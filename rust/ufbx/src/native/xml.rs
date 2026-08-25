@@ -15,7 +15,7 @@ use core::ffi::{c_void, CStr};
 
 use crate::generated::Error;
 use crate::native::allocator::{free, grow_array, Allocator};
-use crate::native::buf::{buf_free, Buf};
+use crate::native::buf::{buf_free, Buf, BufView};
 use crate::native::error::{
     c_strcmp, strcmp, ufbxi_check_err, ufbxi_check_err_msg, ufbxi_fail_err, Fail, EMPTY_CHAR,
 };
@@ -275,18 +275,6 @@ impl XmlContext {
     #[inline(always)]
     pub(crate) fn tok_mut_ptr(&self) -> *mut *mut u8 {
         view_raw_mut!(self, tok)
-    }
-
-    // `tmp_stack` — raw-ptr getter (address of field for out-param/mutation sites).
-    #[inline(always)]
-    pub(crate) fn tmp_stack_mut_ptr(&self) -> *mut Buf {
-        view_raw_mut!(self, tmp_stack)
-    }
-
-    // `result` — raw-ptr getter (address of field for out-param/mutation sites).
-    #[inline(always)]
-    pub(crate) fn result_mut_ptr(&self) -> *mut Buf {
-        view_raw_mut!(self, result)
     }
 
     // `error` — raw-ptr getter (address of field for out-param/mutation sites).
@@ -1101,16 +1089,14 @@ pub(crate) unsafe fn load_xml(opts: *mut XmlLoadOpts, error: *mut Error) -> *mut
     // token run either grown from `xc.ator()` to exactly `tok_cap` bytes or
     // still `(null, 0)`, which `free` ignores.
     unsafe {
-        buf_free(xc.tmp_stack_mut_ptr());
+        buf_free(xc.tmp_stack_view());
         free::<u8>(xc.ator(), xc.tok(), xc.tok_cap());
     }
 
     if ok {
         xc.doc()
     } else {
-        // SAFETY: the result buf is xc's own owned state; on the failure path
-        // nothing was handed out of it.
-        unsafe { buf_free(xc.result_mut_ptr()) };
+        buf_free(xc.result_view());
         if !error.is_null() {
             // SAFETY: `error` is the caller's live, writable `Error` slot
             // (checked non-null); the source is xc's own error field, copied
@@ -1131,8 +1117,9 @@ pub(crate) unsafe fn free_xml(doc: *mut XmlDocument) {
     // contract); the bitwise read moves the owning `Buf` to the stack, and the
     // stale field dies with the storage this call frees.
     let mut buf: Buf = unsafe { core::ptr::read(&raw const (*doc).buf) };
-    // SAFETY: `buf` is that live stack copy, the sole owner of the chunk list.
-    unsafe { buf_free(&raw mut buf) };
+    // SAFETY: `buf` is that live stack copy, the sole owner of the chunk list;
+    // minting the `BufView` `buf_free` takes over that stack local.
+    buf_free(unsafe { BufView::from_ptr(&raw mut buf) });
 }
 
 // ufbx.c:7662-7670 `ufbxi_xml_find_child`

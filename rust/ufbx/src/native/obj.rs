@@ -472,26 +472,23 @@ pub(crate) fn obj_free(uc: &Context) {
         return;
     }
 
-    // SAFETY: releases the obj parser's own arenas and group map through their
-    // raw-ptr getters, reached only once the context is initialized (guard
-    // above).
-    unsafe {
-        // C: `ufbxi_nounroll for (size_t i = 0; i < UFBXI_OBJ_NUM_ATTRIBS_EXT; i++)`
-        for i in 0..OBJ_NUM_ATTRIBS_EXT {
-            buf_free(uc.obj().tmp_vertices_mut_ptr(i));
-            buf_free(uc.obj().tmp_indices_mut_ptr(i));
-        }
-        buf_free(uc.obj().tmp_color_valid_mut_ptr());
-        buf_free(uc.obj().tmp_faces_mut_ptr());
-        buf_free(uc.obj().tmp_face_material_mut_ptr());
-        buf_free(uc.obj().tmp_face_smoothing_mut_ptr());
-        buf_free(uc.obj().tmp_face_group_mut_ptr());
-        buf_free(uc.obj().tmp_face_group_infos_mut_ptr());
-        buf_free(uc.obj().tmp_meshes_mut_ptr());
-        buf_free(uc.obj().tmp_props_mut_ptr());
-
-        map_free(uc.obj().group_map_view());
+    // Releases the obj parser's own buffers and group map, reached only once
+    // the context is initialized (guard above).
+    // C: `ufbxi_nounroll for (size_t i = 0; i < UFBXI_OBJ_NUM_ATTRIBS_EXT; i++)`
+    for i in 0..OBJ_NUM_ATTRIBS_EXT {
+        buf_free(uc.obj().tmp_vertices_at(i));
+        buf_free(uc.obj().tmp_indices_at(i));
     }
+    buf_free(uc.obj().tmp_color_valid_view());
+    buf_free(uc.obj().tmp_faces_view());
+    buf_free(uc.obj().tmp_face_material_view());
+    buf_free(uc.obj().tmp_face_smoothing_view());
+    buf_free(uc.obj().tmp_face_group_view());
+    buf_free(uc.obj().tmp_face_group_infos_view());
+    buf_free(uc.obj().tmp_meshes_view());
+    buf_free(uc.obj().tmp_props_view());
+
+    map_free(uc.obj().group_map_view());
 
     // SAFETY: each array is freed with the capacity it was grown to, through
     // the same temp allocator that allocated it.

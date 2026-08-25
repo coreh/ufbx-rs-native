@@ -968,9 +968,7 @@ pub(crate) unsafe fn load_imp(uc: &Context) -> Result<(), Fail> {
     );
 
     // We can free `tmp_parse` already here as all parsing is done by now.
-    // SAFETY: `tmp_parse` is `uc`'s own buffer field, live for the `&Context`
-    // borrow.
-    unsafe { buf_free(uc.tmp_parse_mut_ptr()) };
+    buf_free(uc.tmp_parse_view());
 
     // SAFETY: `finalize_scene` takes the same `&Context` this fn was handed.
     ufbxi_check!(
@@ -1205,12 +1203,13 @@ pub(crate) fn free_temp(uc: &Context) {
         string_pool_temp_free(uc.string_pool_view());
     }
 
-    // SAFETY: every buffer, map, allocator and growth-state pair torn down
-    // here is uc's own temp-side state, reached through uc's accessors and
-    // valid by construction; this is the last use of all of it (mirrors C
-    // `ufbxi_free_temp`).
+    // SAFETY: every allocator and pointer/capacity pair released through the
+    // raw `free` calls below is uc's own temp-side state, reached through uc's
+    // accessors and valid by construction; this is the last use of all of it
+    // (mirrors C `ufbxi_free_temp`). The buf and map teardowns interleaved
+    // here in C order are safe calls that need no vouch.
     unsafe {
-        buf_free(uc.warnings_view().tmp_stack_mut_ptr());
+        buf_free(uc.warnings_view().tmp_stack_view());
 
         map_free(uc.prop_type_map_view());
         map_free(uc.fbx_id_map_view());
@@ -1221,26 +1220,26 @@ pub(crate) fn free_temp(uc: &Context) {
         map_free(uc.node_prop_set_view());
         map_free(uc.dom_node_map_view());
 
-        buf_free(uc.tmp_mut_ptr());
-        buf_free(uc.tmp_parse_mut_ptr());
+        buf_free(uc.tmp_view());
+        buf_free(uc.tmp_parse_view());
         for i in 0..THREAD_GROUP_COUNT {
-            buf_free(uc.tmp_thread_parse_mut_ptr(i));
+            buf_free(uc.tmp_thread_parse_at(i));
         }
-        buf_free(uc.tmp_stack_mut_ptr());
-        buf_free(uc.tmp_connections_mut_ptr());
-        buf_free(uc.tmp_node_ids_mut_ptr());
-        buf_free(uc.tmp_elements_mut_ptr());
-        buf_free(uc.tmp_element_offsets_mut_ptr());
-        buf_free(uc.tmp_element_fbx_ids_mut_ptr());
-        buf_free(uc.tmp_element_ptrs_mut_ptr());
+        buf_free(uc.tmp_stack_view());
+        buf_free(uc.tmp_connections_view());
+        buf_free(uc.tmp_node_ids_view());
+        buf_free(uc.tmp_elements_view());
+        buf_free(uc.tmp_element_offsets_view());
+        buf_free(uc.tmp_element_fbx_ids_view());
+        buf_free(uc.tmp_element_ptrs_view());
         for i in 0..ELEMENT_TYPE_COUNT {
-            buf_free(uc.tmp_typed_element_offsets_mut_ptr(i));
+            buf_free(uc.tmp_typed_element_offsets_at(i));
         }
-        buf_free(uc.tmp_mesh_textures_mut_ptr());
-        buf_free(uc.tmp_full_weights_mut_ptr());
-        buf_free(uc.tmp_dom_nodes_mut_ptr());
-        buf_free(uc.tmp_element_id_mut_ptr());
-        buf_free(uc.tmp_ascii_spans_mut_ptr());
+        buf_free(uc.tmp_mesh_textures_view());
+        buf_free(uc.tmp_full_weights_view());
+        buf_free(uc.tmp_dom_nodes_view());
+        buf_free(uc.tmp_element_id_view());
+        buf_free(uc.tmp_ascii_spans_view());
 
         free::<Node>(uc.ator_tmp_mut_ptr(), uc.top_nodes(), uc.top_nodes_cap());
         free::<*mut c_void>(
@@ -1279,12 +1278,10 @@ pub(crate) fn free_temp(uc: &Context) {
 // ufbx.c:25464-25470 `ufbxi_free_result`
 #[inline(never)]
 pub(crate) fn free_result(uc: &Context) {
-    // SAFETY: the buffer pointers come from `uc` accessors and are valid by
-    // construction; mirrors C `ufbxi_free_result`'s teardown.
-    unsafe {
-        buf_free(uc.result_mut_ptr());
-        buf_free(uc.string_pool_view().buf_mut_ptr());
-    }
+    // The buffers come from `uc` accessors; mirrors C `ufbxi_free_result`'s
+    // teardown.
+    buf_free(uc.result_view());
+    buf_free(uc.string_pool_view().buf_view());
 
     // SAFETY: `uc.ator_result_view()` is the context's own result allocator,
     // live for the borrow, torn down exactly once here.
@@ -2951,12 +2948,6 @@ impl EvalContext {
         unsafe { &*(&raw mut (*self.get()).opts as *mut EvaluateOptsView) }
     }
 
-    // `tmp` — raw-ptr getter (address of field for out-param/mutation sites).
-    #[inline(always)]
-    pub(crate) fn tmp_mut_ptr(&self) -> *mut Buf {
-        view_raw_mut!(self, tmp)
-    }
-
     // `src_scene` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn src_scene_mut_ptr(&self) -> *mut Scene {
@@ -2967,12 +2958,6 @@ impl EvalContext {
     #[inline(always)]
     pub(crate) fn scene_mut_ptr(&self) -> *mut Scene {
         view_raw_mut!(self, scene)
-    }
-
-    // `result` — raw-ptr getter (address of field for out-param/mutation sites).
-    #[inline(always)]
-    pub(crate) fn result_mut_ptr(&self) -> *mut Buf {
-        view_raw_mut!(self, result)
     }
 
     // `opts` — raw-ptr getter (address of field for out-param/mutation sites).
@@ -4519,7 +4504,7 @@ pub(crate) unsafe fn evaluate_scene(
         // SAFETY: `ec`'s temp buffer and temp allocator are its own fields, live
         // for the borrow, and this is the last use of each.
         unsafe {
-            buf_free(ec.tmp_mut_ptr());
+            buf_free(ec.tmp_view());
             free_ator(ec.ator_tmp_view());
         }
         // SAFETY: `evaluate_imp` succeeded, and its last act is storing the
@@ -4540,8 +4525,8 @@ pub(crate) unsafe fn evaluate_scene(
         // fields, live for the borrow; the failure path discards the result, so
         // this is the last use of each.
         unsafe {
-            buf_free(ec.tmp_mut_ptr());
-            buf_free(ec.result_mut_ptr());
+            buf_free(ec.tmp_view());
+            buf_free(ec.result_view());
             free_ator(ec.ator_tmp_view());
             free_ator(ec.ator_result_view());
         }
@@ -4661,12 +4646,6 @@ impl CreateAnimContext {
         // SAFETY: repr(transparent) over the `opts` field inside this context's
         // outer UnsafeCell; shared interior-mutable view, asserts no validity.
         unsafe { &*(&raw mut (*self.get()).opts as *mut AnimOptsView) }
-    }
-
-    // `result` — raw-ptr getter (address of field for out-param/mutation sites).
-    #[inline(always)]
-    pub(crate) fn result_mut_ptr(&self) -> *mut Buf {
-        view_raw_mut!(self, result)
     }
 
     // `opts` — raw-ptr getter (address of field for out-param/mutation sites).
@@ -5729,46 +5708,16 @@ impl BakeContext {
         unsafe { &*(&raw mut (*self.get()).opts as *mut BakeOptsView) }
     }
 
-    // `tmp_times` — raw-ptr getter (address of field for out-param/mutation sites).
-    #[inline(always)]
-    pub(crate) fn tmp_times_mut_ptr(&self) -> *mut Buf {
-        view_raw_mut!(self, tmp_times)
-    }
-
-    // `tmp_props` — raw-ptr getter (address of field for out-param/mutation sites).
-    #[inline(always)]
-    pub(crate) fn tmp_props_mut_ptr(&self) -> *mut Buf {
-        view_raw_mut!(self, tmp_props)
-    }
-
     // `tmp_prop` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn tmp_prop_mut_ptr(&self) -> *mut Buf {
         view_raw_mut!(self, tmp_prop)
     }
 
-    // `tmp_nodes` — raw-ptr getter (address of field for out-param/mutation sites).
-    #[inline(always)]
-    pub(crate) fn tmp_nodes_mut_ptr(&self) -> *mut Buf {
-        view_raw_mut!(self, tmp_nodes)
-    }
-
-    // `tmp_elements` — raw-ptr getter (address of field for out-param/mutation sites).
-    #[inline(always)]
-    pub(crate) fn tmp_elements_mut_ptr(&self) -> *mut Buf {
-        view_raw_mut!(self, tmp_elements)
-    }
-
     // `tmp_bake_stack` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn tmp_bake_stack_mut_ptr(&self) -> *mut Buf {
         view_raw_mut!(self, tmp_bake_stack)
-    }
-
-    // `tmp_bake_props` — raw-ptr getter (address of field for out-param/mutation sites).
-    #[inline(always)]
-    pub(crate) fn tmp_bake_props_mut_ptr(&self) -> *mut Buf {
-        view_raw_mut!(self, tmp_bake_props)
     }
 
     // `tmp_arr_size` — raw-ptr getter (address of field for out-param/mutation sites).
@@ -5781,18 +5730,6 @@ impl BakeContext {
     #[inline(always)]
     pub(crate) fn tmp_arr_mut_ptr(&self) -> *mut *mut u8 {
         view_raw_mut!(self, tmp_arr)
-    }
-
-    // `tmp` — raw-ptr getter (address of field for out-param/mutation sites).
-    #[inline(always)]
-    pub(crate) fn tmp_mut_ptr(&self) -> *mut Buf {
-        view_raw_mut!(self, tmp)
-    }
-
-    // `result` — raw-ptr getter (address of field for out-param/mutation sites).
-    #[inline(always)]
-    pub(crate) fn result_mut_ptr(&self) -> *mut Buf {
-        view_raw_mut!(self, result)
     }
 
     // `opts` — raw-ptr getter (address of field for out-param/mutation sites).

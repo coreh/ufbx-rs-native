@@ -76,10 +76,6 @@ impl StringPoolView {
         unsafe { &*(&raw mut (*self.get()).buf as *mut crate::native::buf::BufView) }
     }
     #[inline(always)]
-    pub(crate) fn buf_mut_ptr(&self) -> *mut Buf {
-        view_raw_mut!(self, buf)
-    }
-    #[inline(always)]
     pub(crate) fn set_error(&self, error: *mut Error) {
         view_write!(self, error, error)
     }
@@ -1828,7 +1824,7 @@ mod tests {
     use super::*;
     use crate::generated::UnicodeErrorHandling;
     use crate::native::allocator::{init_ator, Allocator};
-    use crate::native::buf::buf_free;
+    use crate::native::buf::{buf_free, BufView};
     use crate::native::hash::map_init;
     use core::mem::MaybeUninit;
 
@@ -1880,7 +1876,7 @@ mod tests {
         // built by `make_fixture` over that same fixture's allocator, and this
         // teardown is its last use.
         unsafe {
-            buf_free(&mut fx.pool.buf);
+            buf_free(BufView::from_ptr(&raw mut fx.pool.buf));
         }
         // SAFETY: single teardown — each test builds its own fixture and calls
         // `free_fixture` once at its end, so this is the only release of that

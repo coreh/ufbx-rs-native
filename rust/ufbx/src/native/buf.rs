@@ -1126,11 +1126,14 @@ pub(crate) unsafe fn push_peek_size(
 
 // ufbx.c:4278-4297 `ufbxi_buf_free`
 #[inline(never)]
-pub(crate) unsafe fn buf_free(buf: *mut Buf) {
+pub(crate) fn buf_free(buf: &BufView) {
+    let buf: *mut Buf = buf.get();
     // C: `ufbxi_nounroll` — optimizer pragma, no Rust analogue (platform.rs).
-    // SAFETY: `buf` addresses a live `Buf` (this fn's raw-pointer contract);
-    // each `chunks[i]` head and the chain from its `->root` are live chunks
-    // allocated from `(*buf).ator` — the `free_chunk` contract for each.
+    // SAFETY: `buf` is the view's write-provenance pointer to a live,
+    // initialized `Buf` (the `BufView` mint invariant); each `chunks[i]` head
+    // and the chain from its `->root` are live chunks allocated from
+    // `(*buf).ator` (the `Buf` construction invariant, the same standing the
+    // `BufView` push family relies on) — the `free_chunk` contract for each.
     for i in 0..2usize {
         let chunk = unsafe { (*buf).chunks[i] };
         if !chunk.is_null() {
@@ -1158,9 +1161,10 @@ pub(crate) unsafe fn buf_clear(buf: *mut Buf) {
 
     // Free the memory if using ASAN
     // SAFETY: `buf` is the live `Buf` and `(*buf).ator` its live allocator;
-    // reading `huge_size`, then forwarding the live-`Buf` contract to `buf_free`.
+    // reading `huge_size`, then minting the `BufView` `buf_free` takes off the
+    // same live, context-owned `Buf` (this fn's raw-pointer contract).
     if unsafe { (*(*buf).ator).huge_size } <= 1 {
-        unsafe { buf_free(buf) };
+        buf_free(unsafe { BufView::from_ptr(buf) });
         return;
     }
 
@@ -1521,9 +1525,9 @@ mod tests {
         assert_eq!(buf.num_items, 0);
         assert_eq!(buf.pos, 0);
 
-        unsafe {
-            buf_free(&mut buf);
-        }
+        // SAFETY: a live, initialized stack-local `Buf` owned by this test;
+        // minting the `BufView` `buf_free` takes.
+        buf_free(unsafe { BufView::from_ptr(&raw mut buf) });
         assert_eq!(unsafe { (*ator).current_size }, 0);
     }
 
@@ -1551,9 +1555,9 @@ mod tests {
         assert_eq!(buf.pos, 12);
         assert_eq!(unsafe { (*buf.chunks[0]).padding_pos }, 0);
 
-        unsafe {
-            buf_free(&mut buf);
-        }
+        // SAFETY: a live, initialized stack-local `Buf` owned by this test;
+        // minting the `BufView` `buf_free` takes.
+        buf_free(unsafe { BufView::from_ptr(&raw mut buf) });
         assert_eq!(unsafe { (*ator).current_size }, 0);
     }
 
@@ -1590,10 +1594,10 @@ mod tests {
         assert_eq!(stack.num_items, 0);
         assert_eq!(result.num_items, N);
 
-        unsafe {
-            buf_free(&mut stack);
-            buf_free(&mut result);
-        }
+        // SAFETY: a live, initialized stack-local `Buf` owned by this test;
+        // minting the `BufView` `buf_free` takes.
+        buf_free(unsafe { BufView::from_ptr(&raw mut stack) });
+        buf_free(unsafe { BufView::from_ptr(&raw mut result) });
         assert_eq!(unsafe { (*ator).current_size }, 0);
     }
 
@@ -1628,9 +1632,9 @@ mod tests {
         assert_eq!(buf.size, 0);
         assert_eq!(unsafe { (*ator).current_size }, 0);
 
-        unsafe {
-            buf_free(&mut buf);
-        }
+        // SAFETY: a live, initialized stack-local `Buf` owned by this test;
+        // minting the `BufView` `buf_free` takes.
+        buf_free(unsafe { BufView::from_ptr(&raw mut buf) });
     }
 
     #[test]
@@ -1672,9 +1676,9 @@ mod tests {
         }
         assert_eq!(count, HUGE_MAX_SCAN);
 
-        unsafe {
-            buf_free(&mut buf);
-        }
+        // SAFETY: a live, initialized stack-local `Buf` owned by this test;
+        // minting the `BufView` `buf_free` takes.
+        buf_free(unsafe { BufView::from_ptr(&raw mut buf) });
         assert_eq!(unsafe { (*ator).current_size }, 0);
     }
 }

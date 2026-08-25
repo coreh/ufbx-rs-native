@@ -8,7 +8,7 @@ use core::ffi::c_void;
 use core::mem::size_of;
 
 use crate::native::allocator::{alloc, free, free_ator, ufbx_free, ufbx_malloc, Allocator};
-use crate::native::buf::{buf_free, push, Buf};
+use crate::native::buf::{buf_free, push, Buf, BufView};
 use crate::native::error::{ufbxi_check_return_err, ufbxi_check_return_err_msg};
 use crate::native::platform::{
     read_u32, ufbx_assert, ufbxi_maybe_null, ufbxi_regression_assert, MAP_MAX_SCAN,
@@ -387,8 +387,9 @@ pub(crate) fn map_free(map: &MapView) {
 
     // SAFETY: the view's mint invariant keeps `map` live, and `aa_buf` is its own AA-tree buffer, freed
     // through the allocator it was allocated from. `&raw mut` preserves the
-    // raw pointer's provenance without manufacturing a temporary reference.
-    unsafe { buf_free(&raw mut (*map).aa_buf) };
+    // raw pointer's provenance without manufacturing a temporary reference;
+    // the `BufView` is minted over that field in place.
+    buf_free(unsafe { BufView::from_ptr(&raw mut (*map).aa_buf) });
     // SAFETY: `entries` is the combined entry/item block `map_grow_size_imp`
     // allocated from `map`'s own allocator with byte length `data_size` (0/null
     // for a never-grown map, which `free` tolerates).

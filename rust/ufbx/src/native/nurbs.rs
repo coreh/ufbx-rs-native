@@ -313,12 +313,6 @@ impl TessellateCurveContext {
         view_raw_mut!(self, line)
     }
 
-    // `result` — raw-ptr getter (address of field for out-param/mutation sites).
-    #[inline(always)]
-    pub(crate) fn result_mut_ptr(&self) -> *mut Buf {
-        view_raw_mut!(self, result)
-    }
-
     // `ator_result` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn ator_result_mut_ptr(&self) -> *mut Allocator {
@@ -477,18 +471,6 @@ impl TessellateSurfaceContext {
     pub(crate) fn position_map_view(&self) -> &crate::native::hash::MapView {
         // SAFETY: reinterpret the Map field in place; interior-mutable, no validity asserted.
         unsafe { &*(&raw mut (*self.get()).position_map as *mut crate::native::hash::MapView) }
-    }
-
-    // `tmp` — raw-ptr getter (address of field for out-param/mutation sites).
-    #[inline(always)]
-    pub(crate) fn tmp_mut_ptr(&self) -> *mut Buf {
-        view_raw_mut!(self, tmp)
-    }
-
-    // `result` — raw-ptr getter (address of field for out-param/mutation sites).
-    #[inline(always)]
-    pub(crate) fn result_mut_ptr(&self) -> *mut Buf {
-        view_raw_mut!(self, result)
     }
 
     // `ator_result` — raw-ptr getter (address of field for out-param/mutation sites).

@@ -27,7 +27,7 @@ use crate::native::api::{
     coordinate_axes_valid, matrix_determinant, matrix_mul, matrix_to_transform,
     transform_to_matrix, EMPTY_STRING,
 };
-use crate::native::buf::{buf_free, Buf};
+use crate::native::buf::{buf_free, Buf, BufView};
 use crate::native::error::{
     clear_error, fix_error_type, set_err_info, strlen, ufbxi_check, ufbxi_check_err,
     ufbxi_check_err_msg, ufbxi_fail_err, ufbxi_fail_err_msg, ufbxi_fail_msg, ufbxi_fmt_err_info,
@@ -2159,8 +2159,8 @@ pub(crate) unsafe fn cache_load(cc: &CacheContext, filename: String) -> *mut Geo
     // `name_buf`/`tmp_arr` runs with `cc.ator_tmp`. Each is freed once, and the
     // context is not used for allocation afterwards.
     unsafe {
-        buf_free(cc.tmp_mut_ptr());
-        buf_free(cc.tmp_stack_mut_ptr());
+        buf_free(cc.tmp_view());
+        buf_free(cc.tmp_stack_view());
         free::<u8>(cc.ator_tmp(), cc.name_buf(), cc.name_cap());
         free::<u8>(cc.ator_tmp(), cc.tmp_arr(), cc.tmp_arr_size());
     }
@@ -2191,13 +2191,12 @@ pub(crate) unsafe fn cache_load(cc: &CacheContext, filename: String) -> *mut Geo
             );
         }
         if !cc.owned_by_scene() {
-            // SAFETY: on the failure path the result buf never reached an
-            // `imp`, so `cc` still owns the string-pool buf and the result
-            // allocator — both its own fields, freed exactly once here.
-            unsafe {
-                buf_free(cc.string_pool_view().buf_mut_ptr());
-                free_ator(cc.ator_result_view());
-            }
+            // On the failure path the result buf never reached an `imp`, so
+            // `cc` still owns the string-pool buf and the result allocator.
+            buf_free(cc.string_pool_view().buf_view());
+            // SAFETY: `cc.ator_result_view()` is `cc`'s own result allocator,
+            // freed exactly once here.
+            unsafe { free_ator(cc.ator_result_view()) };
         }
         core::ptr::null_mut()
     }
@@ -2302,7 +2301,7 @@ pub(crate) unsafe fn free_geometry_cache_imp(imp: *mut GeometryCacheImp) {
     // `string_buf` is that header's own buf, freed once as the cache dies.
     unsafe {
         ufbx_assert!((*imp).magic == CACHE_IMP_MAGIC);
-        buf_free(&raw mut (*imp).string_buf);
+        buf_free(BufView::from_ptr(&raw mut (*imp).string_buf));
     }
 }
 

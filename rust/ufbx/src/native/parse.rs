@@ -1136,36 +1136,20 @@ impl ObjContext {
     }
 
     #[inline(always)]
-    pub(crate) fn tmp_faces_mut_ptr(&self) -> *mut crate::native::buf::Buf {
-        view_raw_mut!(self, tmp_faces)
-    }
-    #[inline(always)]
     pub(crate) fn tmp_faces_view(&self) -> &crate::native::buf::BufView {
         unsafe { &*(&raw mut (*self.get()).tmp_faces as *mut crate::native::buf::BufView) }
     }
 
-    #[inline(always)]
-    pub(crate) fn tmp_props_mut_ptr(&self) -> *mut crate::native::buf::Buf {
-        view_raw_mut!(self, tmp_props)
-    }
     #[inline(always)]
     pub(crate) fn tmp_props_view(&self) -> &crate::native::buf::BufView {
         unsafe { &*(&raw mut (*self.get()).tmp_props as *mut crate::native::buf::BufView) }
     }
 
     #[inline(always)]
-    pub(crate) fn tmp_meshes_mut_ptr(&self) -> *mut crate::native::buf::Buf {
-        view_raw_mut!(self, tmp_meshes)
-    }
-    #[inline(always)]
     pub(crate) fn tmp_meshes_view(&self) -> &crate::native::buf::BufView {
         unsafe { &*(&raw mut (*self.get()).tmp_meshes as *mut crate::native::buf::BufView) }
     }
 
-    #[inline(always)]
-    pub(crate) fn tmp_face_smoothing_mut_ptr(&self) -> *mut crate::native::buf::Buf {
-        view_raw_mut!(self, tmp_face_smoothing)
-    }
     #[inline(always)]
     pub(crate) fn tmp_face_smoothing_view(&self) -> &crate::native::buf::BufView {
         unsafe { &*(&raw mut (*self.get()).tmp_face_smoothing as *mut crate::native::buf::BufView) }
@@ -1181,20 +1165,12 @@ impl ObjContext {
     }
 
     #[inline(always)]
-    pub(crate) fn tmp_face_group_infos_mut_ptr(&self) -> *mut crate::native::buf::Buf {
-        view_raw_mut!(self, tmp_face_group_infos)
-    }
-    #[inline(always)]
     pub(crate) fn tmp_face_group_infos_view(&self) -> &crate::native::buf::BufView {
         unsafe {
             &*(&raw mut (*self.get()).tmp_face_group_infos as *mut crate::native::buf::BufView)
         }
     }
 
-    #[inline(always)]
-    pub(crate) fn tmp_face_material_mut_ptr(&self) -> *mut crate::native::buf::Buf {
-        view_raw_mut!(self, tmp_face_material)
-    }
     #[inline(always)]
     pub(crate) fn tmp_face_material_view(&self) -> &crate::native::buf::BufView {
         unsafe { &*(&raw mut (*self.get()).tmp_face_material as *mut crate::native::buf::BufView) }
@@ -2834,18 +2810,10 @@ impl Context {
         }
     }
     #[inline(always)]
-    pub(crate) fn tmp_typed_element_offsets_mut_ptr(&self, i: usize) -> *mut Buf {
-        unsafe { &raw mut (*self.get()).tmp_typed_element_offsets[i] }
-    }
-    #[inline(always)]
     pub(crate) fn tmp_thread_parse_at(&self, i: usize) -> &crate::native::buf::BufView {
         unsafe {
             &*(&raw mut (*self.get()).tmp_thread_parse[i] as *mut crate::native::buf::BufView)
         }
-    }
-    #[inline(always)]
-    pub(crate) fn tmp_thread_parse_mut_ptr(&self, i: usize) -> *mut Buf {
-        unsafe { &raw mut (*self.get()).tmp_thread_parse[i] }
     }
     // `exporter`/`mirror_axis` (Copy enums) — value getter/setter.
     #[inline(always)]
@@ -3113,12 +3081,6 @@ impl Context {
         view_raw_mut!(self, axis_matrix)
     }
 
-    // `tmp_ascii_spans` — raw-ptr getter (address of field for out-param/mutation sites).
-    #[inline(always)]
-    pub(crate) fn tmp_ascii_spans_mut_ptr(&self) -> *mut Buf {
-        view_raw_mut!(self, tmp_ascii_spans)
-    }
-
     // `legacy_node` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn legacy_node_mut_ptr(&self) -> *mut Node {
@@ -3131,12 +3093,6 @@ impl Context {
         // SAFETY: repr(transparent) over the `legacy_node` field inside the outer UnsafeCell;
         // shared interior-mutable view, asserts no validity.
         unsafe { &*(&raw mut (*self.get()).legacy_node as *mut NodeView) }
-    }
-
-    // `tmp_mesh_textures` — raw-ptr getter (address of field for out-param/mutation sites).
-    #[inline(always)]
-    pub(crate) fn tmp_mesh_textures_mut_ptr(&self) -> *mut Buf {
-        view_raw_mut!(self, tmp_mesh_textures)
     }
 
     // `ator_result` — raw-ptr getter (address of field for out-param/mutation sites).
@@ -3154,12 +3110,6 @@ impl Context {
         }
     }
 
-    // `tmp_element_id` — raw-ptr getter (address of field for out-param/mutation sites).
-    #[inline(always)]
-    pub(crate) fn tmp_element_id_mut_ptr(&self) -> *mut Buf {
-        view_raw_mut!(self, tmp_element_id)
-    }
-
     // `ptr_fbx_id_map` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn ptr_fbx_id_map_mut_ptr(&self) -> *mut Map {
@@ -3172,18 +3122,6 @@ impl Context {
         view_raw_mut!(self, texture_file_map)
     }
 
-    // `tmp_element_fbx_ids` — raw-ptr getter (address of field for out-param/mutation sites).
-    #[inline(always)]
-    pub(crate) fn tmp_element_fbx_ids_mut_ptr(&self) -> *mut Buf {
-        view_raw_mut!(self, tmp_element_fbx_ids)
-    }
-
-    // `tmp_element_ptrs` — raw-ptr getter (address of field for out-param/mutation sites).
-    #[inline(always)]
-    pub(crate) fn tmp_element_ptrs_mut_ptr(&self) -> *mut Buf {
-        view_raw_mut!(self, tmp_element_ptrs)
-    }
-
     // `node_prop_set` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn node_prop_set_mut_ptr(&self) -> *mut Map {
@@ -3194,12 +3132,6 @@ impl Context {
     #[inline(always)]
     pub(crate) fn prop_type_map_mut_ptr(&self) -> *mut Map {
         view_raw_mut!(self, prop_type_map)
-    }
-
-    // `tmp_dom_nodes` — raw-ptr getter (address of field for out-param/mutation sites).
-    #[inline(always)]
-    pub(crate) fn tmp_dom_nodes_mut_ptr(&self) -> *mut Buf {
-        view_raw_mut!(self, tmp_dom_nodes)
     }
 
     // `dom_node_map` — raw-ptr getter (address of field for out-param/mutation sites).
@@ -3226,46 +3158,16 @@ impl Context {
         view_raw_mut!(self, scene)
     }
 
-    // `tmp_full_weights` — raw-ptr getter (address of field for out-param/mutation sites).
-    #[inline(always)]
-    pub(crate) fn tmp_full_weights_mut_ptr(&self) -> *mut Buf {
-        view_raw_mut!(self, tmp_full_weights)
-    }
-
-    // `tmp_elements` — raw-ptr getter (address of field for out-param/mutation sites).
-    #[inline(always)]
-    pub(crate) fn tmp_elements_mut_ptr(&self) -> *mut Buf {
-        view_raw_mut!(self, tmp_elements)
-    }
-
     // `fbx_attr_map` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn fbx_attr_map_mut_ptr(&self) -> *mut Map {
         view_raw_mut!(self, fbx_attr_map)
     }
 
-    // `tmp_element_offsets` — raw-ptr getter (address of field for out-param/mutation sites).
-    #[inline(always)]
-    pub(crate) fn tmp_element_offsets_mut_ptr(&self) -> *mut Buf {
-        view_raw_mut!(self, tmp_element_offsets)
-    }
-
-    // `tmp_connections` — raw-ptr getter (address of field for out-param/mutation sites).
-    #[inline(always)]
-    pub(crate) fn tmp_connections_mut_ptr(&self) -> *mut Buf {
-        view_raw_mut!(self, tmp_connections)
-    }
-
     // `thread_pool` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn thread_pool_mut_ptr(&self) -> *mut ThreadPool {
         view_raw_mut!(self, thread_pool)
-    }
-
-    // `tmp_node_ids` — raw-ptr getter (address of field for out-param/mutation sites).
-    #[inline(always)]
-    pub(crate) fn tmp_node_ids_mut_ptr(&self) -> *mut Buf {
-        view_raw_mut!(self, tmp_node_ids)
     }
 
     // `ascii` — raw-ptr getter (address of field for out-param/mutation sites).
@@ -7089,9 +6991,7 @@ pub(crate) unsafe fn parse_toplevel(uc: &Context, name: *const u8) -> Result<(),
             }
 
             // Not needed anymore
-            // SAFETY: `tmp_parse_mut_ptr` is `uc`'s own `tmp_parse` buffer
-            // pointer — `buf_free`'s contract.
-            unsafe { buf_free(uc.tmp_parse_mut_ptr()) };
+            buf_free(uc.tmp_parse_view());
 
             return Ok(());
         }
@@ -8236,7 +8136,7 @@ mod tests {
     #[test]
     fn test_push_element_extra_grows_and_dedups() {
         use crate::native::allocator::init_ator;
-        use crate::native::buf::buf_free;
+        use crate::native::buf::{buf_free, BufView};
 
         let mut uc: std::boxed::Box<InnerContext> =
             unsafe { std::boxed::Box::new_zeroed().assume_init() };
@@ -8260,7 +8160,9 @@ mod tests {
             assert_eq!((*b).bone_fbx_id, 0);
             assert_eq!(get_element_extra(uc_ptr, 6), b as *mut c_void);
 
-            buf_free(&mut uc.tmp);
+            // SAFETY: `uc.tmp` is a live, initialized `Buf` this test owns;
+            // minting the `BufView` `buf_free` takes.
+            buf_free(BufView::from_ptr(&raw mut uc.tmp));
             crate::native::allocator::free_size(
                 &mut uc.ator_tmp,
                 size_of::<*mut c_void>(),
@@ -8297,7 +8199,7 @@ mod tests {
     #[test]
     fn test_retain_dom_node_tree() {
         use crate::native::allocator::init_ator;
-        use crate::native::buf::buf_free;
+        use crate::native::buf::{buf_free, BufView};
         use crate::native::hash::{map_cmp_uintptr, map_free, map_init, MapView};
         use crate::native::string_pool::{map_cmp_string, string_pool_temp_free, StringPoolView};
 
@@ -8402,10 +8304,12 @@ mod tests {
             );
             assert!(get_dom_node(uc_ptr, None).is_null());
 
-            buf_free(&mut uc.result);
-            buf_free(&mut uc.tmp_stack);
-            buf_free(&mut uc.tmp_dom_nodes);
-            buf_free(&mut uc.string_pool.buf);
+            // SAFETY: each is a live, initialized `Buf` this test owns;
+            // minting the `BufView`s `buf_free` takes.
+            buf_free(BufView::from_ptr(&raw mut uc.result));
+            buf_free(BufView::from_ptr(&raw mut uc.tmp_stack));
+            buf_free(BufView::from_ptr(&raw mut uc.tmp_dom_nodes));
+            buf_free(BufView::from_ptr(&raw mut uc.string_pool.buf));
         }
         // SAFETY: single teardown — `uc` is this test's exclusively owned
         // context, torn down once here at the end of the test, so this is the

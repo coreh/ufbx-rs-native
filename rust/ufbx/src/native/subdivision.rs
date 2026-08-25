@@ -415,12 +415,6 @@ impl SubdivideContext {
         view_raw_mut!(self, src_mesh)
     }
 
-    // `source` — raw-ptr getter (address of field for out-param/mutation sites).
-    #[inline(always)]
-    pub(crate) fn source_mut_ptr(&self) -> *mut Buf {
-        view_raw_mut!(self, source)
-    }
-
     // `result` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn result_mut_ptr(&self) -> *mut Buf {
@@ -3101,8 +3095,8 @@ pub(crate) fn subdivide_mesh_imp(
             // C: `sc->src_mesh = sc->dst_mesh;` — struct assignment (memcpy).
             core::ptr::copy_nonoverlapping(sc.dst_mesh_mut_ptr(), sc.src_mesh_mut_ptr(), 1);
 
-            buf_free(sc.source_mut_ptr());
-            buf_free(sc.tmp_mut_ptr());
+            buf_free(sc.source_view());
+            buf_free(sc.tmp_view());
             sc.set_source(sc.take_result());
             core::ptr::write_bytes(sc.result_mut_ptr() as *mut u8, 0, size_of::<Buf>());
         }
@@ -3114,7 +3108,7 @@ pub(crate) fn subdivide_mesh_imp(
     // state (construction invariant).
     unsafe {
         subdivide_mesh_level(sc)?;
-        buf_free(sc.tmp_mut_ptr());
+        buf_free(sc.tmp_view());
     }
 
     let mesh: &MeshView = sc.dst_mesh_view();
@@ -3307,11 +3301,8 @@ pub(crate) unsafe fn subdivide_mesh(
     // allocator and the `inputs` array (with its capacity) it allocated, the
     // free contract.
     unsafe { free::<SubdivideInput>(sc.ator_tmp_mut_ptr(), sc.inputs(), sc.inputs_cap()) };
-    // SAFETY: `tmp`/`source` are `sc`'s own live scratch bufs.
-    unsafe {
-        buf_free(sc.tmp_mut_ptr());
-        buf_free(sc.source_mut_ptr());
-    }
+    buf_free(sc.tmp_view());
+    buf_free(sc.source_view());
 
     if let Ok(finished_imp) = result {
         // SAFETY: `ator_tmp_view()` is `sc`'s own live temp allocator, torn
@@ -3332,10 +3323,10 @@ pub(crate) unsafe fn subdivide_mesh(
         unsafe {
             fix_error_type(sc.error_mut_ptr(), b"Failed to subdivide\0", &raw mut fixed);
         }
-        // SAFETY: `result` is `sc`'s own live scratch buf; both allocators are
-        // `sc`'s own live temp/result allocators, torn down exactly once here.
+        buf_free(sc.result_view());
+        // SAFETY: both allocators are `sc`'s own live temp/result allocators,
+        // torn down exactly once here.
         unsafe {
-            buf_free(sc.result_mut_ptr());
             free_ator(sc.ator_tmp_view());
             free_ator(sc.ator_result_view());
         }
