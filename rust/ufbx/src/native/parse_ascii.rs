@@ -1871,8 +1871,7 @@ fn ascii_parse_node_rec(
             // in fast parsing functions.
             ufbxi_check!(
                 uc,
-                // SAFETY: `tmp_stack_mut_ptr` is `uc`'s own live temp-stack buf.
-                !unsafe { push_size_zero(uc.tmp_stack_mut_ptr(), 8, 1) }.is_null(),
+                !push_size_zero(uc.tmp_stack_view(), 8, 1).is_null(),
                 "ufbxi_push_size_zero(&uc->tmp_stack, 8, 1)"
             );
 
@@ -1880,8 +1879,7 @@ fn ascii_parse_node_rec(
             if (flags & ARRAY_FLAG_PAD_BEGIN) != 0 {
                 ufbxi_check!(
                     uc,
-                    // SAFETY: `tmp_stack_mut_ptr` is `uc`'s own live temp-stack buf.
-                    !unsafe { push_size_zero(uc.tmp_stack_mut_ptr(), arr_elem_size, 4) }.is_null(),
+                    !push_size_zero(uc.tmp_stack_view(), arr_elem_size, 4).is_null(),
                     "ufbxi_push_size_zero(&uc->tmp_stack, arr_elem_size, 4)"
                 );
                 num_values += 4;

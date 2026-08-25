@@ -4689,8 +4689,7 @@ pub(crate) fn push_element_extra_size(uc: &Context, id: u32, size: usize) -> *mu
         return existing;
     }
 
-    // SAFETY: pushing onto `uc`'s own `tmp` buf through its raw-ptr getter.
-    let extra: *mut c_void = unsafe { push_size_zero(uc.tmp_mut_ptr(), size, 1) };
+    let extra: *mut c_void = push_size_zero(uc.tmp_view(), size, 1);
     ufbxi_check_return!(uc, !extra.is_null(), core::ptr::null_mut(), "extra");
     // SAFETY: `id < element_extra_cap()` as above; `push_size_zero` touches
     // only `uc->tmp`, so the array is still that long.
