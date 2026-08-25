@@ -922,27 +922,40 @@ pub(crate) unsafe fn binary_parse_node(
             ufbx_assert!(d.get() < MAX_NODE_DEPTH + 1);
             d.set(d.get() + 1);
         });
-        // SAFETY: forwards the caller's `p_end` (a live `*mut bool`) and
-        // borrows unchanged to the recursive body.
-        let ret =
-            unsafe { binary_parse_node_rec(uc, depth, parent_state, p_end, tmp_buf, recursive) };
+        // SAFETY: `p_end` is the caller's live, exclusively owned `bool` output
+        // slot; the reborrow lasts only for the recursive call.
+        let ret = binary_parse_node_rec(
+            uc,
+            depth,
+            parent_state,
+            unsafe { &mut *p_end },
+            tmp_buf,
+            recursive,
+        );
         UFBXI_RECURSION_DEPTH.with(|d| d.set(d.get() - 1));
         ret
     }
     #[cfg(not(feature = "regression"))]
     {
-        // SAFETY: forwards the caller's `p_end` (a live `*mut bool`) and
-        // borrows unchanged to the recursive body.
-        unsafe { binary_parse_node_rec(uc, depth, parent_state, p_end, tmp_buf, recursive) }
+        // SAFETY: `p_end` is the caller's live, exclusively owned `bool` output
+        // slot; the reborrow lasts only for the recursive call.
+        binary_parse_node_rec(
+            uc,
+            depth,
+            parent_state,
+            unsafe { &mut *p_end },
+            tmp_buf,
+            recursive,
+        )
     }
 }
 
 #[inline(never)]
-unsafe fn binary_parse_node_rec(
+fn binary_parse_node_rec(
     uc: &Context,
     depth: u32,
     parent_state: ParseState,
-    p_end: *mut bool,
+    p_end: &mut bool,
     tmp_buf: &BufView,
     recursive: bool,
 ) -> Result<(), Fail> {
@@ -1002,8 +1015,7 @@ unsafe fn binary_parse_node_rec(
     // If `end_offset` and `name_len` is zero we treat as the node as a NULL-sentinel
     // that terminates a node list.
     if end_offset == 0 && name_len == 0 {
-        // SAFETY: `p_end` is the caller's live `*mut bool` output flag.
-        unsafe { *p_end = true };
+        *p_end = true;
         return Ok(());
     }
 
