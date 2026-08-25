@@ -7657,12 +7657,13 @@ pub(crate) fn find_enum<M: Mode>(
 // in exactly that order), so the walk is pointer arithmetic from the struct
 // base.
 #[inline(never)]
-pub(crate) unsafe fn matrix_all_zero(matrix: *const Matrix) -> bool {
+pub(crate) fn matrix_all_zero<M: Mode>(matrix: &View<Matrix, M>) -> bool {
     for i in 0..12 {
-        // SAFETY: `matrix` points to a valid `Matrix` whose `m00`..`m23` reals are
-        // laid out contiguously (fn comment), so `(matrix as *const Real).add(i)`
-        // for `i in 0..12` reads a live element.
-        if unsafe { *(matrix as *const Real).add(i) } != 0.0 {
+        // SAFETY: the view covers a live, initialized `Matrix` whose `m00`..`m23`
+        // reals are laid out contiguously (fn comment), so
+        // `(matrix.as_ptr() as *const Real).add(i)` for `i in 0..12` reads a live
+        // element.
+        if unsafe { *(matrix.as_ptr() as *const Real).add(i) } != 0.0 {
             return false;
         }
     }
@@ -7715,16 +7716,32 @@ pub(crate) fn is_quat_equal(a: Quat, b: Quat) -> bool {
     ((a.x == b.x) as u8 & (a.y == b.y) as u8 & (a.z == b.z) as u8 & (a.w == b.w) as u8) != 0
 }
 
+// Rust-port infrastructure (not a ufbx.c section): the three leaves
+// `ufbxi_is_transform_identity` reads off the `ufbx_transform *` its callers
+// hand it.
+impl<M: Mode> View<Transform, M> {
+    #[inline(always)]
+    pub(crate) fn translation(&self) -> Vec3 {
+        view_read_shared!(self, translation)
+    }
+    #[inline(always)]
+    pub(crate) fn rotation(&self) -> Quat {
+        view_read_shared!(self, rotation)
+    }
+    #[inline(always)]
+    pub(crate) fn scale(&self) -> Vec3 {
+        view_read_shared!(self, scale)
+    }
+}
+
 // ufbx.c:11604-11607 `ufbxi_is_transform_identity`
 #[inline(never)]
-pub(crate) unsafe fn is_transform_identity(t: *const Transform) -> bool {
+pub(crate) fn is_transform_identity<M: Mode>(t: &View<Transform, M>) -> bool {
     // C: `(bool)((int)ufbxi_is_vec3_zero(..) & (int)ufbxi_is_quat_identity(..)
     // & (int)ufbxi_is_vec3_one(..))` — a non-short-circuiting bitwise `&`.
-    // SAFETY: `t` points to a valid `Transform` (fn contract); read its
-    // `translation`/`rotation`/`scale` fields by value.
-    ((is_vec3_zero(unsafe { (*t).translation }) as i32)
-        & (is_quat_identity(unsafe { (*t).rotation }) as i32)
-        & (is_vec3_one(unsafe { (*t).scale }) as i32))
+    ((is_vec3_zero(t.translation()) as i32)
+        & (is_quat_identity(t.rotation()) as i32)
+        & (is_vec3_one(t.scale()) as i32))
         != 0
 }
 
@@ -7773,15 +7790,8 @@ pub(crate) unsafe fn get_name_key_c(name: *const u8) -> u32 {
 
 // ufbx.c:11633-11643 `ufbxi_name_key_less`
 #[inline(always)]
-pub(crate) unsafe fn name_key_less(
-    prop: *mut Prop,
-    data: *const u8,
-    name_len: usize,
-    key: u32,
-) -> bool {
-    // SAFETY: `prop` points to a valid `Prop` in the caller's property table (fn
-    // contract), which outlives this call and carries write-capable provenance.
-    let prop: &PropView = unsafe { PropView::from_ptr(prop) };
+pub(crate) fn name_key_less<M: Mode>(prop: &View<Prop, M>, data: &[u8], key: u32) -> bool {
+    let name_len: usize = data.len();
 
     if prop._internal_key() < key {
         return true;
@@ -7794,7 +7804,7 @@ pub(crate) unsafe fn name_key_less(
     let len: usize = min_sz(prop_len, name_len);
     // SAFETY: `prop.name.data` spans `prop_len` bytes and `data` spans `name_len`;
     // `len` is their min, so both reads stay in bounds — `memcmp`'s contract.
-    let cmp: i32 = unsafe { memcmp(prop.name().data, data, len) };
+    let cmp: i32 = unsafe { memcmp(prop.name().data, data.as_ptr(), len) };
     if cmp != 0 {
         return cmp < 0;
     }

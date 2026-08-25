@@ -1996,7 +1996,12 @@ pub(crate) fn add_connections_to_elements(uc: &Context) -> Result<(), Fail> {
                     }
 
                     let key: u32 = get_name_key(name.as_bytes());
-                    while prop != prop_end && name_key_less(prop, name.data, name.length, key) {
+                    // SAFETY: `prop != prop_end` pins `prop` to a live element of
+                    // the property run being walked, which carries write-capable
+                    // arena provenance; `name` spans `name.length` readable bytes.
+                    while prop != prop_end
+                        && name_key_less(PropView::from_ptr(prop), name.as_bytes(), key)
+                    {
                         prop = prop.add(1);
                     }
 
@@ -7082,7 +7087,7 @@ pub(crate) fn modify_geometry<'a>(uc: &'a Context) -> Result<(), Fail> {
 
                 (*node).geometry_transform =
                     get_geometry_transform(node_view.props_view(), node_view);
-                if !is_transform_identity(&raw const (*node).geometry_transform) {
+                if !is_transform_identity(node_view.geometry_transform_view()) {
                     (*node).geometry_to_node =
                         transform_to_matrix(&raw const (*node).geometry_transform);
                     (*node).has_geometry_transform = true;
@@ -8694,10 +8699,7 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
                     // non-null header is the head of a live `ufbx_skin_cluster`.
                     let cluster: &View<SkinCluster> =
                         unsafe { View::<SkinCluster>::from_ptr(dst_ref.ptr() as *mut SkinCluster) };
-                    // SAFETY: `bind_to_world_ptr` addresses the cluster's own
-                    // matrix field, which `ufbxi_matrix_all_zero` reads (fn
-                    // contract).
-                    if unsafe { matrix_all_zero(cluster.bind_to_world_ptr()) } {
+                    if matrix_all_zero(cluster.bind_to_world_view()) {
                         cluster.set_bind_to_world(bone.bone_to_world());
                     }
                 }
@@ -11351,10 +11353,7 @@ pub(crate) fn update_node(node_view: &NodeView, overrides: &[TransformOverride])
         node_view.set_unscaled_node_to_world(unscaled_node_to_parent);
     }
 
-    // SAFETY: `geometry_transform_ptr()` is the node view's own geometry
-    // transform field, set on both arms above, read through the raw pointer
-    // the helper takes.
-    if !unsafe { is_transform_identity(node_view.geometry_transform_ptr()) } {
+    if !is_transform_identity(node_view.geometry_transform_view()) {
         // SAFETY: as above, for `ufbx_transform_to_matrix`.
         let geometry_to_node: Matrix =
             unsafe { transform_to_matrix(node_view.geometry_transform_ptr()) };
@@ -12046,7 +12045,7 @@ pub(crate) fn update_texture(texture_view: &TextureView) {
     // math over the texture's own fields.
     unsafe {
         (*texture).uv_transform = get_texture_transform(texture_view.props_view());
-        if !is_transform_identity(&raw const (*texture).uv_transform) {
+        if !is_transform_identity(texture_view.uv_transform_view()) {
             (*texture).has_uv_transform = true;
             (*texture).texture_to_uv = transform_to_matrix(&raw const (*texture).uv_transform);
             (*texture).uv_to_texture = matrix_invert(&raw const (*texture).texture_to_uv);
@@ -12400,6 +12399,28 @@ impl View<BonePose> {
     }
 }
 
+// Rust-port infrastructure (not a ufbx.c section): the transforms
+// `ufbxi_is_transform_identity` tests, projected so the `ufbx_transform *`
+// parameter travels as a view over scene-arena memory.
+impl<M: Mode> View<Node, M> {
+    #[inline(always)]
+    pub(crate) fn local_transform_view(&self) -> &View<Transform, M> {
+        view_project!(self, local_transform)
+    }
+
+    #[inline(always)]
+    pub(crate) fn geometry_transform_view(&self) -> &View<Transform, M> {
+        view_project!(self, geometry_transform)
+    }
+}
+
+impl<M: Mode> View<Texture, M> {
+    #[inline(always)]
+    pub(crate) fn uv_transform_view(&self) -> &View<Transform, M> {
+        view_project!(self, uv_transform)
+    }
+}
+
 // ufbx.c:23497-23505 `ufbxi_mirror_matrix_dst`
 // C indexes the `ufbx_matrix` value union's `ufbx_vec3 cols[4]` view and then
 // each column's `ufbx_real v[3]`; the generated struct keeps only the named
@@ -12631,9 +12652,7 @@ pub(crate) fn update_initial_clusters(scene_view: &SceneView) {
             node_view = unsafe { View::<Node>::from_ptr(opt_ptr(node_view.parent_ptr())) };
         }
 
-        // SAFETY: `mesh_node_to_bone_ptr()` projects the cluster's own live,
-        // initialized matrix.
-        if unsafe { matrix_all_zero(cluster.mesh_node_to_bone_ptr()) } {
+        if matrix_all_zero(cluster.mesh_node_to_bone_view()) {
             // If `mesh_node_to_bone` is not explicitly specified compute it from bind pose.
             // SAFETY: `bind_to_world_ptr()` projects the cluster's own live,
             // initialized matrix.
@@ -12831,10 +12850,14 @@ pub(crate) unsafe fn axis_matrix(
 pub(crate) fn update_adjust_transforms<'a>(uc: &'a Context, scene: &'a SceneView) {
     let scene: *mut Scene = scene.get();
     let mut root_transform: Transform = IDENTITY_TRANSFORM;
+    // SAFETY: `axis_matrix_mut_ptr()` projects uc's own live, initialized,
+    // write-capable `axis_matrix` storage.
+    let axis_matrix_view: &View<Matrix> =
+        unsafe { View::<Matrix>::from_ptr(uc.axis_matrix_mut_ptr()) };
     // SAFETY: pure value math over `uc`'s live axis-matrix field.
     unsafe {
         let axis_matrix: *const Matrix = uc.axis_matrix_mut_ptr();
-        if !matrix_all_zero(axis_matrix) {
+        if !matrix_all_zero(axis_matrix_view) {
             root_transform = matrix_to_transform(axis_matrix);
         }
     }

@@ -2797,7 +2797,8 @@ pub(crate) fn transform_to_axes(uc: &Context, dst_axes: CoordinateAxes) {
         // over locals and the root's own transform fields.
         unsafe {
             let root_node: *mut Node = ref_ptr(uc.scene_view().root_node_ptr());
-            if !is_transform_identity(&raw const (*root_node).local_transform) {
+            let root_node_view: &View<Node> = View::<Node>::from_ptr(root_node);
+            if !is_transform_identity(root_node_view.local_transform_view()) {
                 let root_mat: Matrix = transform_to_matrix(&raw const (*root_node).local_transform);
                 axis_mat = matrix_mul(&raw const root_mat, &raw const axis_mat);
             }
