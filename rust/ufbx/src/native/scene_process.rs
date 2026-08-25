@@ -7777,39 +7777,33 @@ pub(crate) unsafe fn sort_file_contents(
 
 // ufbx.c:21466-21475 `ufbxi_push_file_content`
 #[inline(never)]
-pub(crate) unsafe fn push_file_content(
+pub(crate) fn push_file_content(
     uc: &Context,
-    p_filename: *mut String,
-    p_data: *mut Blob,
+    p_filename: &View<String>,
+    p_data: &View<Blob>,
 ) -> Result<(), Fail> {
-    // SAFETY: `p_data`/`p_filename` point to the live, initialized `ufbx_blob` /
-    // `ufbx_string` fields of the element being collected (fn contract).
-    if unsafe { (*p_data).size } == 0 || unsafe { (*p_filename).length } == 0 {
+    if p_data.size() == 0 || p_filename.length() == 0 {
         return Ok(());
     }
     let content: *mut FileContent = uc.tmp_stack_view().push::<FileContent>(1);
     ufbxi_check!(uc, !content.is_null(), "content");
 
     // SAFETY: `content` is the non-null one-element push just made into `uc`'s tmp
-    // stack, so it addresses writable storage for one `ufbxi_file_content`;
-    // `p_filename` is live (see above).
-    unsafe { (*content).absolute_filename = *p_filename };
-    // SAFETY: as above, with `p_data` live.
-    unsafe { (*content).content = *p_data };
+    // stack, so it addresses writable storage for one `ufbxi_file_content`; the two
+    // C struct assignments are rebuilt from the source views' own leaf reads.
+    unsafe { (*content).absolute_filename = String::new_c(p_filename.data(), p_filename.length()) };
+    // SAFETY: as above.
+    unsafe { (*content).content = Blob::new_c(p_data.data(), p_data.size()) };
     Ok(())
 }
 
 // ufbx.c:21477-21488 `ufbxi_fetch_file_content`
 #[inline(never)]
-pub(crate) unsafe fn fetch_file_content(uc: &Context, p_filename: *mut String, p_data: *mut Blob) {
-    // SAFETY: `p_data` points to the live, initialized `ufbx_blob` field being
-    // filled in (fn contract).
-    if unsafe { (*p_data).size } > 0 {
+pub(crate) fn fetch_file_content(uc: &Context, p_filename: &View<String>, p_data: &View<Blob>) {
+    if p_data.size() > 0 {
         return;
     }
-    // SAFETY: `p_filename` points to the live, initialized `ufbx_string` field of
-    // the same element (fn contract).
-    let filename: String = unsafe { *p_filename };
+    let filename: String = String::new_c(p_filename.data(), p_filename.length());
     let mut index: usize = usize::MAX;
     // C: `ufbxi_macro_lower_bound_eq(ufbxi_file_content, 8, &index,
     // uc->file_content, 0, uc->num_file_content, ...)` — does NOT write
@@ -7842,8 +7836,9 @@ pub(crate) unsafe fn fetch_file_content(uc: &Context, p_filename: *mut String, p
     if index != usize::MAX {
         // SAFETY: `index != SIZE_MAX` means the search wrote a hit, which is an
         // index below `num_file_content`, so the offset lands on a live element of
-        // `uc`'s file-content run; `p_data` is live (see above).
-        unsafe { *p_data = (*uc.file_content().add(index)).content };
+        // `uc`'s file-content run; `p_data.get()` is that view's own write-capable
+        // `ufbx_blob` place.
+        unsafe { *p_data.get() = (*uc.file_content().add(index)).content };
     }
 }
 
@@ -7853,9 +7848,9 @@ pub(crate) fn resolve_file_content<'a>(uc: &'a Context) -> Result<(), Fail> {
     let initial_stack: usize = uc.tmp_stack_view().num_items();
 
     // SAFETY: walks the stored `videos` element-pointer run of the uc-owned scene
-    // (`count` entries); the resolve/push helpers receive `&raw mut` places inside
-    // that same video, whose write-capable provenance also backs the strblob views
-    // minted over them.
+    // (`count` entries); the resolve/push helpers receive views over places inside
+    // that same video, whose write-capable provenance backs every strblob, string,
+    // and blob view minted over them.
     unsafe {
         // C: `ufbxi_for_ptr_list(ufbx_video, p_video, uc->scene.videos)`
         let mut p_video: *mut *mut Video = uc.scene_view().videos_view().data() as *mut *mut Video;
@@ -7878,8 +7873,8 @@ pub(crate) fn resolve_file_content<'a>(uc: &'a Context) -> Result<(), Fail> {
             )?;
             push_file_content(
                 uc,
-                &raw mut (*video).absolute_filename,
-                &raw mut (*video).content,
+                View::<String>::from_ptr(&raw mut (*video).absolute_filename),
+                View::<Blob>::from_ptr(&raw mut (*video).content),
             )?;
             p_video = p_video.add(1);
         }
@@ -7888,8 +7883,8 @@ pub(crate) fn resolve_file_content<'a>(uc: &'a Context) -> Result<(), Fail> {
     // SAFETY: walks the stored `audio_clips` element-pointer run of the uc-owned
     // scene (`count` entries); each clip's props are reached through an
     // arena-anchored view with NUL-terminated literal names, and the resolve/push
-    // helpers receive `&raw mut` places inside that same clip, whose write-capable
-    // provenance also backs the strblob views minted over them.
+    // helpers receive views over places inside that same clip, whose write-capable
+    // provenance backs every strblob, string, and blob view minted over them.
     unsafe {
         // C: `ufbxi_for_ptr_list(ufbx_audio_clip, p_clip, uc->scene.audio_clips)`
         let mut p_clip: *mut *mut AudioClip =
@@ -7923,8 +7918,8 @@ pub(crate) fn resolve_file_content<'a>(uc: &'a Context) -> Result<(), Fail> {
             )?;
             push_file_content(
                 uc,
-                &raw mut (*clip).absolute_filename,
-                &raw mut (*clip).content,
+                View::<String>::from_ptr(&raw mut (*clip).absolute_filename),
+                View::<Blob>::from_ptr(&raw mut (*clip).content),
             )?;
             p_clip = p_clip.add(1);
         }
@@ -7944,8 +7939,8 @@ pub(crate) fn resolve_file_content<'a>(uc: &'a Context) -> Result<(), Fail> {
     }
 
     // SAFETY: walks the stored `videos` element-pointer run of the uc-owned scene
-    // (`count` entries), handing each video's own filename/content fields to the
-    // lookup.
+    // (`count` entries), minting views over each video's own filename/content
+    // fields for the lookup.
     unsafe {
         // C: `ufbxi_for_ptr_list(ufbx_video, p_video, uc->scene.videos)`
         let mut p_video: *mut *mut Video = uc.scene_view().videos_view().data() as *mut *mut Video;
@@ -7954,16 +7949,16 @@ pub(crate) fn resolve_file_content<'a>(uc: &'a Context) -> Result<(), Fail> {
             let video: *mut Video = *p_video;
             fetch_file_content(
                 uc,
-                &raw mut (*video).absolute_filename,
-                &raw mut (*video).content,
+                View::<String>::from_ptr(&raw mut (*video).absolute_filename),
+                View::<Blob>::from_ptr(&raw mut (*video).content),
             );
             p_video = p_video.add(1);
         }
     }
 
     // SAFETY: walks the stored `audio_clips` element-pointer run of the uc-owned
-    // scene (`count` entries), handing each clip's own filename/content fields to
-    // the lookup.
+    // scene (`count` entries), minting views over each clip's own filename/content
+    // fields for the lookup.
     unsafe {
         // C: `ufbxi_for_ptr_list(ufbx_audio_clip, p_clip, uc->scene.audio_clips)`
         let mut p_clip: *mut *mut AudioClip =
@@ -7974,8 +7969,8 @@ pub(crate) fn resolve_file_content<'a>(uc: &'a Context) -> Result<(), Fail> {
             let clip: *mut AudioClip = *p_clip;
             fetch_file_content(
                 uc,
-                &raw mut (*clip).absolute_filename,
-                &raw mut (*clip).content,
+                View::<String>::from_ptr(&raw mut (*clip).absolute_filename),
+                View::<Blob>::from_ptr(&raw mut (*clip).content),
             );
             p_clip = p_clip.add(1);
         }
