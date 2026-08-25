@@ -214,25 +214,15 @@ impl View<CacheChannel, Mut> {
 // `native::obj`). C return type `int` (1 = success) → `Result<(), Fail>`.
 #[cfg(feature = "skinning-eval")]
 #[inline(never)]
-pub(crate) unsafe fn evaluate_skinning(
-    scene: *mut Scene,
-    error: *mut Error,
+pub(crate) fn evaluate_skinning(
+    scene: &SceneView,
+    error: &crate::native::error::ErrorView,
     buf_result: &BufView,
     buf_tmp: &BufView,
     time: f64,
     load_caches: bool,
-    cache_opts: *mut RawGeometryCacheDataOpts,
+    cache_opts: &RawGeometryCacheDataOpts,
 ) -> Result<(), Fail> {
-    // SAFETY: `scene` is the caller's live `ufbx_scene` — the raw-pointer
-    // contract of this `unsafe fn` — reached through `*mut`, i.e. with
-    // write-capable provenance for `Mut`.
-    let scene = unsafe { View::<Scene>::from_ptr(scene) };
-    // SAFETY: `error` is the caller's live `ufbx_error` slot — the same
-    // raw-pointer contract — and is the target every `ufbxi_check_err!` below
-    // records into.
-    let error: &crate::native::error::ErrorView =
-        unsafe { crate::native::error::ErrorView::from_ptr(error) };
-
     let mut max_skinned_indices: usize = 0;
 
     // C: `ufbxi_for_ptr_list(ufbx_mesh, p_mesh, scene->meshes)`
@@ -301,9 +291,9 @@ pub(crate) unsafe fn evaluate_skinning(
                 {
                     // SAFETY: `channel` is a live scene-owned cache channel,
                     // `result_pos` addresses `num_vertices` writable `ufbx_vec3`
-                    // slots of the result allocation, and `cache_opts` is the
-                    // caller's options pointer — `sample_geometry_cache_vec3`'s
-                    // contract.
+                    // slots of the result allocation, and `cache_opts` is
+                    // derived from this fn's borrow of the caller's options —
+                    // `sample_geometry_cache_vec3`'s contract.
                     let num_read: usize = unsafe {
                         sample_geometry_cache_vec3(
                             channel.ptr(),
@@ -336,8 +326,8 @@ pub(crate) unsafe fn evaluate_skinning(
 
                     // SAFETY: `channel` is a live scene-owned cache channel,
                     // `normal_data` addresses `num_normals` writable `ufbx_vec3`
-                    // slots of the result allocation, and `cache_opts` is the
-                    // caller's options pointer.
+                    // slots of the result allocation, and `cache_opts` is
+                    // derived from this fn's borrow of the caller's options.
                     let num_read: usize = unsafe {
                         sample_geometry_cache_vec3(
                             channel.ptr(),
@@ -502,22 +492,23 @@ pub(crate) unsafe fn evaluate_skinning(
 // the report's recording witness.
 #[cfg(not(feature = "skinning-eval"))]
 #[inline(never)]
-pub(crate) unsafe fn evaluate_skinning(
-    scene: *mut Scene,
-    error: *mut Error,
+pub(crate) fn evaluate_skinning(
+    scene: &SceneView,
+    error: &crate::native::error::ErrorView,
     buf_result: &BufView,
     buf_tmp: &BufView,
     time: f64,
     load_caches: bool,
-    cache_opts: *mut RawGeometryCacheDataOpts,
+    cache_opts: &RawGeometryCacheDataOpts,
 ) -> Result<(), Fail> {
     // C: all parameters other than `error` are unreferenced in the `#else` arm.
     let _ = (scene, buf_result, buf_tmp, time, load_caches, cache_opts);
-    // SAFETY: `error` is the caller's live `ufbx_error` slot — the raw-pointer
-    // contract of this `unsafe fn` — which is what the macro formats into.
-    unsafe { ufbxi_fmt_err_info!(error, "UFBX_ENABLE_SKINNING_EVALUATION") };
+    // SAFETY: `error.get()` addresses the live `ufbx_error` this view borrows,
+    // which is what the macro formats into; the format string is a NUL-
+    // terminated literal.
+    unsafe { ufbxi_fmt_err_info!(error.get(), "UFBX_ENABLE_SKINNING_EVALUATION") };
     Err(ufbxi_report_err_msg!(
-        unsafe { crate::native::error::ErrorView::from_ptr(error) },
+        error,
         "UFBXI_FEATURE_SKINNING_EVALUATION",
         "Feature disabled"
     ))
@@ -1078,20 +1069,17 @@ pub(crate) unsafe fn load_imp(uc: &Context) -> Result<(), Fail> {
         // initialized for the `&Context` borrow; `ufbx_open_file_cb` is `Copy`,
         // so the read does not duplicate ownership.
         cache_opts.open_file_cb = unsafe { ptr::read(uc.opts_view().open_file_cb_ptr()) };
-        // SAFETY: the scene, error slot, result and tmp buffers are all `uc`'s
-        // own fields (live for the borrow) and `cache_opts` is the live local
-        // just initialized above.
         ufbxi_check!(
             uc,
-            unsafe { evaluate_skinning(
-                uc.scene_mut_ptr(),
-                uc.error_mut_ptr(),
+            evaluate_skinning(
+                uc.scene_view(),
+                uc.error_view(),
                 uc.result_view(),
                 uc.tmp_view(),
                 0.0,
                 uc.opts_view().load_external_files() && uc.opts_view().evaluate_caches(),
-                &raw mut cache_opts,
-            ) }
+                &cache_opts,
+            )
             .is_ok(),
             "ufbxi_evaluate_skinning(&uc->scene, &uc->error, &uc->result, &uc->tmp, 0.0, uc->opts.load_external_files && uc->opts.evaluate_caches, &cache_opts)"
         );
@@ -4154,21 +4142,15 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
                 1,
             );
         }
-        // SAFETY: the scene, error and time all come from `ec`'s own live context
-        // struct, the scene being the fully translated destination scene, and
-        // `cache_opts` is the live local just filled in — `evaluate_skinning`'s
-        // contract.
-        unsafe {
-            evaluate_skinning(
-                ec.scene_mut_ptr(),
-                ec.error_mut_ptr(),
-                ec.result_view(),
-                ec.tmp_view(),
-                ec.time(),
-                ec.opts_view().load_external_files() && ec.opts_view().evaluate_caches(),
-                &raw mut cache_opts,
-            )
-        }?;
+        evaluate_skinning(
+            ec.scene_view(),
+            ec.error_view(),
+            ec.result_view(),
+            ec.tmp_view(),
+            ec.time(),
+            ec.opts_view().load_external_files() && ec.opts_view().evaluate_caches(),
+            &cache_opts,
+        )?;
     }
 
     // Retain the scene, this must be the final allocation as we copy
