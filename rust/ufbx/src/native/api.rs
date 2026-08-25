@@ -1657,9 +1657,18 @@ pub(crate) unsafe fn evaluate_props_flags(
     let mut num_anim: usize = 0;
     let mut iter = MaybeUninit::<evaluate::PropIter>::uninit(); // ufbxi_uninit
     let iter: *mut evaluate::PropIter = iter.as_mut_ptr();
+    // Public-boundary roots: `anim`/`element` are the caller's `*const` pointers,
+    // so mint read-only `Const` views; the iterator only reads through them and
+    // the frozen tags end with this call.
     // SAFETY: `iter` addresses this frame's own uninitialized iterator storage,
     // which `init_prop_iter` fills; `anim`/`element` are the live params.
-    unsafe { evaluate::init_prop_iter(iter, anim, element) };
+    unsafe {
+        evaluate::init_prop_iter(
+            iter,
+            View::<Anim, Const>::from_ptr(anim),
+            View::<Element, Const>::from_ptr(element),
+        )
+    };
     // C: `while ((prop = ufbxi_next_prop(&iter)) != NULL)`
     loop {
         // SAFETY: `iter` is the initialized iterator.

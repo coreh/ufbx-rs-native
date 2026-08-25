@@ -2275,20 +2275,14 @@ pub(crate) struct PropIter {
 #[inline(never)]
 pub(crate) unsafe fn init_prop_iter_slow(
     iter: *mut PropIter,
-    anim: *const Anim,
-    element: *const Element,
+    anim: &View<Anim, Const>,
+    element: &View<Element, Const>,
 ) {
-    // Public-boundary root: `element` is a caller-owned `*const Element` whose
-    // provenance can be a read-only `&Element`, so mint a read-only `Const`
-    // view; this fn only reads through it, so the frozen tag never spans a write
-    // to the element.
-    // SAFETY (every access in this fn): `iter` is the caller's live `PropIter`
-    // storage and `anim`/`element` its live scene objects — the raw-pointer
-    // contract of this `unsafe fn`.
-    let element: &View<Element, Const> = unsafe { View::<Element, Const>::from_ptr(element) };
     // C: `iter->prop_end = element->props.props.data + element->props.props.count;`
-    // SAFETY: `data`/`count` describe the element's own prop run, so the end
-    // pointer is one past its last element.
+    // SAFETY (every `*iter` access in this fn): `iter` is the caller's live
+    // `PropIter` storage — the raw-pointer contract of this `unsafe fn`.
+    // `data`/`count` describe the element's own prop run, so the end pointer is
+    // one past its last element.
     unsafe {
         (*iter).prop = element.props().props().data;
         (*iter).prop_end = element
@@ -2298,12 +2292,8 @@ pub(crate) unsafe fn init_prop_iter_slow(
             .add(element.props().props().count);
     }
 
-    // SAFETY: `&raw const (*anim).prop_overrides` addresses the live anim's own
-    // override list, read-only during evaluation — the `Const` mint's freeze.
-    let over: List<PropOverride> = find_element_prop_overrides(
-        unsafe { View::<_, Const>::from_ptr(&raw const (*anim).prop_overrides) },
-        element.element_id(),
-    );
+    let over: List<PropOverride> =
+        find_element_prop_overrides(anim.prop_overrides_view(), element.element_id());
     // SAFETY: as above for `iter`; `over` is a sub-run of the anim's override
     // list, so `data + count` is one past its last element.
     unsafe {
@@ -2323,16 +2313,12 @@ pub(crate) unsafe fn init_prop_iter_slow(
 #[inline(always)]
 pub(crate) unsafe fn init_prop_iter(
     iter: *mut PropIter,
-    anim: *const Anim,
-    element: *const Element,
+    anim: &View<Anim, Const>,
+    element: &View<Element, Const>,
 ) {
-    // Read-only `Const` view over the caller-owned `*const Element`, as in
-    // `init_prop_iter_slow` above.
-    // SAFETY (every access in this fn): `iter` is the caller's live `PropIter`
-    // storage and `anim`/`element` its live scene objects — the raw-pointer
-    // contract of this `unsafe fn`.
-    let element: &View<Element, Const> = unsafe { View::<Element, Const>::from_ptr(element) };
     // C: `iter->over = iter->over_end = NULL;`
+    // SAFETY (every `*iter` access in this fn): `iter` is the caller's live
+    // `PropIter` storage — the raw-pointer contract of this `unsafe fn`.
     unsafe {
         (*iter).prop = element.props().props().data;
         (*iter).prop_end = add_ptr(
@@ -2342,11 +2328,10 @@ pub(crate) unsafe fn init_prop_iter(
         (*iter).over = ptr::null();
         (*iter).over_end = ptr::null();
     }
-    if unsafe { (*anim).prop_overrides.count } > 0 {
-        // SAFETY: `iter`/`anim` are forwarded unchanged from this fn's own
-        // parameters and `element.as_ptr()` addresses the same live element, so
+    if anim.prop_overrides_view().count() > 0 {
+        // SAFETY: `iter` is forwarded unchanged from this fn's own parameter, so
         // the callee inherits the caller's contract.
-        unsafe { init_prop_iter_slow(iter, anim, element.as_ptr()) };
+        unsafe { init_prop_iter_slow(iter, anim, element) };
     }
 }
 
@@ -2485,10 +2470,20 @@ pub(crate) unsafe fn evaluate_selected_props(
 
     let mut iter = MaybeUninit::<PropIter>::uninit(); // ufbxi_uninit
     let iter: *mut PropIter = iter.as_mut_ptr();
+    // Public-boundary roots: `anim`/`element` are caller-owned `*const` pointers
+    // whose provenance can be a read-only borrow, so mint read-only `Const`
+    // views; the iterator only reads through them and the frozen tags end with
+    // this call.
     // SAFETY: `iter` addresses the live local `MaybeUninit<PropIter>` storage,
     // which `init_prop_iter` only writes through; `anim`/`element` are the
     // caller's live scene objects — the contract of this `unsafe fn`.
-    unsafe { init_prop_iter(iter, anim, element) };
+    unsafe {
+        init_prop_iter(
+            iter,
+            View::<Anim, Const>::from_ptr(anim),
+            View::<Element, Const>::from_ptr(element),
+        )
+    };
     // C: `while ((prop = ufbxi_next_prop(&iter)) != NULL)`
     loop {
         // SAFETY: `iter` is the storage `init_prop_iter` initialized above.
