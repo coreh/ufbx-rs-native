@@ -2235,7 +2235,7 @@ unsafe fn evaluate_connected_prop_rec(
         let (src, src_prop): (&View<Element, Const>, Option<&[u8]>) = unsafe {
             let src_prop_data: *const u8 = (*conn).src_prop.data;
             (
-                View::<Element, Const>::from_ptr(ref_ptr(&raw const (*conn).src)),
+                ptr::read(&raw const (*conn).src).view::<Const>(),
                 if src_prop_data.is_null() {
                     None
                 } else {
@@ -2263,7 +2263,7 @@ unsafe fn evaluate_connected_prop_rec(
         let (src, src_prop): (&View<Element, Const>, Option<&[u8]>) = unsafe {
             let src_prop_data: *const u8 = (*conn).src_prop.data;
             (
-                View::<Element, Const>::from_ptr(ref_ptr(&raw const (*conn).src)),
+                ptr::read(&raw const (*conn).src).view::<Const>(),
                 if src_prop_data.is_null() {
                     None
                 } else {
@@ -2282,7 +2282,7 @@ unsafe fn evaluate_connected_prop_rec(
         let ep: Prop = unsafe {
             evaluate_prop_flags_len(
                 anim.as_ptr(),
-                ref_ptr(&raw const (*conn).src),
+                ptr::read(&raw const (*conn).src).ptr(),
                 (*conn).src_prop.data,
                 (*conn).src_prop.length,
                 time,
@@ -2731,9 +2731,9 @@ fn extrapolate_curve_rec(curve: &View<AnimCurve, Const>, real_time: f64, flags: 
     // Perform all operations in KTime ticks to be frame perfect
     let scene: Ref<Scene> = curve.element().scene();
     // SAFETY: `element.scene` is the non-null owning-scene `Ref` of the live
-    // viewed curve (read just above per the mint's per-leaf discipline), so
-    // `ref_ptr` yields that live `ufbx_scene` to read metadata from.
-    let scale: f64 = unsafe { (*ref_ptr(&raw const scene)).metadata.ktime_second } as f64;
+    // viewed curve (read just above per the mint's per-leaf discipline), so its
+    // address is that live `ufbx_scene`, whose metadata the deref reads.
+    let scale: f64 = unsafe { (*scene.ptr()).metadata.ktime_second } as f64;
     let min_time: f64 = math::rint(curve.min_time() * scale);
     let max_time: f64 = math::rint(curve.max_time() * scale);
     let time: f64 = real_time * scale;
@@ -3138,14 +3138,15 @@ pub(crate) unsafe fn translate_maps(ec: &EvalContext, maps: *mut MaterialMap, co
     while map != map_end {
         // SAFETY: `map` walks the caller's `count`-element `ufbx_material_map`
         // run and stops at `map_end`, so it addresses a live map; `texture` is
-        // that map's own `Option<Ref<Texture>>` field, which `opt_ptr` reads as
-        // the nullable element pointer it is and the store writes back in place.
-        // The texture it holds belongs to the source scene, which is
-        // `translate_element`'s contract.
+        // that map's own `Option<Ref<Texture>>` field and the store writes it
+        // back in place. The texture it holds belongs to the source scene,
+        // which is `translate_element`'s contract.
         unsafe {
-            *(&raw mut (*map).texture as *mut *mut Texture) =
-                translate_element(ec, opt_ptr(&raw const (*map).texture) as *mut c_void)
-                    as *mut Texture;
+            *(&raw mut (*map).texture as *mut *mut Texture) = translate_element(
+                ec,
+                ptr::read(&raw const (*map).texture).map_or(ptr::null_mut(), |r| r.ptr())
+                    as *mut c_void,
+            ) as *mut Texture;
         }
         // SAFETY: `map` is inside the run, so `map + 1` is at most one past its
         // end.
@@ -3308,25 +3309,25 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
                 1,
             );
         }
-        // SAFETY (these four stores): `src` and `dst` view live connection slots
-        // holding the copies made just above, whose `src`/`dst` are non-null
-        // `Ref`s to source-scene elements — `translate_element`'s contract —
-        // read through `ref_ptr` and written back in place.
+        // SAFETY (these four stores): `src` and `dst` view live connection
+        // slots holding the copies made just above, whose `src`/`dst` are
+        // non-null `Ref`s to source-scene elements — `translate_element`'s
+        // contract — read by value and written back in place.
         unsafe {
             *(src.src_raw() as *mut *mut Element) =
-                translate_element(ec, ref_ptr(src.src_ptr()) as *mut c_void);
+                translate_element(ec, src.src().ptr() as *mut c_void);
         }
         unsafe {
             *(src.dst_raw() as *mut *mut Element) =
-                translate_element(ec, ref_ptr(src.dst_ptr()) as *mut c_void);
+                translate_element(ec, src.dst().ptr() as *mut c_void);
         }
         unsafe {
             *(dst.src_raw() as *mut *mut Element) =
-                translate_element(ec, ref_ptr(dst.src_ptr()) as *mut c_void);
+                translate_element(ec, dst.src().ptr() as *mut c_void);
         }
         unsafe {
             *(dst.dst_raw() as *mut *mut Element) =
-                translate_element(ec, ref_ptr(dst.dst_ptr()) as *mut c_void);
+                translate_element(ec, dst.dst().ptr() as *mut c_void);
         }
     }
 
@@ -3346,7 +3347,7 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
     // contract.
     unsafe {
         *(ec.scene_view().root_node_mut_ptr() as *mut *mut UfbxNode) =
-            translate_element(ec, ref_ptr(ec.scene_view().root_node_ptr()) as *mut c_void)
+            translate_element(ec, ec.scene_view().root_node().ptr() as *mut c_void)
                 as *mut UfbxNode;
     }
     // SAFETY: `anim` is a field of the destination scene struct inside `ec`,
@@ -3464,11 +3465,11 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
         }
         // SAFETY: `named` views the live entry copied just above, whose
         // `element` is a non-null `Ref` to a source-scene element —
-        // `translate_element`'s contract — read through `ref_ptr` and written
-        // back in place.
+        // `translate_element`'s contract — read by value and written back in
+        // place.
         unsafe {
             *(named.element_raw() as *mut *mut Element) =
-                translate_element(ec, ref_ptr(named.element_ptr()) as *mut c_void);
+                translate_element(ec, named.element().ptr() as *mut c_void);
         }
     }
 
@@ -3481,14 +3482,15 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
         // C: `ufbx_node *node = *p_node;`
         let node: &View<UfbxNode> = nodes.at(i);
         // SAFETY (this store and the ones below it): each named field is
-        // `node`'s own nullable `Option<Ref<..>>`, which `opt_ptr` reads as the
-        // element pointer it is. The byte copy left every one of them still
-        // pointing at the source-scene element it named — `translate_element`'s
-        // contract — and the translated pointer is written back into the same
-        // field.
+        // `node`'s own nullable `Option<Ref<..>>`. The byte copy left every
+        // one of them still pointing at the source-scene element it named —
+        // `translate_element`'s contract — and the translated pointer is
+        // written back into the same field.
         unsafe {
-            *(node.parent_raw() as *mut *mut UfbxNode) =
-                translate_element(ec, opt_ptr(node.parent_ptr()) as *mut c_void) as *mut UfbxNode;
+            *(node.parent_raw() as *mut *mut UfbxNode) = translate_element(
+                ec,
+                node.parent().map_or(ptr::null_mut(), |r| r.ptr()) as *mut c_void,
+            ) as *mut UfbxNode;
         }
         // SAFETY: `children` is the node's own `ufbx_element_list`, still
         // listing source-scene elements — `translate_element_list`'s contract.
@@ -3496,47 +3498,62 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
 
         // SAFETY: as for `parent` above.
         unsafe {
-            *(node.attrib_raw() as *mut *mut Element) =
-                translate_element(ec, opt_ptr(node.attrib_ptr()) as *mut c_void);
+            *(node.attrib_raw() as *mut *mut Element) = translate_element(
+                ec,
+                node.attrib().map_or(ptr::null_mut(), |r| r.ptr()) as *mut c_void,
+            );
         }
         // SAFETY: as for `parent` above.
         unsafe {
-            *(node.mesh_raw() as *mut *mut Mesh) =
-                translate_element(ec, opt_ptr(node.mesh_ptr()) as *mut c_void) as *mut Mesh;
+            *(node.mesh_raw() as *mut *mut Mesh) = translate_element(
+                ec,
+                node.mesh().map_or(ptr::null_mut(), |r| r.ptr()) as *mut c_void,
+            ) as *mut Mesh;
         }
         // SAFETY: as for `parent` above.
         unsafe {
-            *(node.light_raw() as *mut *mut crate::generated::Light) =
-                translate_element(ec, opt_ptr(node.light_ptr()) as *mut c_void)
-                    as *mut crate::generated::Light;
+            *(node.light_raw() as *mut *mut crate::generated::Light) = translate_element(
+                ec,
+                node.light().map_or(ptr::null_mut(), |r| r.ptr()) as *mut c_void,
+            )
+                as *mut crate::generated::Light;
         }
         // SAFETY: as for `parent` above.
         unsafe {
-            *(node.camera_raw() as *mut *mut Camera) =
-                translate_element(ec, opt_ptr(node.camera_ptr()) as *mut c_void) as *mut Camera;
+            *(node.camera_raw() as *mut *mut Camera) = translate_element(
+                ec,
+                node.camera().map_or(ptr::null_mut(), |r| r.ptr()) as *mut c_void,
+            ) as *mut Camera;
         }
         // SAFETY: as for `parent` above.
         unsafe {
-            *(node.bone_raw() as *mut *mut crate::generated::Bone) =
-                translate_element(ec, opt_ptr(node.bone_ptr()) as *mut c_void)
-                    as *mut crate::generated::Bone;
+            *(node.bone_raw() as *mut *mut crate::generated::Bone) = translate_element(
+                ec,
+                node.bone().map_or(ptr::null_mut(), |r| r.ptr()) as *mut c_void,
+            )
+                as *mut crate::generated::Bone;
         }
         // SAFETY: as for `parent` above.
         unsafe {
-            *(node.inherit_scale_node_raw() as *mut *mut UfbxNode) =
-                translate_element(ec, opt_ptr(node.inherit_scale_node_ptr()) as *mut c_void)
-                    as *mut UfbxNode;
+            *(node.inherit_scale_node_raw() as *mut *mut UfbxNode) = translate_element(
+                ec,
+                node.inherit_scale_node()
+                    .map_or(ptr::null_mut(), |r| r.ptr()) as *mut c_void,
+            ) as *mut UfbxNode;
         }
         // SAFETY: as for `parent` above.
         unsafe {
-            *(node.scale_helper_raw() as *mut *mut UfbxNode) =
-                translate_element(ec, opt_ptr(node.scale_helper_ptr()) as *mut c_void)
-                    as *mut UfbxNode;
+            *(node.scale_helper_raw() as *mut *mut UfbxNode) = translate_element(
+                ec,
+                node.scale_helper().map_or(ptr::null_mut(), |r| r.ptr()) as *mut c_void,
+            ) as *mut UfbxNode;
         }
         // SAFETY: as for `parent` above.
         unsafe {
-            *(node.bind_pose_raw() as *mut *mut Pose) =
-                translate_element(ec, opt_ptr(node.bind_pose_ptr()) as *mut c_void) as *mut Pose;
+            *(node.bind_pose_raw() as *mut *mut Pose) = translate_element(
+                ec,
+                node.bind_pose().map_or(ptr::null_mut(), |r| r.ptr()) as *mut c_void,
+            ) as *mut Pose;
         }
 
         if node.all_attribs_view().count() > 1 {
@@ -3556,7 +3573,8 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
         unsafe {
             *(node.geometry_transform_helper_raw() as *mut *mut UfbxNode) = translate_element(
                 ec,
-                opt_ptr(node.geometry_transform_helper_ptr()) as *mut c_void,
+                node.geometry_transform_helper()
+                    .map_or(ptr::null_mut(), |r| r.ptr()) as *mut c_void,
             )
                 as *mut UfbxNode;
         }
@@ -3591,15 +3609,18 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
         // C: `ufbx_stereo_camera *stereo = *p_stereo;`
         let stereo: &View<StereoCamera> = stereo_cameras.at(i);
         // SAFETY (both stores): `left`/`right` are the stereo camera's own
-        // nullable `Option<Ref<Camera>>` fields, which `opt_ptr` reads as element
-        // pointers; the byte copy left them naming source-scene elements —
-        // `translate_element`'s contract — and the result is written back in
-        // place.
+        // nullable `Option<Ref<Camera>>` fields; the byte copy left them
+        // naming source-scene elements — `translate_element`'s contract — and
+        // the result is written back in place.
         unsafe {
-            *(stereo.left_raw() as *mut *mut Camera) =
-                translate_element(ec, opt_ptr(stereo.left_ptr()) as *mut c_void) as *mut Camera;
-            *(stereo.right_raw() as *mut *mut Camera) =
-                translate_element(ec, opt_ptr(stereo.right_ptr()) as *mut c_void) as *mut Camera;
+            *(stereo.left_raw() as *mut *mut Camera) = translate_element(
+                ec,
+                stereo.left().map_or(ptr::null_mut(), |r| r.ptr()) as *mut c_void,
+            ) as *mut Camera;
+            *(stereo.right_raw() as *mut *mut Camera) = translate_element(
+                ec,
+                stereo.right().map_or(ptr::null_mut(), |r| r.ptr()) as *mut c_void,
+            ) as *mut Camera;
         }
     }
 
@@ -3620,14 +3641,14 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
         // C: `ufbx_skin_cluster *cluster = *p_cluster;`
         let cluster: &View<SkinCluster> = skin_clusters.at(i);
         // SAFETY: `bone_node` is that cluster's own nullable
-        // `Option<Ref<UfbxNode>>` field, which `opt_ptr` reads as the element
-        // pointer it is; the byte copy left it naming a source-scene element —
-        // `translate_element`'s contract — and the result is written back in
-        // place.
+        // `Option<Ref<UfbxNode>>` field; the byte copy left it naming a
+        // source-scene element — `translate_element`'s contract — and the
+        // result is written back in place.
         unsafe {
-            *(cluster.bone_node_raw() as *mut *mut UfbxNode) =
-                translate_element(ec, opt_ptr(cluster.bone_node_ptr()) as *mut c_void)
-                    as *mut UfbxNode;
+            *(cluster.bone_node_raw() as *mut *mut UfbxNode) = translate_element(
+                ec,
+                cluster.bone_node().map_or(ptr::null_mut(), |r| r.ptr()) as *mut c_void,
+            ) as *mut UfbxNode;
         }
     }
 
@@ -3672,27 +3693,27 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
             unsafe {
                 ptr::copy_nonoverlapping(chan.keyframes_view().data().add(i), key.get(), 1);
             }
-            // SAFETY: `keys[i]` holds the copy made just above, whose `shape` is a
-            // non-null `Ref` to a source-scene element — `translate_element`'s
-            // contract — read through `ref_ptr` and written back in place.
+            // SAFETY: `keys[i]` holds the copy made just above, whose `shape`
+            // is a non-null `Ref` to a source-scene element —
+            // `translate_element`'s contract — read by value and written back
+            // in place.
             unsafe {
                 *(key.shape_raw() as *mut *mut BlendShape) =
-                    translate_element(ec, ref_ptr(key.shape_ptr()) as *mut c_void)
-                        as *mut BlendShape;
+                    translate_element(ec, key.shape().ptr() as *mut c_void) as *mut BlendShape;
             }
         }
         // C: `chan->keyframes.data = keys;` — the destination channel retargeted
         // at the translated keyframe array.
         chan.keyframes_view().set_data(keys);
         // SAFETY: `target_shape` is that channel's own nullable
-        // `Option<Ref<BlendShape>>` field, which `opt_ptr` reads as the element
-        // pointer it is; the byte copy left it naming a source-scene element —
-        // `translate_element`'s contract — and the result is written back in
-        // place.
+        // `Option<Ref<BlendShape>>` field; the byte copy left it naming a
+        // source-scene element — `translate_element`'s contract — and the
+        // result is written back in place.
         unsafe {
-            *(chan.target_shape_raw() as *mut *mut BlendShape) =
-                translate_element(ec, opt_ptr(chan.target_shape_ptr()) as *mut c_void)
-                    as *mut BlendShape;
+            *(chan.target_shape_raw() as *mut *mut BlendShape) = translate_element(
+                ec,
+                chan.target_shape().map_or(ptr::null_mut(), |r| r.ptr()) as *mut c_void,
+            ) as *mut BlendShape;
         }
     }
 
@@ -3702,14 +3723,14 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
         // C: `ufbx_cache_deformer *deformer = *p_deformer;`
         let deformer: &View<CacheDeformer> = cache_deformers.at(i);
         // SAFETY: `file` is that deformer's own nullable
-        // `Option<Ref<CacheFile>>` field, which `opt_ptr` reads as the element
-        // pointer it is; the byte copy left it naming a source-scene element —
-        // `translate_element`'s contract — and the result is written back in
-        // place.
+        // `Option<Ref<CacheFile>>` field; the byte copy left it naming a
+        // source-scene element — `translate_element`'s contract — and the
+        // result is written back in place.
         unsafe {
-            *(deformer.file_raw() as *mut *mut CacheFile) =
-                translate_element(ec, opt_ptr(deformer.file_ptr()) as *mut c_void)
-                    as *mut CacheFile;
+            *(deformer.file_raw() as *mut *mut CacheFile) = translate_element(
+                ec,
+                deformer.file().map_or(ptr::null_mut(), |r| r.ptr()) as *mut c_void,
+            ) as *mut CacheFile;
         }
     }
 
@@ -3720,13 +3741,14 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
         let material: &View<Material> = materials.at(i_material);
 
         // SAFETY: `shader` is that material's own nullable
-        // `Option<Ref<Shader>>` field, which `opt_ptr` reads as the element
-        // pointer it is; the byte copy left it naming a source-scene element —
-        // `translate_element`'s contract — and the result is written back in
-        // place.
+        // `Option<Ref<Shader>>` field; the byte copy left it naming a
+        // source-scene element — `translate_element`'s contract — and the
+        // result is written back in place.
         unsafe {
-            *(material.shader_raw() as *mut *mut Shader) =
-                translate_element(ec, opt_ptr(material.shader_ptr()) as *mut c_void) as *mut Shader;
+            *(material.shader_raw() as *mut *mut Shader) = translate_element(
+                ec,
+                material.shader().map_or(ptr::null_mut(), |r| r.ptr()) as *mut c_void,
+            ) as *mut Shader;
         }
         // C: `material->fbx.maps` / `material->pbr.maps` — the flat `maps[]`
         // union view; the generated struct keeps only the named branch, whose
@@ -3777,12 +3799,11 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
             }
             // SAFETY: `textures[i]` holds the copy made just above, whose
             // `texture` is a non-null `Ref` to a source-scene element —
-            // `translate_element`'s contract — read through `ref_ptr` and written
-            // back in place.
+            // `translate_element`'s contract — read by value and written back
+            // in place.
             unsafe {
                 *(texture.texture_raw() as *mut *mut Texture) =
-                    translate_element(ec, ref_ptr(texture.texture_ptr()) as *mut c_void)
-                        as *mut Texture;
+                    translate_element(ec, texture.texture().ptr() as *mut c_void) as *mut Texture;
             }
         }
         // C: `material->textures.data = textures;` — the destination material
@@ -3796,12 +3817,14 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
         // C: `ufbx_texture *texture = *p_texture;`
         let texture: &View<Texture> = textures.at(i_texture);
         // SAFETY: `video` is that texture's own nullable `Option<Ref<Video>>`
-        // field, which `opt_ptr` reads as the element pointer it is; the byte
-        // copy left it naming a source-scene element — `translate_element`'s
-        // contract — and the result is written back in place.
+        // field; the byte copy left it naming a source-scene element —
+        // `translate_element`'s contract — and the result is written back in
+        // place.
         unsafe {
-            *(texture.video_raw() as *mut *mut Video) =
-                translate_element(ec, opt_ptr(texture.video_ptr()) as *mut c_void) as *mut Video;
+            *(texture.video_raw() as *mut *mut Video) = translate_element(
+                ec,
+                texture.video().map_or(ptr::null_mut(), |r| r.ptr()) as *mut c_void,
+            ) as *mut Video;
         }
 
         // `layers` is that texture's own list, whose byte copy still describes
@@ -3828,14 +3851,13 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
             unsafe {
                 ptr::copy_nonoverlapping(texture.layers_view().data().add(i), layer.get(), 1);
             }
-            // SAFETY: `layers[i]` holds the copy made just above, whose `texture`
-            // is a non-null `Ref` to a source-scene element —
-            // `translate_element`'s contract — read through `ref_ptr` and written
-            // back in place.
+            // SAFETY: `layers[i]` holds the copy made just above, whose
+            // `texture` is a non-null `Ref` to a source-scene element —
+            // `translate_element`'s contract — read by value and written back
+            // in place.
             unsafe {
                 *(layer.texture_raw() as *mut *mut Texture) =
-                    translate_element(ec, ref_ptr(layer.texture_ptr()) as *mut c_void)
-                        as *mut Texture;
+                    translate_element(ec, layer.texture().ptr() as *mut c_void) as *mut Texture;
             }
         }
         // C: `texture->layers.data = layers;` — the destination texture
@@ -3847,16 +3869,15 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
         // `translate_element_list`'s contract.
         unsafe { translate_element_list(ec, texture.file_textures_raw() as *mut c_void) }?;
 
-        // C: `if (texture->shader) { ... }`
-        // SAFETY: `shader` is the texture's own nullable
-        // `Option<Ref<ShaderTexture>>` field, which `opt_ptr` reads as the
-        // pointer it is.
-        if !unsafe { opt_ptr(texture.shader_ptr()) }.is_null() {
-            // SAFETY: as above.
-            let mut shader: *mut ShaderTexture = unsafe { opt_ptr(texture.shader_ptr()) };
+        // C: `if (texture->shader) { ... }` — the texture's own nullable
+        // `Option<Ref<ShaderTexture>>` field, whose `Some` case carries the
+        // source-scene shader texture's address.
+        if let Some(shader_ref) = texture.shader() {
+            let mut shader: *mut ShaderTexture = shader_ref.ptr();
             // SAFETY: `ec.result_mut_ptr()` is the eval context's own result
-            // buffer and `shader` is the non-null (checked just above)
-            // source-scene shader texture `push_copy` copies.
+            // buffer and `shader` is the address of the `Some` branch's
+            // non-null `Ref`, the source-scene shader texture `push_copy`
+            // copies.
             shader = unsafe { ec.result_view().push_copy_raw::<ShaderTexture>(1, shader) };
             ufbxi_check_err!(ec.error_view(), !shader.is_null(), "shader");
             // SAFETY: `texture` views the destination texture, retargeted at the
@@ -3930,16 +3951,18 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
         let node: &View<SelectionNode> = selection_nodes.at(i);
 
         // SAFETY (both stores): each named field is that selection node's own
-        // nullable `Option<Ref<..>>`, which `opt_ptr` reads as the element
-        // pointer it is; the byte copy left it naming a source-scene element —
-        // `translate_element`'s contract — and the result is written back in
-        // place.
+        // nullable `Option<Ref<..>>`; the byte copy left it naming a
+        // source-scene element — `translate_element`'s contract — and the
+        // result is written back in place.
         unsafe {
-            *(node.target_node_raw() as *mut *mut UfbxNode) =
-                translate_element(ec, opt_ptr(node.target_node_ptr()) as *mut c_void)
-                    as *mut UfbxNode;
-            *(node.target_mesh_raw() as *mut *mut Mesh) =
-                translate_element(ec, opt_ptr(node.target_mesh_ptr()) as *mut c_void) as *mut Mesh;
+            *(node.target_node_raw() as *mut *mut UfbxNode) = translate_element(
+                ec,
+                node.target_node().map_or(ptr::null_mut(), |r| r.ptr()) as *mut c_void,
+            ) as *mut UfbxNode;
+            *(node.target_mesh_raw() as *mut *mut Mesh) = translate_element(
+                ec,
+                node.target_mesh().map_or(ptr::null_mut(), |r| r.ptr()) as *mut c_void,
+            ) as *mut Mesh;
         }
     }
 
@@ -3949,24 +3972,33 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
         // C: `ufbx_constraint *constraint = *p_constraint;`
         let constraint: &View<Constraint> = constraints.at(i_constraint);
 
-        // SAFETY (these four stores): each named field is that constraint's own
-        // nullable `Option<Ref<UfbxNode>>`, which `opt_ptr` reads as the element
-        // pointer it is; the byte copy left it naming a source-scene element —
-        // `translate_element`'s contract — and the result is written back in
-        // place.
+        // SAFETY (these four stores): each named field is that constraint's
+        // own nullable `Option<Ref<UfbxNode>>`; the byte copy left it naming a
+        // source-scene element — `translate_element`'s contract — and the
+        // result is written back in place.
         unsafe {
-            *(constraint.node_raw() as *mut *mut UfbxNode) =
-                translate_element(ec, opt_ptr(constraint.node_ptr()) as *mut c_void)
-                    as *mut UfbxNode;
-            *(constraint.aim_up_node_raw() as *mut *mut UfbxNode) =
-                translate_element(ec, opt_ptr(constraint.aim_up_node_ptr()) as *mut c_void)
-                    as *mut UfbxNode;
-            *(constraint.ik_effector_raw() as *mut *mut UfbxNode) =
-                translate_element(ec, opt_ptr(constraint.ik_effector_ptr()) as *mut c_void)
-                    as *mut UfbxNode;
-            *(constraint.ik_end_node_raw() as *mut *mut UfbxNode) =
-                translate_element(ec, opt_ptr(constraint.ik_end_node_ptr()) as *mut c_void)
-                    as *mut UfbxNode;
+            *(constraint.node_raw() as *mut *mut UfbxNode) = translate_element(
+                ec,
+                constraint.node().map_or(ptr::null_mut(), |r| r.ptr()) as *mut c_void,
+            ) as *mut UfbxNode;
+            *(constraint.aim_up_node_raw() as *mut *mut UfbxNode) = translate_element(
+                ec,
+                constraint
+                    .aim_up_node()
+                    .map_or(ptr::null_mut(), |r| r.ptr()) as *mut c_void,
+            ) as *mut UfbxNode;
+            *(constraint.ik_effector_raw() as *mut *mut UfbxNode) = translate_element(
+                ec,
+                constraint
+                    .ik_effector()
+                    .map_or(ptr::null_mut(), |r| r.ptr()) as *mut c_void,
+            ) as *mut UfbxNode;
+            *(constraint.ik_end_node_raw() as *mut *mut UfbxNode) = translate_element(
+                ec,
+                constraint
+                    .ik_end_node()
+                    .map_or(ptr::null_mut(), |r| r.ptr()) as *mut c_void,
+            ) as *mut UfbxNode;
         }
 
         // `targets` is that constraint's own list, whose byte copy still
@@ -3996,13 +4028,13 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
             unsafe {
                 ptr::copy_nonoverlapping(constraint.targets_view().data().add(i), target.get(), 1);
             }
-            // SAFETY: `targets[i]` holds the copy made just above, whose `node` is
-            // a non-null `Ref` to a source-scene element — `translate_element`'s
-            // contract — read through `ref_ptr` and written back in place.
+            // SAFETY: `targets[i]` holds the copy made just above, whose
+            // `node` is a non-null `Ref` to a source-scene element —
+            // `translate_element`'s contract — read by value and written back
+            // in place.
             unsafe {
                 *(target.node_raw() as *mut *mut UfbxNode) =
-                    translate_element(ec, ref_ptr(target.node_ptr()) as *mut c_void)
-                        as *mut UfbxNode;
+                    translate_element(ec, target.node().ptr() as *mut c_void) as *mut UfbxNode;
             }
         }
         // C: `constraint->targets.data = targets;` — the destination constraint
@@ -4077,16 +4109,15 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
             unsafe {
                 ptr::copy_nonoverlapping(layer.anim_props_view().data().add(i), prop.get(), 1);
             }
-            // SAFETY: `props[i]` holds the copy made just above, whose `element`
-            // and `anim_value` are non-null `Ref`s to source-scene elements —
-            // `translate_element`'s contract — read through `ref_ptr` and written
-            // back in place.
+            // SAFETY: `props[i]` holds the copy made just above, whose
+            // `element` and `anim_value` are non-null `Ref`s to source-scene
+            // elements — `translate_element`'s contract — read by value and
+            // written back in place.
             unsafe {
                 *(prop.element_raw() as *mut *mut Element) =
-                    translate_element(ec, ref_ptr(prop.element_ptr()) as *mut c_void);
+                    translate_element(ec, prop.element().ptr() as *mut c_void);
                 *(prop.anim_value_raw() as *mut *mut AnimValue) =
-                    translate_element(ec, ref_ptr(prop.anim_value_ptr()) as *mut c_void)
-                        as *mut AnimValue;
+                    translate_element(ec, prop.anim_value().ptr() as *mut c_void) as *mut AnimValue;
             }
         }
         // Maintain NULL sentinel
@@ -4135,14 +4166,13 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
             unsafe {
                 ptr::copy_nonoverlapping(pose.bone_poses_view().data().add(i), bone.get(), 1);
             }
-            // SAFETY: `bones[i]` holds the copy made just above, whose `bone_node`
-            // is a non-null `Ref` to a source-scene element —
-            // `translate_element`'s contract — read through `ref_ptr` and written
-            // back in place.
+            // SAFETY: `bones[i]` holds the copy made just above, whose
+            // `bone_node` is a non-null `Ref` to a source-scene element —
+            // `translate_element`'s contract — read by value and written back
+            // in place.
             unsafe {
                 *(bone.bone_node_raw() as *mut *mut UfbxNode) =
-                    translate_element(ec, ref_ptr(bone.bone_node_ptr()) as *mut c_void)
-                        as *mut UfbxNode;
+                    translate_element(ec, bone.bone_node().ptr() as *mut c_void) as *mut UfbxNode;
             }
         }
         // C: `pose->bone_poses.data = bones;` — the destination pose retargeted
@@ -4432,7 +4462,7 @@ pub(crate) unsafe fn evaluate_scene(
     } else {
         // SAFETY: `scene` is the caller's live scene, whose `anim` field is a
         // non-null `Ref` to the scene's own default animation.
-        unsafe { ref_ptr(&raw const (*scene).anim) }
+        unsafe { ptr::read(&raw const (*scene).anim) }.ptr()
     });
     ec.set_time(time);
 
@@ -7918,7 +7948,7 @@ pub(crate) fn bake_anim(bc: &BakeContext) -> Result<(), Fail> {
                 // The anim prop's `element` is a stored `Ref` into the scene's own
                 // element buffer, so it carries write-capable provenance.
                 let element: &View<Element> =
-                    View::<Element>::from_ptr(ref_ptr(&raw const (*anim_prop).element));
+                    ptr::read(&raw const (*anim_prop).element).view::<Mut>();
 
                 // Sort nodes by `typed_id` to make sure we process them in order.
                 if element.type_() as u32 == ElementType::Node as u32 {
@@ -7932,7 +7962,7 @@ pub(crate) fn bake_anim(bc: &BakeContext) -> Result<(), Fail> {
 
                 (*prop).element_id = element.element_id();
                 (*prop).prop_name = (*anim_prop).prop_name.data;
-                (*prop).anim_value = ref_ptr(&raw const (*anim_prop).anim_value);
+                (*prop).anim_value = ptr::read(&raw const (*anim_prop).anim_value).ptr();
 
                 anim_prop = anim_prop.add(1);
             }
