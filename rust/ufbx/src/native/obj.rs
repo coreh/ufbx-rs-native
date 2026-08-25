@@ -1355,9 +1355,9 @@ pub(crate) const fn obj_cmd3(a: u8, b: u8, c: u8) -> u32 {
 // ufbx.c:17412-17432 `ufbxi_obj_pop_vertices`
 #[cfg(feature = "obj")]
 #[inline(never)]
-pub(crate) unsafe fn obj_pop_vertices(
+pub(crate) fn obj_pop_vertices(
     uc: &Context,
-    dst: *mut List<Real>,
+    dst: &mut List<Real>,
     attrib: u32,
     min_index: u64,
 ) -> Result<(), Fail> {
@@ -1389,11 +1389,8 @@ pub(crate) unsafe fn obj_pop_vertices(
     // into the `count`-element tail of the fresh run.
     unsafe { pop::<Real>(uc.obj().tmp_vertices_mut_ptr(attrib as usize), count, data) };
 
-    // SAFETY: caller contract — `dst` is a writable `List<Real>` out-param.
-    unsafe {
-        (*dst).data = data;
-        (*dst).count = count;
-    }
+    dst.data = data;
+    dst.count = count;
     Ok(())
 }
 
@@ -1606,20 +1603,15 @@ pub(crate) fn obj_pop_meshes(uc: &Context) -> Result<(), Fail> {
         if !non_disjoint[attrib] {
             continue;
         }
-        // SAFETY: `vertices[attrib]` is an unaliased local out-param and
-        // `attrib < OBJ_NUM_ATTRIBS` selects that attribute's own arenas.
-        unsafe { obj_pop_vertices(uc, &raw mut vertices[attrib], attrib as u32, 0)? };
+        obj_pop_vertices(uc, &mut vertices[attrib], attrib as u32, 0)?;
     }
     if uc.obj().has_vertex_color() && non_disjoint[ObjAttrib::Position as usize] {
-        // SAFETY: as above for the color attribute.
-        unsafe {
-            obj_pop_vertices(
-                uc,
-                &raw mut vertices[ObjAttrib::Color as usize],
-                ObjAttrib::Color as u32,
-                0,
-            )?;
-        }
+        obj_pop_vertices(
+            uc,
+            &mut vertices[ObjAttrib::Color as usize],
+            ObjAttrib::Color as u32,
+            0,
+        )?;
         // The `color_valid` pop moves one flag per popped color quad off the
         // obj parser's own arena.
         color_valid = uc.tmp_view().push_pop::<bool>(
@@ -1652,26 +1644,18 @@ pub(crate) fn obj_pop_meshes(uc: &Context) -> Result<(), Fail> {
                 }
                 let min_ix: u64 = mesh.vertex_range_min(attrib);
                 if min_ix < u64::MAX {
-                    // SAFETY: `vertices[attrib]` is an unaliased local
-                    // out-param; `attrib < OBJ_NUM_ATTRIBS` selects that
-                    // attribute's own arenas.
-                    unsafe {
-                        obj_pop_vertices(uc, &raw mut vertices[attrib], attrib as u32, min_ix)?
-                    };
+                    obj_pop_vertices(uc, &mut vertices[attrib], attrib as u32, min_ix)?;
                 }
             }
             if uc.obj().has_vertex_color() && !non_disjoint[ObjAttrib::Position as usize] {
                 let min_ix: u64 = mesh.vertex_range_min(ObjAttrib::Position as usize);
                 ufbxi_check!(uc, min_ix < u64::MAX, "min_ix < UINT64_MAX");
-                // SAFETY: as above for the color attribute.
-                unsafe {
-                    obj_pop_vertices(
-                        uc,
-                        &raw mut vertices[ObjAttrib::Color as usize],
-                        ObjAttrib::Color as u32,
-                        min_ix,
-                    )?;
-                }
+                obj_pop_vertices(
+                    uc,
+                    &mut vertices[ObjAttrib::Color as usize],
+                    ObjAttrib::Color as u32,
+                    min_ix,
+                )?;
                 // The `color_valid` pop moves one flag per popped color quad
                 // off the obj parser's own arena.
                 color_valid = uc.tmp_view().push_pop::<bool>(
