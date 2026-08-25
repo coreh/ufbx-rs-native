@@ -56,6 +56,8 @@ use crate::native::scene_process::finalize_mesh_material;
 use crate::native::string_pool::slow_normalize3;
 #[cfg(feature = "tessellation")]
 use crate::native::view::view_raw_mut;
+#[cfg(feature = "tessellation")]
+use crate::native::view::Const;
 use crate::native::view::{view_raw_const, view_read, view_write};
 use crate::native::view::{Mode, View};
 #[cfg(feature = "tessellation")]
@@ -683,14 +685,21 @@ pub(crate) fn tessellate_nurbs_curve_imp(
     // SAFETY: `tc.imp()` is the fresh non-null push just checked above and the
     // last allocation of `tc->result`, so filling its header is writing our own
     // allocation; the parent refcount comes from the scene the input curve
-    // belongs to, which owns that curve for the duration of this call; and
+    // belongs to, which owns that curve for the duration of this call — the
+    // `Const` mint reads that scene reference out of the caller-supplied live
+    // curve, whose bytes nothing writes here; and
     // `tc.line_mut_ptr()` is tc's own `LineCurve` slot — a distinct allocation
     // from the freshly pushed imp.
     let finished_imp = unsafe {
         finish_imp(
             tc.imp(),
-            ImpHandle::<SceneImp>::from_payload(ref_ptr(&raw const (*curve).element.scene))
-                .refcount_ptr(),
+            ImpHandle::<SceneImp>::from_payload(
+                View::<NurbsCurve, Const>::from_ptr(curve)
+                    .element()
+                    .scene()
+                    .ptr(),
+            )
+            .refcount_ptr(),
             tc.line_mut_ptr(),
             tc.ator_result(),
             tc.take_result(),
@@ -1117,9 +1126,13 @@ pub(crate) fn tessellate_nurbs_surface_imp(
     // context zeroed).
     let mesh_view = unsafe { View::<Mesh>::from_ptr(mesh) };
 
-    // SAFETY: reading the live surface's material ref (tc construction
-    // invariant).
-    if !unsafe { opt_ptr(&raw const (*surface).material) }.is_null() {
+    // SAFETY: `surface` is the live surface the context was built around (tc
+    // construction invariant), reached through a `*const` the caller keeps
+    // read-only; the `Const` mint is not held across any write to its bytes.
+    let surface_view: &View<NurbsSurface, Const> =
+        unsafe { View::<NurbsSurface, Const>::from_ptr(surface) };
+
+    if surface_view.material().is_some() {
         mesh_view
             .face_material_view()
             .set_data(tc.result_view().push_zero::<u32>(num_faces) as *const u32);
@@ -1135,7 +1148,9 @@ pub(crate) fn tessellate_nurbs_surface_imp(
         // SAFETY: `mat` is the fresh non-null single-element push just
         // checked; the material it receives is the surface's own live ref.
         unsafe {
-            *mat = opt_ptr(&raw const (*surface).material);
+            *mat = surface_view
+                .material()
+                .map_or(core::ptr::null_mut(), |r| r.ptr());
         }
         mesh_view
             .materials_view()
@@ -1199,13 +1214,20 @@ pub(crate) fn tessellate_nurbs_surface_imp(
     // SAFETY: `tc.imp()` is the fresh non-null push just checked and the last
     // allocation of `tc->result`, so filling its header writes our own
     // allocation; the parent refcount comes from the scene owning the input
-    // surface for the duration of this call; and `tc.mesh_mut_ptr()` is tc's own
+    // surface for the duration of this call — the `Const` mint reads that scene
+    // reference out of the caller-supplied live surface, whose bytes nothing
+    // writes here; and `tc.mesh_mut_ptr()` is tc's own
     // `Mesh` slot, a distinct allocation from the pushed imp.
     let finished_imp = unsafe {
         finish_imp(
             tc.imp(),
-            ImpHandle::<SceneImp>::from_payload(ref_ptr(&raw const (*surface).element.scene))
-                .refcount_ptr(),
+            ImpHandle::<SceneImp>::from_payload(
+                View::<NurbsSurface, Const>::from_ptr(surface)
+                    .element()
+                    .scene()
+                    .ptr(),
+            )
+            .refcount_ptr(),
             tc.mesh_mut_ptr(),
             tc.ator_result(),
             tc.take_result(),

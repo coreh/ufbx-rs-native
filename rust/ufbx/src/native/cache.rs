@@ -52,7 +52,7 @@ use crate::native::string_pool::{
 use crate::native::view::SliceViewIter;
 #[cfg(feature = "geometry-cache")]
 use crate::native::view::{view_raw_const, view_raw_mut, Const};
-use crate::native::view::{view_read, view_write, View};
+use crate::native::view::{view_read, view_write, Mut, View};
 use crate::native::warnings::ufbxi_warnf;
 #[cfg(feature = "geometry-cache")]
 use crate::native::xml::{
@@ -2681,9 +2681,11 @@ pub(crate) fn load_external_files(uc: &Context) -> Result<(), Fail> {
     // Patch the geometry deformers
     // C: `ufbxi_for_ptr_list(ufbx_cache_deformer, p_deformer, uc->scene.cache_deformers)`
     // SAFETY: walking the stored `cache_deformers` element-pointer run of the
-    // uc-owned scene; every deref below is either null-checked (`opt_ptr`
-    // results) or an in-bounds element of the deformer's channel list
-    // (`count == 1` fast path / lower-bound hit `ix < count`).
+    // uc-owned scene; every element pointer addresses a live, write-capable
+    // arena element, and every deref below is either a resolved reference
+    // (`Option<Ref>` field, matched `Some`) or an in-bounds element of the
+    // deformer's channel list (`count == 1` fast path / lower-bound hit
+    // `ix < count`).
     unsafe {
         let mut p_deformer: *mut *mut CacheDeformer =
             uc.scene_view().cache_deformers_view().data() as *mut *mut CacheDeformer;
@@ -2691,13 +2693,16 @@ pub(crate) fn load_external_files(uc: &Context) -> Result<(), Fail> {
             add_ptr(p_deformer, uc.scene_view().cache_deformers_view().count());
         while p_deformer != p_deformer_end {
             let deformer: *mut CacheDeformer = *p_deformer;
-            let file: *mut CacheFile = opt_ptr(&raw const (*deformer).file);
-            if file.is_null() || opt_ptr(&raw const (*file).external_cache).is_null() {
+            let deformer_view: &View<CacheDeformer> = View::<CacheDeformer>::from_ptr(deformer);
+            let cache_view: Option<&View<GeometryCache>> = deformer_view
+                .file_view()
+                .and_then(|file_view| file_view.external_cache_view());
+            let Some(cache_view) = cache_view else {
                 p_deformer = p_deformer.add(1);
                 continue;
-            }
-            let cache: *mut GeometryCache = opt_ptr(&raw const (*file).external_cache);
-            (*deformer).external_cache = Some(Ref::from_ptr(cache));
+            };
+            let cache: *mut GeometryCache = cache_view.get();
+            deformer_view.set_external_cache(Some(cache_view.to_ref()));
 
             // HACK: It seems like channels may be connected even if the name is wrong
             // and they work when exporting from Marvelous to Maya...
@@ -2792,27 +2797,28 @@ pub(crate) fn transform_to_axes(uc: &Context, dst_axes: CoordinateAxes) {
 
     if uc.opts_view().space_conversion() == SpaceConversion::TransformRoot {
         let mut axis_mat: Matrix = uc.axis_matrix();
-        // SAFETY: `root_node` is the scene's stored (always-resolved) root
-        // reference from the uc arena; the matrix helpers are pure value math
-        // over locals and the root's own transform fields.
-        unsafe {
-            let root_node: *mut Node = ref_ptr(uc.scene_view().root_node_ptr());
-            let root_node_view: &View<Node> = View::<Node>::from_ptr(root_node);
-            if !is_transform_identity(root_node_view.local_transform_view()) {
-                let root_mat: Matrix = transform_to_matrix(&raw const (*root_node).local_transform);
+        let root_node_view: &View<Node> = uc.scene_view().root_node().view::<Mut>();
+        if !is_transform_identity(root_node_view.local_transform_view()) {
+            // SAFETY: `local_transform_ptr()` projects the root's own live,
+            // initialized transform field; `root_mat`/`axis_mat` are live stack
+            // locals and the matrix helpers are pure value math over them.
+            unsafe {
+                let root_mat: Matrix = transform_to_matrix(root_node_view.local_transform_ptr());
                 axis_mat = matrix_mul(&raw const root_mat, &raw const axis_mat);
             }
+        }
 
-            // SAFETY: `axis_mat` is a live, fully written stack local, so
-            // `&raw mut` over it is write-capable and stays valid for the call.
+        // SAFETY: `axis_mat` is a live, fully written stack local, so `&raw mut`
+        // over it is write-capable and stays valid for the mirror call, and
+        // `&raw const` over it is a pure value read for the conversion.
+        unsafe {
             mirror_matrix(
                 View::<Matrix>::from_ptr(&raw mut axis_mat),
                 uc.mirror_axis(),
             );
-
-            (*root_node).local_transform = matrix_to_transform(&raw const axis_mat);
-            (*root_node).node_to_parent = axis_mat;
+            root_node_view.set_local_transform(matrix_to_transform(&raw const axis_mat));
         }
+        root_node_view.set_node_to_parent(axis_mat);
     }
 }
 
@@ -2836,10 +2842,11 @@ pub(crate) fn scale_units(uc: &Context, mut target_meters: Real) -> Result<(), F
     uc.set_unit_scale(ratio);
 
     if uc.opts_view().space_conversion() == SpaceConversion::TransformRoot {
+        let root_node: *mut Node = uc.scene_view().root_node().ptr();
         // SAFETY: `root_node` is the scene's stored (always-resolved) root
-        // reference from the uc arena; the writes stay within its fields.
+        // reference from the uc arena — live, unmoved and write-capable; the
+        // writes stay within its own initialized fields.
         unsafe {
-            let root_node: *mut Node = ref_ptr(uc.scene_view().root_node_ptr());
             (*root_node).local_transform.scale.x *= ratio;
             (*root_node).local_transform.scale.y *= ratio;
             (*root_node).local_transform.scale.z *= ratio;

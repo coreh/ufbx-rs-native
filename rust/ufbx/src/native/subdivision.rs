@@ -53,7 +53,7 @@ use crate::native::view::{view_read, view_write};
 #[cfg(feature = "subdivision")]
 use crate::native::view::{Const, Mode, SliceViewIter, View};
 #[cfg(feature = "subdivision")]
-use crate::prelude::{ListView, Real};
+use crate::prelude::{ListView, Real, Ref};
 #[cfg(feature = "subdivision")]
 use core::ffi::c_void;
 #[cfg(feature = "subdivision")]
@@ -2552,24 +2552,19 @@ pub(crate) unsafe fn subdivide_mesh_level(
 
     let result_sub: *mut SubdivisionResult = sc.result_view().push_zero::<SubdivisionResult>(1);
     ufbxi_check_err!(sc.error_view(), !result_sub.is_null(), "result_sub");
-    // SAFETY: `result_sub` is the fresh non-null push above, wrapped into an
-    // optional ref stored into the destination mesh.
-    result.set_subdivision_result(unsafe { opt_ref(result_sub) });
+    // SAFETY: `result_sub` is the fresh non-null result-arena push above, so the
+    // view carries that buffer's write-capable provenance; the ref it yields is
+    // stored into the destination mesh.
+    result.set_subdivision_result(Some(
+        unsafe { View::<SubdivisionResult>::from_ptr(result_sub) }.to_ref(),
+    ));
 
     if sc.opts_view().evaluate_source_vertices() || sc.opts_view().evaluate_skin_weights() {
-        // SAFETY: `subdivision_result_ptr()` addresses `mesh`'s own live
-        // optional-ref field, from which `opt_ptr` reads the raw pointer (or null).
-        let mesh_sub: *mut SubdivisionResult = unsafe { opt_ptr(mesh.subdivision_result_ptr()) };
         // The source mesh's previous-level result is read-only in this scope, so
         // it is viewed `Const` (the frozen tag holds: every write below targets
         // `result_sub`, a distinct fresh allocation).
-        // SAFETY: `mesh_sub` is either null or the live `SubdivisionResult`
-        // retained by `mesh`, which outlives this scope.
-        let mesh_sub_view: Option<&View<SubdivisionResult, Const>> = if mesh_sub.is_null() {
-            None
-        } else {
-            Some(unsafe { View::<SubdivisionResult, Const>::from_ptr(mesh_sub) })
-        };
+        let mesh_sub_view: Option<&View<SubdivisionResult, Const>> =
+            mesh.subdivision_result().map(|sub| sub.view::<Const>());
         // SAFETY: `result_sub` is the fresh non-null result-arena push above, so
         // the view carries that buffer's write-capable provenance; no other
         // reference to those bytes is formed while it is live.
@@ -2585,15 +2580,17 @@ pub(crate) unsafe fn subdivide_mesh_level(
                     "sc->opts.skin_deformer_index < mesh->skin_deformers.count"
                 );
                 // SAFETY: the check above bounds `skin_deformer_index` below
-                // `skin_deformers.count`, so `.add(index)` is a live element whose
-                // ref `ref_ptr` unwraps to a raw pointer.
-                skin = unsafe {
-                    ref_ptr(
+                // `skin_deformers.count`, so `.add(index)` addresses a live
+                // element of the mesh's own deformer-ref run and reading the
+                // `Ref` out of it copies one initialized element.
+                let skin_ref: Ref<SkinDeformer> = unsafe {
+                    core::ptr::read(
                         mesh.skin_deformers()
                             .data
                             .add(sc.opts_view().skin_deformer_index()),
                     )
                 };
+                skin = skin_ref.ptr();
             }
         }
 
@@ -3225,10 +3222,7 @@ pub(crate) fn subdivide_mesh_imp(
         if src_mesh.subdivision_evaluated() && src_mesh.from_tessellated_nurbs() {
             ImpHandle::<MeshImp>::from_payload(sc.src_mesh_ptr()).refcount_ptr()
         } else {
-            ImpHandle::<SceneImp>::from_payload(ref_ptr(
-                &raw const (*sc.src_mesh_ptr()).element.scene,
-            ))
-            .refcount_ptr()
+            ImpHandle::<SceneImp>::from_payload(src_mesh.element().scene().ptr()).refcount_ptr()
         }
     };
 
@@ -3238,11 +3232,13 @@ pub(crate) fn subdivide_mesh_imp(
     sc.set_imp(sc.result_view().push::<MeshImp>(1));
     ufbxi_check_err!(sc.error_view(), !sc.imp().is_null(), "sc->imp");
 
+    let dst_sub: *mut SubdivisionResult = mesh
+        .subdivision_result()
+        .map_or(core::ptr::null_mut(), |r| r.ptr());
     // SAFETY: `subdivide_mesh_level` always installs a `SubdivisionResult` on
-    // the destination mesh (the `result_sub` push there), so this ref is
+    // the destination mesh (the `result_sub` push there), so `dst_sub` is
     // non-null and points into sc's own result arena.
     unsafe {
-        let dst_sub: *mut SubdivisionResult = opt_ptr(mesh.subdivision_result_ptr());
         (*dst_sub).result_memory_used = sc.ator_result_view().current_size();
         (*dst_sub).temp_memory_used = sc.ator_tmp_view().current_size();
         (*dst_sub).result_allocs = sc.ator_result_view().num_allocs();
