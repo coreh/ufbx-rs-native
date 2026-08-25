@@ -163,19 +163,22 @@ pub(crate) fn vwarnf_imp(
 
     // SAFETY: `ws` as above; `(*ws).result` and `(*ws).error` are the
     // context-owned result buf / error the sink was initialized with (live for
-    // the whole load); `desc` provides `desc_len + 1 <= 256` readable bytes.
-    let desc_copy: *mut u8 =
-        unsafe { buf::push_copy::<u8>((*ws).result, desc_len + 1, desc.as_ptr()) };
+    // the whole load), so `(*ws).result` satisfies the `BufView::from_ptr` mint
+    // invariant; `desc` provides `desc_len + 1 <= 256` readable bytes.
+    let desc_copy: *mut u8 = unsafe {
+        buf::push_copy::<u8>(
+            buf::BufView::from_ptr((*ws).result),
+            desc_len + 1,
+            desc.as_ptr(),
+        )
+    };
     ufbxi_check_err!(
         unsafe { crate::native::error::ErrorView::from_ptr((*ws).error) },
         !desc_copy.is_null(),
         "desc_copy"
     );
 
-    // SAFETY: `ws` is live and `tmp_stack` is its owned buffer. `&raw mut`
-    // preserves the raw pointer's provenance without manufacturing a temporary
-    // reference.
-    let warning: *mut Warning = unsafe { buf::push::<Warning>(&raw mut (*ws).tmp_stack, 1) };
+    let warning: *mut Warning = buf::push::<Warning>(ws_view.tmp_stack_view(), 1);
     ufbxi_check_err!(
         unsafe { crate::native::error::ErrorView::from_ptr((*ws).error) },
         !warning.is_null(),

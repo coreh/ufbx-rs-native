@@ -328,7 +328,7 @@ impl BufView {
     #[inline(always)]
     #[must_use]
     pub(crate) fn push<T>(&self, n: usize) -> *mut T {
-        unsafe { push::<T>(self.get(), n) }
+        push::<T>(self, n)
     }
     #[inline(always)]
     #[must_use]
@@ -338,7 +338,7 @@ impl BufView {
     #[inline(always)]
     #[must_use]
     pub(crate) fn push_zero<T>(&self, n: usize) -> *mut T {
-        unsafe { push_zero::<T>(self.get(), n) }
+        push_zero::<T>(self, n)
     }
     // Copy-in from a borrow. Raw-pointer sources (arena runs reached by
     // pointer arithmetic) stay on the free `unsafe fn push_copy` —
@@ -346,12 +346,12 @@ impl BufView {
     #[inline(always)]
     #[must_use]
     pub(crate) fn push_copy_ref<T>(&self, src: &T) -> *mut T {
-        unsafe { push_copy::<T>(self.get(), 1, src) }
+        unsafe { push_copy::<T>(self, 1, src) }
     }
     #[inline(always)]
     #[must_use]
     pub(crate) fn push_copy_slice<T>(&self, src: &[T]) -> *mut T {
-        unsafe { push_copy::<T>(self.get(), src.len(), src.as_ptr()) }
+        unsafe { push_copy::<T>(self, src.len(), src.as_ptr()) }
     }
     #[inline(always)]
     #[must_use]
@@ -371,7 +371,7 @@ impl BufView {
     pub(crate) unsafe fn push_copy_raw<T>(&self, n: usize, src: *const T) -> *mut T {
         // SAFETY: buf side per the view invariant (family comment above); the
         // source run is the caller's vouch (fn contract).
-        unsafe { push_copy::<T>(self.get(), n, src) }
+        unsafe { push_copy::<T>(self, n, src) }
     }
     /// `push_copy_fast` flavor of [`Self::push_copy_raw`] (same contract).
     #[inline(always)]
@@ -1383,39 +1383,26 @@ pub(crate) fn buf_clear(view: &BufView) {
 
 // ufbx.c:4346 `#define ufbxi_push(b, type, n)`
 #[inline(always)]
-pub(crate) unsafe fn push<T>(b: *mut Buf, n: usize) -> *mut T {
-    // SAFETY: `b` addresses a live, initialized `Buf` in context/arena-owned
-    // memory with write-capable provenance (this fn's raw-pointer contract) —
-    // the `BufView::from_ptr` mint invariant.
-    (push_size(unsafe { BufView::from_ptr(b) }, size_of::<T>(), n)) as *mut T
+pub(crate) fn push<T>(b: &BufView, n: usize) -> *mut T {
+    (push_size(b, size_of::<T>(), n)) as *mut T
 }
 
 // ufbx.c:4347 `#define ufbxi_push_zero(b, type, n)`
 #[inline(always)]
-pub(crate) unsafe fn push_zero<T>(b: *mut Buf, n: usize) -> *mut T {
-    // SAFETY: `b` addresses a live, initialized `Buf` in context/arena-owned
-    // memory with write-capable provenance (this fn's raw-pointer contract) —
-    // the `BufView::from_ptr` mint invariant.
-    (push_size_zero(unsafe { BufView::from_ptr(b) }, size_of::<T>(), n)) as *mut T
+pub(crate) fn push_zero<T>(b: &BufView, n: usize) -> *mut T {
+    (push_size_zero(b, size_of::<T>(), n)) as *mut T
 }
 
 // ufbx.c:4348 `#define ufbxi_push_copy(b, type, n, data)`
 #[inline(always)]
 #[must_use]
-pub(crate) unsafe fn push_copy<T>(b: *mut Buf, n: usize, data: *const T) -> *mut T {
-    // SAFETY: `b` addresses a live, initialized `Buf` in context/arena-owned
-    // memory with write-capable provenance (this fn's raw-pointer contract) —
-    // the `BufView::from_ptr` mint invariant; and this fn's readable-`data`
-    // contract is `push_size_copy`'s run contract for `size_of::<T>() * n`
-    // bytes.
-    (unsafe {
-        push_size_copy(
-            BufView::from_ptr(b),
-            size_of::<T>(),
-            n,
-            data as *const c_void,
-        )
-    }) as *mut T
+/// # Safety
+/// `data` must be readable for `n` `T`s, and the run must not overlap the
+/// chunk memory the push writes.
+pub(crate) unsafe fn push_copy<T>(b: &BufView, n: usize, data: *const T) -> *mut T {
+    // SAFETY: this fn's readable-`data` contract is `push_size_copy`'s run
+    // contract for `size_of::<T>() * n` bytes.
+    (unsafe { push_size_copy(b, size_of::<T>(), n, data as *const c_void) }) as *mut T
 }
 
 // ufbx.c:4349 `#define ufbxi_push_copy_fast(b, type, n, data)`
@@ -1703,7 +1690,9 @@ mod tests {
         // ~4032 bytes; 4096 items = 16384 bytes).
         const N: usize = 4096;
         for i in 0..N {
-            let p = unsafe { push::<u32>(&mut buf, 1) };
+            // SAFETY: a live stack-local `Buf` owned by this test; minting the
+            // `BufView` the push takes.
+            let p = push::<u32>(unsafe { BufView::from_ptr(&raw mut buf) }, 1);
             assert!(!p.is_null());
             unsafe {
                 *p = i as u32;
@@ -1809,7 +1798,9 @@ mod tests {
 
         const N: usize = 3000;
         for i in 0..N {
-            let p = unsafe { push::<u64>(&mut stack, 1) };
+            // SAFETY: a live stack-local `Buf` owned by this test; minting the
+            // `BufView` the push takes.
+            let p = push::<u64>(unsafe { BufView::from_ptr(&raw mut stack) }, 1);
             assert!(!p.is_null());
             unsafe {
                 *p = i as u64;

@@ -102,8 +102,9 @@ pub(crate) fn ascii_refill(uc: &Context) -> u8 {
         if !ua.retain_buf().is_null() {
             dst_size = uc.opts_view().read_buffer_size();
             // SAFETY: `retain_buf` is a non-null buf owned by `uc` (the array
-            // reader parks its retention target there before refilling).
-            dst_buffer = unsafe { push::<u8>(ua.retain_buf(), dst_size) };
+            // reader parks its retention target there before refilling), so it
+            // satisfies the `BufView::from_ptr` mint invariant.
+            dst_buffer = push::<u8>(unsafe { BufView::from_ptr(ua.retain_buf()) }, dst_size);
             ufbxi_check_return!(uc, !dst_buffer.is_null(), b'\0', "dst_buffer");
             ua.set_src_is_retained(true);
             ua.set_src_buf(ua.retain_buf());
