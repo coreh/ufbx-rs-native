@@ -2972,18 +2972,15 @@ pub(crate) unsafe fn fetch_deformers(
 
 // ufbx.c:19221-19239 `ufbxi_fetch_blend_keyframes`
 #[inline(never)]
-pub(crate) unsafe fn fetch_blend_keyframes(
+pub(crate) fn fetch_blend_keyframes(
     uc: &Context,
-    list: *mut List<BlendKeyframe>,
-    element: *mut Element,
+    list: &ListView<BlendKeyframe>,
+    element: &View<Element>,
 ) -> Result<(), Fail> {
     let mut num_keyframes: usize = 0;
 
-    let conns: List<Connection> = find_dst_connections(
-        // SAFETY: `element` points to a live scene element (fn contract).
-        unsafe { ElementView::from_ptr(element) },
-        None,
-    );
+    // `None` is C's null `prop` — the "no prop filter" argument.
+    let conns: List<Connection> = find_dst_connections(element, None);
     // C: `ufbxi_for_list(ufbx_connection, conn, conns)`
     let mut conn: *mut Connection = conns.data as *mut Connection;
     let conn_end: *mut Connection = add_ptr(conn, conns.count);
@@ -3012,14 +3009,12 @@ pub(crate) unsafe fn fetch_blend_keyframes(
         conn = unsafe { conn.add(1) };
     }
 
-    // SAFETY: `list` is the caller's out-list (fn contract).
-    unsafe {
-        (*list).data = uc
-            .result_view()
-            .push_pop::<BlendKeyframe>(uc.tmp_stack_view(), num_keyframes);
-        (*list).count = num_keyframes;
-        ufbxi_check!(uc, !(*list).data.is_null(), "list->data");
-    }
+    list.set_data(
+        uc.result_view()
+            .push_pop::<BlendKeyframe>(uc.tmp_stack_view(), num_keyframes),
+    );
+    list.set_count(num_keyframes);
+    ufbxi_check!(uc, !list.data().is_null(), "list->data");
 
     Ok(())
 }
@@ -9106,10 +9101,7 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
     for channel_ix in 0..scene_blend_channels.count() {
         let channel: &View<BlendChannel> = scene_blend_channels.at(channel_ix);
 
-        // SAFETY: `ufbxi_fetch_blend_keyframes` fills the list header it is handed
-        // from the destination connections of the element it is handed (fn
-        // contract); both are projections of this channel's own view.
-        unsafe { fetch_blend_keyframes(uc, channel.keyframes_raw(), channel.element_raw()) }?;
+        fetch_blend_keyframes(uc, channel.keyframes_view(), channel.element())?;
 
         // C carries `full_weights` as a cursor advanced once per channel; the
         // popped run holds one list header per blend channel, so the per-channel
