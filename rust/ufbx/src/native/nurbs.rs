@@ -1155,14 +1155,17 @@ pub(crate) fn tessellate_nurbs_surface_imp(
         );
     }
 
-    // SAFETY: the finalizers and the normal computation all operate on tc's
-    // own mesh slot, filled above, using tc's own result buf and error slot;
+    // SAFETY: the finalizer operates on tc's own mesh slot, filled above,
+    // using tc's own result buf and error slot.
+    unsafe {
+        finalize_mesh_material(tc.result_view(), tc.error_mut_ptr(), mesh_view)?;
+    }
+    finalize_mesh(tc.result_view(), tc.error_view(), mesh_view)?;
+
+    // SAFETY: the normal computation operates on tc's own mesh slot;
     // `vertex_normal.values` is the `normals` push, whose `count` elements are
     // exactly the run `compute_normals` writes.
     unsafe {
-        finalize_mesh_material(tc.result_view(), tc.error_mut_ptr(), mesh_view)?;
-        finalize_mesh(tc.result_view(), tc.error_mut_ptr(), mesh_view)?;
-
         mesh_view.set_generated_normals(true);
         compute_normals(
             mesh_view.as_ptr(),

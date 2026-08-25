@@ -1879,9 +1879,7 @@ pub(crate) fn obj_pop_meshes(uc: &Context) -> Result<(), Fail> {
             }
         }
 
-        // SAFETY: `finalize_mesh` updates this mesh's own element in place,
-        // pushing its new list data onto uc's result arena.
-        unsafe { finalize_mesh(uc.result_view(), uc.error_mut_ptr(), fbx_mesh)? };
+        finalize_mesh(uc.result_view(), uc.error_view(), fbx_mesh)?;
 
         if uc.retain_mesh_parts() {
             // The part run is freshly zero-pushed onto uc's result arena,

@@ -94,7 +94,7 @@ use core::mem::MaybeUninit;
 use crate::generated::{
     AnimCurve, AnimLayer, AnimStack, AnimValue, AudioClip, AudioLayer, BlendChannel, BlendDeformer,
     BlendShape, Bone, BonePose, CacheDeformer, CacheFile, Camera, CameraSwitcher, Character,
-    ColorSet, Constraint, ConstraintType, DisplayLayer, Edge, Element, ElementType, Empty, Error,
+    ColorSet, Constraint, ConstraintType, DisplayLayer, Edge, Element, ElementType, Empty,
     Exporter, Extrapolation, ExtrapolationMode, Face, FaceGroup, IndexErrorHandling, InheritMode,
     InheritModeHandling, Interpolation, Keyframe, Light, LineCurve, LineSegment, LodGroup, Marker,
     MarkerType, Material, Matrix, Mesh, MeshPart, MetadataObject, Node as UfbxNode, NurbsCurve,
@@ -11310,9 +11310,9 @@ pub(crate) unsafe fn update_vertex_first_index(mesh: &View<Mesh>) {
 
 // ufbx.c:16691-16765 `ufbxi_finalize_mesh`
 #[inline(never)]
-pub(crate) unsafe fn finalize_mesh(
+pub(crate) fn finalize_mesh(
     buf: &BufView,
-    error: *mut Error,
+    error: &crate::native::error::ErrorView,
     mesh: &View<Mesh>,
 ) -> Result<(), Fail> {
     if mesh.vertices().count == 0 {
@@ -11384,7 +11384,7 @@ pub(crate) unsafe fn finalize_mesh(
         mesh.vertex_first_index_view()
             .set_data(buf.push::<u32>(mesh.num_vertices()));
         ufbxi_check_err!(
-            unsafe { crate::native::error::ErrorView::from_ptr(error) },
+            error,
             !mesh.vertex_first_index().data.is_null(),
             "mesh->vertex_first_index.data"
         );
@@ -11398,11 +11398,7 @@ pub(crate) unsafe fn finalize_mesh(
 
     if mesh.uv_sets().count == 0 && mesh.vertex_uv().exists() {
         let uv_set: *mut UvSet = buf.push_zero::<UvSet>(1);
-        ufbxi_check_err!(
-            unsafe { crate::native::error::ErrorView::from_ptr(error) },
-            !uv_set.is_null(),
-            "uv_set"
-        );
+        ufbxi_check_err!(error, !uv_set.is_null(), "uv_set");
 
         // SAFETY: `uv_set` is the fresh non-null single-element run pushed
         // above, owned by `buf` — write-capable provenance.
@@ -11433,11 +11429,7 @@ pub(crate) unsafe fn finalize_mesh(
 
     if mesh.color_sets().count == 0 && mesh.vertex_color().exists() {
         let color_set: *mut ColorSet = buf.push_zero::<ColorSet>(1);
-        ufbxi_check_err!(
-            unsafe { crate::native::error::ErrorView::from_ptr(error) },
-            !color_set.is_null(),
-            "color_set"
-        );
+        ufbxi_check_err!(error, !color_set.is_null(), "color_set");
 
         // SAFETY: `color_set` is the fresh non-null single-element run pushed
         // above, owned by `buf` — write-capable provenance.
