@@ -12556,16 +12556,16 @@ pub(crate) unsafe fn mirror_matrix_dst(m: *mut Matrix, axis: MirrorAxis) {
 // Same `cols[4]` overlay as `ufbxi_mirror_matrix_dst`, but here C names the
 // column's `x`/`y`/`z` members directly.
 #[inline(always)]
-pub(crate) unsafe fn mirror_matrix_src(m: *mut Matrix, axis: MirrorAxis) {
+pub(crate) fn mirror_matrix_src(m: &View<Matrix>, axis: MirrorAxis) {
     // C: `if (axis == 0) return;`
     if axis as u32 == 0 {
         return;
     }
     let ax: i32 = axis as i32 - 1;
-    let cols: *mut Vec3 = m as *mut Vec3;
-    // SAFETY: `m` points to a live, initialized, writable `ufbx_matrix` (fn
-    // contract) laid out as four consecutive `ufbx_vec3` columns, and the early
-    // return above established `axis != None`, so `ax = axis - 1` is in `0..3`.
+    let cols: *mut Vec3 = m.get() as *mut Vec3;
+    // SAFETY: the view covers a live, writable `ufbx_matrix` laid out as four
+    // consecutive `ufbx_vec3` columns, and the early return above established
+    // `axis != None`, so `ax = axis - 1` is in `0..3`.
     let col: *mut Vec3 = unsafe { cols.add(ax as usize) };
     // SAFETY: `col` addresses one of the matrix's own columns (see above).
     unsafe {
@@ -12582,9 +12582,9 @@ pub(crate) unsafe fn mirror_matrix(m: *mut Matrix, axis: MirrorAxis) {
     if axis as u32 == 0 {
         return;
     }
-    // SAFETY: `m` points to a live, initialized, writable `ufbx_matrix` (fn
-    // contract) — the same contract `ufbxi_mirror_matrix_src` takes.
-    unsafe { mirror_matrix_src(m, axis) };
+    // SAFETY: `m` points to a live, initialized `ufbx_matrix` whose provenance
+    // is write-capable (fn contract), so it is a legal `Mut` view root.
+    mirror_matrix_src(unsafe { View::<Matrix>::from_ptr(m) }, axis);
     // SAFETY: as above, for `ufbxi_mirror_matrix_dst`.
     unsafe { mirror_matrix_dst(m, axis) };
 }
