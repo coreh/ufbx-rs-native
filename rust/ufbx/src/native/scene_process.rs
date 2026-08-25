@@ -253,7 +253,9 @@ use crate::native::read::{
 use crate::native::string_pool::{
     self as sp, add3, concat_str_cmp, min3, neg3, normalize3, str_cmp, str_less, sub3, ONE_VEC3,
 };
-use crate::native::view::{view_project, view_read, view_write, Const, Mode, SliceViewIter, View};
+use crate::native::view::{
+    view_project, view_read, view_read_shared, view_write, Const, Mode, SliceViewIter, View,
+};
 use crate::native::warnings::ufbxi_warnf_tag;
 use crate::prelude::as_f64;
 use crate::prelude::{
@@ -429,19 +431,26 @@ impl crate::native::view::View<TmpBonePose> {
 // `ufbxi_tmp_material_texture` (ufbx.c:6346-6350) is an internal scratch record
 // with no generated view; the legacy LayerElement-texture patch walks the
 // sorted run of them through element views.
-impl crate::native::view::View<TmpMaterialTexture> {
+impl<M: Mode> crate::native::view::View<TmpMaterialTexture, M> {
     #[inline(always)]
     pub(crate) fn material_id(&self) -> i32 {
-        view_read!(self, material_id)
+        view_read_shared!(self, material_id)
     }
     #[inline(always)]
     pub(crate) fn texture_id(&self) -> i32 {
-        view_read!(self, texture_id)
+        view_read_shared!(self, texture_id)
     }
     #[inline(always)]
     pub(crate) fn prop_name(&self) -> String {
-        view_read!(self, prop_name)
+        view_read_shared!(self, prop_name)
     }
+    #[inline(always)]
+    pub(crate) fn prop_name_view(&self) -> &View<String, M> {
+        view_project!(self, prop_name)
+    }
+}
+
+impl crate::native::view::View<TmpMaterialTexture> {
     #[inline(always)]
     pub(crate) fn set_material_id(&self, value: i32) {
         view_write!(self, material_id, value)
@@ -1474,24 +1483,22 @@ pub(crate) unsafe fn sort_node_ptrs(
 // ufbx.c:18620-18625 `ufbxi_cmp_tmp_material_texture_less`
 // C declares this `int`-returning, but every `return` is a boolean expression
 // and the only caller is a sort comparator.
+// Comparator over views: the sort adapter mints them (PORTING.md "Sorting").
+// Both `prop_name`s are interned string-pool spans, which is what `str_less`
+// compares.
 #[inline(never)]
 #[must_use]
-pub(crate) unsafe fn cmp_tmp_material_texture_less(
-    a: *const TmpMaterialTexture,
-    b: *const TmpMaterialTexture,
+pub(crate) fn cmp_tmp_material_texture_less<M: Mode>(
+    a: &View<TmpMaterialTexture, M>,
+    b: &View<TmpMaterialTexture, M>,
 ) -> bool {
-    // SAFETY: `a` and `b` point to live, initialized `TmpMaterialTexture`s — the
-    // two records the sort hands its comparator (fn contract); both `prop_name`s
-    // are interned string-pool spans, which is what `str_less` compares.
-    unsafe {
-        if (*a).material_id != (*b).material_id {
-            return (*a).material_id < (*b).material_id;
-        }
-        if (*a).texture_id != (*b).texture_id {
-            return (*a).texture_id < (*b).texture_id;
-        }
-        str_less((*a).prop_name.as_bytes(), (*b).prop_name.as_bytes())
+    if a.material_id() != b.material_id() {
+        return a.material_id() < b.material_id();
     }
+    if a.texture_id() != b.texture_id() {
+        return a.texture_id() < b.texture_id();
+    }
+    str_less(a.prop_name_view().bytes(), b.prop_name_view().bytes())
 }
 
 // ufbx.c:18627-18633 `ufbxi_sort_tmp_material_textures`
@@ -1521,12 +1528,12 @@ pub(crate) unsafe fn sort_tmp_material_textures(
     // `macro_stable_sort` needs are in place; it hands the comparator pointers to
     // live elements of those runs.
     unsafe {
-        macro_stable_sort::<TmpMaterialTexture>(
+        macro_stable_sort_views::<TmpMaterialTexture>(
             32,
             mat_texs,
             uc.tmp_arr() as *mut TmpMaterialTexture,
             count,
-            |a, b| cmp_tmp_material_texture_less(a, b),
+            cmp_tmp_material_texture_less,
         )
     };
     Ok(())
@@ -1538,36 +1545,38 @@ const _: () =
     assert!(size_of::<Connection>() == size_of::<*mut Element>() * 2 + size_of::<String>() * 2);
 
 // ufbx.c:18638-18646 `ufbxi_cmp_connection_less`
+// Comparator over views: the sort adapter mints them (PORTING.md "Sorting").
+//
+// # Safety
+// `index` must be 0 or 1: it selects between the two adjacent element refs
+// (and the two adjacent strings) of one unpadded `ufbx_connection`, a bound
+// the parameter type cannot carry.
 #[inline(always)]
-pub(crate) unsafe fn cmp_connection_less(
-    a: *mut Connection,
-    b: *mut Connection,
+pub(crate) unsafe fn cmp_connection_less<M: Mode>(
+    a: &View<Connection, M>,
+    b: &View<Connection, M>,
     index: usize,
 ) -> bool {
     // C-parity: `(&a->src)[index]` / `(&a->src_prop)[index]` index across the
     // two adjacent element pointers and the two adjacent strings of
-    // `ufbx_connection`, which the static assert above pins as unpadded.
-    // SAFETY: `a` and `b` point to live, initialized `Connection`s — the two
-    // records the sort hands its comparator (fn contract).
-    let a_src: *const Ref<Element> = unsafe { &raw const (*a).src };
-    // SAFETY: as above, for `b`.
-    let b_src: *const Ref<Element> = unsafe { &raw const (*b).src };
-    // SAFETY: `index` is 0 or 1 (the two adjacent `src`/`dst` element refs of one
-    // unpadded `ufbx_connection`, per the static assert above), so the offset
-    // stays inside `*a`, and the ref it names holds a live scene element.
+    // `ufbx_connection`, which the static assert above pins as unpadded; both
+    // projections are derived from the whole connection, keeping its provenance
+    // (PORTING.md "Raw pointers from places").
+    let a_src: *const Ref<Element> = a.src_ptr();
+    let b_src: *const Ref<Element> = b.src_ptr();
+    // SAFETY: `index` is 0 or 1 (fn contract), so the offset stays inside the
+    // viewed connection, and the ref it names holds a live scene element.
     let a_elem: *mut Element = unsafe { ref_ptr(a_src.add(index)) };
     // SAFETY: as above, for `b`.
     let b_elem: *mut Element = unsafe { ref_ptr(b_src.add(index)) };
     if a_elem != b_elem {
         return a_elem < b_elem;
     }
-    // SAFETY: `a` points to a live, initialized `Connection` (fn contract).
-    let a_prop: *const String = unsafe { &raw const (*a).src_prop };
-    // SAFETY: as above, for `b`.
-    let b_prop: *const String = unsafe { &raw const (*b).src_prop };
-    // SAFETY: `index` is 0 or 1, so both offsets stay inside the two adjacent
-    // `src_prop`/`dst_prop` strings of their connection; each is an interned
-    // string-pool span, hence NUL-terminated for `strcmp`.
+    let a_prop: *const String = a.src_prop_ptr();
+    let b_prop: *const String = b.src_prop_ptr();
+    // SAFETY: `index` is 0 or 1 (fn contract), so both offsets stay inside the
+    // two adjacent `src_prop`/`dst_prop` strings of their connection; each is
+    // an interned string-pool span, hence NUL-terminated for `strcmp`.
     let mut cmp: i32 = unsafe { strcmp((*a_prop.add(index)).data, (*b_prop.add(index)).data) };
     if cmp != 0 {
         return cmp < 0;
@@ -1605,12 +1614,15 @@ pub(crate) unsafe fn sort_connections(
     // hands the comparator pointers to live elements of those runs, and `index`
     // is the caller's 0-or-1 field selector.
     unsafe {
-        macro_stable_sort::<Connection>(
+        macro_stable_sort_views::<Connection>(
             32,
             connections,
             uc.tmp_arr() as *mut Connection,
             count,
-            |a, b| cmp_connection_less(a as *mut Connection, b as *mut Connection, index),
+            // The comparator call is covered by the enclosing block: `index` is
+            // the caller's 0-or-1 field selector, which is
+            // `cmp_connection_less`'s contract.
+            |a, b| cmp_connection_less(a, b, index),
         )
     };
     Ok(())
