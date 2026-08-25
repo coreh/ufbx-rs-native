@@ -2474,10 +2474,6 @@ impl SceneView {
         view_write!(self, root_node, root_node)
     }
     #[inline(always)]
-    pub(crate) fn root_node_ptr(&self) -> *const crate::prelude::Ref<crate::generated::Node> {
-        view_raw_const!(self, root_node)
-    }
-    #[inline(always)]
     pub(crate) fn root_node_mut_ptr(&self) -> *mut crate::prelude::Ref<crate::generated::Node> {
         view_raw_mut!(self, root_node)
     }
