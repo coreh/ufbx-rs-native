@@ -5089,12 +5089,16 @@ static CONSTRAINT_PROPS: [ConstraintProp; 10] = [
 ];
 
 // ufbx.c:20244-20266 `ufbxi_add_constraint_prop`
+// `prop: &[u8]` carries C's `const char *prop` — the interned, NUL-terminated
+// property name the caller minted (see `find_dst_connections`). C's `ufbx_node
+// *node` is non-NULL at both call sites (each resolves a connection endpoint it
+// already checked is a `UFBX_ELEMENT_NODE`), so it maps to a plain view.
 #[inline(never)]
-pub(crate) unsafe fn add_constraint_prop(
+pub(crate) fn add_constraint_prop(
     uc: &Context,
-    constraint: *mut Constraint,
-    node: *mut Node,
-    prop: *const u8,
+    constraint: &ConstraintView,
+    node: &NodeView,
+    prop: &[u8],
 ) -> Result<(), Fail> {
     // C: `ufbxi_for(const ufbxi_constraint_prop, cprop, ufbxi_constraint_props, ufbxi_arraycount(ufbxi_constraint_props))`
     let mut cprop: *const ConstraintProp = CONSTRAINT_PROPS.as_ptr();
@@ -5102,25 +5106,31 @@ pub(crate) unsafe fn add_constraint_prop(
         .as_ptr()
         .wrapping_add(CONSTRAINT_PROPS.len());
     while cprop != cprop_end {
+        // C: `strcmp(cprop->name, prop)` over two NUL-terminated strings; the
+        // table name is taken as the span up to its NUL and `prop` is
+        // NUL-terminated at its length, so `c_strcmp` walks the same bytes.
         // SAFETY: `cprop != cprop_end`, so it addresses a live entry of the
         // static `CONSTRAINT_PROPS` table whose `name` is a NUL-terminated
-        // literal; `prop` is a NUL-terminated C string (fn contract) — both are
-        // what `strcmp` walks.
-        if unsafe { strcmp((*cprop).name, prop) } != 0 {
+        // string literal: `strlen` bytes from it are readable.
+        let name: &[u8] = unsafe { slice_from_ptr((*cprop).name, strlen((*cprop).name)) };
+        if c_strcmp(name, prop) != 0 {
             // SAFETY: `cprop != cprop_end`, so the advance lands at or before the
             // one-past-the-end pointer of `CONSTRAINT_PROPS`.
             cprop = unsafe { cprop.add(1) };
             continue;
         }
-        // SAFETY (this group): `cprop` addresses a live table entry (see above);
-        // `constraint` points to a live `ufbx_constraint` and `node` to a live
-        // `ufbx_node` or NULL (fn contract), which is exactly what `opt_ref`
-        // turns into an optional reference.
+        // SAFETY (this group): `cprop` addresses a live table entry (see above),
+        // and `node.get()` hands back the viewed, live `ufbx_node` — the
+        // liveness `opt_ref` requires of the reference it stores.
         match unsafe { (*cprop).type_ } {
-            ConstraintPropType::Node => unsafe { (*constraint).node = opt_ref(node) },
-            ConstraintPropType::IkEffector => unsafe { (*constraint).ik_effector = opt_ref(node) },
-            ConstraintPropType::IkEndNode => unsafe { (*constraint).ik_end_node = opt_ref(node) },
-            ConstraintPropType::AimUp => unsafe { (*constraint).aim_up_node = opt_ref(node) },
+            ConstraintPropType::Node => constraint.set_node(unsafe { opt_ref(node.get()) }),
+            ConstraintPropType::IkEffector => {
+                constraint.set_ik_effector(unsafe { opt_ref(node.get()) })
+            }
+            ConstraintPropType::IkEndNode => {
+                constraint.set_ik_end_node(unsafe { opt_ref(node.get()) })
+            }
+            ConstraintPropType::AimUp => constraint.set_aim_up_node(unsafe { opt_ref(node.get()) }),
             ConstraintPropType::Target => {
                 let target: *mut ConstraintTarget = uc.tmp_stack_view().push_zero(1);
                 ufbxi_check!(uc, !target.is_null(), "target");
@@ -5129,9 +5139,9 @@ pub(crate) unsafe fn add_constraint_prop(
                 // connection endpoint it already checked is a
                 // `UFBX_ELEMENT_NODE`, so `node` is never NULL here.
                 // SAFETY: `target` is the fresh non-null one-element push above,
-                // and `node` is the live, non-NULL `ufbx_node` the caller
-                // resolved from that connection.
-                unsafe { (*target).node = Ref::from_ptr(node) };
+                // and `node.get()` addresses the live, non-NULL `ufbx_node` the
+                // caller resolved from that connection.
+                unsafe { (*target).node = Ref::from_ptr(node.get()) };
                 // SAFETY: `target` is the fresh non-null push above.
                 unsafe {
                     (*target).weight = 1.0f32 as Real;
@@ -10547,17 +10557,11 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
             if conn.src_prop().length == 0 || dst.type_() != ElementType::Node {
                 continue;
             }
-            // SAFETY: `get()` hands back the live constraint, the check above pins
-            // the destination's type so it heads a live `ufbx_node`, and `src_prop`
-            // is an interned NUL-terminated pool string.
-            unsafe {
-                add_constraint_prop(
-                    uc,
-                    constraint.get(),
-                    conn_dst as *mut Node,
-                    conn.src_prop().data,
-                )
-            }?;
+            // SAFETY: the check above pins the destination's type, so the element
+            // heads a live `ufbx_node` of the uc-owned scene and its provenance is
+            // write-capable.
+            let node: &NodeView = unsafe { NodeView::from_ptr(conn_dst as *mut Node) };
+            add_constraint_prop(uc, constraint, node, conn.src_prop_view().bytes())?;
         }
         // C: `ufbxi_for_list(ufbx_connection, conn, constraint->element.connections_dst)`
         // SAFETY: as above, for the constraint's own `connections_dst` run.
@@ -10576,17 +10580,11 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
             if conn.dst_prop().length == 0 || src.type_() != ElementType::Node {
                 continue;
             }
-            // SAFETY: `get()` hands back the live constraint, the check above pins
-            // the source's type so it heads a live `ufbx_node`, and `dst_prop` is an
-            // interned NUL-terminated pool string.
-            unsafe {
-                add_constraint_prop(
-                    uc,
-                    constraint.get(),
-                    conn_src as *mut Node,
-                    conn.dst_prop().data,
-                )
-            }?;
+            // SAFETY: the check above pins the source's type, so the element heads
+            // a live `ufbx_node` of the uc-owned scene and its provenance is
+            // write-capable.
+            let node: &NodeView = unsafe { NodeView::from_ptr(conn_src as *mut Node) };
+            add_constraint_prop(uc, constraint, node, conn.dst_prop_view().bytes())?;
         }
 
         let num_targets: usize = uc.tmp_stack_view().num_items() - tmp_base;
