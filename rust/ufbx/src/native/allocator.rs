@@ -206,10 +206,15 @@ pub(crate) unsafe fn alloc_size(ator: *mut Allocator, size: usize, n: usize) -> 
             "total <= ator->max_size - ator->current_size",
             "Memory limit exceeded"
         );
-        // SAFETY: `a.error` is the allocator's own error slot — non-null, as
-        // `init_ator` stores a caller slot unchecked — so this is a
-        // write-capable mint of it; `a.name` is its NUL-terminated allocator
-        // name, the `%s` printf argument contract of `fmt_err_info`.
+        // SAFETY: `a.error` is the allocator's own error slot, non-null on
+        // any failing-allocation path, so this is a write-capable mint of it.
+        // C requires that too: the `ufbxi_report_err_msg!` just above bottoms
+        // out in `ufbxi_fail_imp_err`, which reads `err->description.data`
+        // unguarded (ufbx.c:3413). `ufbxi_init_ator` (ufbx.c:6947) only ever
+        // stores a real error slot; the `ator.error = NULL` stores
+        // (ufbx.c:25389, 26424) back retained, free-only refcount buffers
+        // whose allocator never allocates. `a.name` is its NUL-terminated
+        // allocator name, the `%s` printf argument contract of `fmt_err_info`.
         unsafe {
             ufbxi_fmt_err_info!(
                 Some(crate::native::error::ErrorView::from_ptr(a.error)),
@@ -230,10 +235,15 @@ pub(crate) unsafe fn alloc_size(ator: *mut Allocator, size: usize, n: usize) -> 
             "ator->num_allocs < ator->max_allocs",
             "Allocation limit exceeded"
         );
-        // SAFETY: `a.error` is the allocator's own error slot — non-null, as
-        // `init_ator` stores a caller slot unchecked — so this is a
-        // write-capable mint of it; `a.name` is its NUL-terminated allocator
-        // name, the `%s` printf argument contract of `fmt_err_info`.
+        // SAFETY: `a.error` is the allocator's own error slot, non-null on
+        // any failing-allocation path, so this is a write-capable mint of it.
+        // C requires that too: the `ufbxi_report_err_msg!` just above bottoms
+        // out in `ufbxi_fail_imp_err`, which reads `err->description.data`
+        // unguarded (ufbx.c:3413). `ufbxi_init_ator` (ufbx.c:6947) only ever
+        // stores a real error slot; the `ator.error = NULL` stores
+        // (ufbx.c:25389, 26424) back retained, free-only refcount buffers
+        // whose allocator never allocates. `a.name` is its NUL-terminated
+        // allocator name, the `%s` printf argument contract of `fmt_err_info`.
         unsafe {
             ufbxi_fmt_err_info!(
                 Some(crate::native::error::ErrorView::from_ptr(a.error)),
@@ -271,10 +281,15 @@ pub(crate) unsafe fn alloc_size(ator: *mut Allocator, size: usize, n: usize) -> 
             "ptr",
             "Out of memory"
         );
-        // SAFETY: `a.error` is the allocator's own error slot — non-null, as
-        // `init_ator` stores a caller slot unchecked — so this is a
-        // write-capable mint of it; `a.name` is its NUL-terminated allocator
-        // name, the `%s` printf argument contract of `fmt_err_info`.
+        // SAFETY: `a.error` is the allocator's own error slot, non-null on
+        // any failing-allocation path, so this is a write-capable mint of it.
+        // C requires that too: the `ufbxi_report_err_msg!` just above bottoms
+        // out in `ufbxi_fail_imp_err`, which reads `err->description.data`
+        // unguarded (ufbx.c:3413). `ufbxi_init_ator` (ufbx.c:6947) only ever
+        // stores a real error slot; the `ator.error = NULL` stores
+        // (ufbx.c:25389, 26424) back retained, free-only refcount buffers
+        // whose allocator never allocates. `a.name` is its NUL-terminated
+        // allocator name, the `%s` printf argument contract of `fmt_err_info`.
         unsafe {
             ufbxi_fmt_err_info!(
                 Some(crate::native::error::ErrorView::from_ptr(a.error)),
