@@ -1591,10 +1591,10 @@ pub(crate) unsafe fn cmp_connection_less<M: Mode>(
     let a_src: *const Ref<Element> = a.src_ptr();
     let b_src: *const Ref<Element> = b.src_ptr();
     // SAFETY: `index` is 0 or 1 (fn contract), so the offset stays inside the
-    // viewed connection, and the ref it names holds a live scene element.
-    let a_elem: *mut Element = unsafe { ref_ptr(a_src.add(index)) };
+    // viewed connection, where a live, initialized `Ref<Element>` sits.
+    let a_elem: *mut Element = unsafe { ptr::read(a_src.add(index)) }.ptr();
     // SAFETY: as above, for `b`.
-    let b_elem: *mut Element = unsafe { ref_ptr(b_src.add(index)) };
+    let b_elem: *mut Element = unsafe { ptr::read(b_src.add(index)) }.ptr();
     if a_elem != b_elem {
         return a_elem < b_elem;
     }
@@ -1801,8 +1801,10 @@ pub(crate) fn resolve_connections(uc: &Context) -> Result<(), Fail> {
             if uc.has_scale_helper_nodes() {
                 if (*dst).type_ == ElementType::Node {
                     let dst_node: *mut Node = dst as *mut Node;
-                    let scale_helper: *mut Node = opt_ptr(&raw const (*dst_node).scale_helper);
-                    if !scale_helper.is_null() {
+                    let scale_helper: Option<Ref<Node>> =
+                        ptr::read(&raw const (*dst_node).scale_helper);
+                    if let Some(scale_helper) = scale_helper {
+                        let scale_helper: *mut Node = scale_helper.ptr();
                         if (*src).type_ == ElementType::Node {
                             let src_node: *mut Node = src as *mut Node;
                             if !(*src_node).is_scale_helper
@@ -1820,8 +1822,10 @@ pub(crate) fn resolve_connections(uc: &Context) -> Result<(), Fail> {
                     }
                 } else if (*src).type_ == ElementType::Node {
                     let src_node: *mut Node = src as *mut Node;
-                    let scale_helper: *mut Node = opt_ptr(&raw const (*src_node).scale_helper);
-                    if !scale_helper.is_null() {
+                    let scale_helper: Option<Ref<Node>> =
+                        ptr::read(&raw const (*src_node).scale_helper);
+                    if let Some(scale_helper) = scale_helper {
+                        let scale_helper: *mut Node = scale_helper.ptr();
                         if (*dst).type_ == ElementType::SkinCluster {
                             src = &raw mut (*scale_helper).element;
                         }
@@ -1920,7 +1924,7 @@ pub(crate) fn add_connections_to_elements(uc: &Context) -> Result<(), Fail> {
     // run and every `src_end`/`dst_end` slice is inside the element's own range.
     // Within an element: `prop` walks that element's own property run against
     // `prop_end`; `anim_def_prop` is a local fully zeroed before use;
-    // `find_prop_with_key` reads the element's own (`is_some`-checked) defaults
+    // `find_prop_with_key` reads the element's own (`Some`-checked) defaults
     // table through an arena-anchored view; and each `push_copy` copies the
     // counted properties out of the element's own property run onto uc's tmp
     // stack.
@@ -1933,21 +1937,39 @@ pub(crate) fn add_connections_to_elements(uc: &Context) -> Result<(), Fail> {
             let elem: *mut Element = *p_elem;
             let id: u32 = (*elem).element_id;
 
-            while conn_src < conn_src_end && (*ref_ptr(&raw const (*conn_src).src)).element_id < id
+            while conn_src < conn_src_end
+                && ptr::read(&raw const (*conn_src).src)
+                    .view::<Mut>()
+                    .element_id()
+                    < id
             {
                 conn_src = conn_src.add(1);
             }
-            while conn_dst < conn_dst_end && (*ref_ptr(&raw const (*conn_dst).dst)).element_id < id
+            while conn_dst < conn_dst_end
+                && ptr::read(&raw const (*conn_dst).dst)
+                    .view::<Mut>()
+                    .element_id()
+                    < id
             {
                 conn_dst = conn_dst.add(1);
             }
             let mut src_end: *mut Connection = conn_src;
             let mut dst_end: *mut Connection = conn_dst;
 
-            while src_end < conn_src_end && (*ref_ptr(&raw const (*src_end).src)).element_id == id {
+            while src_end < conn_src_end
+                && ptr::read(&raw const (*src_end).src)
+                    .view::<Mut>()
+                    .element_id()
+                    == id
+            {
                 src_end = src_end.add(1);
             }
-            while dst_end < conn_dst_end && (*ref_ptr(&raw const (*dst_end).dst)).element_id == id {
+            while dst_end < conn_dst_end
+                && ptr::read(&raw const (*dst_end).dst)
+                    .view::<Mut>()
+                    .element_id()
+                    == id
+            {
                 dst_end = dst_end.add(1);
             }
 
@@ -1977,7 +1999,9 @@ pub(crate) fn add_connections_to_elements(uc: &Context) -> Result<(), Fail> {
                         if (*conn_dst).src_prop.length > 0 {
                             break;
                         }
-                        if (*ref_ptr(&raw const (*conn_dst).src)).type_ == ElementType::AnimValue {
+                        if ptr::read(&raw const (*conn_dst).src).view::<Mut>().type_()
+                            == ElementType::AnimValue
+                        {
                             break;
                         }
                         conn_dst = conn_dst.add(1);
@@ -2000,10 +2024,11 @@ pub(crate) fn add_connections_to_elements(uc: &Context) -> Result<(), Fail> {
                     while conn_dst < dst_end && (*conn_dst).dst_prop.data == name.data {
                         if (*conn_dst).src_prop.length > 0 {
                             flags |= PropFlags::CONNECTED.raw();
-                        } else if (*ref_ptr(&raw const (*conn_dst).src)).type_
+                        } else if ptr::read(&raw const (*conn_dst).src).view::<Mut>().type_()
                             == ElementType::AnimValue
                         {
-                            anim_value = ref_ptr(&raw const (*conn_dst).src) as *mut AnimValue;
+                            anim_value =
+                                ptr::read(&raw const (*conn_dst).src).ptr() as *mut AnimValue;
                             flags |= PropFlags::ANIMATED.raw();
                         }
                         conn_dst = conn_dst.add(1);
@@ -2041,9 +2066,9 @@ pub(crate) fn add_connections_to_elements(uc: &Context) -> Result<(), Fail> {
                         // `memset` below (no upstream `ufbxi_uninit` marker).
                         let mut anim_def_prop = MaybeUninit::<Prop>::uninit();
                         let mut def_prop: *mut Prop = ptr::null_mut();
-                        if (*elem).props.defaults.is_some() {
+                        if let Some(defaults) = ptr::read(&raw const (*elem).props.defaults) {
                             def_prop = match find_prop_with_key(
-                                PropsView::from_ptr(opt_ptr(&raw const (*elem).props.defaults)),
+                                defaults.view(),
                                 // `find_prop_with_key` matches on the interned
                                 // run's ADDRESS, so the borrow must be over
                                 // `name`'s own bytes.
@@ -2175,9 +2200,9 @@ pub(crate) fn linearize_nodes(uc: &Context) -> Result<(), Fail> {
 
     // SAFETY: both passes below walk the fresh `num_nodes`-element `node_ptrs`
     // run (the second reuses the first's `p_node_end`) and, per node, that
-    // node's own `connections_dst` run (`count` entries); `opt_ptr`/`ref_ptr`
-    // results are null-checked or always-resolved references of the same arena,
-    // and the parent-chain walk is bounded by the `num_nodes` cycle guard.
+    // node's own `connections_dst` run (`count` entries); every stored reference
+    // read out of those structs names a live element of the same arena, and the
+    // parent-chain walk is bounded by the `num_nodes` cycle guard.
     unsafe {
         // Hook up the parent nodes, we'll assume that there's no cycles at this point
         // C: `ufbxi_for_ptr(ufbx_node, p_node, node_ptrs, num_nodes)`
@@ -2188,10 +2213,10 @@ pub(crate) fn linearize_nodes(uc: &Context) -> Result<(), Fail> {
 
             // Pre-6000 files don't have any explicit root connections so they must always
             // be connected to the root..
-            if opt_ptr(&raw const (*node).parent).is_null()
+            if ptr::read(&raw const (*node).parent).is_none()
                 && !(uc.opts_view().allow_nodes_out_of_root() && uc.version() >= 6000)
             {
-                if node != ref_ptr(uc.scene_view().root_node_ptr()) {
+                if node != uc.scene_view().root_node().ptr() {
                     (*node).parent = Some(uc.scene_view().root_node());
                 }
             }
@@ -2204,11 +2229,11 @@ pub(crate) fn linearize_nodes(uc: &Context) -> Result<(), Fail> {
                     conn = conn.add(1);
                     continue;
                 }
-                if (*ref_ptr(&raw const (*conn).src)).type_ != ElementType::Node {
+                if ptr::read(&raw const (*conn).src).view::<Mut>().type_() != ElementType::Node {
                     conn = conn.add(1);
                     continue;
                 }
-                (*(ref_ptr(&raw const (*conn).src) as *mut Node)).parent = opt_ref(node);
+                (*(ptr::read(&raw const (*conn).src).ptr() as *mut Node)).parent = opt_ref(node);
                 conn = conn.add(1);
             }
             p_node = p_node.add(1);
@@ -2221,10 +2246,10 @@ pub(crate) fn linearize_nodes(uc: &Context) -> Result<(), Fail> {
             let mut depth: u32 = 0;
 
             // C: `for (ufbx_node *p = node->parent; p; p = p->parent)`
-            let mut p: *mut Node = opt_ptr(&raw const (*node).parent);
-            while !p.is_null() {
-                depth = depth.wrapping_add((*p).node_depth.wrapping_add(1));
-                if (*p).node_depth > 0 {
+            let mut p: Option<&View<Node>> = ptr::read(&raw const (*node).parent).map(Ref::view);
+            while let Some(p_view) = p {
+                depth = depth.wrapping_add(p_view.node_depth().wrapping_add(1));
+                if p_view.node_depth() > 0 {
                     break;
                 }
                 ufbxi_check_msg!(
@@ -2233,7 +2258,7 @@ pub(crate) fn linearize_nodes(uc: &Context) -> Result<(), Fail> {
                     "Cyclic node hierarchy",
                     "depth <= num_nodes"
                 );
-                p = opt_ptr(&raw const (*p).parent);
+                p = p_view.parent_view();
             }
 
             if uc.opts_view().node_depth_limit() > 0 {
@@ -2247,14 +2272,14 @@ pub(crate) fn linearize_nodes(uc: &Context) -> Result<(), Fail> {
             (*node).node_depth = depth;
 
             // Second pass to cache the depths to avoid O(n^2)
-            let mut p: *mut Node = opt_ptr(&raw const (*node).parent);
-            while !p.is_null() {
+            let mut p: Option<&View<Node>> = ptr::read(&raw const (*node).parent).map(Ref::view);
+            while let Some(p_view) = p {
                 depth = depth.wrapping_sub(1);
-                if depth <= (*p).node_depth {
+                if depth <= p_view.node_depth() {
                     break;
                 }
-                (*p).node_depth = depth;
-                p = opt_ptr(&raw const (*p).parent);
+                p_view.set_node_depth(depth);
+                p = p_view.parent_view();
             }
             p_node = p_node.add(1);
         }
@@ -2395,9 +2420,10 @@ pub(crate) unsafe fn get_element_node(element: *mut Element) -> *mut Element {
         // SAFETY: `type_ == Node` (checked) means the element is the `element`
         // prefix of a live `ufbx_node`, so the cast pointer is a valid `Node`.
         if unsafe { (*node).is_geometry_transform_helper } {
-            // SAFETY: as above; `parent` is a live `Ref<Node>` field of that node,
-            // which `opt_ptr` reads as a nullable pointer.
-            return unsafe { opt_ptr(&raw const (*node).parent) } as *mut Element;
+            // SAFETY: as above; `parent` is a live `Option<Ref<Node>>` field of
+            // that node, read here as the nullable pointer C stores.
+            return unsafe { ptr::read(&raw const (*node).parent) }
+                .map_or(ptr::null_mut(), |parent| parent.ptr()) as *mut Element;
         }
         ptr::null_mut()
     } else {
@@ -2406,7 +2432,7 @@ pub(crate) unsafe fn get_element_node(element: *mut Element) -> *mut Element {
             // SAFETY: `instances.count > 0` (checked), so `instances.data` points
             // at a live `Ref<Node>` whose referent is a live node; taking the
             // address of its `element` prefix does not read the node.
-            unsafe { &raw mut (*ref_ptr(element_view.instances().data)).element }
+            unsafe { &raw mut (*ptr::read(element_view.instances().data).ptr()).element }
         } else {
             ptr::null_mut()
         }
@@ -2453,10 +2479,9 @@ pub(crate) unsafe fn fetch_dst_elements(
             // SAFETY: `conn_ix < conns.count` and `conns` is a `data`/`count` span
             // of live connections carved out of the element's connection array.
             let conn: *mut Connection = unsafe { (conns.data as *mut Connection).add(conn_ix) };
-            // SAFETY: `conn` points to a live `Connection` whose `src` ref names
-            // a live arena scene element, which anchors an `ElementView`.
-            let src_view: &ElementView =
-                unsafe { ElementView::from_ptr(ref_ptr(&raw const (*conn).src)) };
+            // SAFETY: `conn` points to a live `Connection`, so its `src` ref is
+            // initialized; the ref itself vouches for the element it names.
+            let src_view: &ElementView = unsafe { ptr::read(&raw const (*conn).src) }.view();
             if src_view.type_() == src_type {
                 if ignore_duplicates {
                     let element_id: u32 = src_view.element_id();
@@ -2491,7 +2516,7 @@ pub(crate) unsafe fn fetch_dst_elements(
                 // SAFETY: `p_elem` is non-null (checked) and addresses the slot
                 // just pushed on `tmp_stack`; `conn` points to a live `Connection`
                 // whose `src` ref names a live scene element.
-                unsafe { *p_elem = ref_ptr(&raw const (*conn).src) };
+                unsafe { *p_elem = ptr::read(&raw const (*conn).src).ptr() };
                 num_elements += 1;
             }
         }
@@ -2570,10 +2595,9 @@ pub(crate) unsafe fn fetch_src_elements(
             // SAFETY: `conn_ix < conns.count` and `conns` is a `data`/`count` span
             // of live connections carved out of the element's connection array.
             let conn: *mut Connection = unsafe { (conns.data as *mut Connection).add(conn_ix) };
-            // SAFETY: `conn` points to a live `Connection` whose `dst` ref names
-            // a live arena scene element, which anchors an `ElementView`.
-            let dst_view: &ElementView =
-                unsafe { ElementView::from_ptr(ref_ptr(&raw const (*conn).dst)) };
+            // SAFETY: `conn` points to a live `Connection`, so its `dst` ref is
+            // initialized; the ref itself vouches for the element it names.
+            let dst_view: &ElementView = unsafe { ptr::read(&raw const (*conn).dst) }.view();
             if dst_view.type_() == dst_type {
                 if ignore_duplicates {
                     let element_id: u32 = dst_view.element_id();
@@ -2608,7 +2632,7 @@ pub(crate) unsafe fn fetch_src_elements(
                 // SAFETY: `p_elem` is non-null (checked) and addresses the slot
                 // just pushed on `tmp_stack`; `conn` points to a live `Connection`
                 // whose `dst` ref names a live scene element.
-                unsafe { *p_elem = ref_ptr(&raw const (*conn).dst) };
+                unsafe { *p_elem = ptr::read(&raw const (*conn).dst).ptr() };
                 num_elements += 1;
             }
         }
@@ -2683,8 +2707,8 @@ pub(crate) unsafe fn fetch_dst_element(
             // SAFETY: `conn` is inside that span and its `src` ref names a live
             // scene element.
             unsafe {
-                if (*ref_ptr(&raw const (*conn).src)).type_ == src_type {
-                    return ref_ptr(&raw const (*conn).src);
+                if ptr::read(&raw const (*conn).src).view::<Mut>().type_() == src_type {
+                    return ptr::read(&raw const (*conn).src).ptr();
                 }
             }
             // SAFETY: `conn != conn_end`, so the advance lands at or before the
@@ -2740,8 +2764,8 @@ pub(crate) unsafe fn fetch_src_element(
             // SAFETY: `conn` is inside that span and its `dst` ref names a live
             // scene element.
             unsafe {
-                if (*ref_ptr(&raw const (*conn).dst)).type_ == dst_type {
-                    return ref_ptr(&raw const (*conn).dst);
+                if ptr::read(&raw const (*conn).dst).view::<Mut>().type_() == dst_type {
+                    return ptr::read(&raw const (*conn).dst).ptr();
                 }
             }
             // SAFETY: `conn != conn_end`, so the advance lands at or before the
@@ -2796,7 +2820,11 @@ pub(crate) unsafe fn fetch_textures(
                 continue;
             }
             // SAFETY: as above; the `src` ref names a live scene element.
-            if unsafe { (*ref_ptr(&raw const (*conn).src)).type_ } == ElementType::Texture {
+            if unsafe { ptr::read(&raw const (*conn).src) }
+                .view::<Mut>()
+                .type_()
+                == ElementType::Texture
+            {
                 let tex: *mut MaterialTexture = uc.tmp_stack_view().push(1);
                 ufbxi_check!(uc, !tex.is_null(), "tex");
                 // C: `tex->shader_prop = tex->material_prop = conn->dst_prop;`
@@ -2807,10 +2835,12 @@ pub(crate) unsafe fn fetch_textures(
                     (*tex).material_prop = (*conn).dst_prop;
                     (*tex).shader_prop = (*tex).material_prop;
                 }
-                // SAFETY: as above; `src` has `type_ == Texture` (checked), so it
-                // names a live `ufbx_texture`.
+                // SAFETY: `tex` is the pushed slot (see above); `conn` points to a
+                // live `Connection` and its `src` has `type_ == Texture`
+                // (checked), so the ref names a live `ufbx_texture`.
                 unsafe {
-                    (*tex).texture = Ref::from_ptr(ref_ptr(&raw const (*conn).src) as *mut Texture)
+                    (*tex).texture =
+                        Ref::from_ptr(ptr::read(&raw const (*conn).src).ptr() as *mut Texture)
                 };
                 num_textures += 1;
             }
@@ -2867,11 +2897,15 @@ pub(crate) unsafe fn fetch_mesh_materials(
         while conn != conn_end {
             // SAFETY: `conn` is inside that span and its `src` ref names a live
             // scene element.
-            if unsafe { (*ref_ptr(&raw const (*conn).src)).type_ } == ElementType::Material {
+            if unsafe { ptr::read(&raw const (*conn).src) }
+                .view::<Mut>()
+                .type_()
+                == ElementType::Material
+            {
                 // SAFETY: as above, with `type_ == Material` (checked) making the
                 // referent a live `ufbx_material`.
                 let mat: *mut Material =
-                    unsafe { ref_ptr(&raw const (*conn).src) } as *mut Material;
+                    unsafe { ptr::read(&raw const (*conn).src) }.ptr() as *mut Material;
                 ufbxi_check!(
                     uc,
                     !uc.tmp_stack_view().push_copy_ref(&mat).is_null(),
@@ -2943,7 +2977,9 @@ pub(crate) unsafe fn fetch_deformers(
                 continue;
             }
             // SAFETY: as above; the `src` ref names a live scene element.
-            let type_: ElementType = unsafe { (*ref_ptr(&raw const (*conn).src)).type_ };
+            let type_: ElementType = unsafe { ptr::read(&raw const (*conn).src) }
+                .view::<Mut>()
+                .type_();
             if type_ == ElementType::SkinDeformer
                 || type_ == ElementType::BlendDeformer
                 || type_ == ElementType::CacheDeformer
@@ -3003,13 +3039,19 @@ pub(crate) fn fetch_blend_keyframes(
     while conn != conn_end {
         // SAFETY: `conn` is inside that span and its `src` ref names a live scene
         // element.
-        if unsafe { (*ref_ptr(&raw const (*conn).src)).type_ } == ElementType::BlendShape {
+        if unsafe { ptr::read(&raw const (*conn).src) }
+            .view::<Mut>()
+            .type_()
+            == ElementType::BlendShape
+        {
             // C: `ufbx_blend_keyframe key = { (ufbx_blend_shape*)conn->src };`
             // — the remaining fields are zero-initialized.
             let key = BlendKeyframe {
                 // SAFETY: as above, with `type_ == BlendShape` (checked) making the
                 // referent a live `ufbx_blend_shape`.
-                shape: unsafe { Ref::from_ptr(ref_ptr(&raw const (*conn).src) as *mut BlendShape) },
+                shape: unsafe {
+                    Ref::from_ptr(ptr::read(&raw const (*conn).src).ptr() as *mut BlendShape)
+                },
                 target_weight: 0.0,
                 effective_weight: 0.0,
             };
@@ -3052,15 +3094,20 @@ pub(crate) fn fetch_texture_layers(
     while conn != conn_end {
         // SAFETY: `conn` is inside the connection span and its `src` ref names a
         // live scene element.
-        if unsafe { (*ref_ptr(&raw const (*conn).src)).type_ } == ElementType::Texture {
+        if unsafe { ptr::read(&raw const (*conn).src) }
+            .view::<Mut>()
+            .type_()
+            == ElementType::Texture
+        {
             // The layer's source texture is an arena element reached through the
             // connection (write provenance), so its view anchors the property
             // lookups exactly like the typed element views in `finalize_scene`.
             // SAFETY: as above, with `type_ == Texture` (checked) making the
             // referent a live, context-owned `ufbx_texture` — a write-capable
             // pointer, which is what minting a `TextureView` requires.
-            let texture_view: &TextureView =
-                unsafe { TextureView::from_ptr(ref_ptr(&raw const (*conn).src) as *mut Texture) };
+            let texture_view: &TextureView = unsafe {
+                TextureView::from_ptr(ptr::read(&raw const (*conn).src).ptr() as *mut Texture)
+            };
             let texture: *mut Texture = texture_view.get();
             // C: `ufbx_texture_layer layer = { texture };` — the remaining
             // fields are zero-initialized (`UFBX_BLEND_TRANSLUCENT` == 0).
@@ -3297,8 +3344,14 @@ pub(crate) unsafe extern "C" fn bone_pose_less(
     // C-callback comparator (the sort is instantiated over that type), and each
     // `bone_node` ref names a live scene node.
     unsafe {
-        (*ref_ptr(&raw const (*a).bone_node)).element.typed_id
-            < (*ref_ptr(&raw const (*b).bone_node)).element.typed_id
+        ptr::read(&raw const (*a).bone_node)
+            .view::<Mut>()
+            .element()
+            .typed_id()
+            < ptr::read(&raw const (*b).bone_node)
+                .view::<Mut>()
+                .element()
+                .typed_id()
     }
 }
 
@@ -5125,13 +5178,9 @@ pub(crate) fn add_constraint_prop(
         // and `node.get()` hands back the viewed, live `ufbx_node` — the
         // liveness `opt_ref` requires of the reference it stores.
         match unsafe { (*cprop).type_ } {
-            ConstraintPropType::Node => constraint.set_node(unsafe { opt_ref(node.get()) }),
-            ConstraintPropType::IkEffector => {
-                constraint.set_ik_effector(unsafe { opt_ref(node.get()) })
-            }
-            ConstraintPropType::IkEndNode => {
-                constraint.set_ik_end_node(unsafe { opt_ref(node.get()) })
-            }
+            ConstraintPropType::Node => constraint.set_node(Some(node.to_ref())),
+            ConstraintPropType::IkEffector => constraint.set_ik_effector(Some(node.to_ref())),
+            ConstraintPropType::IkEndNode => constraint.set_ik_end_node(Some(node.to_ref())),
             ConstraintPropType::AimUp => constraint.set_aim_up_node(unsafe { opt_ref(node.get()) }),
             ConstraintPropType::Target => {
                 let target: *mut ConstraintTarget = uc.tmp_stack_view().push_zero(1);
