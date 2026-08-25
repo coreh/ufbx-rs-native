@@ -2022,28 +2022,35 @@ pub(crate) unsafe fn read_element(
 }
 
 // ufbx.c:12637-12653 `ufbxi_read_unknown`
+// `node_name` is the interned run itself: its pointer is stored into
+// `unknown->super_type.data` (the pointer-identity carrier) and its length is
+// measured by `strlen`, exactly as C does.
+//
+// # Safety
+// `node_name` must be NUL-terminated within its own run — `strlen` walks it
+// from `node_name.as_ptr()`, an obligation `&[u8]` does not carry.
 #[inline(never)]
 pub(crate) unsafe fn read_unknown(
     uc: &Context,
     node: &NodeView,
-    element: *mut ElementInfo,
+    element: &View<ElementInfo, Mut>,
     type_: String,
     sub_type: String,
-    node_name: *const u8,
+    node_name: &[u8],
 ) -> Result<(), Fail> {
     ufbxi_ignore!(node);
-    // SAFETY: `element` is the caller's live `ufbxi_element_info` and `Unknown`
-    // is the element struct for `ElementType::Unknown`.
+    // SAFETY: `element` views the caller's live `ufbxi_element_info` and
+    // `Unknown` is the element struct for `ElementType::Unknown`.
     let unknown: *mut Unknown =
-        unsafe { push_element::<Unknown>(uc, element, ElementType::Unknown) };
+        unsafe { push_element::<Unknown>(uc, element.get(), ElementType::Unknown) };
     ufbxi_check!(uc, !unknown.is_null(), "unknown");
     // SAFETY: `unknown` is the fresh non-null element checked above; `node_name`
-    // is the caller's NUL-terminated node name — `strlen`'s contract.
+    // is NUL-terminated within its own run (fn contract) — `strlen`'s contract.
     unsafe {
         (*unknown).type_ = type_;
         (*unknown).sub_type = sub_type;
-        (*unknown).super_type.data = node_name;
-        (*unknown).super_type.length = strlen(node_name);
+        (*unknown).super_type.data = node_name.as_ptr();
+        (*unknown).super_type.length = strlen(node_name.as_ptr());
     }
 
     // `type`, `sub_type` and `node_name` are raw strings so they may need to be sanitized.
@@ -7196,13 +7203,18 @@ pub(crate) unsafe fn read_synthetic_attribute(
             )?;
         } else {
             let sub_type_str: String = String::new_c(sub_type, strlen(sub_type));
+            // SAFETY: `attrib_info` is this frame's own `ufbxi_element_info`
+            // local — write-capable provenance, live and unmoved across the
+            // call; `super_type` is the caller's NUL-terminated interned node
+            // name, so the borrowed run spans it and its terminator, which is
+            // what `read_unknown`'s `strlen` walks.
             read_unknown(
                 uc,
                 node,
-                &raw mut attrib_info,
+                View::<ElementInfo, Mut>::from_ptr(&raw mut attrib_info),
                 type_str,
                 sub_type_str,
-                super_type,
+                crate::prelude::slice_from_ptr(super_type, strlen(super_type) + 1),
             )?;
         }
     }
@@ -7300,6 +7312,13 @@ pub(crate) fn read_object(uc: &Context, node: &NodeView) -> Result<(), Fail> {
     // readable for its own `length` bytes; interned pool strings are non-null
     // and are never moved or rewritten.
     let name_bytes: &[u8] = unsafe { core::slice::from_raw_parts(name, node.name_len() as usize) };
+    // `read_unknown` stores the run's own pointer into `unknown->super_type.data`
+    // and measures it with `strlen`, so its borrow spans the pooled name plus the
+    // terminator that walk ends on.
+    // SAFETY: as above, plus the trailing NUL the string pool writes after every
+    // interned run.
+    let name_run: &[u8] =
+        unsafe { core::slice::from_raw_parts(name, node.name_len() as usize + 1) };
     // SAFETY: as above.
     let sub_type_bytes: &[u8] =
         unsafe { core::slice::from_raw_parts(sub_type, sub_type_str.length) };
@@ -7381,7 +7400,16 @@ pub(crate) fn read_object(uc: &Context, node: &NodeView) -> Result<(), Fail> {
                     ElementType::LodGroup,
                 )?;
             } else {
-                read_unknown(uc, node, &raw mut info, type_str, sub_type_str, name)?;
+                // SAFETY: `info` is this frame's own `ufbxi_element_info` local —
+                // write-capable provenance, live and unmoved across the call.
+                read_unknown(
+                    uc,
+                    node,
+                    View::<ElementInfo, Mut>::from_ptr(&raw mut info),
+                    type_str,
+                    sub_type_str,
+                    name_run,
+                )?;
             }
         } else if name == sp::Geometry.as_ptr() {
             if sub_type == sp::Mesh.as_ptr() {
@@ -7411,7 +7439,16 @@ pub(crate) fn read_object(uc: &Context, node: &NodeView) -> Result<(), Fail> {
                     ElementType::NurbsTrimBoundary,
                 )?;
             } else {
-                read_unknown(uc, node, &raw mut info, type_str, sub_type_str, name)?;
+                // SAFETY: `info` is this frame's own `ufbxi_element_info` local —
+                // write-capable provenance, live and unmoved across the call.
+                read_unknown(
+                    uc,
+                    node,
+                    View::<ElementInfo, Mut>::from_ptr(&raw mut info),
+                    type_str,
+                    sub_type_str,
+                    name_run,
+                )?;
             }
         } else if name == sp::Deformer.as_ptr() {
             if sub_type == sp::Skin.as_ptr() {
@@ -7437,7 +7474,16 @@ pub(crate) fn read_object(uc: &Context, node: &NodeView) -> Result<(), Fail> {
                     ElementType::CacheDeformer,
                 )?;
             } else {
-                read_unknown(uc, node, &raw mut info, type_str, sub_type_str, name)?;
+                // SAFETY: `info` is this frame's own `ufbxi_element_info` local —
+                // write-capable provenance, live and unmoved across the call.
+                read_unknown(
+                    uc,
+                    node,
+                    View::<ElementInfo, Mut>::from_ptr(&raw mut info),
+                    type_str,
+                    sub_type_str,
+                    name_run,
+                )?;
             }
         } else if name == sp::Material.as_ptr() {
             read_material(uc, node, &raw mut info)?;
@@ -7530,7 +7576,16 @@ pub(crate) fn read_object(uc: &Context, node: &NodeView) -> Result<(), Fail> {
         } else if name == sp::Audio.as_ptr() {
             read_audio_clip(uc, node, &raw mut info)?;
         } else {
-            read_unknown(uc, node, &raw mut info, type_str, sub_type_str, name)?;
+            // SAFETY: `info` is this frame's own `ufbxi_element_info` local —
+            // write-capable provenance, live and unmoved across the call.
+            read_unknown(
+                uc,
+                node,
+                View::<ElementInfo, Mut>::from_ptr(&raw mut info),
+                type_str,
+                sub_type_str,
+                name_run,
+            )?;
         }
     }
 
