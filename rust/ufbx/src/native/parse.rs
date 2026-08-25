@@ -8406,13 +8406,17 @@ mod tests {
             buf_free(&mut uc.tmp_stack);
             buf_free(&mut uc.tmp_dom_nodes);
             buf_free(&mut uc.string_pool.buf);
-            // SAFETY: `uc` is this test's exclusively owned context, so its
-            // `string_pool` is live and write-capable; this is its last use.
-            string_pool_temp_free(StringPoolView::from_ptr(&raw mut uc.string_pool));
-            // SAFETY: `dom_node_map` is `uc`'s own live map.
-            map_free(MapView::from_ptr(&raw mut uc.dom_node_map));
-            assert_eq!(uc.ator_tmp.current_size, 0);
-            assert_eq!(uc.ator_result.current_size, 0);
         }
+        // SAFETY: single teardown — `uc` is this test's exclusively owned
+        // context, torn down once here at the end of the test, so this is the
+        // only release of its `string_pool`'s `temp_str`.
+        unsafe {
+            string_pool_temp_free(StringPoolView::from_ptr(&raw mut uc.string_pool));
+        }
+        // SAFETY: `dom_node_map` is `uc`'s own live map, initialized by
+        // `map_init` above, and this is its last use.
+        map_free(unsafe { MapView::from_ptr(&raw mut uc.dom_node_map) });
+        assert_eq!(uc.ator_tmp.current_size, 0);
+        assert_eq!(uc.ator_result.current_size, 0);
     }
 }

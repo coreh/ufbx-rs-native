@@ -1192,14 +1192,24 @@ pub(crate) unsafe fn load_imp(uc: &Context) -> Result<(), Fail> {
 // ufbx.c:25412-25462 `ufbxi_free_temp`
 #[inline(never)]
 pub(crate) fn free_temp(uc: &Context) {
+    // SAFETY: `thread_pool` is uc's own thread pool, valid by construction, and
+    // this teardown is its last use (mirrors C `ufbxi_free_temp`).
+    unsafe {
+        thread_pool_free(uc.thread_pool_mut_ptr());
+    }
+
+    // SAFETY: single teardown — `free_temp` is reached exactly once per load
+    // context, on the single teardown path of `load` after `load_imp` returns,
+    // so this is the only release of `uc`'s string-pool `temp_str`.
+    unsafe {
+        string_pool_temp_free(uc.string_pool_view());
+    }
+
     // SAFETY: every buffer, map, allocator and growth-state pair torn down
     // here is uc's own temp-side state, reached through uc's accessors and
     // valid by construction; this is the last use of all of it (mirrors C
     // `ufbxi_free_temp`).
     unsafe {
-        thread_pool_free(uc.thread_pool_mut_ptr());
-
-        string_pool_temp_free(uc.string_pool_view());
         buf_free(uc.warnings_view().tmp_stack_mut_ptr());
 
         map_free(uc.prop_type_map_view());

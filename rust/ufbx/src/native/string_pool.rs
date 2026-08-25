@@ -360,14 +360,27 @@ pub(crate) fn safe_string(data: *const u8, length: usize) -> String {
 }
 
 // ufbx.c:5028-5032 `ufbxi_string_pool_temp_free`
-pub(crate) fn string_pool_temp_free(pool: &StringPoolView) {
-    // SAFETY: the view's mint invariant vouches `pool` addresses a live,
-    // write-capable `StringPool`; `temp_str`/`temp_cap` are either the null/0
-    // never-allocated pair (`free` no-ops on count 0) or the buffer/capacity
-    // pair grown through the pool's own `map.ator`, the pairing `free` requires.
-    unsafe { free::<u8>(pool.map_view().ator(), pool.temp_str(), pool.temp_cap()) };
+/// # Safety
+/// Single teardown — must be called at most once per pool, after its last use
+/// of `temp_str`; `temp_str`/`temp_cap` are not reset (C parity), so a second
+/// call double-frees.
+pub(crate) unsafe fn string_pool_temp_free(pool: &StringPoolView) {
+    // SAFETY: `map` is an initialized embedded `Map`, and its own `ator` field
+    // is the initialized allocator the pool's temp buffer was grown through.
+    let ator = pool.map_view().ator();
+    // SAFETY: `temp_str` is initialized — the null of a never-grown pool or the
+    // buffer `grow_array_size` allocated through `ator`.
+    let temp_str = pool.temp_str();
+    // SAFETY: `temp_cap` is initialized — 0 alongside a null `temp_str`, else
+    // the capacity that buffer was allocated with.
+    let temp_cap = pool.temp_cap();
+    // SAFETY: the pair is exactly what `ator` handed out (`free` no-ops on
+    // count 0), and the caller's single-teardown obligation makes this its only
+    // release.
+    unsafe { free::<u8>(ator, temp_str, temp_cap) };
     // `map` is the pool's own map, used here for the last time before the pool
     // is discarded; the view's field projection preserves provenance.
+    // `map_free` is idempotent, so it stands on its own lane.
     map_free(pool.map_view());
 }
 
@@ -1863,11 +1876,16 @@ mod tests {
     }
 
     fn free_fixture(fx: &mut Fixture) {
-        // SAFETY: `fx` is a fixture the caller owns exclusively; its pool and
-        // buf were built by `make_fixture` over that same fixture's allocator,
-        // and this teardown is their last use.
+        // SAFETY: `fx` is a fixture the caller owns exclusively; its buf was
+        // built by `make_fixture` over that same fixture's allocator, and this
+        // teardown is its last use.
         unsafe {
             buf_free(&mut fx.pool.buf);
+        }
+        // SAFETY: single teardown — each test builds its own fixture and calls
+        // `free_fixture` once at its end, so this is the only release of that
+        // pool's `temp_str`.
+        unsafe {
             string_pool_temp_free(StringPoolView::from_ptr(&raw mut fx.pool));
         }
         assert_eq!(fx.ator.current_size, 0);
