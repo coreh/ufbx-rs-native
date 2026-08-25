@@ -244,6 +244,81 @@ pub(crate) struct AaNode {
     pub index: u32,
 }
 
+// Typed interior-mutable VIEW over an `AaNode` living in a map's `aa_buf`
+// arena, reinterpreted in place.
+pub(crate) type AaNodeView = crate::native::view::View<AaNode>;
+
+// Nullable `ufbxi_aa_node *` -> `Option<&AaNodeView>`: one named home for the
+// mint, so every raw-boundary site states the arena contract once.
+//
+// # Safety
+// `node` is null, or points at an `AaNode` that stays alive and unmoved for
+// `'a` with the write-capable provenance of the `aa_buf` arena it was pushed
+// from.
+#[inline(always)]
+unsafe fn aa_node_view<'a>(node: *mut AaNode) -> Option<&'a AaNodeView> {
+    if node.is_null() {
+        None
+    } else {
+        // SAFETY: non-null (checked) and live/arena-provenanced per this fn's
+        // contract.
+        Some(unsafe { AaNodeView::from_ptr(node) })
+    }
+}
+
+impl AaNodeView {
+    #[inline(always)]
+    pub(crate) fn left(&self) -> *mut AaNode {
+        view_read!(self, left)
+    }
+    #[inline(always)]
+    pub(crate) fn right(&self) -> *mut AaNode {
+        view_read!(self, right)
+    }
+    #[inline(always)]
+    pub(crate) fn level(&self) -> u32 {
+        view_read!(self, level)
+    }
+    #[inline(always)]
+    pub(crate) fn index(&self) -> u32 {
+        view_read!(self, index)
+    }
+    #[inline(always)]
+    pub(crate) fn set_left(&self, left: *mut AaNode) {
+        view_write!(self, left, left)
+    }
+    #[inline(always)]
+    pub(crate) fn set_right(&self, right: *mut AaNode) {
+        view_write!(self, right, right)
+    }
+    #[inline(always)]
+    pub(crate) fn set_level(&self, level: u32) {
+        view_write!(self, level, level)
+    }
+    #[inline(always)]
+    pub(crate) fn set_index(&self, index: u32) {
+        view_write!(self, index, index)
+    }
+
+    // The nullable child links as views: a link is null or points at another
+    // node of the same AA tree, pushed into the same `aa_buf` arena, so it
+    // stays alive and unmoved for as long as the receiver's own view does.
+    #[inline(always)]
+    pub(crate) fn left_view(&self) -> Option<&AaNodeView> {
+        let left = self.left();
+        // SAFETY: the link is null or an `AaNode` in the same arena as the
+        // receiver (tree invariant), live for the receiver's lifetime.
+        unsafe { aa_node_view(left) }
+    }
+    #[inline(always)]
+    pub(crate) fn right_view(&self) -> Option<&AaNodeView> {
+        let right = self.right();
+        // SAFETY: the link is null or an `AaNode` in the same arena as the
+        // receiver (tree invariant), live for the receiver's lifetime.
+        unsafe { aa_node_view(right) }
+    }
+}
+
 // ufbx.c:4373-4391 `ufbxi_map`
 // C-parity: `cmp_fn` is a plain (never-null after `ufbxi_map_init`) function
 // pointer in C; `Option` here only so a zero-initialized map (C callers memset
@@ -306,6 +381,18 @@ impl MapView {
     #[inline(always)]
     pub(crate) fn set_cmp_user(&self, cmp_user: *mut c_void) {
         view_write!(self, cmp_user, cmp_user)
+    }
+    // `aa_root` — the AA-tree overflow root, nullable, as a view.
+    #[inline(always)]
+    pub(crate) fn aa_root_view(&self) -> Option<&AaNodeView> {
+        let aa_root: *mut AaNode = view_read!(self, aa_root);
+        // SAFETY: the root is null or an `AaNode` pushed into this map's own
+        // `aa_buf` arena, live and unmoved for as long as the map is.
+        unsafe { aa_node_view(aa_root) }
+    }
+    #[inline(always)]
+    pub(crate) fn set_aa_root(&self, aa_root: *mut AaNode) {
+        view_write!(self, aa_root, aa_root)
     }
     // `aa_buf` (Buf) — typed VIEW handle (reinterpret-in-place); accessors on BufView.
     #[inline(always)]
@@ -465,10 +552,18 @@ pub(crate) fn map_free(map: &MapView) {
 // regression, a thread-local depth guard wraps the recursive body (which C
 // splits into `ufbxi_aa_tree_insert_rec`); otherwise the macro is empty and
 // the wrapper is a plain call.
+//
+// # Safety
+// `value` points at a key of the map's own key discipline — the untyped
+// `const void *` the map's `cmp_fn` was initialized for, whose pointees the
+// comparator may follow — and `item_size` is that map's element stride. Neither
+// is expressible in the signature: the map is key-type-erased in C and stays so
+// here (PORTING.md "Fn boundaries take borrows": map key pointees are a
+// declared obligation, not safety theater).
 #[inline(never)]
 pub(crate) unsafe fn aa_tree_insert(
     map: &MapView,
-    node: *mut AaNode,
+    node: Option<&AaNodeView>,
     value: *const c_void,
     index: u32,
     item_size: usize,
@@ -482,33 +577,37 @@ pub(crate) unsafe fn aa_tree_insert(
             ufbx_assert!(depth.get() < 59);
             depth.set(depth.get() + 1);
         });
-        // SAFETY: forwards this fn's pointer contract (valid tree `node`,
-        // `value`/`item_size` matching the map's element type) to the
-        // recursive body.
+        // SAFETY: forwards this fn's key contract (`value` pointing at a key
+        // of the map's own key discipline, `item_size` its element stride) to
+        // the recursive body.
         let ret = unsafe { aa_tree_insert_rec(map, node, value, index, item_size) };
         UFBXI_RECURSION_DEPTH.with(|depth| depth.set(depth.get() - 1));
         ret
     }
     #[cfg(not(feature = "regression"))]
     {
-        // SAFETY: forwards this fn's pointer contract (valid tree `node`,
-        // `value`/`item_size` matching the map's element type) to the
-        // recursive body.
+        // SAFETY: forwards this fn's key contract (`value` pointing at a key
+        // of the map's own key discipline, `item_size` its element stride) to
+        // the recursive body.
         unsafe { aa_tree_insert_rec(map, node, value, index, item_size) }
     }
 }
 
 // The recursive body (attached directly to `ufbxi_aa_tree_insert` in
 // non-regression C builds; recursive calls go through the guarded wrapper).
+//
+// # Safety
+// As `aa_tree_insert`: `value` points at a key of the map's own key discipline
+// and `item_size` is that map's element stride.
 unsafe fn aa_tree_insert_rec(
     map: &MapView,
-    node: *mut AaNode,
+    node: Option<&AaNodeView>,
     value: *const c_void,
     index: u32,
     item_size: usize,
 ) -> *mut AaNode {
-    let mut node = node;
-    if node.is_null() {
+    // C: `if (!node) { ... }` — the null check is the `None` arm.
+    let Some(mut node) = node else {
         // `aa_buf` is the map's own AA-tree buffer, reached as a view over the
         // field in place; the push allocates one `AaNode`.
         let new_node = map.aa_buf_view().push::<AaNode>(1);
@@ -516,71 +615,59 @@ unsafe fn aa_tree_insert_rec(
             return core::ptr::null_mut();
         }
         // SAFETY: `new_node` is the freshly pushed `AaNode`, just proven
-        // non-null, so its fields are writable.
-        unsafe {
-            (*new_node).left = core::ptr::null_mut();
-            (*new_node).right = core::ptr::null_mut();
-            (*new_node).level = 1;
-            (*new_node).index = index;
-        }
+        // non-null, so it is a live, writable slot in the map's own arena.
+        let new_node_view = unsafe { AaNodeView::from_ptr(new_node) };
+        new_node_view.set_left(core::ptr::null_mut());
+        new_node_view.set_right(core::ptr::null_mut());
+        new_node_view.set_level(1);
+        new_node_view.set_index(index);
         return new_node;
-    }
+    };
 
-    // SAFETY: `node` is a valid tree node (caller/recursion contract); its
-    // `index` addresses one of the map's `items`, whose element stride is the
-    // matching `item_size`, so the computed `entry` lands inside `items`.
+    // SAFETY: `node`'s `index` addresses one of the map's `items`, whose
+    // element stride is the matching `item_size` (this fn's contract), so the
+    // computed `entry` lands inside `items`.
     let entry =
-        unsafe { (map.items() as *mut u8).add((*node).index as usize * item_size) as *mut c_void };
+        unsafe { (map.items() as *mut u8).add(node.index() as usize * item_size) as *mut c_void };
     // C-parity: C calls through the raw `cmp_fn` pointer without a null check.
     // SAFETY: `map.cmp_fn` is the non-null comparator installed by `map_init`;
     // calling it with the map's `cmp_user` and the two same-key-discipline
     // pointers `value`/`entry` is the C-callback contract.
     let cmp = unsafe { (map.cmp_fn().unwrap_unchecked())(map.cmp_user(), value, entry) };
     if cmp < 0 {
-        // SAFETY: `node` is a valid tree node; its `left` child link is a valid
-        // tree pointer (possibly null, which `aa_tree_insert` handles).
-        unsafe { (*node).left = aa_tree_insert(map, (*node).left, value, index, item_size) };
+        // SAFETY: forwards this fn's key contract (`value`/`item_size` of the
+        // map's own key discipline) to the recursive call.
+        node.set_left(unsafe { aa_tree_insert(map, node.left_view(), value, index, item_size) });
     } else if cmp >= 0 {
-        // SAFETY: `node` is a valid tree node; its `right` child link is a valid
-        // tree pointer (possibly null, which `aa_tree_insert` handles).
-        unsafe { (*node).right = aa_tree_insert(map, (*node).right, value, index, item_size) };
+        // SAFETY: forwards this fn's key contract (`value`/`item_size` of the
+        // map's own key discipline) to the recursive call.
+        node.set_right(unsafe { aa_tree_insert(map, node.right_view(), value, index, item_size) });
     }
 
-    // SAFETY: `node` and its non-null `left` child are valid tree nodes, so
-    // their `level` fields are readable.
-    if unsafe { !(*node).left.is_null() && (*(*node).left).level == (*node).level } {
-        // SAFETY: `node` and its (non-null, per the guard) `left` child are
-        // valid tree nodes; the skew rotation only re-links their child
-        // pointers.
-        unsafe {
-            let left = (*node).left;
-            (*node).left = (*left).right;
-            (*left).right = node;
-            node = left;
-        }
+    // C: `if (node->left && node->left->level == node->level)` — the non-null
+    // guard is the `Some` arm, the level compare the `filter` predicate,
+    // evaluated in the same order and only on the non-null link.
+    if let Some(left) = node.left_view().filter(|left| left.level() == node.level()) {
+        node.set_left(left.right());
+        left.set_right(node.get());
+        node = left;
     }
 
-    // SAFETY: `node`, its non-null `right` child, and that child's non-null
-    // `right` grandchild are valid tree nodes, so their `level` fields are
-    // readable.
-    if unsafe {
-        !(*node).right.is_null()
-            && !(*(*node).right).right.is_null()
-            && (*(*(*node).right).right).level == (*node).level
-    } {
-        // SAFETY: `node` and its (non-null, per the guard) `right` child are
-        // valid tree nodes; the split rotation re-links their child pointers
-        // and bumps the promoted node's `level`.
-        unsafe {
-            let right = (*node).right;
-            (*node).right = (*right).left;
-            (*right).left = node;
-            (*right).level += 1;
-            node = right;
-        }
+    // C: `if (node->right && node->right->right && node->right->right->level
+    // == node->level)` — same shape, the grandchild guard nested in the
+    // predicate.
+    if let Some(right) = node.right_view().filter(|right| {
+        right
+            .right_view()
+            .is_some_and(|rr| rr.level() == node.level())
+    }) {
+        node.set_right(right.left());
+        right.set_left(node.get());
+        right.set_level(right.level() + 1);
+        node = right;
     }
 
-    node
+    node.get()
 }
 
 // ufbx.c:4483-4498 `ufbxi_aa_tree_find`
@@ -922,20 +1009,20 @@ pub(crate) unsafe fn map_insert_size(
                     ((*map).items as *const u8).add(size * new_index as usize) as *const c_void
                 }
             };
-            // SAFETY: `map.aa_root` is the map's own (possibly null) AA-tree
-            // root, live `map`; the mint carries this fn's caller contract
-            // (live, writable `Map`) into the view, and `aa_tree_insert`
-            // re-roots the overflow tree with `new_value`/`size` of the map's
-            // element discipline.
-            unsafe {
-                (*map).aa_root = aa_tree_insert(
-                    MapView::from_ptr(map),
-                    (*map).aa_root,
+            // SAFETY: the mint carries this fn's caller contract (live,
+            // writable `Map`) into the view.
+            let map_view = unsafe { MapView::from_ptr(map) };
+            // SAFETY: `aa_tree_insert` re-roots the overflow tree with
+            // `new_value`/`size` of the map's own key/element discipline.
+            map_view.set_aa_root(unsafe {
+                aa_tree_insert(
+                    map_view,
+                    map_view.aa_root_view(),
                     new_value,
                     new_index,
                     size,
-                );
-            }
+                )
+            });
             // SAFETY: `index` is this insertion's freshly claimed element slot
             // (< `map.size`), inside the items region.
             return unsafe { ((*map).items as *mut u8).add(size * index as usize) as *mut c_void };
