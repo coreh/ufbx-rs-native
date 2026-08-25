@@ -6538,23 +6538,16 @@ pub(crate) fn read_texture(
 
 // ufbx.c:14572-14599 `ufbxi_read_layered_texture`
 #[inline(never)]
-pub(crate) unsafe fn read_layered_texture(
+pub(crate) fn read_layered_texture(
     uc: &Context,
     node: &NodeView,
-    info: *mut ElementInfo,
+    info: &View<ElementInfo, Mut>,
 ) -> Result<(), Fail> {
-    // SAFETY: `info` is the caller's live `ufbxi_element_info` — write-capable
-    // provenance, live and unmoved across the call — whose `name` is a pooled
-    // NUL-terminated string and whose `props`/`dom_node` point into uc's own
-    // buffers, so all three survive being stored into the element by pointer;
-    // `Texture` is the element struct for `ElementType::Texture`.
-    let texture: *mut Texture = unsafe {
-        push_element::<Texture>(
-            uc,
-            View::<ElementInfo>::from_ptr(info),
-            ElementType::Texture,
-        )
-    };
+    // SAFETY: `info` views the caller's live `ufbxi_element_info`, whose `name`
+    // is a pooled NUL-terminated string and whose `props`/`dom_node` point into
+    // uc's own buffers, so all three survive being stored into the element by
+    // pointer; `Texture` is the element struct for `ElementType::Texture`.
+    let texture: *mut Texture = unsafe { push_element::<Texture>(uc, info, ElementType::Texture) };
     ufbxi_check!(uc, !texture.is_null(), "texture");
 
     // SAFETY: `texture` is the fresh non-null element pushed above.
@@ -7845,7 +7838,9 @@ pub(crate) fn read_object(uc: &Context, node: &NodeView) -> Result<(), Fail> {
             // write-capable provenance, live and unmoved across the call.
             read_texture(uc, node, View::<ElementInfo, Mut>::from_ptr(&raw mut info))?;
         } else if name == sp::LayeredTexture.as_ptr() {
-            read_layered_texture(uc, node, &raw mut info)?;
+            // SAFETY: `info` is this frame's own `ufbxi_element_info` local —
+            // write-capable provenance, live and unmoved across the call.
+            read_layered_texture(uc, node, View::<ElementInfo, Mut>::from_ptr(&raw mut info))?;
         } else if name == sp::Video.as_ptr() {
             read_video(uc, node, &raw mut info)?;
         } else if name == sp::AnimationStack.as_ptr() {
