@@ -6296,13 +6296,10 @@ pub(crate) unsafe fn retain_toplevel(uc: &Context, node: *mut Node) -> Result<()
 
 // ufbx.c:10846-10853 `ufbxi_retain_toplevel_child`
 #[inline(never)]
-pub(crate) unsafe fn retain_toplevel_child(uc: &Context, child: *mut Node) -> Result<(), Fail> {
+pub(crate) fn retain_toplevel_child(uc: &Context, child: &NodeView) -> Result<(), Fail> {
     ufbx_assert!(!uc.dom_parse_toplevel().is_null());
-    // SAFETY: `child` is a valid parse node living in `uc`'s arena (fn contract),
-    // which outlives the call.
-    let child_view: &NodeView = unsafe { NodeView::from_ptr(child) };
     // C passes a NULL out-pointer here; `None` is that absent out-slot.
-    retain_dom_node(uc, child_view, None)?;
+    retain_dom_node(uc, child, None)?;
     uc.set_dom_parse_num_children(uc.dom_parse_num_children().wrapping_add(1));
 
     Ok(())
@@ -7161,8 +7158,10 @@ pub(crate) unsafe fn parse_toplevel(uc: &Context, name: *const u8) -> Result<(),
             let mut i: usize = 0;
             while i < num_children as usize {
                 // SAFETY: `node` is live; `i < num_children` bounds
-                // `children.add(i)` inside the just-populated child run.
-                unsafe { retain_toplevel_child(uc, (*node).children.add(i))? };
+                // `children.add(i)` inside the just-populated child run, which
+                // lives in `uc`'s arena.
+                let child: &NodeView = unsafe { NodeView::from_ptr((*node).children.add(i)) };
+                retain_toplevel_child(uc, child)?;
                 i += 1;
             }
         }
@@ -7217,15 +7216,16 @@ pub(crate) fn parse_toplevel_child<'a>(
             // live `Node` slot receiving the popped node — `pop`'s contract.
             unsafe { pop::<Node>(uc.tmp_stack_mut_ptr(), 1, dst) };
 
-            if uc.opts_view().retain_dom() {
-                // SAFETY: `dst` is the freshly popped live `Node`.
-                unsafe { retain_toplevel_child(uc, dst)? };
-            }
-
             // SAFETY: `dst` is the just-popped live `Node`, held either in uc's
             // own `top_child` field or in a `tmp_buf` push — uc-owned arena
             // memory, valid and unmoved for the borrow of `uc`.
-            Ok(Some(unsafe { NodeView::from_ptr(dst) }))
+            let dst_view: &NodeView = unsafe { NodeView::from_ptr(dst) };
+
+            if uc.opts_view().retain_dom() {
+                retain_toplevel_child(uc, dst_view)?;
+            }
+
+            Ok(Some(dst_view))
         }
     } else {
         // Iterate already parsed nodes
