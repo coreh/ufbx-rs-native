@@ -7213,11 +7213,7 @@ pub(crate) fn modify_geometry<'a>(uc: &'a Context) -> Result<(), Fail> {
                 flip_winding(uc, mesh)?;
             }
 
-            // SAFETY: `mesh.element_raw()` addresses that live arena mesh's own
-            // element header with whole-struct provenance, which anchors an
-            // `ElementView`.
-            let geo_node: *mut Node =
-                get_geometry_transform_node(ElementView::from_ptr(mesh.element_raw()));
+            let geo_node: *mut Node = get_geometry_transform_node(mesh.element());
             if do_geometry_transforms && !geo_node.is_null() {
                 let mut tangent_matrix: Matrix = (*geo_node).geometry_to_node;
                 tangent_matrix.m03 = 0.0;
