@@ -6177,25 +6177,20 @@ macro_rules! patch_empty {
 
 // ufbx.c:20757-20800 `ufbxi_insert_texture_file`
 #[inline(never)]
-pub(crate) unsafe fn insert_texture_file(uc: &Context, texture: *mut Texture) -> Result<(), Fail> {
-    // SAFETY: `texture` points to a live, initialized `ufbx_texture` — the
-    // texture being registered with the file table (fn contract).
-    unsafe { (*texture).file_index = NO_INDEX };
+pub(crate) fn insert_texture_file(uc: &Context, texture: &TextureView) -> Result<(), Fail> {
+    texture.set_file_index(NO_INDEX);
 
     let mut key: *const u8 = ptr::null();
 
     // HACK: Even the raw entries have a null terminator so we can offset the
     // pointer by one for relative filenames. This guarantees that an overlapping
     // absolute and relative filenames will get separate textures.
-    // SAFETY: `texture` is live (see above); the raw relative blob spans `size`
-    // bytes plus the NUL the string pool appends, so offsetting by one stays
-    // inside its allocation.
-    unsafe {
-        if (*texture).raw_absolute_filename.size > 0 {
-            key = (*texture).raw_absolute_filename.data;
-        } else if (*texture).raw_relative_filename.size > 0 {
-            key = (*texture).raw_relative_filename.data.add(1);
-        }
+    if texture.raw_absolute_filename().size > 0 {
+        key = texture.raw_absolute_filename().data;
+    } else if texture.raw_relative_filename().size > 0 {
+        // SAFETY: the raw relative blob spans `size` bytes plus the NUL the
+        // string pool appends, so offsetting by one stays inside its allocation.
+        key = unsafe { texture.raw_relative_filename().data.add(1) };
     }
 
     if key.is_null() {
@@ -6225,37 +6220,35 @@ pub(crate) unsafe fn insert_texture_file(uc: &Context, texture: *mut Texture) ->
     // SAFETY: `entry` is non-null — either the hit from `map_find` or the freshly
     // filled insert above — and points to a live `TextureFileEntry`.
     let file: *mut TextureFile = unsafe { (*entry).file };
-    // SAFETY: `file` is that entry's `TextureFile`, pushed on `uc`'s `tmp` arena;
-    // `texture` is live.
-    unsafe { (*texture).file_index = (*file).index };
-    // SAFETY: `texture` is live (see above).
-    unsafe { (*texture).has_file = true };
-    // SAFETY: `file` and `texture` are both live (see above), so the macro's
-    // `(*file)` / `(*texture)` field projections address their own members.
+    // SAFETY: `file` is that entry's `TextureFile`, pushed on `uc`'s `tmp` arena.
+    texture.set_file_index(unsafe { (*file).index });
+    texture.set_has_file(true);
+    // SAFETY: `file` is live (see above), so the macro's `(*file)` field
+    // projections address its own members.
     unsafe {
-        patch_empty!((*file).filename, length, (*texture).filename);
+        patch_empty!((*file).filename, length, texture.filename());
         patch_empty!(
             (*file).relative_filename,
             length,
-            (*texture).relative_filename
+            texture.relative_filename()
         );
         patch_empty!(
             (*file).absolute_filename,
             length,
-            (*texture).absolute_filename
+            texture.absolute_filename()
         );
-        patch_empty!((*file).raw_filename, size, (*texture).raw_filename);
+        patch_empty!((*file).raw_filename, size, texture.raw_filename());
         patch_empty!(
             (*file).raw_relative_filename,
             size,
-            (*texture).raw_relative_filename
+            texture.raw_relative_filename()
         );
         patch_empty!(
             (*file).raw_absolute_filename,
             size,
-            (*texture).raw_absolute_filename
+            texture.raw_absolute_filename()
         );
-        patch_empty!((*file).content, size, (*texture).content);
+        patch_empty!((*file).content, size, texture.content());
     }
 
     Ok(())
@@ -10340,9 +10333,7 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
             }
         }
 
-        // SAFETY: `get()` hands back the live, initialized `ufbx_texture` the
-        // view was minted from.
-        unsafe { insert_texture_file(uc, texture.get()) }?;
+        insert_texture_file(uc, texture)?;
     }
 
     propagate_main_textures(uc.scene_view());
