@@ -803,23 +803,24 @@ pub(crate) fn obj_parse_vertex(uc: &Context, attrib: ObjAttrib, offset: usize) -
 // ufbx.c:17110-17166 `ufbxi_obj_parse_index`
 #[cfg(feature = "obj")]
 #[inline(never)]
+/// # Safety
+///
+/// `s` holds a token span (possibly empty) at token index >= 1 within the line
+/// window `obj_tokenize` scanned, so `data .. data + length` is readable and so
+/// is the byte *at* `end`: `obj_tokenize` terminates every non-'#' token on a
+/// delimiter byte inside that window (in the worst case the '\n' sentinel
+/// `obj_read_line` appends), and a '#' token — the one kind that ends on an
+/// arbitrary byte — is only ever produced at index 0, so none reaches here.
 pub(crate) unsafe fn obj_parse_index(
     uc: &Context,
     mesh: &ObjMeshView,
-    s: *mut String,
+    s: &mut String,
     attrib: u32,
 ) -> Result<(), Fail> {
-    // SAFETY: caller contract — `s` is a live `String` holding a token span
-    // (possibly empty) at token index >= 1 within the line window
-    // `obj_tokenize` scanned, so `data .. data + length` is readable and so is
-    // the byte *at* `end`: `obj_tokenize` terminates every non-'#' token on a
-    // delimiter byte inside that window (in the worst case the '\n' sentinel
-    // `obj_read_line` appends), and a '#' token — the one kind that ends on an
-    // arbitrary byte — is only ever produced at index 0, so none reaches here.
-    // The `'/'` rebasing below only shrinks a span from the front, keeping the
-    // same `end`. `ptr`/`end` bracket the span, `end` being one past its last
-    // byte and still within the window.
-    let (mut ptr, end) = unsafe { ((*s).data, (*s).data.add((*s).length)) };
+    // SAFETY: the span `s` describes is readable per the fn contract, so `end`
+    // is one past its last byte and still within the window. The `'/'` rebasing
+    // below only shrinks a span from the front, keeping the same `end`.
+    let (mut ptr, end) = (s.data, unsafe { s.data.add(s.length) });
 
     let mut negative: bool = false;
     // SAFETY: `ptr` is either inside the span or equal to `end`; both are
@@ -904,13 +905,10 @@ pub(crate) unsafe fn obj_parse_index(
         mesh.set_vertex_range_max(a, max64(mesh.vertex_range_max(a), index));
     }
 
-    // SAFETY: `s` is the caller's live `String` (contract above); `ptr` rests
-    // inside its own span at or before `end`, so the rebased span is a suffix
-    // of the original.
-    unsafe {
-        (*s).data = ptr;
-        (*s).length = to_size(end as isize - ptr as isize);
-    }
+    // `ptr` rests inside `s`'s own span at or before `end`, so the rebased span
+    // is a suffix of the original.
+    s.data = ptr;
+    s.length = to_size(end as isize - ptr as isize);
 
     Ok(())
 }
@@ -1118,12 +1116,14 @@ pub(crate) fn obj_parse_indices(
     for ix in 0..num_indices {
         // SAFETY: `token_begin + ix` is inside the caller's token window (its
         // end is bounded by `num_tokens`), so it indexes the stored token run;
-        // `tok` is an unaliased local that the per-attribute parser advances,
-        // and `mesh` is the anchored current mesh.
+        // `tok` is an unaliased local copy of such a token — a span at token
+        // index >= 1 within the line window, which is `obj_parse_index`'s
+        // contract — that the per-attribute parser advances, and `mesh` is the
+        // anchored current mesh.
         unsafe {
             let mut tok: String = *uc.obj().tokens().add(token_begin + ix);
             for attrib in 0..OBJ_NUM_ATTRIBS as u32 {
-                obj_parse_index(uc, mesh, &raw mut tok, attrib)?;
+                obj_parse_index(uc, mesh, &mut tok, attrib)?;
             }
         }
     }
