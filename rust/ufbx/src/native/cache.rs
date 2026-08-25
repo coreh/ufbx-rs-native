@@ -51,7 +51,8 @@ use crate::native::string_pool::{
 };
 use crate::native::view::SliceViewIter;
 #[cfg(feature = "geometry-cache")]
-use crate::native::view::{view_raw_const, view_raw_mut, view_read, view_write, Const, View};
+use crate::native::view::{view_raw_const, view_raw_mut, Const};
+use crate::native::view::{view_read, view_write, View};
 use crate::native::warnings::ufbxi_warnf;
 #[cfg(feature = "geometry-cache")]
 use crate::native::xml::{
@@ -2379,6 +2380,26 @@ pub(crate) struct ExternalFile {
     pub data_size: usize,
 }
 
+// Reinterpret-in-place VIEW over one `ufbxi_external_file` record inside the
+// deduplicated run `load_external_files` materializes in uc's tmp buffer;
+// `load_external_cache` takes it in place of C's `ufbxi_external_file *`.
+pub(crate) type ExternalFileView = View<ExternalFile>;
+
+impl ExternalFileView {
+    #[inline(always)]
+    pub(crate) fn filename(&self) -> String {
+        view_read!(self, filename)
+    }
+    #[inline(always)]
+    pub(crate) fn absolute_filename(&self) -> String {
+        view_read!(self, absolute_filename)
+    }
+    #[inline(always)]
+    pub(crate) fn set_data(&self, data: *mut c_void) {
+        view_write!(self, data, data)
+    }
+}
+
 // ufbx.c:24802-24811 `ufbxi_less_external_file`
 pub(crate) unsafe extern "C" fn less_external_file(
     user: *mut c_void,
@@ -2409,10 +2430,7 @@ pub(crate) unsafe extern "C" fn less_external_file(
 // ufbx.c:24813-24867 `ufbxi_load_external_cache`
 #[cfg(feature = "geometry-cache")]
 #[inline(never)]
-pub(crate) unsafe fn load_external_cache(
-    uc: &Context,
-    file: *mut ExternalFile,
-) -> Result<(), Fail> {
+pub(crate) fn load_external_cache(uc: &Context, file: &ExternalFileView) -> Result<(), Fail> {
     // C: `ufbxi_cache_context cc = { UFBX_ERROR_NONE };`
     // SAFETY: `CacheContext` is plain data whose all-zero bit pattern is the C
     // zero-initializer this line ports.
@@ -2433,17 +2451,18 @@ pub(crate) unsafe fn load_external_cache(
         .set_scale_factor(uc.scene_view().metadata_view().geometry_scale());
 
     // SAFETY: `cc` is initialized above with the borrowed allocators and string
-    // pool `cache_load` consumes; the caller's contract is that `file` points
-    // at a live `ExternalFile`, whose `filename` is an interned pool string.
-    let mut cache: *mut GeometryCache = unsafe { cache_load(&cc, (*file).filename) };
+    // pool `cache_load` consumes; `file`'s `filename` is an interned pool
+    // string, the NUL-terminated run `cache_load` requires.
+    let mut cache: *mut GeometryCache = unsafe { cache_load(&cc, file.filename()) };
     if cache.is_null() {
         if cc.error_view().type_() == ErrorType::FileNotFound {
             // SAFETY: `error_mut_ptr` addresses `cc`'s own `Error` field, so
             // one `Error` worth of bytes is writable there.
             unsafe { core::ptr::write_bytes(cc.error_mut_ptr(), 0, 1) };
-            // SAFETY: same live-`ExternalFile` and initialized-`cc` argument as
-            // the first attempt; the error was just cleared for the retry.
-            cache = unsafe { cache_load(&cc, (*file).absolute_filename) };
+            // SAFETY: same initialized `cc` as the first attempt and another
+            // interned pool string off `file`; the error was just cleared for
+            // the retry.
+            cache = unsafe { cache_load(&cc, file.absolute_filename()) };
         }
     }
 
@@ -2454,21 +2473,18 @@ pub(crate) unsafe fn load_external_cache(
     if cache.is_null() {
         if cc.error_view().type_() == ErrorType::FileNotFound {
             if uc.opts_view().ignore_missing_external_files() {
-                // SAFETY: the caller's contract is that `file` points at a live
-                // `ExternalFile`, whose `filename` is a NUL-terminated interned
-                // pool string — what the `%s` conversion reads. The verbatim C
-                // condition text is supplied, so wrapping the condition does
-                // not perturb the recorded error string.
+                // The `%s` conversion reads `file`'s `filename`, a
+                // NUL-terminated interned pool string. The verbatim C condition
+                // text is supplied, so wrapping the condition does not perturb
+                // the recorded error string.
                 ufbxi_check!(
                     uc,
-                    unsafe {
-                        ufbxi_warnf!(
-                            uc,
-                            WarningType::MissingExternalFile,
-                            "Failed to open geometry cache: %s",
-                            (*file).filename.data
-                        )
-                    }
+                    ufbxi_warnf!(
+                        uc,
+                        WarningType::MissingExternalFile,
+                        "Failed to open geometry cache: %s",
+                        file.filename().data
+                    )
                     .is_ok(),
                     "ufbxi_warnf_imp(&uc->warnings, UFBX_WARNING_MISSING_EXTERNAL_FILE, ~0u, \"Failed to open geometry cache: %s\", file->filename.data)"
                 );
@@ -2493,16 +2509,14 @@ pub(crate) unsafe fn load_external_cache(
         return Err(Fail::unrecorded());
     }
 
-    // SAFETY: the caller's contract is that `file` points at a live, writable
-    // `ExternalFile`.
-    unsafe { (*file).data = cache as *mut c_void };
+    file.set_data(cache as *mut c_void);
     Ok(())
 }
 
 // ufbx.c:24862-24865 (`#else` branch of `UFBXI_FEATURE_GEOMETRY_CACHE`)
 #[cfg(not(feature = "geometry-cache"))]
 #[inline(never)]
-pub(crate) fn load_external_cache(uc: &Context, file: *mut ExternalFile) -> Result<(), Fail> {
+pub(crate) fn load_external_cache(uc: &Context, file: &ExternalFileView) -> Result<(), Fail> {
     // C: `file` is unreferenced in the `#else` arm.
     let _ = file;
     if uc.opts_view().ignore_missing_external_files() {
@@ -2614,7 +2628,10 @@ pub(crate) fn load_external_files(uc: &Context) -> Result<(), Fail> {
                 continue;
             }
             if (*file).type_ == ExternalFileType::GeometryCache {
-                load_external_cache(uc, file)?;
+                // SAFETY: `file` is an in-bounds element of the fresh
+                // `num_files` run materialized above in uc's own tmp buffer —
+                // live, unmoved and write-capable arena memory.
+                load_external_cache(uc, ExternalFileView::from_ptr(file))?;
             }
             prev_name = (*file).filename.data;
             prev_type = (*file).type_;
