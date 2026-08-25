@@ -2820,10 +2820,18 @@ pub(crate) unsafe fn fetch_textures(
 }
 
 // ufbx.c:19175-19197 `ufbxi_fetch_mesh_materials`
+//
+// # Safety
+// `element` heads a live, arena-owned `ufbx_element`. With `search_node` set,
+// its provenance must additionally span the ENCLOSING element struct: the walk
+// then reaches `ufbxi_get_element_node`, which reads `ufbx_node` fields past
+// `size_of::<Element>()`, so a pointer derived from a header-only
+// `&View<Element>` may not address them. With `search_node` clear the walk
+// stays within the `ufbx_element` header, where header-only provenance suffices.
 #[inline(never)]
 pub(crate) unsafe fn fetch_mesh_materials(
     uc: &Context,
-    list: *mut RefList<Material>,
+    list: &RefListView<Material>,
     element: *mut Element,
     search_node: bool,
 ) -> Result<(), Fail> {
@@ -2873,15 +2881,13 @@ pub(crate) unsafe fn fetch_mesh_materials(
         }
     }
 
-    // SAFETY: `list` is the caller's out-list (fn contract).
-    unsafe {
-        (*list).data = uc
-            .result_view()
+    list.set_data(
+        uc.result_view()
             .push_pop::<*mut Material>(uc.tmp_stack_view(), num_materials)
-            as *const Ref<Material>;
-        (*list).count = num_materials;
-        ufbxi_check!(uc, !(*list).data.is_null(), "list->data");
-    }
+            as *const Ref<Material>,
+    );
+    list.set_count(num_materials);
+    ufbxi_check!(uc, !list.data().is_null(), "list->data");
 
     Ok(())
 }
@@ -9382,9 +9388,10 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
                 };
             }
 
-            // SAFETY: `materials_raw()`/`element_raw()` address the viewed mesh's
-            // own `materials` list header and element header.
-            unsafe { fetch_mesh_materials(uc, mesh.materials_raw(), mesh.element_raw(), true) }?;
+            // SAFETY: `element_raw()` addresses the viewed mesh's own element
+            // header, and its provenance spans the enclosing `ufbx_mesh` — the
+            // whole element struct the `search_node` walk may read.
+            unsafe { fetch_mesh_materials(uc, mesh.materials_view(), mesh.element_raw(), true) }?;
 
             // Patch materials to instances if necessary
             if mesh.materials().count > 0 {
