@@ -5707,9 +5707,9 @@ pub(crate) fn solve_auto_tangent_right(
 }
 
 // ufbx.c:14215-14225 `ufbxi_solve_tcb`
-pub(crate) unsafe fn solve_tcb(
-    p_slope_left: *mut f32,
-    p_slope_right: *mut f32,
+pub(crate) fn solve_tcb(
+    p_slope_left: &mut f32,
+    p_slope_right: &mut f32,
     tension: f64,
     continuity: f64,
     bias: f64,
@@ -5723,10 +5723,8 @@ pub(crate) unsafe fn solve_tcb(
     let d10: f64 = factor * (1.0 - tension) * (1.0 + bias) * (1.0 + continuity);
     let d11: f64 = factor * (1.0 - tension) * (1.0 - bias) * (1.0 - continuity);
 
-    // SAFETY: `p_slope_left` is a live, writable `f32` out-slot (fn contract).
-    unsafe { *p_slope_left = (d00 * slope_left + d01 * slope_right) as f32 };
-    // SAFETY: `p_slope_right` is a live, writable `f32` out-slot (fn contract).
-    unsafe { *p_slope_right = (d10 * slope_left + d11 * slope_right) as f32 };
+    *p_slope_left = (d00 * slope_left + d01 * slope_right) as f32;
+    *p_slope_right = (d10 * slope_left + d11 * slope_right) as f32;
 }
 
 // ufbx.c:14227-14255 `ufbxi_read_extrapolation`
@@ -6067,20 +6065,16 @@ pub(crate) unsafe fn read_animation_curve(
                     tcb_edge = true;
                 }
 
-                // SAFETY: `slope_left`/`slope_right` are live `f32` locals — the
-                // out-slots `solve_tcb` writes.
-                unsafe {
-                    solve_tcb(
-                        &raw mut slope_left,
-                        &raw mut slope_right,
-                        attrs_data[attr_ix] as f64,
-                        attrs_data[attr_ix + 1] as f64,
-                        attrs_data[attr_ix + 2] as f64,
-                        tcb_slope_left,
-                        tcb_slope_right,
-                        tcb_edge,
-                    )
-                };
+                solve_tcb(
+                    &mut slope_left,
+                    &mut slope_right,
+                    attrs_data[attr_ix] as f64,
+                    attrs_data[attr_ix + 1] as f64,
+                    attrs_data[attr_ix + 2] as f64,
+                    tcb_slope_left,
+                    tcb_slope_right,
+                    tcb_edge,
+                );
 
                 // TODO: How to handle these?
                 next_slope_left = 0.0f32;
