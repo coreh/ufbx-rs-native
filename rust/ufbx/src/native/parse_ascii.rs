@@ -60,6 +60,7 @@ use crate::native::platform::{
 };
 use crate::native::string_pool::{push_sanitized_string, push_string, push_string_place_str};
 use crate::native::thread::{thread_pool_create_task, thread_pool_run_task, Task};
+use crate::native::view::{view_read, view_write, Mut, View};
 use crate::native::warnings::ufbxi_warnf;
 use crate::prelude::{Real, String};
 
@@ -1065,81 +1066,106 @@ pub(crate) struct AsciiArrayTask {
     pub offset: usize,
 }
 
+impl View<AsciiArrayTask> {
+    pub(crate) fn arr_data(&self) -> *mut c_void {
+        view_read!(self, arr_data)
+    }
+
+    pub(crate) fn arr_type(&self) -> u8 {
+        view_read!(self, arr_type)
+    }
+
+    pub(crate) fn arr_size(&self) -> usize {
+        view_read!(self, arr_size)
+    }
+
+    pub(crate) fn offset(&self) -> usize {
+        view_read!(self, offset)
+    }
+
+    pub(crate) fn set_offset(&self, value: usize) {
+        view_write!(self, offset, value);
+    }
+}
+
 // ufbx.c:9975-10008 `ufbxi_ascii_array_task_parse_floats`
+///
+/// Parses comma-separated floats out of `src` into the task's destination
+/// array, returning the offset within `src` of the byte after the last
+/// committed comma, or `None` for C's `NULL` (destination array full).
+///
+/// # Safety
+/// `t`'s `arr_data` / `arr_size` / `arr_type` fields must describe a live
+/// destination run: `arr_data` is the base of an array of at least `arr_size`
+/// elements of the type `arr_type` names (`'f'` -> `f32`, `'d'` -> `f64`), of
+/// which the first `offset` are already written. That `(pointer, count)` run is
+/// a caller vouch the view type cannot carry.
 #[inline(never)]
 pub(crate) unsafe fn ascii_array_task_parse_floats(
-    t: *mut AsciiArrayTask,
-    src: *const u8,
-    src_end: *const u8,
+    t: &View<AsciiArrayTask, Mut>,
+    src: &[u8],
     parse_flags: u32,
-) -> *const u8 {
-    let mut src: *const u8 = src;
-    // SAFETY: `t` points to a valid, live `AsciiArrayTask` (caller contract);
-    // reads its `offset` field.
-    let mut offset: usize = unsafe { (*t).offset };
-    // SAFETY: `t` is a valid, live `AsciiArrayTask`; when its type is `'f'`/`'d'`,
-    // `arr_data` is the base of the matching destination array and `offset` is the
-    // count already written, so `add_ptr` addresses its next slot.
-    let (mut dst_float, mut dst_double): (*mut f32, *mut f64) = unsafe {
-        (
-            if (*t).arr_type == b'f' {
-                add_ptr((*t).arr_data as *mut f32, offset)
-            } else {
-                core::ptr::null_mut()
-            },
-            if (*t).arr_type == b'd' {
-                add_ptr((*t).arr_data as *mut f64, offset)
-            } else {
-                core::ptr::null_mut()
-            },
-        )
-    };
+) -> Option<usize> {
+    let mut src_ix: usize = 0;
+    let mut offset: usize = t.offset();
+    // When the task type is `'f'`/`'d'`, `arr_data` is the base of the matching
+    // destination array and `offset` is the count already written, so `add_ptr`
+    // addresses its next slot.
+    let (mut dst_float, mut dst_double): (*mut f32, *mut f64) = (
+        if t.arr_type() == b'f' {
+            add_ptr(t.arr_data() as *mut f32, offset)
+        } else {
+            core::ptr::null_mut()
+        },
+        if t.arr_type() == b'd' {
+            add_ptr(t.arr_data() as *mut f64, offset)
+        } else {
+            core::ptr::null_mut()
+        },
+    );
     ufbx_assert!(!dst_float.is_null() || !dst_double.is_null());
-    let mut src_begin: *const u8 = src;
+    let mut src_begin: usize = src_ix;
 
-    while src != src_end {
-        // SAFETY: both callers guarantee the run's final byte `*(src_end - 1)` is
-        // a `','` (imp's buffer appends one when it leaves the value state; its
+    while src_ix != src.len() {
+        // Both callers guarantee the run's final byte `src[src.len() - 1]` is a
+        // `','` (imp's buffer appends one when it leaves the value state; its
         // span path cuts `parse_end` just past one), a non-space that halts this
-        // scan and every deref strictly before `src_end`.
-        while unsafe { is_space(*src) } {
-            src = unsafe { src.add(1) };
+        // scan strictly before the run end.
+        while is_space(src[src_ix]) {
+            src_ix += 1;
         }
 
         // Try to parse the next value, we don't commit this until we find a comma after it above.
         let mut num_end: *const u8 = core::ptr::null();
-        // SAFETY: `[src, src_end)` is the caller's readable parse run; `parse_double`
-        // scans at most `src_end - src` bytes and stores its end into `num_end`.
+        // SAFETY: `src[src_ix..]` is a readable run of `src.len() - src_ix`
+        // bytes; `parse_double` scans at most that many and stores its end into
+        // `num_end`, which therefore lands inside `src`.
         let val: f64 = unsafe {
             parse_double(
-                src,
-                to_size(src_end as isize - src as isize),
+                src[src_ix..].as_ptr(),
+                src.len() - src_ix,
                 &raw mut num_end,
                 parse_flags,
             )
         };
         if num_end.is_null() {
-            return src_begin;
+            return Some(src_begin);
         }
-        src = num_end;
+        src_ix = to_size(num_end as isize - src.as_ptr() as isize);
 
-        // SAFETY: as the first scan — the run's trailing `','` halts it strictly
-        // before `src_end`.
-        while unsafe { is_space(*src) } {
-            src = unsafe { src.add(1) };
+        // As the first scan — the run's trailing `','` halts it strictly before
+        // the run end.
+        while is_space(src[src_ix]) {
+            src_ix += 1;
         }
-        // SAFETY: `src` rests on a non-space byte within the parse run.
-        if unsafe { *src } != b',' {
+        if src[src_ix] != b',' {
             break;
         }
-        // SAFETY: `src` addresses the just-read comma, a byte before `src_end`,
-        // so `+1` stays at or before the run end.
-        src = unsafe { src.add(1) };
-        src_begin = src;
+        src_ix += 1;
+        src_begin = src_ix;
 
-        // SAFETY: `t` is a valid, live `AsciiArrayTask`; reads its `arr_size`.
-        if offset >= unsafe { (*t).arr_size } {
-            return core::ptr::null();
+        if offset >= t.arr_size() {
+            return None;
         }
         if !dst_double.is_null() {
             // SAFETY: `offset < arr_size` (checked above), so `dst_double` (base +
@@ -1160,11 +1186,8 @@ pub(crate) unsafe fn ascii_array_task_parse_floats(
         offset += 1;
     }
 
-    // SAFETY: `t` is a valid, live `AsciiArrayTask`; writes back its `offset`.
-    unsafe {
-        (*t).offset = offset;
-    }
-    src_begin
+    t.set_offset(offset);
+    Some(src_begin)
 }
 
 // ufbx.c:10010-10040 `ufbxi_ascii_array_task_parse_ints`
@@ -1269,9 +1292,24 @@ pub(crate) unsafe fn ascii_array_task_parse(
     // reads its `arr_type` field.
     if unsafe { (*t).arr_type } == b'f' || unsafe { (*t).arr_type } == b'd' {
         let flags: u32 = parse_double_init_flags();
-        // SAFETY: forwards the caller's `t` validity and `[src, src_end)` parse
-        // run to the float worker.
-        unsafe { ascii_array_task_parse_floats(t, src, src_end, flags) }
+        // SAFETY: `t` points to a valid, live, write-capable `AsciiArrayTask`
+        // (caller contract), so it mints the task view, and it carries the
+        // destination-run vouch the float worker documents; `[src, src_end)` is
+        // the caller's readable parse run, minted once as the worker's slice.
+        let src_begin: Option<usize> = unsafe {
+            ascii_array_task_parse_floats(
+                View::<AsciiArrayTask, Mut>::from_ptr(t),
+                core::slice::from_raw_parts(src, to_size(src_end as isize - src as isize)),
+                flags,
+            )
+        };
+        match src_begin {
+            // SAFETY: `src_begin` is an offset at or before `src_end - src`, so
+            // it lands inside the caller's own run, derived from `src` to keep
+            // that run's provenance.
+            Some(offset) => unsafe { src.add(offset) },
+            None => core::ptr::null(),
+        }
     } else {
         // SAFETY: forwards the caller's `t` validity and `[src, src_end)` parse
         // run to the int worker.
