@@ -82,6 +82,7 @@ use crate::generated::{
 };
 #[cfg(feature = "tessellation")]
 use crate::generated::{RawTessellateCurveOpts, RawTessellateSurfaceOpts};
+#[cfg(feature = "baking")]
 use crate::native::allocator::free;
 use crate::native::allocator::{
     align_to_mask, alloc, free_ator, Allocator, CACHE_IMP_MAGIC, REFCOUNT_IMP_MAGIC,
