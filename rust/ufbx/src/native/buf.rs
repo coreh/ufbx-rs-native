@@ -16,7 +16,7 @@ use core::ffi::c_void;
 use core::mem::size_of;
 
 use crate::native::allocator::{
-    align_to_mask, alloc_size, does_overflow, free_size, size_align_mask, Allocator,
+    align_to_mask, alloc_size, does_overflow, free_size, size_align_mask, Allocator, AllocatorView,
     BUF_CHUNK_IMP_MAGIC, ZERO_SIZE_BUFFER,
 };
 #[cfg(feature = "regression")]
@@ -181,6 +181,14 @@ impl<'a> ChunkIter<'a> {
     /// Reading the link before the yield also means a corrupted chunk has its
     /// link read before the body's `magic` assert fires (C's two scan loops
     /// assert first); the tripwire is weaker only on already-invalid memory.
+    ///
+    /// `head` stays a RAW pointer rather than a `&View<BufChunk>`: `BufChunk`
+    /// is a flexible-array-member struct, so a view over it tags the header
+    /// bytes only (PORTING.md "Allocator + ufbxi_buf"). Every `ChunkRef` this
+    /// walker yields — the head chunk included — carries `ptr` onward to
+    /// `chunk_data()` and to `free_chunk`, both of which reach past the header
+    /// and out to the whole allocation; a `head.get()` derived from a header
+    /// view would narrow that provenance and make the deallocation invalid.
     #[inline]
     unsafe fn new(head: *mut BufChunk, dir: ChunkDir) -> Self {
         Self {
@@ -241,19 +249,26 @@ impl<'a> Iterator for ChunkIter<'a> {
 // Takes the `ChunkRef` by value: after the free the body cannot touch the
 // chunk through its (now dangling) accessors without a compile error.
 //
+// The `&AllocatorView` param discharges the allocator's liveness and
+// write-provenance; the chunk side stays a declared obligation, `ChunkRef`
+// being a header view plus a raw pointer that can express neither "allocated
+// from THIS allocator" nor "not already freed".
+//
 // # Safety
 // `chunk` was yielded by a `ChunkIter` whose chain is allocated from `ator`
 // (each chunk `size_of::<BufChunk>() + size` bytes) and is live at this point.
 #[inline]
-unsafe fn free_chunk(ator: *mut Allocator, chunk: ChunkRef<'_>) {
+unsafe fn free_chunk(ator: &AllocatorView, chunk: ChunkRef<'_>) {
     let chunk: *mut BufChunk = chunk.ptr();
     // SAFETY: the fn contract above — a live chunk of exactly that allocation,
-    // reached through its whole-allocation pointer.
+    // reached through its whole-allocation pointer; `ator.get()` is the view's
+    // write-provenance pointer to the live `Allocator` it was minted over (the
+    // `View::from_ptr` mint invariant), which is `free_size`'s raw contract.
     unsafe {
         ufbx_assert!((*chunk).magic == BUF_CHUNK_IMP_MAGIC as usize);
         (*chunk).magic = 0;
         free_size(
-            ator,
+            ator.get(),
             1,
             chunk as *mut c_void,
             size_of::<BufChunk>() + (*chunk).size,
@@ -899,17 +914,23 @@ pub(crate) unsafe fn buf_free_unused(b: *mut Buf) {
         return;
     }
 
+    // SAFETY: `(*b).ator` is `b`'s live stored allocator back-pointer (the
+    // `Buf` construction invariant, the same standing the `BufView` push family
+    // relies on), owned by the enclosing context — write-capable provenance
+    // alive for the rest of this call.
+    let ator = unsafe { AllocatorView::from_ptr((*b).ator) };
+
     // SAFETY: `chunk` is `b`'s non-null active chunk (checked above); its
-    // `->next` chain holds live chunks allocated from `(*b).ator` — the
+    // `->next` chain holds live chunks allocated from `ator` — the
     // `free_chunk` contract for each, freed on its own iteration only.
     for c in unsafe { ChunkIter::forward((*chunk).next) } {
-        unsafe { free_chunk((*b).ator, c) };
+        unsafe { free_chunk(ator, c) };
     }
     // SAFETY: `chunk` is `b`'s live active chunk; unlinking its freed tail.
     unsafe { (*chunk).next = core::ptr::null_mut() };
 
     // SAFETY: `chunk` and its `->prev` chain are live chunks of `b` allocated
-    // from `(*b).ator` (the `free_chunk` contract); `b` is the live `Buf` whose
+    // from `ator` (the `free_chunk` contract); `b` is the live `Buf` whose
     // own fields the loop rewinds.
     // C: `while (b->pos == 0 && chunk)` — the link is read before the free.
     let mut chunks = unsafe { ChunkIter::backward(chunk) };
@@ -918,7 +939,7 @@ pub(crate) unsafe fn buf_free_unused(b: *mut Buf) {
             break;
         };
         let prev = c.prev();
-        unsafe { free_chunk((*b).ator, c) };
+        unsafe { free_chunk(ator, c) };
         unsafe { (*b).chunks[0] = prev };
         if !prev.is_null() {
             unsafe {
@@ -1146,12 +1167,17 @@ pub(crate) fn buf_free(buf: &BufView) {
     // assertion each generated read accessor makes. Each `chunks[i]` head and
     // the chain from its `->root` are live chunks allocated from `(*buf).ator`
     // (the `Buf` construction invariant, the same standing the `BufView` push
-    // family relies on) — the `free_chunk` contract for each.
+    // family relies on) — the `free_chunk` contract for each. That stored
+    // allocator back-pointer is context-owned, so it carries write-capable
+    // provenance and stays alive for this call: the `AllocatorView` mint. It is
+    // reached only where a chunk list is non-empty, matching C, which touches
+    // `buf->ator` only through the `ufbxi_free_size` calls in the loop body.
     for i in 0..2usize {
         let chunk = unsafe { (*buf).chunks[i] };
         if !chunk.is_null() {
+            let ator = unsafe { AllocatorView::from_ptr((*buf).ator) };
             for c in unsafe { ChunkIter::forward((*chunk).root) } {
-                unsafe { free_chunk((*buf).ator, c) };
+                unsafe { free_chunk(ator, c) };
             }
         }
         unsafe { (*buf).chunks[i] = core::ptr::null_mut() };
@@ -1238,10 +1264,14 @@ pub(crate) fn buf_clear(view: &BufView) {
             // the full `HUGE_MAX_SCAN` iterations, so its `->prev` is the last
             // tracked live `BufChunk` (non-null); unlinking the tail from it.
             unsafe { (*(*huge).prev).next = core::ptr::null_mut() };
+            // SAFETY: `(*buf).ator` is the buf's live stored allocator
+            // back-pointer into the enclosing context (the `Buf` construction
+            // invariant) — write-capable provenance, alive for this call.
+            let ator = unsafe { AllocatorView::from_ptr((*buf).ator) };
             // SAFETY: the unreachable tail is a live chain allocated from
-            // `(*buf).ator`; each chunk is freed on its own iteration only.
+            // `ator`; each chunk is freed on its own iteration only.
             for c in unsafe { ChunkIter::forward(huge) } {
-                unsafe { free_chunk((*buf).ator, c) };
+                unsafe { free_chunk(ator, c) };
             }
         }
     }
@@ -1358,9 +1388,12 @@ mod tests {
             // `root`-linked list this buf pushed, each chunk allocated from
             // `b.ator` with `sizeof(BufChunk) + size` bytes. Nothing else
             // holds these chunks, so freeing them here is the last use.
+            // `b.ator` is the fixture's live, exclusively-owned allocator —
+            // write-capable provenance for the `AllocatorView` mint.
             unsafe {
+                let ator = AllocatorView::from_ptr(b.ator);
                 for c in ChunkIter::forward((*chunk).root) {
-                    free_chunk(b.ator, c);
+                    free_chunk(ator, c);
                 }
             }
             b.chunks[list_ix] = core::ptr::null_mut();
