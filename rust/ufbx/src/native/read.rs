@@ -140,7 +140,7 @@ use crate::native::thread::{
     thread_pool_available_tasks, thread_pool_flush_group, thread_pool_wait_all,
     thread_pool_wait_group, THREAD_GROUP_COUNT,
 };
-use crate::native::view::{view_project, view_raw_mut, view_read_shared, view_write};
+use crate::native::view::{view_project, view_raw_mut, view_read, view_read_shared, view_write};
 use crate::native::view::{Mode, Mut, SliceViewIter, View};
 use crate::native::warnings::ufbxi_warnf;
 use crate::prelude::as_f64;
@@ -3113,12 +3113,28 @@ pub(crate) fn read_shape(
     Ok(())
 }
 
+// Rust-port infrastructure (not a ufbx.c section): the read surface the
+// per-element readers need on a `ufbxi_element_info` they receive as a view —
+// the FBX id leaf and the property table as a sub-view.
+pub(crate) type ElementInfoView = View<ElementInfo>;
+
+impl ElementInfoView {
+    #[inline(always)]
+    pub(crate) fn fbx_id(&self) -> u64 {
+        view_read!(self, fbx_id)
+    }
+    #[inline(always)]
+    pub(crate) fn props_view(&self) -> &PropsView {
+        view_project!(self, props)
+    }
+}
+
 // ufbx.c:13077-13137 `ufbxi_read_synthetic_blend_shapes`
 #[inline(never)]
-pub(crate) unsafe fn read_synthetic_blend_shapes(
+pub(crate) fn read_synthetic_blend_shapes(
     uc: &Context,
     node: &NodeView,
-    info: *mut ElementInfo,
+    info: &ElementInfoView,
 ) -> Result<(), Fail> {
     let mut deformer: *mut BlendDeformer = core::ptr::null_mut();
     let mut deformer_fbx_id: u64 = 0;
@@ -3159,8 +3175,7 @@ pub(crate) unsafe fn read_synthetic_blend_shapes(
                 )
             };
             ufbxi_check!(uc, !deformer.is_null(), "deformer");
-            // SAFETY: `info` is the caller's live `ufbxi_element_info`.
-            connect_oo(uc, deformer_fbx_id, unsafe { (*info).fbx_id })?;
+            connect_oo(uc, deformer_fbx_id, info.fbx_id())?;
         }
 
         let mut channel_fbx_id: u64 = 0;
@@ -3209,12 +3224,10 @@ pub(crate) unsafe fn read_synthetic_blend_shapes(
             (*shape_props.add(0)).value_blob = EMPTY_BLOB.0;
         }
 
-        // SAFETY: `info` is the caller's live `ufbxi_element_info`, so
-        // `&raw mut (*info).props` addresses its live `ufbx_props` field and
-        // `PropsView::from_ptr` may anchor to it; `name` is the interned
-        // string fetched above, readable for its length (`as_bytes`).
+        // SAFETY: `name` is the interned string fetched above, readable for its
+        // length (`as_bytes`).
         let self_prop: Option<&PropView> =
-            unsafe { find_prop_len(PropsView::from_ptr(&raw mut (*info).props), name.as_bytes()) };
+            find_prop_len(info.props_view(), unsafe { name.as_bytes() });
         if self_prop.is_some_and(|prop| {
             prop.type_() == PropType::Number || prop.type_() == PropType::Integer
         }) {
@@ -3223,12 +3236,12 @@ pub(crate) unsafe fn read_synthetic_blend_shapes(
             unsafe {
                 (*shape_props.add(0)).value_vec4.x = self_prop.unwrap().value_vec4().x;
             }
-            // SAFETY: `info` is the caller's live `ufbxi_element_info` and
-            // index `0` of the pushed `ufbx_prop` run holds the name set above.
+            // SAFETY: index `0` of the pushed `ufbx_prop` run holds the name
+            // set above.
             unsafe {
                 connect_pp(
                     uc,
-                    (*info).fbx_id,
+                    info.fbx_id(),
                     channel_fbx_id,
                     name,
                     (*shape_props.add(0)).name,
@@ -3239,7 +3252,7 @@ pub(crate) unsafe fn read_synthetic_blend_shapes(
             unsafe {
                 connect_pp(
                     uc,
-                    (*info).fbx_id,
+                    info.fbx_id(),
                     channel_fbx_id,
                     name,
                     (*shape_props.add(0)).name,
@@ -3963,8 +3976,11 @@ pub(crate) unsafe fn read_mesh(
 
     // In up to version 7100 FBX files blend shapes are contained within the same geometry node
     if uc.version() <= 7100 {
-        // SAFETY: `info` is the caller's live `ufbxi_element_info`.
-        unsafe { read_synthetic_blend_shapes(uc, node, info) }?;
+        // SAFETY: `info` is the caller's live `ufbxi_element_info` —
+        // write-capable provenance, live and unmoved across the call.
+        read_synthetic_blend_shapes(uc, node, unsafe {
+            View::<ElementInfo, Mut>::from_ptr(info)
+        })?;
     }
 
     patch_mesh_reals(mesh);
@@ -9836,8 +9852,11 @@ pub(crate) unsafe fn read_legacy_mesh(
     // at each use site, as this function fills them in.
     let mesh = unsafe { View::<Mesh>::from_ptr(mesh) };
 
-    // SAFETY: `info` is the caller's live `ufbxi_element_info`.
-    unsafe { read_synthetic_blend_shapes(uc, node, info) }?;
+    // SAFETY: `info` is the caller's live `ufbxi_element_info` — write-capable
+    // provenance, live and unmoved across the call.
+    read_synthetic_blend_shapes(uc, node, unsafe {
+        View::<ElementInfo, Mut>::from_ptr(info)
+    })?;
 
     patch_mesh_reals(mesh);
 
