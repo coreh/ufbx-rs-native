@@ -5435,23 +5435,14 @@ pub(crate) fn read_marker(
 
 // ufbx.c:13992-14022 `ufbxi_read_skin`
 #[inline(never)]
-pub(crate) unsafe fn read_skin(
-    uc: &Context,
-    node: &NodeView,
-    info: *mut ElementInfo,
-) -> Result<(), Fail> {
-    // SAFETY: `info` is the caller's live `ufbxi_element_info` — write-capable
-    // provenance, live and unmoved across the call — whose `name` is a pooled
-    // NUL-terminated string and whose `props`/`dom_node` point into uc's own
-    // buffers, so all three survive being stored into the element by pointer;
-    // `SkinDeformer` is the element struct for `ElementType::SkinDeformer`.
-    let skin: *mut SkinDeformer = unsafe {
-        push_element::<SkinDeformer>(
-            uc,
-            View::<ElementInfo>::from_ptr(info),
-            ElementType::SkinDeformer,
-        )
-    };
+pub(crate) fn read_skin(uc: &Context, node: &NodeView, info: &ElementInfoView) -> Result<(), Fail> {
+    // SAFETY: `info` views the caller's live `ufbxi_element_info`, whose `name`
+    // is a pooled NUL-terminated string and whose `props`/`dom_node` point into
+    // uc's own buffers, so all three survive being stored into the element by
+    // pointer; `SkinDeformer` is the element struct for
+    // `ElementType::SkinDeformer`.
+    let skin: *mut SkinDeformer =
+        unsafe { push_element::<SkinDeformer>(uc, info, ElementType::SkinDeformer) };
     ufbxi_check!(uc, !skin.is_null(), "skin");
     // SAFETY: `skin` is the fresh non-null element pushed above, owned by uc's
     // element buffer — write-capable provenance.
@@ -7822,7 +7813,9 @@ pub(crate) fn read_object(uc: &Context, node: &NodeView) -> Result<(), Fail> {
             }
         } else if name == sp::Deformer.as_ptr() {
             if sub_type == sp::Skin.as_ptr() {
-                read_skin(uc, node, &raw mut info)?;
+                // SAFETY: `info` is this frame's own `ufbxi_element_info` local —
+                // write-capable provenance, live and unmoved across the call.
+                read_skin(uc, node, View::<ElementInfo, Mut>::from_ptr(&raw mut info))?;
             } else if sub_type == sp::Cluster.as_ptr() {
                 read_skin_cluster(uc, node, &raw mut info)?;
             } else if sub_type == sp::BlendShape.as_ptr() {
