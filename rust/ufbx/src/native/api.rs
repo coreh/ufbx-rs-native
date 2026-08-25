@@ -2052,10 +2052,14 @@ pub(crate) unsafe fn evaluate_transform_flags(
             }
         }
         if (components & TransformFlags::INCLUDE_SCALE.raw()) != 0 {
-            // SAFETY: `t` is the local transform; `get_scale` reads a read-only
-            // view over the local `props` and the live `node`.
+            // SAFETY: `t` is the local transform; `get_scale` reads read-only
+            // views over the local `props` and the live `node`, neither written
+            // through while the views are held.
             unsafe {
-                (*t).scale = get_scale(View::<Props, Const>::from_ptr(&raw const props), node);
+                (*t).scale = get_scale(
+                    View::<Props, Const>::from_ptr(&raw const props),
+                    View::<Node, Const>::from_ptr(node),
+                );
             }
         } else {
             // SAFETY: local transform storage; writing its own field.

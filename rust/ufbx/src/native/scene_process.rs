@@ -10896,7 +10896,7 @@ pub(crate) fn get_rotation<M: Mode>(
 // Scale-only fast path, pinned to `ufbxi_get_transform` by the
 // `ufbxi_regression_assert` at ufbx.c:22902.
 #[inline(never)]
-pub(crate) unsafe fn get_scale<M: Mode>(props: &View<Props, M>, node: *const Node) -> Vec3 {
+pub(crate) fn get_scale<M: Mode>(props: &View<Props, M>, node: &View<Node, Const>) -> Vec3 {
     let scaling: Vec3 = find_vec3(props, &sp::Lcl_Scaling, 1.0, 1.0, 1.0);
 
     // C: `ufbx_transform t = { { 0,0,0 }, { 0,0,0,1 }, { 1,1,1 }};`
@@ -10919,21 +10919,14 @@ pub(crate) unsafe fn get_scale<M: Mode>(props: &View<Props, M>, node: *const Nod
         },
     };
 
-    // SAFETY: `node` points to the live, initialized `ufbx_node` whose scale is
-    // being composed (fn contract).
-    unsafe {
-        if (*node).has_adjust_transform {
-            mul_scale_real(&mut t, (*node).adjust_post_scale);
-        }
+    if node.has_adjust_transform() {
+        mul_scale_real(&mut t, node.adjust_post_scale());
     }
 
     mul_scale(&mut t, scaling);
 
-    // SAFETY: `node` is live (see above).
-    unsafe {
-        if (*node).has_adjust_transform {
-            mul_scale_real(&mut t, (*node).adjust_pre_scale);
-        }
+    if node.has_adjust_transform() {
+        mul_scale_real(&mut t, node.adjust_pre_scale());
     }
 
     t.scale
@@ -11052,7 +11045,10 @@ pub(crate) unsafe fn get_transform<M: Mode>(
         get_rotation(props, order, unsafe { View::<Node, Const>::from_ptr(node) })
     ));
     // SAFETY: as above, for the scale-only fast path.
-    ufbxi_regression_assert!(is_vec3_equal(t.scale, unsafe { get_scale(props, node) }));
+    ufbxi_regression_assert!(is_vec3_equal(
+        t.scale,
+        get_scale(props, unsafe { View::<Node, Const>::from_ptr(node) })
+    ));
 
     t
 }
