@@ -2086,9 +2086,15 @@ pub(crate) fn obj_flush_material(uc: &Context) -> Result<(), Fail> {
 }
 
 // ufbx.c:17777-17850 `ufbxi_obj_parse_prop`
+//
+// # Safety
+// `name` must be a valid `ufbx_string`: `data .. data + length` readable for
+// the whole call, since the name is stored into the pushed prop and then
+// interned (read and hashed) by `push_string_place_str` — a readability
+// contract the `String` POD cannot carry.
 #[cfg(feature = "obj")]
 #[inline(never)]
-pub(crate) fn obj_parse_prop(
+pub(crate) unsafe fn obj_parse_prop(
     uc: &Context,
     name: String,
     start: usize,
@@ -2242,9 +2248,9 @@ pub(crate) fn obj_parse_mtl_map(uc: &Context, prefix_len: usize) -> Result<(), F
     }
 
     let mut num_props: usize = 1;
-    // SAFETY: the property name is a NUL-terminated literal.
-    let name: String = unsafe { str_c(b"obj|args\0".as_ptr()) };
-    obj_parse_prop(uc, name, 1, true, None)?;
+    // SAFETY: the property name is a NUL-terminated literal, so `str_c` yields
+    // a readable span for the parser to intern.
+    unsafe { obj_parse_prop(uc, str_c(b"obj|args\0".as_ptr()), 1, true, None)? };
 
     let mut start: usize = 1;
     // C: `for (; start + 1 < uc->obj.num_tokens; )`
@@ -2261,7 +2267,9 @@ pub(crate) fn obj_parse_mtl_map(uc: &Context, prefix_len: usize) -> Result<(), F
             // advanced `data` stays inside the token's own span.
             tok.data = unsafe { tok.data.add(1) };
             tok.length -= 1;
-            obj_parse_prop(uc, tok, start + 1, false, Some(&mut start))?;
+            // SAFETY: `tok` is still that token's own readable span after
+            // dropping the leading '-'.
+            unsafe { obj_parse_prop(uc, tok, start + 1, false, Some(&mut start))? };
             num_props += 1;
         } else {
             break;
@@ -2345,7 +2353,8 @@ pub(crate) fn obj_parse_mtl(uc: &Context) -> Result<(), Fail> {
         // stored token run and every comparison below reads at most
         // `cmd.length` bytes of its own span (guarded by the length tests);
         // the literals are NUL-terminated for `str_c`, and the fallback
-        // property parse takes no out-param.
+        // property parse gets that same readable token 0 span as its name and
+        // takes no out-param.
         unsafe {
             let cmd: String = *uc.obj().tokens().add(0);
             if str_equal(cmd.as_bytes(), b"newmtl") {
