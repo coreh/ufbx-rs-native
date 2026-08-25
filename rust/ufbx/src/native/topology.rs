@@ -816,14 +816,9 @@ pub(crate) unsafe fn triangulate_ngon(
         axis.y = 1.0;
         axis.z = 0.0;
     }
-    // SAFETY: `&axis`/`&normal` are live locals — valid `Vec3` operands for
-    // `slow_normalized_cross3`.
-    nc.axes_at(0)
-        .set(unsafe { slow_normalized_cross3(&axis, &normal) });
-    // SAFETY: `&normal` is a live local and `axes_at(0).as_ptr()` addresses
-    // `nc`'s own live `axes[0]` slot — both valid `Vec3` operands.
+    nc.axes_at(0).set(slow_normalized_cross3(&axis, &normal));
     nc.axes_at(1)
-        .set(unsafe { slow_normalized_cross3(&normal, nc.axes_at(0).as_ptr()) });
+        .set(slow_normalized_cross3(&normal, &nc.axes_at(0).get()));
     nc.axes_at(2).set(normal);
 
     let kd_indices: *mut u32 = indices;

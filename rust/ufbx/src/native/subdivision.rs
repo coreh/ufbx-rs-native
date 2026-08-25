@@ -2476,9 +2476,9 @@ pub(crate) unsafe fn subdivide_mesh_level(
             let mut normal: *mut Vec3 = values.data as *mut Vec3;
             let normal_end: *mut Vec3 = unsafe { normal.add(values.count) };
             while normal != normal_end {
-                // SAFETY: `normal` is an in-range live `Vec3`; `slow_normalize3`
-                // reads it and the result is stored back in place.
-                unsafe { *normal = slow_normalize3(normal) };
+                // SAFETY: `normal` is an in-range live `Vec3`; the copy read
+                // feeds `slow_normalize3` and the result is stored back in place.
+                unsafe { *normal = slow_normalize3(&{ *normal }) };
                 // SAFETY: `normal != normal_end`, so advancing stays in the array.
                 normal = unsafe { normal.add(1) };
             }
@@ -2509,8 +2509,9 @@ pub(crate) unsafe fn subdivide_mesh_level(
             let mut normal: *mut Vec3 = values.data as *mut Vec3;
             let normal_end: *mut Vec3 = unsafe { normal.add(values.count) };
             while normal != normal_end {
-                // SAFETY: `normal` is an in-range live `Vec3`, normalized in place.
-                unsafe { *normal = slow_normalize3(normal) };
+                // SAFETY: `normal` is an in-range live `Vec3`, read as a copy
+                // and normalized in place.
+                unsafe { *normal = slow_normalize3(&{ *normal }) };
                 // SAFETY: `normal != normal_end`, so advancing stays in the array.
                 normal = unsafe { normal.add(1) };
             }

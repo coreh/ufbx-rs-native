@@ -922,11 +922,10 @@ pub(crate) fn tessellate_nurbs_surface_imp(
                         u = unsafe { *(*surface).basis_u.spans.data.add(0) };
                     }
 
-                    // SAFETY: evaluating the live surface (tc construction
-                    // invariant) at a parameter taken from its own span range;
-                    // the normalizations read locals.
-                    let (pos, tangent_u, tangent_v) = unsafe {
-                        let point: SurfacePoint = evaluate_nurbs_surface(surface, u, v);
+                    let (pos, tangent_u, tangent_v) = {
+                        // SAFETY: evaluating the live surface (tc construction
+                        // invariant) at a parameter taken from its own span range.
+                        let point: SurfacePoint = unsafe { evaluate_nurbs_surface(surface, u, v) };
                         (
                             point.position,
                             slow_normalize3(&point.derivative_u),

@@ -1830,16 +1830,14 @@ pub(crate) fn distsq2(a: Vec2, b: Vec2) -> Real {
 
 // ufbx.c:5972-5974 `ufbxi_slow_normalize3`
 #[inline(never)]
-pub(crate) unsafe fn slow_normalize3(a: *const Vec3) -> Vec3 {
-    // SAFETY: the caller vouches `a` addresses a live `Vec3`.
-    normalize3(unsafe { *a })
+pub(crate) fn slow_normalize3(a: &Vec3) -> Vec3 {
+    normalize3(*a)
 }
 
 // ufbx.c:5976-5978 `ufbxi_slow_normalized_cross3`
 #[inline(never)]
-pub(crate) unsafe fn slow_normalized_cross3(a: *const Vec3, b: *const Vec3) -> Vec3 {
-    // SAFETY: the caller vouches `a`/`b` address live `Vec3`s.
-    normalize3(cross3(unsafe { *a }, unsafe { *b }))
+pub(crate) fn slow_normalized_cross3(a: &Vec3, b: &Vec3) -> Vec3 {
+    normalize3(cross3(*a, *b))
 }
 
 #[cfg(test)]
@@ -2404,27 +2402,25 @@ mod tests {
             distsq2(Vec2 { x: 1.0, y: 2.0 }, Vec2 { x: 4.0, y: 6.0 }),
             25.0
         );
-        unsafe {
-            let v = slow_normalize3(&Vec3 {
+        let v = slow_normalize3(&Vec3 {
+            x: 2.0,
+            y: 0.0,
+            z: 0.0,
+        });
+        assert_eq!((v.x, v.y, v.z), (1.0, 0.0, 0.0));
+        let v = slow_normalized_cross3(
+            &Vec3 {
                 x: 2.0,
                 y: 0.0,
                 z: 0.0,
-            });
-            assert_eq!((v.x, v.y, v.z), (1.0, 0.0, 0.0));
-            let v = slow_normalized_cross3(
-                &Vec3 {
-                    x: 2.0,
-                    y: 0.0,
-                    z: 0.0,
-                },
-                &Vec3 {
-                    x: 0.0,
-                    y: 2.0,
-                    z: 0.0,
-                },
-            );
-            assert_eq!((v.x, v.y, v.z), (0.0, 0.0, 1.0));
-        }
+            },
+            &Vec3 {
+                x: 0.0,
+                y: 2.0,
+                z: 0.0,
+            },
+        );
+        assert_eq!((v.x, v.y, v.z), (0.0, 0.0, 1.0));
         assert_eq!(ONE_VEC3.x, 1.0);
         // `UFBXI_PI` is `UFBXI_DPI` narrowed to `ufbx_real`.
         assert_eq!(PI, DPI as Real);
