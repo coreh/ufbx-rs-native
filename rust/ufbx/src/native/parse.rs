@@ -637,6 +637,22 @@ impl AsciiTokenView {
         view_read!(self, str_cap)
     }
     #[inline(always)]
+    pub(crate) fn str_len(&self) -> usize {
+        view_read!(self, str_len)
+    }
+    #[inline(always)]
+    pub(crate) fn set_str_len(&self, str_len: usize) {
+        view_write!(self, str_len, str_len);
+    }
+    #[inline(always)]
+    pub(crate) fn str_data_mut_ptr(&self) -> *mut *mut u8 {
+        view_raw_mut!(self, str_data)
+    }
+    #[inline(always)]
+    pub(crate) fn str_cap_mut_ptr(&self) -> *mut usize {
+        view_raw_mut!(self, str_cap)
+    }
+    #[inline(always)]
     pub(crate) fn type_(&self) -> u8 {
         view_read!(self, type_)
     }

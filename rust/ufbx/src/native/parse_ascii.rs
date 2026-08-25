@@ -50,9 +50,9 @@ use crate::native::float_parse::{
 use crate::native::hash::hash_string_check_ascii;
 use crate::native::parse::{
     array_type_size, is_array_node, is_raw_string, normalize_array_type, report_progress,
-    update_parse_state, ArrayInfo, Ascii, AsciiToken, AsciiView, Context, Node, ParseState, Value,
-    ValueArray, ValueType, ARRAY_FLAG_ACCURATE_F32, ARRAY_FLAG_PAD_BEGIN, ARRAY_FLAG_RESULT,
-    ARRAY_FLAG_TMP_BUF, MAX_NODE_DEPTH, MAX_NON_ARRAY_VALUES,
+    update_parse_state, ArrayInfo, Ascii, AsciiToken, AsciiTokenView, AsciiView, Context, Node,
+    ParseState, Value, ValueArray, ValueType, ARRAY_FLAG_ACCURATE_F32, ARRAY_FLAG_PAD_BEGIN,
+    ARRAY_FLAG_RESULT, ARRAY_FLAG_TMP_BUF, MAX_NODE_DEPTH, MAX_NON_ARRAY_VALUES,
 };
 use crate::native::platform::{
     add_ptr, f64_to_i32, f64_to_i64, max_sz, min32, sub_ptr, to_size, ufbx_assert,
@@ -377,27 +377,26 @@ pub(crate) fn ascii_skip_whitespace(uc: &Context) -> u8 {
 
 // ufbx.c:9612-9623 `ufbxi_ascii_push_token_char`
 #[inline(always)]
-pub(crate) unsafe fn ascii_push_token_char(
+pub(crate) fn ascii_push_token_char(
     uc: &Context,
-    token: *mut AsciiToken,
+    token: &AsciiTokenView,
     c: u8,
 ) -> Result<(), Fail> {
     // Grow the string data buffer if necessary
-    // SAFETY: `token` points to a valid, live `AsciiToken` (caller contract).
-    if unsafe { (*token).str_len == (*token).str_cap } {
-        // SAFETY: as above — reads `token`'s own `str_len` field.
-        let len: usize = max_sz(unsafe { (*token).str_len } + 1, 256);
+    if token.str_len() == token.str_cap() {
+        let len: usize = max_sz(token.str_len() + 1, 256);
         ufbxi_check!(
             uc,
-            // SAFETY: `token`'s own paired `str_data`/`str_cap` growth state is
-            // grown through `uc`'s temp allocator (uc construction invariant);
-            // the `&raw mut` projections address `token`'s fields without forming
-            // references.
+            // SAFETY: `grow_array` is an `unsafe fn` over a paired pointer/cap
+            // slot pair; the two projections address `token`'s own
+            // `str_data`/`str_cap` fields through its view (write-capable by
+            // its mint), and the allocator is `uc`'s own temp allocator (uc
+            // construction invariant).
             unsafe {
                 crate::native::allocator::grow_array::<u8>(
                     uc.ator_tmp_mut_ptr(),
-                    &raw mut (*token).str_data,
-                    &raw mut (*token).str_cap,
+                    token.str_data_mut_ptr(),
+                    token.str_cap_mut_ptr(),
                     len
                 )
             },
@@ -407,40 +406,43 @@ pub(crate) unsafe fn ascii_push_token_char(
 
     // SAFETY: the guard/grow above leaves `str_len < str_cap` (the grow runs
     // only when the two are equal, and requests at least `str_len + 1`), so
-    // `str_data + str_len` is a writable slot inside `token`'s string buffer
-    // and the increment stays within capacity.
+    // `str_data + str_len` is a writable slot inside `token`'s string buffer.
     unsafe {
-        *(*token).str_data.add((*token).str_len) = c;
-        (*token).str_len += 1;
+        *token.str_data().add(token.str_len()) = c;
     }
+    // The increment stays within capacity by the same argument.
+    token.set_str_len(token.str_len() + 1);
 
     Ok(())
 }
 
 // ufbx.c:9625-9637 `ufbxi_ascii_push_token_string`
+///
+/// # Safety
+/// `data` must address a readable run of `length` bytes — an untypeable run
+/// contract the caller vouches for.
 #[inline(always)]
 pub(crate) unsafe fn ascii_push_token_string(
     uc: &Context,
-    token: *mut AsciiToken,
+    token: &AsciiTokenView,
     data: *const u8,
     length: usize,
 ) -> Result<(), Fail> {
     // Grow the string data buffer if necessary
-    // SAFETY: `token` points to a valid, live `AsciiToken` (caller contract).
-    if unsafe { (*token).str_len + length >= (*token).str_cap } {
-        // SAFETY: as above — reads `token`'s own `str_len` field.
-        let len: usize = max_sz(unsafe { (*token).str_len } + length, 256);
+    if token.str_len() + length >= token.str_cap() {
+        let len: usize = max_sz(token.str_len() + length, 256);
         ufbxi_check!(
             uc,
-            // SAFETY: `token`'s own paired `str_data`/`str_cap` growth state is
-            // grown through `uc`'s temp allocator (uc construction invariant);
-            // the `&raw mut` projections address `token`'s fields without forming
-            // references.
+            // SAFETY: `grow_array` is an `unsafe fn` over a paired pointer/cap
+            // slot pair; the two projections address `token`'s own
+            // `str_data`/`str_cap` fields through its view (write-capable by
+            // its mint), and the allocator is `uc`'s own temp allocator (uc
+            // construction invariant).
             unsafe {
                 crate::native::allocator::grow_array::<u8>(
                     uc.ator_tmp_mut_ptr(),
-                    &raw mut (*token).str_data,
-                    &raw mut (*token).str_cap,
+                    token.str_data_mut_ptr(),
+                    token.str_cap_mut_ptr(),
                     len
                 )
             },
@@ -452,11 +454,12 @@ pub(crate) unsafe fn ascii_push_token_string(
     // (the grow requests exactly that many bytes, so the capacity can land on
     // it), so the `length`-byte copy lands inside `token`'s string buffer
     // starting at `str_data + str_len`; `data` is the caller's readable source
-    // run of `length` bytes.
+    // run of `length` bytes (this fn's own contract).
     unsafe {
-        core::ptr::copy_nonoverlapping(data, (*token).str_data.add((*token).str_len), length);
-        (*token).str_len += length;
+        core::ptr::copy_nonoverlapping(data, token.str_data().add(token.str_len()), length);
     }
+    // The advance stays within capacity by the same argument.
+    token.set_str_len(token.str_len() + length);
 
     Ok(())
 }
@@ -642,6 +645,11 @@ pub(crate) unsafe fn ascii_try_ignore_string(uc: &Context, token: *mut AsciiToke
 #[inline(never)]
 pub(crate) unsafe fn ascii_next_token(uc: &Context, token: *mut AsciiToken) -> Result<(), Fail> {
     let ua: *mut Ascii = uc.ascii_mut_ptr();
+    // SAFETY: `token` points to a valid, live `AsciiToken` with write-capable
+    // provenance (caller contract; every call site passes an `ascii`
+    // sub-context token). `Mut` mode is interior-mutable, so the raw writes
+    // through `token` below coexist with this view.
+    let token_view: &AsciiTokenView = unsafe { AsciiTokenView::from_ptr(token) };
 
     // Replace `prev_token` with `token` but swap the buffers so `token` uses
     // the now-unused string buffer of the old `prev_token`.
@@ -674,9 +682,7 @@ pub(crate) unsafe fn ascii_next_token(uc: &Context, token: *mut AsciiToken) -> R
             || c == b'('
             || c == b')'
         {
-            // SAFETY: `token` is the caller's valid, live `AsciiToken`; the byte
-            // push appends to its own string buffer.
-            unsafe { ascii_push_token_char(uc, token, c) }?;
+            ascii_push_token_char(uc, token_view, c)?;
             c = ascii_next(uc);
         }
 
@@ -711,9 +717,7 @@ pub(crate) unsafe fn ascii_next_token(uc: &Context, token: *mut AsciiToken) -> R
                     (*token).type_ = ASCII_FLOAT;
                 }
             }
-            // SAFETY: `token` is the caller's valid, live `AsciiToken`; the byte
-            // push appends to its own string buffer.
-            unsafe { ascii_push_token_char(uc, token, c) }?;
+            ascii_push_token_char(uc, token_view, c)?;
             c = ascii_next(uc);
         }
 
@@ -726,13 +730,10 @@ pub(crate) unsafe fn ascii_next_token(uc: &Context, token: *mut AsciiToken) -> R
             || c == b')'
         {
             nan_like = true;
-            // SAFETY: `token` is the caller's valid, live `AsciiToken`; the byte
-            // push appends to its own string buffer.
-            unsafe { ascii_push_token_char(uc, token, c) }?;
+            ascii_push_token_char(uc, token_view, c)?;
             c = ascii_next(uc);
         }
-        // SAFETY: as above — appends the NUL terminator to `token`'s buffer.
-        unsafe { ascii_push_token_char(uc, token, b'\0') }?;
+        ascii_push_token_char(uc, token_view, b'\0')?;
         if nan_like {
             // SAFETY: `token` is the caller's valid, live `AsciiToken`.
             unsafe {
@@ -815,13 +816,12 @@ pub(crate) unsafe fn ascii_next_token(uc: &Context, token: *mut AsciiToken) -> R
                 }
 
                 if begin < end {
-                    // SAFETY: `token` is the caller's valid, live `AsciiToken`;
-                    // `[begin, end)` is a readable run of the source window, copied
-                    // into `token`'s string buffer.
+                    // SAFETY: `[begin, end)` is a readable run of the source
+                    // window, so `begin` addresses that many readable bytes.
                     unsafe {
                         ascii_push_token_string(
                             uc,
-                            token,
+                            token_view,
                             begin,
                             to_size(end as isize - begin as isize),
                         )
@@ -890,16 +890,14 @@ pub(crate) unsafe fn ascii_next_token(uc: &Context, token: *mut AsciiToken) -> R
                 // so `entity + step` is readable.
                 if unsafe { *entity.add(step) } == b'\0' {
                     // Full match: Push the replacement character
-                    // SAFETY: `token` is the caller's valid, live `AsciiToken`.
-                    unsafe { ascii_push_token_char(uc, token, replacement) }?;
+                    ascii_push_token_char(uc, token_view, replacement)?;
                 } else {
                     // Partial match: Push the prefix we have skipped already
                     let mut i: usize = 0;
                     while i < step {
-                        // SAFETY: `token` is the caller's valid, live `AsciiToken`;
-                        // `i < step` indexes a matched prefix byte of the entity
-                        // literal, before its terminating NUL.
-                        unsafe { ascii_push_token_char(uc, token, *entity.add(i)) }?;
+                        // SAFETY: `i < step` indexes a matched prefix byte of
+                        // the entity literal, before its terminating NUL.
+                        ascii_push_token_char(uc, token_view, unsafe { *entity.add(i) })?;
                         i += 1;
                     }
                 }
@@ -907,9 +905,7 @@ pub(crate) unsafe fn ascii_next_token(uc: &Context, token: *mut AsciiToken) -> R
             }
 
             ufbxi_check!(uc, c != b'\0', "c != '\\0'");
-            // SAFETY: `token` is the caller's valid, live `AsciiToken`; the byte
-            // push appends to its own string buffer.
-            unsafe { ascii_push_token_char(uc, token, c) }?;
+            ascii_push_token_char(uc, token_view, c)?;
             c = ascii_next(uc);
         }
         // Skip closing quote
