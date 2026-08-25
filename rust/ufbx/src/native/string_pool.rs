@@ -929,8 +929,8 @@ pub(crate) unsafe fn push_string_imp(
 // # Safety
 //
 // `str_` must be readable for `length` bytes, and `p_out_length` must be null
-// or address a live `usize` slot — the `push_string_imp` contract, forwarded
-// unchanged.
+// or address a live `usize` slot, non-null whenever `raw` is false — the
+// `push_string_imp` contract, forwarded unchanged.
 #[inline(always)]
 pub(crate) unsafe fn push_string(
     pool: &StringPoolView,
