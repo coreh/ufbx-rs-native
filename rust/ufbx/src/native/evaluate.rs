@@ -101,7 +101,6 @@ use crate::native::platform::{
 };
 #[cfg(feature = "baking")]
 use crate::native::platform::{macro_stable_sort, ufbxi_unreachable};
-#[cfg(feature = "scene-eval")]
 use crate::native::read::{
     init_file_paths, open_file, read_legacy_root, read_root, ref_ptr, supports_version,
     SYNTHETIC_ID_START,
