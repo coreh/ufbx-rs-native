@@ -3311,10 +3311,11 @@ pub unsafe extern "C" fn ufbx_find_material(
     scene: *const crate::generated::Scene,
     name: *const u8,
 ) -> *mut crate::generated::Material {
-    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
-    // own raw-pointer contract and are forwarded unchanged to the native impl,
-    // whose contract is identical.
-    unsafe { crate::native::api::find_material(scene, name) }
+    // SAFETY: an ABI shim; the caller's null-or-live scene contract becomes the
+    // read-only `View<_, Const>` mint (legal for any readable provenance), and
+    // the NUL-terminated `name` carries this `unsafe fn`'s own raw-pointer
+    // contract, forwarded unchanged to the native impl.
+    unsafe { crate::native::api::find_material(crate::native::api::scene_const_view(scene), name) }
 }
 
 // ufbx.c:33154 `ufbx_find_anim_prop` (impl: native/api.rs `find_anim_prop`)
@@ -3338,10 +3339,21 @@ pub unsafe extern "C" fn ufbx_evaluate_prop(
     name: *const u8,
     time: f64,
 ) -> crate::generated::Prop {
-    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
-    // own raw-pointer contract and are forwarded unchanged to the native impl,
-    // whose contract is identical.
-    unsafe { crate::native::api::evaluate_prop(anim, element, name, time) }
+    // SAFETY: an ABI shim; the caller's live-pointee contract for `anim` and
+    // `element` becomes the read-only `View<_, Const>` mints (legal for any
+    // readable provenance, and the evaluation reads both), and the
+    // NUL-terminated `name` carries this `unsafe fn`'s own raw-pointer contract.
+    unsafe {
+        crate::native::api::evaluate_prop(
+            crate::native::view::View::<crate::generated::Anim, crate::native::view::Const>::from_ptr(anim),
+            crate::native::view::View::<
+                crate::generated::Element,
+                crate::native::view::Const,
+            >::from_ptr(element),
+            name,
+            time,
+        )
+    }
 }
 
 // ufbx.c:33156 `ufbx_evaluate_prop_flags` (impl: native/api.rs

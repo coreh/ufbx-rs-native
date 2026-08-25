@@ -1887,13 +1887,17 @@ pub(crate) unsafe fn evaluate_transform_flags(
             // addresses its own ref when live, unwrapped by `opt_ptr`.
             while !p.is_null() && !unsafe { opt_ptr(&raw const (*p).scale_helper) }.is_null() {
                 // C: `ufbx_prop scale = ufbx_evaluate_prop(anim, &p->scale_helper->element, ufbxi_Lcl_Scaling, time);`
-                // SAFETY: `p`'s scale-helper is non-null (loop condition), so
-                // `&raw const (*helper).element` addresses its live element;
-                // `anim` is the live anim param.
+                // SAFETY: `anim` is the live anim param and `p`'s scale-helper is
+                // non-null (loop condition), so `&raw const (*helper).element`
+                // addresses its live element — both read-only for the call, which
+                // is what the `Const` mints ask for; `sp::Lcl_Scaling` is a
+                // NUL-terminated static name.
                 let scale: Prop = unsafe {
                     evaluate_prop(
-                        anim,
-                        &raw const (*opt_ptr(&raw const (*p).scale_helper)).element,
+                        View::<Anim, Const>::from_ptr(anim),
+                        View::<Element, Const>::from_ptr(
+                            &raw const (*opt_ptr(&raw const (*p).scale_helper)).element,
+                        ),
                         sp::Lcl_Scaling.as_ptr(),
                         time,
                     )
@@ -1913,13 +1917,17 @@ pub(crate) unsafe fn evaluate_transform_flags(
         if !unsafe { opt_ptr(&raw const (*parent).scale_helper) }.is_null()
             && (flags & TransformFlags::IGNORE_SCALE_HELPER.raw()) == 0
         {
-            // SAFETY: the parent's scale-helper is non-null (checked), so
-            // `&raw const (*helper).element` addresses its live element; `anim` is
-            // the live anim param.
+            // SAFETY: `anim` is the live anim param and the parent's scale-helper
+            // is non-null (checked), so `&raw const (*helper).element` addresses
+            // its live element — both read-only for the call, which is what the
+            // `Const` mints ask for; `sp::Lcl_Scaling` is a NUL-terminated static
+            // name.
             helper_scale.write(unsafe {
                 evaluate_prop(
-                    anim,
-                    &raw const (*opt_ptr(&raw const (*parent).scale_helper)).element,
+                    View::<Anim, Const>::from_ptr(anim),
+                    View::<Element, Const>::from_ptr(
+                        &raw const (*opt_ptr(&raw const (*parent).scale_helper)).element,
+                    ),
                     sp::Lcl_Scaling.as_ptr(),
                     time,
                 )
@@ -7187,16 +7195,17 @@ pub(crate) unsafe fn find_anim_stack(scene: *const Scene, name: *const u8) -> *m
 }
 
 // ufbx.c:33153 `ufbx_find_material`
-pub(crate) unsafe fn find_material(scene: *const Scene, name: *const u8) -> *mut Material {
+// `scene: Option<&View<Scene, M>>` carries C's nullable `const ufbx_scene *`.
+pub(crate) unsafe fn find_material<M: Mode>(
+    scene: Option<&View<Scene, M>>,
+    name: *const u8,
+) -> *mut Material {
     // SAFETY: `name` is this fn's NUL-terminated raw-pointer string param;
-    // `strlen` measures it, and the measured run (with `scene`) is exactly the
-    // slice minted for the `_len` impl.
-    unsafe {
-        find_material_len(
-            scene_const_view(scene),
-            crate::prelude::slice_from_ptr(name, strlen(name)),
-        )
-    }
+    // `strlen` measures it, and the measured run is exactly the slice minted
+    // for the `_len` impl.
+    find_material_len(scene, unsafe {
+        crate::prelude::slice_from_ptr(name, strlen(name))
+    })
 }
 
 // ufbx.c:33154 `ufbx_find_anim_prop`
@@ -7226,15 +7235,18 @@ pub(crate) unsafe fn find_anim_prop(
 }
 
 // ufbx.c:33155 `ufbx_evaluate_prop`
+// `anim`/`element` carry C's `const ufbx_anim *` / `const ufbx_element *` as
+// read-only views; the `_len` impl re-derives the raw pointers it reads.
 pub(crate) unsafe fn evaluate_prop(
-    anim: *const Anim,
-    element: *const Element,
+    anim: &View<Anim, Const>,
+    element: &View<Element, Const>,
     name: *const u8,
     time: f64,
 ) -> Prop {
-    // SAFETY: `name` is this fn's NUL-terminated raw-pointer string param;
-    // `strlen` measures it and all forward (with `anim`/`element`) to `_len`.
-    unsafe { evaluate_prop_len(anim, element, name, strlen(name), time) }
+    // SAFETY: `anim`/`element` address live pointees frozen for the call (the
+    // views' own mint contract); `name` is this fn's NUL-terminated raw-pointer
+    // string param — `strlen` measures it and all forward to `_len`.
+    unsafe { evaluate_prop_len(anim.as_ptr(), element.as_ptr(), name, strlen(name), time) }
 }
 
 // ufbx.c:33156 `ufbx_evaluate_prop_flags`
@@ -7751,7 +7763,7 @@ mod tests {
                 ptrs[3] as *mut AnimStack
             );
             assert_eq!(
-                find_material(&scene, b"gamma\0".as_ptr()),
+                find_material(scene_view, b"gamma\0".as_ptr()),
                 ptrs[2] as *mut Material
             );
         }
