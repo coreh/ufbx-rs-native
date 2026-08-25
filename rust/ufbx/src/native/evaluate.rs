@@ -1202,14 +1202,14 @@ pub(crate) fn free_temp(uc: &Context) {
         string_pool_temp_free(uc.string_pool_mut_ptr());
         buf_free(uc.warnings_view().tmp_stack_mut_ptr());
 
-        map_free(uc.prop_type_map_mut_ptr());
-        map_free(uc.fbx_id_map_mut_ptr());
-        map_free(uc.ptr_fbx_id_map_mut_ptr());
-        map_free(uc.texture_file_map_mut_ptr());
-        map_free(uc.anim_stack_map_mut_ptr());
-        map_free(uc.fbx_attr_map_mut_ptr());
-        map_free(uc.node_prop_set_mut_ptr());
-        map_free(uc.dom_node_map_mut_ptr());
+        map_free(uc.prop_type_map_view());
+        map_free(uc.fbx_id_map_view());
+        map_free(uc.ptr_fbx_id_map_view());
+        map_free(uc.texture_file_map_view());
+        map_free(uc.anim_stack_map_view());
+        map_free(uc.fbx_attr_map_view());
+        map_free(uc.node_prop_set_view());
+        map_free(uc.dom_node_map_view());
 
         buf_free(uc.tmp_mut_ptr());
         buf_free(uc.tmp_parse_mut_ptr());

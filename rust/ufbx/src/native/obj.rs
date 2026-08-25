@@ -490,7 +490,7 @@ pub(crate) fn obj_free(uc: &Context) {
         buf_free(uc.obj().tmp_meshes_mut_ptr());
         buf_free(uc.obj().tmp_props_mut_ptr());
 
-        map_free(uc.obj().group_map_mut_ptr());
+        map_free(uc.obj().group_map_view());
     }
 
     // SAFETY: each array is freed with the capacity it was grown to, through

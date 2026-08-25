@@ -372,12 +372,16 @@ pub(crate) unsafe fn map_init(
 
 // ufbx.c:4421-4440 `ufbxi_map_free`
 #[inline(never)]
-pub(crate) unsafe fn map_free(map: *mut Map) {
+pub(crate) fn map_free(map: &MapView) {
+    // The view is minted only over a live, writable `Map` (write provenance);
+    // `get()` is the raw pointer the C body operates on.
+    let map: *mut Map = map.get();
+
     #[cfg(feature = "regression")]
-    // SAFETY: caller contract — `map` points at a live `Map`.
+    // SAFETY: the view's mint invariant — `map` addresses a live `Map`.
     let regression_ator: *mut Allocator = unsafe { (*map).aa_buf.ator };
 
-    // SAFETY: `map` is live and `aa_buf` is its own AA-tree buffer, freed
+    // SAFETY: the view's mint invariant keeps `map` live, and `aa_buf` is its own AA-tree buffer, freed
     // through the allocator it was allocated from. `&raw mut` preserves the
     // raw pointer's provenance without manufacturing a temporary reference.
     unsafe { buf_free(&raw mut (*map).aa_buf) };
@@ -385,8 +389,8 @@ pub(crate) unsafe fn map_free(map: *mut Map) {
     // allocated from `map`'s own allocator with byte length `data_size` (0/null
     // for a never-grown map, which `free` tolerates).
     unsafe { free::<u8>((*map).ator, (*map).entries as *mut u8, (*map).data_size) };
-    // SAFETY: caller contract — `map` points at a live, writable `Map`; the
-    // field resets below match C's `map_free` teardown.
+    // SAFETY: the view's mint invariant — `map` addresses a live, writable
+    // `Map`; the field resets below match C's `map_free` teardown.
     unsafe {
         (*map).entries = core::ptr::null_mut();
         (*map).items = core::ptr::null_mut();
@@ -1177,7 +1181,8 @@ mod tests {
                 map_find::<u64>(&mut map, hash64(v), &v as *const u64 as *const c_void).is_null()
             );
 
-            map_free(&mut map);
+            // SAFETY: `map` is the live local initialized by `make_map`.
+            map_free(MapView::from_ptr(&raw mut map));
             assert_eq!(ator.current_size, 0);
             assert!(map.entries.is_null());
             assert_eq!(map.size, 0);
@@ -1201,7 +1206,8 @@ mod tests {
             assert_eq!(map.capacity, 89);
             assert_eq!(map.size, 1);
 
-            map_free(&mut map);
+            // SAFETY: `map` is the live local initialized by `make_map`.
+            map_free(MapView::from_ptr(&raw mut map));
             assert_eq!(ator.current_size, 0);
         }
     }
@@ -1232,7 +1238,8 @@ mod tests {
                 map_find::<u64>(&mut map, 0, &missing as *const u64 as *const c_void).is_null()
             );
 
-            map_free(&mut map);
+            // SAFETY: `map` is the live local initialized by `make_map`.
+            map_free(MapView::from_ptr(&raw mut map));
             assert_eq!(ator.current_size, 0);
         }
     }
@@ -1248,7 +1255,8 @@ mod tests {
             assert!(
                 map_find::<u64>(&mut map, hash64(v), &v as *const u64 as *const c_void).is_null()
             );
-            map_free(&mut map);
+            // SAFETY: `map` is the live local initialized by `make_map`.
+            map_free(MapView::from_ptr(&raw mut map));
         }
     }
 
@@ -1273,7 +1281,8 @@ mod tests {
             // allocation (ufbx.c:4578-4584).
             #[cfg(feature = "regression")]
             assert_eq!(ator.num_allocs, allocs_after_grow + 1000);
-            map_free(&mut map);
+            // SAFETY: `map` is the live local initialized by `make_map`.
+            map_free(MapView::from_ptr(&raw mut map));
             assert_eq!(ator.current_size, 0);
         }
     }

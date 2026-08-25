@@ -472,10 +472,11 @@ impl TessellateSurfaceContext {
         view_raw_mut!(self, mesh)
     }
 
-    // `position_map` — raw-ptr getter (address of field for out-param/mutation sites).
+    // `position_map` (Map) — typed VIEW handle (reinterpret-in-place); accessors on MapView.
     #[inline(always)]
-    pub(crate) fn position_map_mut_ptr(&self) -> *mut Map {
-        view_raw_mut!(self, position_map)
+    pub(crate) fn position_map_view(&self) -> &crate::native::hash::MapView {
+        // SAFETY: reinterpret the Map field in place; interior-mutable, no validity asserted.
+        unsafe { &*(&raw mut (*self.get()).position_map as *mut crate::native::hash::MapView) }
     }
 
     // `tmp` — raw-ptr getter (address of field for out-param/mutation sites).

@@ -4581,7 +4581,7 @@ pub(crate) unsafe fn tessellate_nurbs_surface(
     // SAFETY: these accessors address `tc`'s own temp buffer and position map.
     unsafe {
         buf_free(tc.tmp_mut_ptr());
-        map_free(tc.position_map_mut_ptr());
+        map_free(tc.position_map_view());
     }
     // SAFETY: `ator_tmp_view()` addresses `tc`'s own temp allocator, torn down
     // exactly once here.

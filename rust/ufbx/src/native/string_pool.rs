@@ -28,7 +28,7 @@ use crate::native::error::{
     memcmp, strlen, ufbxi_check_err, ufbxi_check_err_msg, ufbxi_check_return_err,
     utf8_valid_length, Fail, EMPTY_CHAR,
 };
-use crate::native::hash::{hash_string, hash_string_check_ascii, map_free, Map};
+use crate::native::hash::{hash_string, hash_string_check_ascii, map_free, Map, MapView};
 use crate::native::platform::{math, min_real, min_sz, ufbx_assert, ufbxi_regression_assert};
 use crate::native::view::{view_raw_mut, view_write};
 use crate::native::warnings::{ufbxi_warnf_imp, Warnings};
@@ -360,7 +360,7 @@ pub(crate) unsafe fn string_pool_temp_free(pool: *mut StringPool) {
     unsafe { free::<u8>((*pool).map.ator, (*pool).temp_str, (*pool).temp_cap) };
     // SAFETY: `pool` is live and `map` is its own map, used here for the last
     // time before the pool is discarded. `&raw mut` preserves provenance.
-    unsafe { map_free(&raw mut (*pool).map) };
+    map_free(unsafe { MapView::from_ptr(&raw mut (*pool).map) });
 }
 
 // ufbx.c:5034-5063 `ufbxi_add_replacement_char`

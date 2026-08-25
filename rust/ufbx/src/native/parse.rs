@@ -8298,7 +8298,7 @@ mod tests {
     fn test_retain_dom_node_tree() {
         use crate::native::allocator::init_ator;
         use crate::native::buf::buf_free;
-        use crate::native::hash::{map_cmp_uintptr, map_free, map_init};
+        use crate::native::hash::{map_cmp_uintptr, map_free, map_init, MapView};
         use crate::native::string_pool::{map_cmp_string, string_pool_temp_free};
 
         let mut uc: std::boxed::Box<InnerContext> =
@@ -8407,7 +8407,8 @@ mod tests {
             buf_free(&mut uc.tmp_dom_nodes);
             buf_free(&mut uc.string_pool.buf);
             string_pool_temp_free(&mut uc.string_pool);
-            map_free(&mut uc.dom_node_map);
+            // SAFETY: `dom_node_map` is `uc`'s own live map.
+            map_free(MapView::from_ptr(&raw mut uc.dom_node_map));
             assert_eq!(uc.ator_tmp.current_size, 0);
             assert_eq!(uc.ator_result.current_size, 0);
         }

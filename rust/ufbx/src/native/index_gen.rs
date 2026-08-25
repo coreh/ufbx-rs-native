@@ -29,7 +29,7 @@ use crate::native::error::{clear_error, fix_error_type, ufbxi_fmt_err_info, ufbx
 use crate::native::error::{ufbxi_fmt_err_info, ufbxi_report_err_msg};
 #[cfg(feature = "index-gen")]
 use crate::native::hash::{
-    hash_string, map_find_size, map_free, map_grow_size, map_init, map_insert_size, Map,
+    hash_string, map_find_size, map_free, map_grow_size, map_init, map_insert_size, Map, MapView,
 };
 #[cfg(feature = "index-gen")]
 use crate::native::platform::{add_ptr, to_size, ufbx_assert};
@@ -371,7 +371,7 @@ pub(crate) unsafe fn generate_indices(
     // SAFETY: `map` and `ator` are the live initialized locals above, and the map
     // is freed through the allocator that owns its storage before that allocator
     // itself is torn down.
-    unsafe { map_free(&raw mut map) };
+    map_free(unsafe { MapView::from_ptr(&raw mut map) });
     // SAFETY: `ator` is that same live, unmoved local allocator, torn down
     // exactly once here.
     unsafe { free_ator(AllocatorView::from_ptr(&raw mut ator)) };
