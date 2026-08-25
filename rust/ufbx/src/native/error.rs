@@ -1280,19 +1280,22 @@ pub(crate) fn fix_error_type(
 
 // ufbx.c:30302-30311 `ufbxi_uninitialized_options`
 #[inline(never)]
-pub(crate) unsafe fn uninitialized_options(p_error: *mut Error) -> *mut core::ffi::c_void {
-    if !p_error.is_null() {
-        // SAFETY: `p_error` is non-null (checked above) and the caller's
-        // contract is that it points at a writable `Error`, so exactly
-        // `size_of::<Error>()` bytes are writable there.
-        unsafe { core::ptr::write_bytes(p_error as *mut u8, 0, core::mem::size_of::<Error>()) };
-        // SAFETY: same live-`Error` contract; the zero-fill above leaves every
-        // field of this POD struct initialized.
-        let p_error = unsafe { &mut *p_error };
-        p_error.type_ = ErrorType::UninitializedOptions;
-        p_error.description.data = b"Uninitialized options\0".as_ptr();
+pub(crate) fn uninitialized_options(p_error: Option<&ErrorView>) -> *mut core::ffi::c_void {
+    if let Some(p_error) = p_error {
+        // SAFETY: the view was minted over a live, write-capable `Error` slot
+        // (the `View::from_ptr` mint invariant), so exactly
+        // `size_of::<Error>()` bytes are writable at `get()`.
+        unsafe {
+            core::ptr::write_bytes(p_error.get() as *mut u8, 0, core::mem::size_of::<Error>())
+        };
+        p_error.set_type_(ErrorType::UninitializedOptions);
+        p_error
+            .description_view()
+            .set_data(b"Uninitialized options\0".as_ptr());
         // SAFETY: the argument is a NUL-terminated byte literal.
-        p_error.description.length = unsafe { strlen(b"Uninitialized options\0".as_ptr()) };
+        p_error
+            .description_view()
+            .set_length(unsafe { strlen(b"Uninitialized options\0".as_ptr()) });
     }
     core::ptr::null_mut()
 }
@@ -1727,17 +1730,19 @@ mod tests {
 
     #[test]
     fn test_uninitialized_options() {
-        unsafe {
-            let mut err = Error {
-                type_: ErrorType::Io,
-                ..Default::default()
-            };
-            let ret = uninitialized_options(&mut err);
-            assert!(ret.is_null());
-            assert_eq!(err.type_, ErrorType::UninitializedOptions);
-            assert_eq!(desc_bytes(&err), b"Uninitialized options");
-            assert!(uninitialized_options(core::ptr::null_mut()).is_null());
-        }
+        let mut err = Error {
+            type_: ErrorType::Io,
+            ..Default::default()
+        };
+        // SAFETY: `err` is a live, write-capable stack local owned by this
+        // test, unmoved for the view's lifetime (the `View::from_ptr`
+        // contract), and no `&mut` to it is active while the view is used.
+        let err_view = unsafe { ErrorView::from_ptr(&raw mut err) };
+        let ret = uninitialized_options(Some(err_view));
+        assert!(ret.is_null());
+        assert_eq!(err.type_, ErrorType::UninitializedOptions);
+        assert_eq!(desc_bytes(&err), b"Uninitialized options");
+        assert!(uninitialized_options(None).is_null());
     }
 
     #[test]
