@@ -1079,6 +1079,14 @@ impl View<AsciiArrayTask> {
         view_read!(self, arr_size)
     }
 
+    pub(crate) fn spans(&self) -> *const AsciiSpan {
+        view_read!(self, spans)
+    }
+
+    pub(crate) fn num_spans(&self) -> usize {
+        view_read!(self, num_spans)
+    }
+
     pub(crate) fn offset(&self) -> usize {
         view_read!(self, offset)
     }
@@ -1321,8 +1329,19 @@ pub(crate) enum AsciiScanState {
 }
 
 // ufbx.c:10059-10148 `ufbxi_ascii_array_task_imp`
+///
+/// Scans the task's spans, parsing their comma-separated values into the task's
+/// destination array; returns C's `false` on a parse error or a destination the
+/// spans do not fill exactly.
+///
+/// # Safety
+/// `t`'s `spans` / `num_spans` fields must describe a live span array, each of
+/// whose `source` / `length` pairs is a readable byte run, and its `arr_data` /
+/// `arr_size` / `arr_type` fields must describe a live destination run exactly
+/// as the parse helper this forwards to documents. Both are `(pointer, count)`
+/// runs the view type cannot carry.
 #[inline(never)]
-pub(crate) unsafe fn ascii_array_task_imp(t: *mut AsciiArrayTask) -> bool {
+pub(crate) unsafe fn ascii_array_task_imp(t: &View<AsciiArrayTask, Mut>) -> bool {
     // Temporary buffer for parsing between spans
     // C: uninitialized; only `buffer[0..buffer_len]` is ever read back (and the
     // parse helpers stop at the trailing ',' the state machine writes), so the
@@ -1333,13 +1352,10 @@ pub(crate) unsafe fn ascii_array_task_imp(t: *mut AsciiArrayTask) -> bool {
 
     let mut state: AsciiScanState = AsciiScanState::Whitespace;
     // C: `ufbxi_for(const ufbxi_ascii_span, span, t->spans, t->num_spans)`
-    // SAFETY: `t` points to a valid, live `AsciiArrayTask` (caller contract);
-    // `spans`/`num_spans` describe its span array, so the base and the
-    // one-past-the-end pointer are in bounds of that array.
-    let mut span: *const AsciiSpan = unsafe { (*t).spans };
-    let span_end: *const AsciiSpan = add_ptr(unsafe { (*t).spans } as *mut AsciiSpan, unsafe {
-        (*t).num_spans
-    });
+    // `spans`/`num_spans` describe the task's span array (fn contract), so the
+    // base and the one-past-the-end pointer are in bounds of that array.
+    let mut span: *const AsciiSpan = t.spans();
+    let span_end: *const AsciiSpan = add_ptr(t.spans() as *mut AsciiSpan, t.num_spans());
     while span != span_end {
         // SAFETY: `span` walks `[spans, span_end)`, so it addresses a live
         // `AsciiSpan`; `source`/`length` describe its readable byte run, so
@@ -1403,18 +1419,13 @@ pub(crate) unsafe fn ascii_array_task_imp(t: *mut AsciiArrayTask) -> bool {
             if state == AsciiScanState::Comma {
                 // Parse a value from the buffer
                 if buffer_value {
-                    // SAFETY: `t` points to a valid, live, write-capable
-                    // `AsciiArrayTask` (caller contract), so it mints the task
-                    // view, and it carries the destination-run vouch the parse
-                    // helper documents; `buffer[..buffer_len]` is the local
-                    // `buffer`'s written prefix (`buffer_len <= 127`), a
-                    // readable parse run.
-                    let buffer_end: Option<usize> = unsafe {
-                        ascii_array_task_parse(
-                            View::<AsciiArrayTask, Mut>::from_ptr(t),
-                            &buffer[..buffer_len],
-                        )
-                    };
+                    // SAFETY: `t` carries the destination-run vouch the parse
+                    // helper documents, forwarded from this function's own
+                    // contract; `buffer[..buffer_len]` is the local `buffer`'s
+                    // written prefix (`buffer_len <= 127`), a readable parse
+                    // run.
+                    let buffer_end: Option<usize> =
+                        unsafe { ascii_array_task_parse(t, &buffer[..buffer_len]) };
                     if buffer_end.is_none() || buffer_end == Some(0) {
                         return false;
                     }
@@ -1435,15 +1446,14 @@ pub(crate) unsafe fn ascii_array_task_imp(t: *mut AsciiArrayTask) -> bool {
                         parse_end = unsafe { parse_end.sub(1) };
                     }
                     if src < parse_end {
-                        // SAFETY: `t` points to a valid, live, write-capable
-                        // `AsciiArrayTask` (caller contract), so it mints the
-                        // task view, and it carries the destination-run vouch
-                        // the parse helper documents; `[src, parse_end)` is a
+                        // SAFETY: `t` carries the destination-run vouch the
+                        // parse helper documents, forwarded from this
+                        // function's own contract; `[src, parse_end)` is a
                         // sub-run of the span's readable bytes, minted once as
                         // the helper's slice.
                         let src_begin: Option<usize> = unsafe {
                             ascii_array_task_parse(
-                                View::<AsciiArrayTask, Mut>::from_ptr(t),
+                                t,
                                 core::slice::from_raw_parts(
                                     src,
                                     to_size(parse_end as isize - src as isize),
@@ -1470,8 +1480,7 @@ pub(crate) unsafe fn ascii_array_task_imp(t: *mut AsciiArrayTask) -> bool {
         span = unsafe { span.add(1) };
     }
 
-    // SAFETY: `t` is a valid, live `AsciiArrayTask`; reads its `offset`/`arr_size`.
-    if unsafe { (*t).offset != (*t).arr_size } {
+    if t.offset() != t.arr_size() {
         return false;
     }
 
@@ -1486,8 +1495,10 @@ pub(crate) unsafe extern "C" fn ascii_array_task_fn(task: *mut Task) -> bool {
     // SAFETY: `task` points to a valid, live `Task` (thread-pool contract); its
     // `data` field is the `AsciiArrayTask` this entry point was created with.
     let t: *mut AsciiArrayTask = unsafe { (*task).data } as *mut AsciiArrayTask;
-    // SAFETY: `t` is the task's own live `AsciiArrayTask` payload.
-    if !unsafe { ascii_array_task_imp(t) } {
+    // SAFETY: `t` is the task's own live, write-capable `AsciiArrayTask`
+    // payload, so it mints the task view, and its span/destination fields carry
+    // the runs `ascii_array_task_imp` documents.
+    if !unsafe { ascii_array_task_imp(View::<AsciiArrayTask, Mut>::from_ptr(t)) } {
         // SAFETY: `task` points to a valid, live `Task`; writes its `error` field
         // to a static string literal.
         unsafe {
@@ -2596,8 +2607,11 @@ unsafe fn ascii_parse_node_rec(
                 } else {
                     ufbxi_check_msg!(
                         uc,
-                        // SAFETY: `t` is the fully initialized local task, run inline.
-                        unsafe { ascii_array_task_imp(t) },
+                        // SAFETY: `t` is the fully initialized local task, so
+                        // it mints the task view, and its span/destination
+                        // fields carry the runs `ascii_array_task_imp`
+                        // documents; run inline.
+                        unsafe { ascii_array_task_imp(View::<AsciiArrayTask, Mut>::from_ptr(t)) },
                         "Threaded ASCII parse error",
                         "ufbxi_ascii_array_task_imp(&t)"
                     );
