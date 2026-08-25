@@ -6991,7 +6991,10 @@ pub(crate) unsafe fn parse_toplevel(uc: &Context, name: *const u8) -> Result<(),
             }
 
             // Not needed anymore
-            buf_free(uc.tmp_parse_view());
+            // SAFETY: `tmp_parse` is `uc`'s own live, initialized buffer;
+            // C frees it at this same point, parsing having reached the end,
+            // so nothing reads the parse run afterwards.
+            unsafe { buf_free(uc.tmp_parse_view()) };
 
             return Ok(());
         }

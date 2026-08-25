@@ -3301,8 +3301,13 @@ pub(crate) unsafe fn subdivide_mesh(
     // allocator and the `inputs` array (with its capacity) it allocated, the
     // free contract.
     unsafe { free::<SubdivideInput>(sc.ator_tmp_mut_ptr(), sc.inputs(), sc.inputs_cap()) };
-    buf_free(sc.tmp_view());
-    buf_free(sc.source_view());
+    // SAFETY: `tmp`/`source` are `sc`'s own live, initialized buffers, and the
+    // subdivision above is done with both — the finished mesh lives in `result`
+    // — so nothing reads either run afterwards (C frees them at this point).
+    unsafe {
+        buf_free(sc.tmp_view());
+        buf_free(sc.source_view());
+    }
 
     if let Ok(finished_imp) = result {
         // SAFETY: `ator_tmp_view()` is `sc`'s own live temp allocator, torn
@@ -3323,7 +3328,9 @@ pub(crate) unsafe fn subdivide_mesh(
         unsafe {
             fix_error_type(sc.error_mut_ptr(), b"Failed to subdivide\0", &raw mut fixed);
         }
-        buf_free(sc.result_view());
+        // SAFETY: `result` is `sc`'s own live, initialized buffer; subdivision
+        // failed, so the partially built mesh is discarded unread.
+        unsafe { buf_free(sc.result_view()) };
         // SAFETY: both allocators are `sc`'s own live temp/result allocators,
         // torn down exactly once here.
         unsafe {

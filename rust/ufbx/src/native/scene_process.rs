@@ -1674,7 +1674,10 @@ pub(crate) fn resolve_connections(uc: &Context) -> Result<(), Fail> {
     let tmp_connections: *mut TmpConnection = uc
         .tmp_view()
         .push_pop(uc.tmp_connections_view(), num_connections);
-    buf_free(uc.tmp_connections_view());
+    // SAFETY: `tmp_connections` is `uc`'s own live, initialized buffer, and the
+    // `push_pop` above moved every recorded connection into `uc.tmp` — nothing
+    // reads the old run, matching C's free at this point.
+    unsafe { buf_free(uc.tmp_connections_view()) };
     ufbxi_check!(uc, !tmp_connections.is_null(), "tmp_connections");
 
     // NOTE: We truncate this array in case not all connections are resolved
@@ -1896,7 +1899,9 @@ pub(crate) fn resolve_connections(uc: &Context) -> Result<(), Fail> {
     }
 
     // We don't need the temporary connections at this point anymore
-    buf_free(uc.tmp_connections_view());
+    // SAFETY: `tmp_connections` is `uc`'s own live, initialized buffer; the
+    // connections were consumed above, so nothing reads the run afterwards.
+    unsafe { buf_free(uc.tmp_connections_view()) };
 
     Ok(())
 }
@@ -2162,7 +2167,9 @@ pub(crate) fn linearize_nodes(uc: &Context) -> Result<(), Fail> {
     // Pops the `num_nodes` recorded ids from uc's `tmp_node_ids` buffer into
     // uc's tmp buffer.
     let node_ids: *mut u32 = uc.tmp_view().push_pop(uc.tmp_node_ids_view(), num_nodes);
-    buf_free(uc.tmp_node_ids_view());
+    // SAFETY: `tmp_node_ids` is `uc`'s own live, initialized buffer, and the
+    // `push_pop` above moved every id into `uc.tmp` — nothing reads the old run.
+    unsafe { buf_free(uc.tmp_node_ids_view()) };
     ufbxi_check!(uc, !node_ids.is_null(), "node_ids");
 
     let node_ptrs: *mut *mut Node = uc.tmp_stack_view().push(num_nodes);
@@ -8346,7 +8353,10 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
     let element_offsets: *mut usize = uc
         .tmp_view()
         .push_pop::<usize>(uc.tmp_element_offsets_view(), num_element_offsets);
-    buf_free(uc.tmp_element_offsets_view());
+    // SAFETY: `tmp_element_offsets` is `uc`'s own live, initialized buffer, and
+    // the `push_pop` above moved every offset into `uc.tmp` — nothing reads the
+    // old run.
+    unsafe { buf_free(uc.tmp_element_offsets_view()) };
     ufbxi_check!(uc, !element_offsets.is_null(), "element_offsets");
     // The offsets are the one `ufbxi_push_pop`-materialized block popped above,
     // one `size_t` per element: `ufbxi_push_element_size` pushes exactly one
@@ -8402,8 +8412,13 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
     }
 
     uc.scene_view().elements_view().set_count(num_elements);
-    buf_free(uc.tmp_element_offsets_view());
-    buf_free(uc.tmp_elements_view());
+    // SAFETY: both are `uc`'s own live, initialized buffers; the elements were
+    // materialized into the scene's own arrays above, so nothing reads either
+    // run afterwards — C frees them at this same point.
+    unsafe {
+        buf_free(uc.tmp_element_offsets_view());
+        buf_free(uc.tmp_elements_view());
+    }
 
     uc.set_tmp_element_flag(uc.tmp_view().push_zero::<u8>(num_elements));
     ufbxi_check!(uc, !uc.tmp_element_flag().is_null(), "uc->tmp_element_flag");
@@ -8439,7 +8454,9 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
         let typed_offsets: *mut usize = uc
             .tmp_view()
             .push_pop::<usize>(uc.tmp_typed_element_offsets_at(type_), num_typed);
-        buf_free(uc.tmp_typed_element_offsets_at(type_));
+        // SAFETY: the per-type offset buffer is `uc`'s own live, initialized
+        // field, and the `push_pop` above moved its contents into `uc.tmp`.
+        unsafe { buf_free(uc.tmp_typed_element_offsets_at(type_)) };
         ufbxi_check!(uc, !typed_offsets.is_null(), "typed_offsets");
         // SAFETY: the run is the non-null `ufbxi_push_pop`-materialized block
         // popped above, holding `num_typed` initialized byte offsets; nothing
@@ -8463,7 +8480,9 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
             unsafe { *typed_data.add(i) = element_data.add(typed_offsets_run[i]) as *mut Element };
         }
 
-        buf_free(uc.tmp_typed_element_offsets_at(type_));
+        // SAFETY: same buffer, already emptied above; C repeats the free here
+        // and `buf_free` nulls `chunks`, so the second call is the no-op C's is.
+        unsafe { buf_free(uc.tmp_typed_element_offsets_at(type_)) };
     }
 
     // Create named elements
@@ -9154,7 +9173,9 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
     let full_weights_base: *mut List<Real> = uc
         .tmp_view()
         .push_pop::<List<Real>>(uc.tmp_full_weights_view(), num_full_weights);
-    buf_free(uc.tmp_full_weights_view());
+    // SAFETY: `tmp_full_weights` is `uc`'s own live, initialized buffer, and the
+    // `push_pop` above moved every list header into `uc.tmp`.
+    unsafe { buf_free(uc.tmp_full_weights_view()) };
     ufbxi_check!(uc, !full_weights_base.is_null(), "full_weights");
 
     // C: `ufbxi_for_ptr_list(ufbx_blend_channel, p_channel, uc->scene.blend_channels)`

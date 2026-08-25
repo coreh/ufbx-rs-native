@@ -2193,7 +2193,9 @@ pub(crate) unsafe fn cache_load(cc: &CacheContext, filename: String) -> *mut Geo
         if !cc.owned_by_scene() {
             // On the failure path the result buf never reached an `imp`, so
             // `cc` still owns the string-pool buf and the result allocator.
-            buf_free(cc.string_pool_view().buf_view());
+            // SAFETY: that buf is `cc`'s own live, initialized field, and the
+            // discarded result means nothing reads the interned strings.
+            unsafe { buf_free(cc.string_pool_view().buf_view()) };
             // SAFETY: `cc.ator_result_view()` is `cc`'s own result allocator,
             // freed exactly once here.
             unsafe { free_ator(cc.ator_result_view()) };

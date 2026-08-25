@@ -385,11 +385,13 @@ pub(crate) fn map_free(map: &MapView) {
     // SAFETY: the view's mint invariant — `map` addresses a live `Map`.
     let regression_ator: *mut Allocator = unsafe { (*map).aa_buf.ator };
 
-    // SAFETY: the view's mint invariant keeps `map` live, and `aa_buf` is its own AA-tree buffer, freed
-    // through the allocator it was allocated from. `&raw mut` preserves the
-    // raw pointer's provenance without manufacturing a temporary reference;
-    // the `BufView` is minted over that field in place.
-    buf_free(unsafe { BufView::from_ptr(&raw mut (*map).aa_buf) });
+    // SAFETY: the view's mint invariant keeps `map` live and initialized, and
+    // `aa_buf` is its own AA-tree buffer, freed through the allocator it was
+    // allocated from. `&raw mut` preserves the raw pointer's provenance without
+    // manufacturing a temporary reference; the `BufView` is minted over that
+    // field in place. `map_free` tears the map down, so the AA-tree nodes
+    // pushed into that buf are dead here — `buf_free`'s last-use obligation.
+    unsafe { buf_free(BufView::from_ptr(&raw mut (*map).aa_buf)) };
     // SAFETY: `entries` is the combined entry/item block `map_grow_size_imp`
     // allocated from `map`'s own allocator with byte length `data_size` (0/null
     // for a never-grown map, which `free` tolerates).

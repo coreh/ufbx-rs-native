@@ -1125,13 +1125,28 @@ pub(crate) unsafe fn push_peek_size(
 }
 
 // ufbx.c:4278-4297 `ufbxi_buf_free`
+//
+// # Safety
+// Two obligations no borrow can carry, so this stays an `unsafe fn` even with
+// a `&BufView` parameter (PORTING.md "Unsafe reduction / isolation strategy"):
+//
+// - The viewed `Buf` must be INITIALIZED, not merely live: the fields read
+//   here (`chunks[0..2]`, `ator`) must have been written. A `BufView` mint
+//   (`View::from_ptr`) asserts liveness and write-capable provenance only —
+//   the storage is `MaybeUninit` and the mint claims no whole-value validity,
+//   so the initialization is the caller's to vouch for.
+// - This must be the LAST use of the buffer's memory: every pointer the
+//   push family handed out of this `Buf` dangles once its chunks are
+//   released, and the caller vouches that nothing dereferences one afterwards.
+//   Re-freeing the same `Buf` is fine on its own (C nulls `chunks[i]`, so a
+//   second call is a no-op), but the arena contents are gone.
 #[inline(never)]
-pub(crate) fn buf_free(buf: &BufView) {
+pub(crate) unsafe fn buf_free(buf: &BufView) {
     let buf: *mut Buf = buf.get();
     // C: `ufbxi_nounroll` — optimizer pragma, no Rust analogue (platform.rs).
-    // SAFETY: `buf` is the view's write-provenance pointer to a live,
-    // initialized `Buf` (the `BufView` mint invariant); each `chunks[i]` head
-    // and the chain from its `->root` are live chunks allocated from
+    // SAFETY: `buf` is the view's write-provenance pointer to a `Buf` that is
+    // live (the mint) and initialized (this fn's contract); each `chunks[i]`
+    // head and the chain from its `->root` are live chunks allocated from
     // `(*buf).ator` (the `Buf` construction invariant, the same standing the
     // `BufView` push family relies on) — the `free_chunk` contract for each.
     for i in 0..2usize {
@@ -1160,11 +1175,13 @@ pub(crate) unsafe fn buf_clear(buf: *mut Buf) {
     ufbx_assert!(!unsafe { (*buf).unordered } || unsafe { (*buf).clearable });
 
     // Free the memory if using ASAN
-    // SAFETY: `buf` is the live `Buf` and `(*buf).ator` its live allocator;
-    // reading `huge_size`, then minting the `BufView` `buf_free` takes off the
-    // same live, context-owned `Buf` (this fn's raw-pointer contract).
+    // SAFETY: `buf` is the live, initialized `Buf` and `(*buf).ator` its live
+    // allocator; reading `huge_size`, then minting the `BufView` `buf_free`
+    // takes off that same context-owned `Buf` (this fn's raw-pointer
+    // contract). `buf_free`'s last-use obligation is C's own clear-with-ASAN
+    // path: clearing already discards every pointer into the buffer.
     if unsafe { (*(*buf).ator).huge_size } <= 1 {
-        buf_free(unsafe { BufView::from_ptr(buf) });
+        unsafe { buf_free(BufView::from_ptr(buf)) };
         return;
     }
 
@@ -1526,8 +1543,9 @@ mod tests {
         assert_eq!(buf.pos, 0);
 
         // SAFETY: a live, initialized stack-local `Buf` owned by this test;
-        // minting the `BufView` `buf_free` takes.
-        buf_free(unsafe { BufView::from_ptr(&raw mut buf) });
+        // minting the `BufView` `buf_free` takes. The test is done with the
+        // buffer's contents, so this is the last use of its memory.
+        unsafe { buf_free(BufView::from_ptr(&raw mut buf)) };
         assert_eq!(unsafe { (*ator).current_size }, 0);
     }
 
@@ -1556,8 +1574,9 @@ mod tests {
         assert_eq!(unsafe { (*buf.chunks[0]).padding_pos }, 0);
 
         // SAFETY: a live, initialized stack-local `Buf` owned by this test;
-        // minting the `BufView` `buf_free` takes.
-        buf_free(unsafe { BufView::from_ptr(&raw mut buf) });
+        // minting the `BufView` `buf_free` takes. The test is done with the
+        // buffer's contents, so this is the last use of its memory.
+        unsafe { buf_free(BufView::from_ptr(&raw mut buf)) };
         assert_eq!(unsafe { (*ator).current_size }, 0);
     }
 
@@ -1595,9 +1614,12 @@ mod tests {
         assert_eq!(result.num_items, N);
 
         // SAFETY: a live, initialized stack-local `Buf` owned by this test;
-        // minting the `BufView` `buf_free` takes.
-        buf_free(unsafe { BufView::from_ptr(&raw mut stack) });
-        buf_free(unsafe { BufView::from_ptr(&raw mut result) });
+        // minting the `BufView` `buf_free` takes. The test is done with the
+        // buffer's contents, so this is the last use of its memory.
+        unsafe {
+            buf_free(BufView::from_ptr(&raw mut stack));
+            buf_free(BufView::from_ptr(&raw mut result));
+        }
         assert_eq!(unsafe { (*ator).current_size }, 0);
     }
 
@@ -1633,8 +1655,9 @@ mod tests {
         assert_eq!(unsafe { (*ator).current_size }, 0);
 
         // SAFETY: a live, initialized stack-local `Buf` owned by this test;
-        // minting the `BufView` `buf_free` takes.
-        buf_free(unsafe { BufView::from_ptr(&raw mut buf) });
+        // minting the `BufView` `buf_free` takes. The test is done with the
+        // buffer's contents, so this is the last use of its memory.
+        unsafe { buf_free(BufView::from_ptr(&raw mut buf)) };
     }
 
     #[test]
@@ -1677,8 +1700,9 @@ mod tests {
         assert_eq!(count, HUGE_MAX_SCAN);
 
         // SAFETY: a live, initialized stack-local `Buf` owned by this test;
-        // minting the `BufView` `buf_free` takes.
-        buf_free(unsafe { BufView::from_ptr(&raw mut buf) });
+        // minting the `BufView` `buf_free` takes. The test is done with the
+        // buffer's contents, so this is the last use of its memory.
+        unsafe { buf_free(BufView::from_ptr(&raw mut buf)) };
         assert_eq!(unsafe { (*ator).current_size }, 0);
     }
 }

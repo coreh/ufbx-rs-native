@@ -968,7 +968,9 @@ pub(crate) unsafe fn load_imp(uc: &Context) -> Result<(), Fail> {
     );
 
     // We can free `tmp_parse` already here as all parsing is done by now.
-    buf_free(uc.tmp_parse_view());
+    // SAFETY: `tmp_parse` is `uc`'s own live, initialized buffer, and C frees
+    // it at this same point — parsing is done, so nothing reads the run.
+    unsafe { buf_free(uc.tmp_parse_view()) };
 
     // SAFETY: `finalize_scene` takes the same `&Context` this fn was handed.
     ufbxi_check!(
@@ -1278,10 +1280,13 @@ pub(crate) fn free_temp(uc: &Context) {
 // ufbx.c:25464-25470 `ufbxi_free_result`
 #[inline(never)]
 pub(crate) fn free_result(uc: &Context) {
-    // The buffers come from `uc` accessors; mirrors C `ufbxi_free_result`'s
-    // teardown.
-    buf_free(uc.result_view());
-    buf_free(uc.string_pool_view().buf_view());
+    // SAFETY: both buffers come from `uc` accessors and are live and
+    // initialized; `free_result` is the context's single result teardown, so
+    // each is a last use (mirrors C `ufbxi_free_result`).
+    unsafe {
+        buf_free(uc.result_view());
+        buf_free(uc.string_pool_view().buf_view());
+    }
 
     // SAFETY: `uc.ator_result_view()` is the context's own result allocator,
     // live for the borrow, torn down exactly once here.
