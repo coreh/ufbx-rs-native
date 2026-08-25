@@ -2268,6 +2268,18 @@ const _: () = assert!(size_of::<VertexVec3>() == size_of::<VertexAttrib>());
 const _: () = assert!(size_of::<VertexVec4>() == size_of::<VertexAttrib>());
 
 // ufbx.c:12735-12739 `ufbxi_warn_polygon_mapping`
+//
+// `data_name` and `mapping` stay raw: they feed the two `%s` conversions and
+// nothing else, so the printf scans each to its terminator and neither a
+// length nor a provenance-carrying borrow expresses that obligation
+// (PORTING.md "Fn boundaries take borrows, not raw pointers" names printf
+// `%s` as the case where an honest `unsafe fn` beats a safe signature over a
+// slice the callee still walks past).
+//
+// # Safety
+// `data_name` and `mapping` must each point at a NUL-terminated run — a
+// string-pool-interned name, a `ufbxi_*` name constant or the empty literal —
+// readable from the pointer through its terminator.
 #[inline(never)]
 pub(crate) unsafe fn warn_polygon_mapping(
     uc: &Context,
