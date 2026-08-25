@@ -7209,13 +7209,13 @@ pub(crate) fn load_strings(uc: &Context) -> Result<(), Fail> {
         }
         ufbxi_check!(
             uc,
-            // SAFETY: interning into `uc`'s own string pool through its raw-ptr
-            // getter; `str_` is a `data`/`length` pair over a static literal,
+            // SAFETY: `str_` is a `data`/`length` pair over a static literal,
             // and `'static` outlives the pool, which is why the no-copy
-            // (`copy == false`) intern is sound here.
+            // (`copy == false`) intern is sound here; `p_out_length` is null,
+            // which the `raw == true` path never writes.
             !unsafe {
                 sp::push_string_imp(
-                    uc.string_pool_mut_ptr(),
+                    uc.string_pool_view(),
                     str_.data,
                     str_.length,
                     core::ptr::null_mut(),
@@ -7794,10 +7794,11 @@ pub(crate) fn init_node_prop_names(uc: &Context) -> Result<(), Fail> {
         // SAFETY: `name` is a NUL-terminated static literal, so `strlen` finds
         // its terminator and the `'static` bytes outlive the pool — which is
         // what makes the no-copy (`copy == false`) intern into `uc`'s own
-        // string pool sound.
+        // string pool sound; `p_out_length` is null, which the `raw == true`
+        // path never writes.
         let pooled: *const u8 = unsafe {
             sp::push_string_imp(
-                uc.string_pool_mut_ptr(),
+                uc.string_pool_view(),
                 name,
                 crate::native::error::strlen(name),
                 core::ptr::null_mut(),
@@ -7851,10 +7852,11 @@ pub(crate) fn load_maps(uc: &Context) -> Result<(), Fail> {
         // SAFETY: `name.name` is a NUL-terminated static literal, so `strlen`
         // finds its terminator and the `'static` bytes outlive the pool — what
         // makes the no-copy (`copy == false`) intern into `uc`'s own string
-        // pool sound.
+        // pool sound; `p_out_length` is null, which the `raw == true` path
+        // never writes.
         let pooled: *const u8 = unsafe {
             sp::push_string_imp(
-                uc.string_pool_mut_ptr(),
+                uc.string_pool_view(),
                 name.name,
                 crate::native::error::strlen(name.name),
                 core::ptr::null_mut(),

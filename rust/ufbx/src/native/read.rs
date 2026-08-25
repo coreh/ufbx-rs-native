@@ -9354,12 +9354,14 @@ pub(crate) fn read_root(uc: &Context) -> Result<(), Fail> {
             b"Scene\x00\x01Model\0".as_ptr()
         };
         // SAFETY: `root_name` is one of the two byte-string literals above,
-        // each 12 bytes plus the NUL, so the requested length is in bounds; the
-        // intern goes to uc's own string pool and its result — checked non-null
-        // — is the pooled string the synthetic-id hash reads.
+        // each 12 bytes plus the NUL, so the requested length is in bounds and
+        // the `'static` bytes outlive the pool — which is what makes the no-copy
+        // (`copy == false`) intern sound; `p_out_length` is null, which the
+        // `raw == true` path never writes. Its result — checked non-null — is
+        // the pooled string the synthetic-id hash reads.
         unsafe {
             root_name = sp::push_string_imp(
-                uc.string_pool_mut_ptr(),
+                uc.string_pool_view(),
                 root_name,
                 12,
                 core::ptr::null_mut(),

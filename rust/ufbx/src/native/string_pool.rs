@@ -813,9 +813,17 @@ pub(crate) fn push_sanitized_string(
 
 // ufbx.c:5211-5253 `ufbxi_push_string_imp`
 // C: `ufbxi_nodiscard static ufbxi_noinline const char *` — NULL on failure.
+//
+// # Safety
+//
+// `str_` must be readable for `length` bytes, and when `copy` is false its
+// bytes must outlive every use of the pool's interned strings — the pointer
+// itself is stored in the map entry and returned. `p_out_length` must be null
+// or address a live `usize` slot; the sanitize path writes through it
+// unconditionally, so a non-null slot is required whenever `raw` is false.
 #[inline(never)]
 pub(crate) unsafe fn push_string_imp(
-    pool: *mut StringPool,
+    pool: &StringPoolView,
     mut str_: *const u8,
     mut length: usize,
     p_out_length: *mut usize,
@@ -827,12 +835,8 @@ pub(crate) unsafe fn push_string_imp(
     }
 
     ufbxi_check_return_err!(
-        unsafe { crate::native::error::ErrorView::from_ptr((*pool).error) },
-        // SAFETY: the caller vouches `pool` addresses a live `StringPool`, so
-        // `from_ptr` reinterprets a live pool and `(*pool).initial_size` reads it.
-        unsafe { StringPoolView::from_ptr(pool) }
-            .map_view()
-            .grow::<String>(unsafe { (*pool).initial_size }),
+        pool.error_view(),
+        pool.map_view().grow::<String>(pool.initial_size()),
         ptr::null(),
         "ufbxi_map_grow_size((&pool->map), sizeof(ufbx_string), (pool->initial_size))"
     );
@@ -861,9 +865,7 @@ pub(crate) unsafe fn push_string_imp(
                 // `valid_length < length` (just checked) is the precondition
                 // `sanitize_string` asserts.
                 if sanitize_string(
-                    // SAFETY: the caller vouches `pool` addresses the live,
-                    // context-owned `StringPool`, reinterpreted in place.
-                    unsafe { StringPoolView::from_ptr(pool) },
+                    pool,
                     // SAFETY: the raw address of the local `sanitized` out-param
                     // is write-capable and its slot outlives the call.
                     unsafe { SanitizedStringView::from_ptr(&raw mut sanitized) },
@@ -892,38 +894,18 @@ pub(crate) unsafe fn push_string_imp(
 
     let ref_ = String::new_c(str_, length);
 
-    // SAFETY: the caller vouches `pool` addresses a live `StringPool`, which
-    // `from_ptr` reinterprets in place.
-    let entry: *mut String = unsafe { StringPoolView::from_ptr(pool) }
-        .map_view()
-        .find::<String, _>(hash, &ref_);
+    let entry: *mut String = pool.map_view().find::<String, _>(hash, &ref_);
     if !entry.is_null() {
         // SAFETY: `entry` is a non-null map slot addressing a live `String`.
         return unsafe { (*entry).data };
     }
-    // SAFETY: `pool` addresses a live `StringPool`, reinterpreted in place.
-    let entry = unsafe { StringPoolView::from_ptr(pool) }
-        .map_view()
-        .insert::<String, _>(hash, &ref_);
-    ufbxi_check_return_err!(
-        unsafe { crate::native::error::ErrorView::from_ptr((*pool).error) },
-        !entry.is_null(),
-        ptr::null(),
-        "entry"
-    );
+    let entry = pool.map_view().insert::<String, _>(hash, &ref_);
+    ufbxi_check_return_err!(pool.error_view(), !entry.is_null(), ptr::null(), "entry");
     // SAFETY: `entry` is the just-inserted non-null map slot.
     unsafe { (*entry).length = length };
     if copy {
-        // SAFETY: `pool` addresses a live `StringPool`, reinterpreted in place.
-        let dst: *mut u8 = unsafe { StringPoolView::from_ptr(pool) }
-            .buf_view()
-            .push::<u8>(length + 1);
-        ufbxi_check_return_err!(
-            unsafe { crate::native::error::ErrorView::from_ptr((*pool).error) },
-            !dst.is_null(),
-            ptr::null(),
-            "dst"
-        );
+        let dst: *mut u8 = pool.buf_view().push::<u8>(length + 1);
+        ufbxi_check_return_err!(pool.error_view(), !dst.is_null(), ptr::null(), "dst");
         // SAFETY: `dst` is a non-null run of `length + 1` bytes just pushed onto
         // the pool's arena, so it is writable for the `length` copied bytes plus
         // the trailing NUL; `str_` is readable for `length` bytes and distinct
@@ -951,9 +933,19 @@ pub(crate) unsafe fn push_string(
     p_out_length: *mut usize,
     raw: bool,
 ) -> *const u8 {
-    // SAFETY: the caller's `pool`/`str_`/`length`/`p_out_length` contract is
-    // forwarded unchanged to `push_string_imp`.
-    unsafe { push_string_imp(pool, str_, length, p_out_length, true, raw) }
+    // SAFETY: the caller vouches `pool` addresses the live, context-owned
+    // `StringPool`, reinterpreted in place; the caller's `str_`/`length`/
+    // `p_out_length` contract is forwarded unchanged to `push_string_imp`.
+    unsafe {
+        push_string_imp(
+            StringPoolView::from_ptr(pool),
+            str_,
+            length,
+            p_out_length,
+            true,
+            raw,
+        )
+    }
 }
 
 // ufbx.c:5260-5269 `ufbxi_push_string_place`
