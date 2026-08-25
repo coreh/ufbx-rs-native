@@ -6308,51 +6308,47 @@ pub(crate) fn retain_toplevel_child(uc: &Context, child: &NodeView) -> Result<()
 // -- General parsing (ufbx.c:10855-11407)
 
 // ufbx.c:10857-10879 `ufbxi_next_line`
+///
+/// # Safety
+/// `buf.data`/`buf.length` must describe a readable byte span (the same vouch
+/// `String::as_bytes` takes) — the span is scanned here and the sub-span handed
+/// to `line` is read by the space trimming.
 #[inline(never)]
-pub(crate) unsafe fn next_line(line: *mut String, buf: *mut String, skip_space: bool) -> bool {
-    // SAFETY: `buf` is a valid `*mut String` (fn contract); reading its length.
-    if unsafe { (*buf).length } == 0 {
+pub(crate) unsafe fn next_line(line: &mut String, buf: &mut String, skip_space: bool) -> bool {
+    if buf.length == 0 {
         return false;
     }
-    // SAFETY: `buf` is valid; its `data`/`length` describe a readable byte span,
-    // which is `memchr`'s contract.
-    let newline: *const u8 = unsafe { memchr((*buf).data, b'\n', (*buf).length) };
+    // SAFETY: `buf.data`/`buf.length` describe a readable byte span (fn
+    // contract), which is `memchr`'s contract.
+    let newline: *const u8 = unsafe { memchr(buf.data, b'\n', buf.length) };
     let length: usize = if !newline.is_null() {
-        // SAFETY: `newline` points inside `buf`'s span, so the byte offset from
+        // `newline` points inside `buf`'s span, so the byte offset from
         // `buf.data` is non-negative and in range.
-        unsafe { to_size(newline as isize - (*buf).data as isize) + 1 }
+        to_size(newline as isize - buf.data as isize) + 1
     } else {
-        // SAFETY: `buf` is valid; reading its length.
-        unsafe { (*buf).length }
+        buf.length
     };
 
-    // SAFETY: `line` and `buf` are valid; point `line` at `buf`'s current span
-    // and advance `buf` by `length` (<= its remaining length, per the memchr
-    // result above), keeping `buf.data`/`buf.length` a valid span.
-    unsafe {
-        (*line).data = (*buf).data;
-        (*line).length = length;
-        (*buf).data = (*buf).data.add(length);
-        (*buf).length -= length;
-    }
+    line.data = buf.data;
+    line.length = length;
+    // SAFETY: `length` is at most `buf.length` (per the memchr result above),
+    // so the offset stays within `buf`'s span or one past its end.
+    buf.data = unsafe { buf.data.add(length) };
+    buf.length -= length;
 
     if skip_space {
-        // SAFETY: `line` spans a valid byte range; the `length > 0` guard keeps
-        // `*line.data` inside it, and advancing `data`/shrinking `length`
-        // preserves the span.
-        while unsafe { (*line).length } > 0 && is_space(unsafe { *(*line).data }) {
-            unsafe {
-                (*line).data = (*line).data.add(1);
-                (*line).length -= 1;
-            }
+        // SAFETY: `line` spans a readable byte range (a sub-span of `buf`); the
+        // `length > 0` guard keeps `*line.data` inside it, and advancing
+        // `data`/shrinking `length` preserves the span.
+        while line.length > 0 && is_space(unsafe { *line.data }) {
+            // SAFETY: advancing by one stays inside the span, per the guard.
+            line.data = unsafe { line.data.add(1) };
+            line.length -= 1;
         }
-        // SAFETY: `line` spans a valid byte range; `length > 0` keeps the
+        // SAFETY: `line` spans a readable byte range; `length > 0` keeps the
         // trailing byte `data.add(length - 1)` inside it.
-        while unsafe { (*line).length } > 0
-            && is_space(unsafe { *(*line).data.add((*line).length - 1) })
-        {
-            // SAFETY: `line` is valid; shrinking its length.
-            unsafe { (*line).length -= 1 };
+        while line.length > 0 && is_space(unsafe { *line.data.add(line.length - 1) }) {
+            line.length -= 1;
         }
     }
 
@@ -6762,9 +6758,9 @@ pub(crate) unsafe fn is_format(data: *const u8, size: usize, format: FileFormat)
             return true;
         }
 
-        // SAFETY: `line`/`buf` are valid local `String`s and `buf` spans
-        // `[data, data+size)` — `next_line`'s contract.
-        while unsafe { next_line(&raw mut line, &raw mut buf, true) } {
+        // SAFETY: `buf` spans `[data, data+size)`, a readable byte range —
+        // `next_line`'s contract.
+        while unsafe { next_line(&mut line, &mut buf, true) } {
             // SAFETY: `line` is a valid `String` and the pattern is NUL-terminated
             // — `r#match`'s contract.
             if unsafe {
@@ -6781,9 +6777,9 @@ pub(crate) unsafe fn is_format(data: *const u8, size: usize, format: FileFormat)
             }
         }
     } else if format == FileFormat::Obj {
-        // SAFETY: `line`/`buf` are valid local `String`s and `buf` spans
-        // `[data, data+size)` — `next_line`'s contract.
-        while unsafe { next_line(&raw mut line, &raw mut buf, true) } {
+        // SAFETY: `buf` spans `[data, data+size)`, a readable byte range —
+        // `next_line`'s contract.
+        while unsafe { next_line(&mut line, &mut buf, true) } {
             let pattern: *const u8 = b"(vn?\\s+\\F|vt)\\s+\\F\\s+\\F.*|f\\s+[\\-/0-9]+\\s+[\\-/0-9]+\\s*[\\-/0-9]+.*|(usemtl|mtllib)\\s+\\S.*\0".as_ptr();
             // SAFETY: `line` is a valid `String` and `pattern` is NUL-terminated —
             // `r#match`'s contract.
@@ -6792,9 +6788,9 @@ pub(crate) unsafe fn is_format(data: *const u8, size: usize, format: FileFormat)
             }
         }
     } else if format == FileFormat::Mtl {
-        // SAFETY: `line`/`buf` are valid local `String`s and `buf` spans
-        // `[data, data+size)` — `next_line`'s contract.
-        while unsafe { next_line(&raw mut line, &raw mut buf, true) } {
+        // SAFETY: `buf` spans `[data, data+size)`, a readable byte range —
+        // `next_line`'s contract.
+        while unsafe { next_line(&mut line, &mut buf, true) } {
             let pattern: *const u8 = b"newmtl\\s+\\S.*\0".as_ptr();
             // SAFETY: `line` is a valid `String` and `pattern` is NUL-terminated —
             // `r#match`'s contract.
