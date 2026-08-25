@@ -213,6 +213,12 @@ impl<T> Deref for Ref<T> {
     }
 }
 
+/// Layout twin of [`String`] for values that cross the public boundary, and it
+/// carries NO per-leaf discipline of its own: `data` is whatever the caller
+/// stored, and `length` may be the `SIZE_MAX` NUL-terminated sentinel that
+/// `ufbxi_check_string` normalizes (ufbx.c:26500). Hence no `bytes()` here —
+/// a byte run is only recoverable under a caller promise. Strings that have
+/// passed `ufbxi_check_string` or the string pool are [`String`].
 #[repr(C)]
 pub struct RawString {
     pub data: *const u8,
@@ -226,18 +232,22 @@ pub(crate) type ScalarView<T> = core::cell::Cell<T>;
 // Typed interior-mutable VIEW over `RawString` (non-Copy; subfields read+written).
 pub(crate) type RawStringView = crate::native::view::View<RawString>;
 
-impl RawStringView {
+// Reads serve both modes: a caller's `&ufbx_string` mints `Const` here.
+impl<M: crate::native::view::Mode> crate::native::view::View<RawString, M> {
     #[inline(always)]
     pub(crate) fn data(&self) -> *const u8 {
-        view_read!(self, data)
-    }
-    #[inline(always)]
-    pub(crate) fn set_data(&self, data: *const u8) {
-        view_write!(self, data, data)
+        view_read_shared!(self, data)
     }
     #[inline(always)]
     pub(crate) fn length(&self) -> usize {
-        view_read!(self, length)
+        view_read_shared!(self, length)
+    }
+}
+
+impl RawStringView {
+    #[inline(always)]
+    pub(crate) fn set_data(&self, data: *const u8) {
+        view_write!(self, data, data)
     }
     #[inline(always)]
     pub(crate) fn set_length(&self, length: usize) {

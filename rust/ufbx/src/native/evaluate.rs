@@ -4678,14 +4678,14 @@ impl<M: Mode> View<RawPropOverrideDesc, M> {
 /// # Safety
 /// `src` must hold one of the two shapes this entry accepts: `length !=
 /// SIZE_MAX` with `data` readable for `length` bytes, or the `SIZE_MAX`
-/// sentinel with `data` addressing a NUL-terminated run. Only the first is the
-/// view's own per-leaf discipline; the sentinel's terminator is a caller
-/// promise no parameter type carries.
+/// sentinel with `data` addressing a NUL-terminated run. `RawString` asserts
+/// neither, which is why the source is viewed in that form: both obligations
+/// are the caller's, and `dst` receives the normalized `String` pair.
 #[inline(never)]
 pub(crate) unsafe fn check_string(
     error: &crate::native::error::ErrorView,
     dst: &StringView,
-    src: &View<String, Const>,
+    src: &View<crate::prelude::RawString, Const>,
 ) -> Result<(), Fail> {
     let length: usize = if src.length() != usize::MAX {
         src.length()
@@ -4701,7 +4701,8 @@ pub(crate) unsafe fn check_string(
     };
     if length > 0 {
         // SAFETY: `data` is the source string's own data pointer and `length` is
-        // that string's length (or its `strlen`), so the whole span is readable.
+        // that string's length (or its `strlen`), so the whole span is readable
+        // under either shape of this `unsafe fn`'s contract.
         let valid_length: usize = unsafe { utf8_valid_length(data, length) };
         ufbxi_check_err_msg!(error, valid_length == length, "Invalid UTF-8");
     }
@@ -4932,23 +4933,26 @@ pub(crate) fn create_anim_imp(ac: &CreateAnimContext) -> Result<FinishedImp<Anim
             }
 
             // C: `ufbxi_check_err(&ac->error, ufbxi_check_string(&ac->error, &dst->prop_name, &src->prop_name));`
-            // SAFETY (both calls): `check_string`'s residual contract covers
-            // the source string alone — a caller-supplied descriptor member,
-            // which the public options contract states is either a real span or
-            // the `SIZE_MAX` NUL-terminated sentinel. Each mint reinterprets one
-            // field address of the frozen descriptor view above (`RawString` is
-            // the layout twin of `String`), and that view's own freeze is what
-            // keeps the member unwritten for the call.
+            // SAFETY (both calls): each mint reinterprets one `RawString` field
+            // address of the frozen descriptor view above, and that view's own
+            // freeze is what keeps the member unwritten for the call.
+            // `check_string`'s string-shape obligation is NOT discharged here:
+            // `ufbx_prop_override_desc` (ufbx.h:4967-4979) documents no
+            // `SIZE_MAX` sentinel for these members, unlike `ufbx_load_opts`
+            // (ufbx.h:4794, 4919), yet ufbx.c:26500 `strlen`s that case
+            // regardless — so the obligation is the one `create_anim`'s own
+            // `*const RawAnimOpts` contract passes through to the API caller,
+            // exactly as the C does.
             unsafe {
                 check_string(
                     ac.error_view(),
                     dst.prop_name_view(),
-                    View::<String, Const>::from_ptr(src.prop_name_ptr() as *const String),
+                    View::<crate::prelude::RawString, Const>::from_ptr(src.prop_name_ptr()),
                 )?;
                 check_string(
                     ac.error_view(),
                     dst.value_str_view(),
-                    View::<String, Const>::from_ptr(src.value_str_ptr() as *const String),
+                    View::<crate::prelude::RawString, Const>::from_ptr(src.value_str_ptr()),
                 )?;
             }
 

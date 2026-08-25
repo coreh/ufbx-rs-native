@@ -2169,6 +2169,13 @@ pub(crate) unsafe fn evaluate_scene(
 // ufbx.c:31194-31218 `ufbx_create_anim`
 // No `#if` fork in C: it drives `ufbxi_create_anim_context` /
 // `ufbxi_create_anim_imp` (`native::evaluate`) unconditionally.
+///
+/// # Safety
+/// `scene` must be live and `opts` null or a live `ufbx_anim_opts`, whose
+/// `prop_overrides` run is readable for `count` descriptors. Each descriptor's
+/// `prop_name`/`value_str` must be either `data` readable for `length` bytes or
+/// `length == SIZE_MAX` with `data` NUL-terminated — ufbx.c:26500 `strlen`s the
+/// latter case even though ufbx.h:4967-4979 documents no sentinel there.
 pub(crate) unsafe fn create_anim(
     scene: *const Scene,
     opts: *const RawAnimOpts,
