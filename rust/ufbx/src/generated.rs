@@ -5165,8 +5165,12 @@ pub fn evaluate_transform_flags(anim: &Anim, node: &Node, time: f64, flags: u32)
 pub fn evaluate_blend_weight(anim: &Anim, channel: &BlendChannel, time: f64) -> Real {
     let result = unsafe {
         crate::native::api::evaluate_blend_weight(
-            anim as *const Anim,
-            channel as *const BlendChannel,
+            crate::native::view::View::<Anim, crate::native::view::Const>::from_ptr(
+                anim as *const Anim,
+            ),
+            crate::native::view::View::<BlendChannel, crate::native::view::Const>::from_ptr(
+                channel as *const BlendChannel,
+            ),
             time,
         )
     };
@@ -5182,8 +5186,12 @@ pub fn evaluate_blend_weight_flags(
 ) -> Real {
     let result = unsafe {
         crate::native::api::evaluate_blend_weight_flags(
-            anim as *const Anim,
-            channel as *const BlendChannel,
+            crate::native::view::View::<Anim, crate::native::view::Const>::from_ptr(
+                anim as *const Anim,
+            ),
+            crate::native::view::View::<BlendChannel, crate::native::view::Const>::from_ptr(
+                channel as *const BlendChannel,
+            ),
             time,
             flags,
         )

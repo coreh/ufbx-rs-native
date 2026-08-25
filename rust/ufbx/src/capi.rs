@@ -1062,10 +1062,16 @@ pub unsafe extern "C" fn ufbx_evaluate_blend_weight(
     channel: *const crate::generated::BlendChannel,
     time: f64,
 ) -> crate::prelude::Real {
-    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
-    // own raw-pointer contract and are forwarded unchanged to the native impl,
-    // whose contract is identical.
-    unsafe { crate::native::api::evaluate_blend_weight(anim, channel, time) }
+    // SAFETY: an ABI shim; the caller's live-anim / live-channel contract
+    // becomes the read-only `View<_, Const>` mints (legal for any readable
+    // provenance).
+    unsafe {
+        crate::native::api::evaluate_blend_weight(
+            crate::native::view::View::<crate::generated::Anim, crate::native::view::Const>::from_ptr(anim),
+            crate::native::view::View::<crate::generated::BlendChannel, crate::native::view::Const>::from_ptr(channel),
+            time,
+        )
+    }
 }
 
 // ufbx.c:31167-31176 `ufbx_evaluate_blend_weight_flags` (impl: native/api.rs
@@ -1077,10 +1083,17 @@ pub unsafe extern "C" fn ufbx_evaluate_blend_weight_flags(
     time: f64,
     flags: u32,
 ) -> crate::prelude::Real {
-    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
-    // own raw-pointer contract and are forwarded unchanged to the native impl,
-    // whose contract is identical.
-    unsafe { crate::native::api::evaluate_blend_weight_flags(anim, channel, time, flags) }
+    // SAFETY: an ABI shim; the caller's live-anim / live-channel contract
+    // becomes the read-only `View<_, Const>` mints (legal for any readable
+    // provenance).
+    unsafe {
+        crate::native::api::evaluate_blend_weight_flags(
+            crate::native::view::View::<crate::generated::Anim, crate::native::view::Const>::from_ptr(anim),
+            crate::native::view::View::<crate::generated::BlendChannel, crate::native::view::Const>::from_ptr(channel),
+            time,
+            flags,
+        )
+    }
 }
 
 // ufbx.c:31178-31192 `ufbx_evaluate_scene` (impl: native/api.rs

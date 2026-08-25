@@ -1962,6 +1962,8 @@ const_view_args = {
     "ufbx_catch_compute_normals": {"mesh": "Mesh", "positions": "VertexVec3"},
     "ufbx_catch_get_weighted_face_normal": {"positions": "VertexVec3"},
     "ufbx_find_prop_element_len": {"element": "Element"},
+    "ufbx_evaluate_blend_weight": {"anim": "Anim", "channel": "BlendChannel"},
+    "ufbx_evaluate_blend_weight_flags": {"anim": "Anim", "channel": "BlendChannel"},
 }
 
 def apply_const_view_args(cname, arg_pass):

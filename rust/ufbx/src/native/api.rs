@@ -2050,20 +2050,22 @@ pub(crate) unsafe fn evaluate_transform_flags(
 }
 
 // ufbx.c:31162-31165 `ufbx_evaluate_blend_weight`
-pub(crate) unsafe fn evaluate_blend_weight(
-    anim: *const Anim,
-    channel: *const BlendChannel,
+// `anim`/`channel` carry C's non-nullable `const ufbx_anim *` /
+// `const ufbx_blend_channel *` as mode-generic read views.
+pub(crate) fn evaluate_blend_weight<M: Mode>(
+    anim: &View<Anim, M>,
+    channel: &View<BlendChannel, M>,
     time: f64,
 ) -> Real {
-    // SAFETY: `anim`/`channel` are this `unsafe fn`'s own live params, forwarded
-    // unchanged to `evaluate_blend_weight_flags`.
-    unsafe { evaluate_blend_weight_flags(anim, channel, time, 0) }
+    evaluate_blend_weight_flags(anim, channel, time, 0)
 }
 
 // ufbx.c:31167-31176 `ufbx_evaluate_blend_weight_flags`
-pub(crate) unsafe fn evaluate_blend_weight_flags(
-    anim: *const Anim,
-    channel: *const BlendChannel,
+// `anim`/`channel` carry C's non-nullable `const ufbx_anim *` /
+// `const ufbx_blend_channel *` as mode-generic read views.
+pub(crate) fn evaluate_blend_weight_flags<M: Mode>(
+    anim: &View<Anim, M>,
+    channel: &View<BlendChannel, M>,
     time: f64,
     flags: u32,
 ) -> Real {
@@ -2075,13 +2077,14 @@ pub(crate) unsafe fn evaluate_blend_weight_flags(
 
     // C: `ufbx_prop buf[ufbxi_arraycount(prop_names)]; // ufbxi_uninit`
     let mut buf = MaybeUninit::<[Prop; NUM_PROP_NAMES]>::uninit(); // ufbxi_uninit
-                                                                   // SAFETY: `anim` is live, the raw field address identifies the channel's
-                                                                   // own element, `buf` is correctly sized scratch storage, and `prop_names`
-                                                                   // describes the name table.
+                                                                   // SAFETY: the view params root live `Anim`/`BlendChannel` objects, so
+                                                                   // `as_ptr()` and `element_ptr()` (the addr-of parity for C's
+                                                                   // `&channel->element`) are live read pointers; `buf` is correctly sized
+                                                                   // scratch storage, and `prop_names` describes the name table.
     let props: Props = unsafe {
         evaluate::evaluate_selected_props(
-            anim,
-            &raw const (*channel).element,
+            anim.as_ptr(),
+            channel.element_ptr(),
             time,
             buf.as_mut_ptr() as *mut Prop,
             prop_names.as_ptr(),
@@ -2092,12 +2095,12 @@ pub(crate) unsafe fn evaluate_blend_weight_flags(
     // C: `ufbxi_find_real(&props, ufbxi_DeformPercent, channel->weight * (ufbx_real)100.0) * (ufbx_real)0.01`
     // Const view: same read-only defaults-chain provenance as above.
     // SAFETY: `&raw const props` roots a read-only view over the local `props`,
-    // and `(*channel).weight` reads the live channel's own weight.
+    // which is not written while the view is live.
     (unsafe {
         ufbxi_find_real(
             View::<Props, Const>::from_ptr(&raw const props),
             &sp::DeformPercent,
-            (*channel).weight * (100.0 as Real),
+            channel.weight() * (100.0 as Real),
         )
     }) * (0.01 as Real)
 }
