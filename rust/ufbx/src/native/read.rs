@@ -773,12 +773,8 @@ pub(crate) fn match_version_string(fmt: &[u8], str_: &[u8], p_version: &mut [u32
 // ufbx.c:12084-12128 `ufbxi_match_exporter`
 #[inline(never)]
 pub(crate) fn match_exporter(uc: &Context) -> Result<(), Fail> {
-    let creator: String = uc.scene_view().metadata_view().creator();
+    let creator_bytes: &[u8] = uc.scene_view().metadata_view().creator_view().bytes();
     let mut version: [u32; 3] = [0; 3];
-    // SAFETY: `creator` is uc's own pooled metadata string, so its data/length
-    // pair addresses interned pool bytes that stay live and unwritten for the
-    // match chain below (ufbx.c:4897).
-    let creator_bytes: &[u8] = unsafe { creator.as_bytes() };
     if match_version_string(b"blender-- ?.?.?\0", creator_bytes, &mut version) {
         uc.set_exporter(Exporter::BlenderBinary);
         uc.set_exporter_version(pack_version(version[0], version[1], version[2]));

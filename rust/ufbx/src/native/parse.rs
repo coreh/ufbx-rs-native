@@ -2647,10 +2647,6 @@ impl SceneMetadataView {
         view_raw_mut!(self, filename)
     }
     #[inline(always)]
-    pub(crate) fn creator(&self) -> crate::prelude::String {
-        view_read!(self, creator)
-    }
-    #[inline(always)]
     pub(crate) fn creator_view(&self) -> &crate::prelude::StringView {
         unsafe { &*(&raw mut (*self.get()).creator as *mut crate::prelude::StringView) }
     }
