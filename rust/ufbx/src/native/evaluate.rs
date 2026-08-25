@@ -6834,39 +6834,29 @@ pub(crate) fn bake_time_sample_time(time: BakeTime) -> f64 {
 // ufbx.c:27212-27231 `ufbxi_push_resampled_times`
 #[cfg(feature = "baking")]
 #[inline(never)]
-pub(crate) unsafe fn push_resampled_times(
+pub(crate) fn push_resampled_times<M: Mode>(
     bc: &BakeContext,
-    p_keys: *const List<BakedVec3>,
+    p_keys: &View<List<BakedVec3>, M>,
 ) -> Result<(), Fail> {
-    // C: `ufbx_baked_vec3_list keys = *p_keys;`
-    // SAFETY: `p_keys` points to the caller's live `ufbx_baked_vec3_list` — this
-    // `unsafe fn`'s contract — and the list is plain data, so reading it out by
-    // value leaves the caller's copy valid.
-    let keys: List<BakedVec3> = unsafe { ptr::read(p_keys) };
+    // C: `ufbx_baked_vec3_list keys = *p_keys;` — the by-value copy of the list
+    // header collapses into the view; nothing writes the list while it is read.
+    let keys: &View<List<BakedVec3>, M> = p_keys;
 
-    let times: *mut BakeTime = bc.tmp_times_view().push::<BakeTime>(keys.count);
+    let times: *mut BakeTime = bc.tmp_times_view().push::<BakeTime>(keys.count());
     ufbxi_check_err!(bc.error_view(), !times.is_null(), "times");
-    for i in 0..keys.count {
-        // SAFETY: `keys` describes a live run of `keys.count` baked keys, and
-        // `i < keys.count`, so slot `i`'s flags and time are both readable.
-        let (flags, mut time): (BakedKeyFlags, f64) =
-            unsafe { ((*keys.data.add(i)).flags, (*keys.data.add(i)).time) };
-        // SAFETY (this condition): `i + 1 < keys.count` is established first and
-        // `&&` short-circuits, so that slot is in bounds of the key run.
+    for i in 0..keys.count() {
+        let flags: BakedKeyFlags = keys.at(i).flags();
+        let mut time: f64 = keys.at(i).time();
         if (flags.raw() & BakedKeyFlags::STEP_LEFT.raw()) != 0
-            && i + 1 < keys.count
-            && (unsafe { (*keys.data.add(i + 1)).flags }.raw() & BakedKeyFlags::STEP_KEY.raw()) != 0
+            && i + 1 < keys.count()
+            && (keys.at(i + 1).flags().raw() & BakedKeyFlags::STEP_KEY.raw()) != 0
         {
-            // SAFETY: as above — the condition established `i + 1 < keys.count`.
-            time = unsafe { (*keys.data.add(i + 1)).time };
-        // SAFETY (this condition): `i > 0` is established first and `&&`
-        // short-circuits, so `i - 1` does not underflow and is in bounds.
+            time = keys.at(i + 1).time();
         } else if (flags.raw() & BakedKeyFlags::STEP_RIGHT.raw()) != 0
             && i > 0
-            && (unsafe { (*keys.data.add(i - 1)).flags }.raw() & BakedKeyFlags::STEP_KEY.raw()) != 0
+            && (keys.at(i - 1).flags().raw() & BakedKeyFlags::STEP_KEY.raw()) != 0
         {
-            // SAFETY: as above — the condition established `i > 0`.
-            time = unsafe { (*keys.data.add(i - 1)).time };
+            time = keys.at(i - 1).time();
         }
         // SAFETY: `times` is the non-null (checked) `keys.count`-element run just
         // pushed onto `bc.tmp_times`, and `i < keys.count`; the pair of writes
@@ -6883,8 +6873,20 @@ pub(crate) unsafe fn push_resampled_times(
 // Rust-port infra (not a ufbx.c type): reinterpret-in-place VIEWs over one
 // baked key of a `ufbx_baked_vec3_list` / `ufbx_baked_quat_list`, so the merge
 // loop below writes `keys.data[ix]` through `View<List<T>, Mut>::at` instead of
-// walking the run with raw pointers. Leaf setters only — the generator emits no
-// view for these two public key structs.
+// walking the run with raw pointers. Leaf accessors only — the generator emits
+// no view for these two public key structs.
+#[cfg(feature = "baking")]
+impl<M: Mode> View<BakedVec3, M> {
+    #[inline(always)]
+    pub(crate) fn time(&self) -> f64 {
+        view_read_shared!(self, time)
+    }
+    #[inline(always)]
+    pub(crate) fn flags(&self) -> BakedKeyFlags {
+        view_read_shared!(self, flags)
+    }
+}
+
 #[cfg(feature = "baking")]
 impl View<BakedVec3, Mut> {
     #[inline(always)]
@@ -7042,9 +7044,7 @@ pub(crate) unsafe fn bake_node_imp(
             if !scale_helper_t.constant_scale() {
                 resample_translation = true;
             }
-            // SAFETY: `scale_keys` is that baked node's own key list, which is
-            // what `push_resampled_times` reads.
-            unsafe { push_resampled_times(bc, scale_helper_t.scale_keys_ptr()) }?;
+            push_resampled_times(bc, scale_helper_t.scale_keys_view())?;
         } else {
             constant_scale_t = parent_scale_helper.inherit_scale();
         }
@@ -7206,8 +7206,7 @@ pub(crate) unsafe fn bake_node_imp(
             if !scale_helper_s.constant_scale() {
                 resample_scale = true;
             }
-            // SAFETY: `scale_keys` is that baked node's own key list.
-            unsafe { push_resampled_times(bc, scale_helper_s.scale_keys_ptr()) }?;
+            push_resampled_times(bc, scale_helper_s.scale_keys_view())?;
         } else {
             constant_scale_s = inherit_helper.local_transform().scale;
         }
