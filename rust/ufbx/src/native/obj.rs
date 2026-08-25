@@ -2088,18 +2088,16 @@ pub(crate) fn obj_flush_material(uc: &Context) -> Result<(), Fail> {
 // ufbx.c:17777-17850 `ufbxi_obj_parse_prop`
 #[cfg(feature = "obj")]
 #[inline(never)]
-pub(crate) unsafe fn obj_parse_prop(
+pub(crate) fn obj_parse_prop(
     uc: &Context,
     name: String,
     start: usize,
     include_rest: bool,
-    p_next: *mut usize,
+    p_next: Option<&mut usize>,
 ) -> Result<(), Fail> {
     if start >= uc.obj().num_tokens() {
-        if !p_next.is_null() {
-            // SAFETY: caller contract — a non-null `p_next` is a writable
-            // `usize` out-param.
-            unsafe { *p_next = start };
+        if let Some(p_next) = p_next {
+            *p_next = start;
         }
         return Ok(());
     }
@@ -2228,10 +2226,8 @@ pub(crate) unsafe fn obj_parse_prop(
 
     prop.set_flags(PropFlags::from_raw(flags));
 
-    if !p_next.is_null() {
-        // SAFETY: caller contract — a non-null `p_next` is a writable `usize`
-        // out-param.
-        unsafe { *p_next = start + num_args };
+    if let Some(p_next) = p_next {
+        *p_next = start + num_args;
     }
 
     Ok(())
@@ -2246,18 +2242,9 @@ pub(crate) fn obj_parse_mtl_map(uc: &Context, prefix_len: usize) -> Result<(), F
     }
 
     let mut num_props: usize = 1;
-    // SAFETY: the property name is a NUL-terminated literal and `num_tokens
-    // >= 2` past the guard above, so token 1 starts the value span; the
-    // parser takes no out-param here.
-    unsafe {
-        obj_parse_prop(
-            uc,
-            str_c(b"obj|args\0".as_ptr()),
-            1,
-            true,
-            core::ptr::null_mut(),
-        )?
-    };
+    // SAFETY: the property name is a NUL-terminated literal.
+    let name: String = unsafe { str_c(b"obj|args\0".as_ptr()) };
+    obj_parse_prop(uc, name, 1, true, None)?;
 
     let mut start: usize = 1;
     // C: `for (; start + 1 < uc->obj.num_tokens; )`
@@ -2265,17 +2252,19 @@ pub(crate) fn obj_parse_mtl_map(uc: &Context, prefix_len: usize) -> Result<(), F
         // SAFETY: `start + 1 < num_tokens` (loop condition), so token `start`
         // is in the stored token run; the match guarantees the token is at
         // least two bytes, so dropping the leading '-' keeps `tok` inside its
-        // own span; `start` is an unaliased local out-param.
-        unsafe {
-            let mut tok: String = *uc.obj().tokens().add(start);
-            if r#match(&tok, b"-[A-Za-z][\\-A-Za-z0-9_]*\0".as_ptr()) {
-                tok.data = tok.data.add(1);
-                tok.length -= 1;
-                obj_parse_prop(uc, tok, start + 1, false, &raw mut start)?;
-                num_props += 1;
-            } else {
-                break;
-            }
+        // own span.
+        let mut tok: String = unsafe { *uc.obj().tokens().add(start) };
+        // SAFETY: the pattern literal is NUL-terminated and `tok` is that
+        // token's own span.
+        if unsafe { r#match(&tok, b"-[A-Za-z][\\-A-Za-z0-9_]*\0".as_ptr()) } {
+            // SAFETY: the match guarantees at least two bytes, so the
+            // advanced `data` stays inside the token's own span.
+            tok.data = unsafe { tok.data.add(1) };
+            tok.length -= 1;
+            obj_parse_prop(uc, tok, start + 1, false, Some(&mut start))?;
+            num_props += 1;
+        } else {
+            break;
         }
     }
 
@@ -2375,13 +2364,7 @@ pub(crate) fn obj_parse_mtl(uc: &Context) -> Result<(), Fail> {
             } else if cmd.length == 1 && *cmd.data.add(0) == b'#' {
                 // Implement .mtl magic comment handling here if necessary
             } else {
-                obj_parse_prop(
-                    uc,
-                    *uc.obj().tokens().add(0),
-                    1,
-                    true,
-                    core::ptr::null_mut(),
-                )?;
+                obj_parse_prop(uc, *uc.obj().tokens().add(0), 1, true, None)?;
             }
         }
     }
