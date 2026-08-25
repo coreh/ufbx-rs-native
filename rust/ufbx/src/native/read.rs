@@ -9990,19 +9990,16 @@ pub(crate) unsafe fn read_legacy_link(
 
 // ufbx.c:16123-16136 `ufbxi_read_legacy_light`
 #[inline(never)]
-pub(crate) unsafe fn read_legacy_light(
+pub(crate) fn read_legacy_light(
     uc: &Context,
     node: &NodeView,
-    info: *mut ElementInfo,
+    info: &View<ElementInfo, Mut>,
 ) -> Result<(), Fail> {
-    // SAFETY: `info` is the caller's live `ufbxi_element_info` — write-capable
-    // provenance, live and unmoved across the call — whose `name` is a pooled
-    // NUL-terminated string and whose `props`/`dom_node` point into uc's own
-    // buffers, so all three survive being stored into the element by pointer;
-    // `Light` is the element struct for `ElementType::Light`.
-    let light: *mut Light = unsafe {
-        push_element::<Light>(uc, View::<ElementInfo>::from_ptr(info), ElementType::Light)
-    };
+    // SAFETY: `info` views the caller's live `ufbxi_element_info`, whose `name`
+    // is a pooled NUL-terminated string and whose `props`/`dom_node` point into
+    // uc's own buffers, so all three survive being stored into the element by
+    // pointer; `Light` is the element struct for `ElementType::Light`.
+    let light: *mut Light = unsafe { push_element::<Light>(uc, info, ElementType::Light) };
     ufbxi_check!(uc, !light.is_null(), "light");
 
     // C: `ufbx_prop tmp_props[ufbxi_arraycount(ufbxi_legacy_light_props)];`
@@ -10037,19 +10034,16 @@ pub(crate) unsafe fn read_legacy_light(
 
 // ufbx.c:16138-16151 `ufbxi_read_legacy_camera`
 #[inline(never)]
-pub(crate) unsafe fn read_legacy_camera(
+pub(crate) fn read_legacy_camera(
     uc: &Context,
     node: &NodeView,
-    info: *mut ElementInfo,
+    info: &View<ElementInfo, Mut>,
 ) -> Result<(), Fail> {
-    // SAFETY: `info` is the caller's live `ufbxi_element_info` — write-capable
-    // provenance, live and unmoved across the call — whose `name` is a pooled
-    // NUL-terminated string and whose `props`/`dom_node` point into uc's own
-    // buffers, so all three survive being stored into the element by pointer;
-    // `Camera` is the element struct for `ElementType::Camera`.
-    let camera: *mut Camera = unsafe {
-        push_element::<Camera>(uc, View::<ElementInfo>::from_ptr(info), ElementType::Camera)
-    };
+    // SAFETY: `info` views the caller's live `ufbxi_element_info`, whose `name`
+    // is a pooled NUL-terminated string and whose `props`/`dom_node` point into
+    // uc's own buffers, so all three survive being stored into the element by
+    // pointer; `Camera` is the element struct for `ElementType::Camera`.
+    let camera: *mut Camera = unsafe { push_element::<Camera>(uc, info, ElementType::Camera) };
     ufbxi_check!(uc, !camera.is_null(), "camera");
 
     // C: `ufbx_prop tmp_props[ufbxi_arraycount(ufbxi_legacy_camera_props)];`
@@ -10084,18 +10078,16 @@ pub(crate) unsafe fn read_legacy_camera(
 
 // ufbx.c:16153-16171 `ufbxi_read_legacy_limb_node`
 #[inline(never)]
-pub(crate) unsafe fn read_legacy_limb_node(
+pub(crate) fn read_legacy_limb_node(
     uc: &Context,
     node: &NodeView,
-    info: *mut ElementInfo,
+    info: &View<ElementInfo, Mut>,
 ) -> Result<(), Fail> {
-    // SAFETY: `info` is the caller's live `ufbxi_element_info` — write-capable
-    // provenance, live and unmoved across the call — whose `name` is a pooled
-    // NUL-terminated string and whose `props`/`dom_node` point into uc's own
-    // buffers, so all three survive being stored into the element by pointer;
-    // `Bone` is the element struct for `ElementType::Bone`.
-    let bone: *mut Bone =
-        unsafe { push_element::<Bone>(uc, View::<ElementInfo>::from_ptr(info), ElementType::Bone) };
+    // SAFETY: `info` views the caller's live `ufbxi_element_info`, whose `name`
+    // is a pooled NUL-terminated string and whose `props`/`dom_node` point into
+    // uc's own buffers, so all three survive being stored into the element by
+    // pointer; `Bone` is the element struct for `ElementType::Bone`.
+    let bone: *mut Bone = unsafe { push_element::<Bone>(uc, info, ElementType::Bone) };
     ufbxi_check!(uc, !bone.is_null(), "bone");
 
     // C: `ufbx_prop tmp_props[ufbxi_arraycount(ufbxi_legacy_bone_props)];`
@@ -10620,17 +10612,36 @@ pub(crate) fn read_legacy_model(uc: &Context, node: &NodeView) -> Result<(), Fai
         attrib_type = got.0;
     }
 
-    // SAFETY (this dispatch): each arm hands the same parse-tree NodeView and
-    // the local `&raw mut attrib_info` to the legacy attribute reader selected by
-    // pointer-identity comparison of the pooled `attrib_type`.
+    // SAFETY (this dispatch): each arm hands the same parse-tree NodeView and a
+    // handle on the local `attrib_info` to the legacy attribute reader selected
+    // by pointer-identity comparison of the pooled `attrib_type`; `attrib_info`
+    // is this frame's own live, unmoved `ufbxi_element_info`.
     let mut has_attrib: bool = true;
     unsafe {
         if attrib_type == sp::Light.as_ptr() {
-            read_legacy_light(uc, node, &raw mut attrib_info)?;
+            // SAFETY: `attrib_info` is this frame's own `ufbxi_element_info`
+            // local — write-capable provenance, live and unmoved across the call.
+            read_legacy_light(
+                uc,
+                node,
+                View::<ElementInfo, Mut>::from_ptr(&raw mut attrib_info),
+            )?;
         } else if attrib_type == sp::Camera.as_ptr() {
-            read_legacy_camera(uc, node, &raw mut attrib_info)?;
+            // SAFETY: `attrib_info` is this frame's own `ufbxi_element_info`
+            // local — write-capable provenance, live and unmoved across the call.
+            read_legacy_camera(
+                uc,
+                node,
+                View::<ElementInfo, Mut>::from_ptr(&raw mut attrib_info),
+            )?;
         } else if attrib_type == sp::LimbNode.as_ptr() {
-            read_legacy_limb_node(uc, node, &raw mut attrib_info)?;
+            // SAFETY: `attrib_info` is this frame's own `ufbxi_element_info`
+            // local — write-capable provenance, live and unmoved across the call.
+            read_legacy_limb_node(
+                uc,
+                node,
+                View::<ElementInfo, Mut>::from_ptr(&raw mut attrib_info),
+            )?;
         } else if find_child(node, sp::Vertices.as_ptr()).is_some() {
             read_legacy_mesh(uc, node, &raw mut attrib_info)?;
         } else {
