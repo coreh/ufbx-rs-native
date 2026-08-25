@@ -6188,10 +6188,7 @@ pub(crate) unsafe fn sort_bake_times(
 // ufbx.c:26847-26968 `ufbxi_finalize_bake_times`
 #[cfg(feature = "baking")]
 #[inline(never)]
-pub(crate) unsafe fn finalize_bake_times(
-    bc: &BakeContext,
-    p_dst: *mut BakeTimeList,
-) -> Result<(), Fail> {
+pub(crate) fn finalize_bake_times(bc: &BakeContext, p_dst: &mut BakeTimeList) -> Result<(), Fail> {
     if bc.layer_weight_times_view().count() > 0 {
         ufbxi_check_err!(
             bc.error_view(),
@@ -6389,13 +6386,8 @@ pub(crate) unsafe fn finalize_bake_times(
         }
     }
 
-    // SAFETY: `p_dst` points to the caller's live `ufbxi_bake_time_list` slot —
-    // this `unsafe fn`'s contract — with write-capable (caller-owned)
-    // provenance, and the pair of writes below retargets it at the
-    // deduplicated run.
-    let p_dst_view: &BakeTimeListView = unsafe { View::<BakeTimeList, Mut>::from_ptr(p_dst) };
-    p_dst_view.set_data(times);
-    p_dst_view.set_count(num_times);
+    p_dst.data = times;
+    p_dst.count = num_times;
 
     Ok(())
 }
@@ -7114,9 +7106,7 @@ pub(crate) unsafe fn bake_node_imp(
         }
     }
 
-    // SAFETY: `times_t` is a live local `ufbxi_bake_time_list`, which is the
-    // output slot `finalize_bake_times` fills in.
-    unsafe { finalize_bake_times(bc, &raw mut times_t) }?;
+    finalize_bake_times(bc, &mut times_t)?;
 
     // Rotation
     if complex_rotation {
@@ -7167,9 +7157,7 @@ pub(crate) unsafe fn bake_node_imp(
             }
         }
     }
-    // SAFETY: `times_r` is a live local `ufbxi_bake_time_list`, the output slot
-    // `finalize_bake_times` fills in.
-    unsafe { finalize_bake_times(bc, &raw mut times_r) }?;
+    finalize_bake_times(bc, &mut times_r)?;
 
     // Scaling
     let mut resample_scale: bool = false;
@@ -7246,9 +7234,7 @@ pub(crate) unsafe fn bake_node_imp(
             }
         }
     }
-    // SAFETY: `times_s` is a live local `ufbxi_bake_time_list`, the output slot
-    // `finalize_bake_times` fills in.
-    unsafe { finalize_bake_times(bc, &raw mut times_s) }?;
+    finalize_bake_times(bc, &mut times_s)?;
 
     // C: `ufbx_baked_vec3_list keys_t; ufbx_baked_quat_list keys_r; ufbx_baked_vec3_list keys_s;`
     // SAFETY: these lists are pointer/length pairs, and an all-zero pattern
@@ -7614,9 +7600,7 @@ pub(crate) unsafe fn bake_anim_prop(
     // SAFETY: `BakeTimeList` is a pointer/length pair, and an all-zero pattern
     // (null pointer, zero count) is a valid inhabitant of it.
     let mut times: BakeTimeList = unsafe { MaybeUninit::zeroed().assume_init() };
-    // SAFETY: `times` is a live local `ufbxi_bake_time_list`, the output slot
-    // `finalize_bake_times` fills in.
-    unsafe { finalize_bake_times(bc, &raw mut times) }?;
+    finalize_bake_times(bc, &mut times)?;
 
     // C: `ufbx_baked_vec3_list keys;`
     // SAFETY: as for `times` — an all-zero pointer/length pair is valid.
@@ -7951,15 +7935,9 @@ pub(crate) fn bake_anim(bc: &BakeContext) -> Result<(), Fail> {
         if has_weight_times {
             // C: `ufbxi_bake_time_list weight_times = { 0 };`
             // SAFETY: `BakeTimeList` is a data pointer plus a count, for which
-            // all-zero is the valid empty list; `finalize_bake_times` fills it
-            // through the unaliased local out-pointer, and the copy that
-            // follows reads exactly the `count` elements it reported into bc's
-            // own tmp buf.
-            let weight_times: BakeTimeList = unsafe {
-                let mut weight_times: BakeTimeList = MaybeUninit::zeroed().assume_init();
-                finalize_bake_times(bc, &raw mut weight_times)?;
-                weight_times
-            };
+            // all-zero is the valid empty list.
+            let mut weight_times: BakeTimeList = unsafe { MaybeUninit::zeroed().assume_init() };
+            finalize_bake_times(bc, &mut weight_times)?;
 
             bc.layer_weight_times_view().set_count(weight_times.count);
             bc.layer_weight_times_view().set_data(unsafe {
