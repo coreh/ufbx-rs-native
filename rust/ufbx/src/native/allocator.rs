@@ -797,10 +797,12 @@ mod tests {
             assert!(q.is_null());
             // The description is recorded here; the type is resolved by the
             // `fix_error_type` strcmp ladder at top-level entry points.
+            // SAFETY: `err` is a live, write-capable `Error` local of this
+            // frame, unmoved for the mint's borrow.
             crate::native::error::fix_error_type(
-                &mut err,
+                crate::native::error::ErrorView::from_ptr(&raw mut err),
                 b"Failed to load\0",
-                core::ptr::null_mut(),
+                None,
             );
             assert_eq!(err.type_, ErrorType::AllocationLimit);
             // info carries the allocator name via `%s`
@@ -824,10 +826,12 @@ mod tests {
             // C check is `total < max_size - current_size`: exactly-at-limit fails.
             let p = alloc_size(&mut ator, 1, 100);
             assert!(p.is_null());
+            // SAFETY: `err` is a live, write-capable `Error` local of this
+            // frame, unmoved for the mint's borrow.
             crate::native::error::fix_error_type(
-                &mut err,
+                crate::native::error::ErrorView::from_ptr(&raw mut err),
                 b"Failed to load\0",
-                core::ptr::null_mut(),
+                None,
             );
             assert_eq!(err.type_, ErrorType::MemoryLimit);
 

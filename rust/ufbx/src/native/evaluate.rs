@@ -1561,9 +1561,10 @@ pub(crate) unsafe fn load(
         // rewrite is observable only through the slot, so applying it to the
         // carried value is byte-equivalent).
         let mut fixed: Error = Error::default();
-        // SAFETY: `uc`'s error field is live for the borrow and `&raw mut fixed`
-        // is this frame's live `Error` slot, which `fix_error_type` accepts.
-        unsafe { fix_error_type(uc.error_mut_ptr(), b"Failed to load\0", &raw mut fixed) };
+        // SAFETY: `&raw mut fixed` addresses this frame's live, write-capable
+        // `Error` local, unmoved for the mint's borrow.
+        let fixed_view = unsafe { crate::native::error::ErrorView::from_ptr(&raw mut fixed) };
+        fix_error_type(uc.error_view(), b"Failed to load\0", Some(fixed_view));
         if fixed.type_ == ErrorType::Unknown
             && uc.scene_view().metadata_view().file_format() == FileFormat::Fbx
             && !supports_version(uc.version())
@@ -4521,10 +4522,10 @@ pub(crate) unsafe fn evaluate_scene(
         // C copies the fixed error into the caller's slot; the `Result` shape
         // carries it by value instead (the shim owns the slot writes).
         let mut fixed: Error = Error::default();
-        // SAFETY: `ec`'s error field is live for the borrow, the message literal
-        // is NUL-terminated, and `&raw mut fixed` is this frame's live `Error`
-        // slot, which `fix_error_type` accepts.
-        unsafe { fix_error_type(ec.error_mut_ptr(), b"Failed to evaluate\0", &raw mut fixed) };
+        // SAFETY: `&raw mut fixed` addresses this frame's live, write-capable
+        // `Error` local, unmoved for the mint's borrow.
+        let fixed_view = unsafe { crate::native::error::ErrorView::from_ptr(&raw mut fixed) };
+        fix_error_type(ec.error_view(), b"Failed to evaluate\0", Some(fixed_view));
         buf_free(ec.tmp_view());
         buf_free(ec.result_view());
         // SAFETY: `ec`'s temp and result allocators are its own fields, live

@@ -550,9 +550,10 @@ pub(crate) unsafe fn end_file_context(fc: &FileContext, ok: bool) -> Result<(), 
         // shape carries the fixed error by value (the shim owns the slot
         // writes, including the success-path clear).
         let mut fixed: Error = Error::default();
-        // SAFETY: `fc.error_mut_ptr()` is `fc`'s own field and `&raw mut fixed`
-        // this frame's live `Error`, which `fix_error_type` accepts.
-        unsafe { fix_error_type(fc.error_mut_ptr(), b"Failed to open file\0", &raw mut fixed) };
+        // SAFETY: `&raw mut fixed` addresses this frame's live, write-capable
+        // `Error` local, unmoved for the mint's borrow.
+        let fixed_view = unsafe { crate::native::error::ErrorView::from_ptr(&raw mut fixed) };
+        fix_error_type(fc.error_view(), b"Failed to open file\0", Some(fixed_view));
         Err(fixed)
     } else {
         Ok(())

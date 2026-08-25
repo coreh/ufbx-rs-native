@@ -2239,16 +2239,14 @@ pub(crate) unsafe fn create_anim(
         // C copies the fixed error into the caller's slot; the `Result` shape
         // carries it by value (the shim owns the slot writes).
         let mut fixed: Error = Error::default();
-        // SAFETY: `ac.error_mut_ptr()` is the context's own error slot and
-        // `&raw mut fixed` this frame's live `Error`, which `fix_error_type`
-        // accepts.
-        unsafe {
-            fix_error_type(
-                ac.error_mut_ptr(),
-                b"Failed to create anim\0",
-                &raw mut fixed,
-            );
-        }
+        // SAFETY: `&raw mut fixed` addresses this frame's live, write-capable
+        // `Error` local, unmoved for the mint's borrow.
+        let fixed_view = unsafe { crate::native::error::ErrorView::from_ptr(&raw mut fixed) };
+        fix_error_type(
+            ac.error_view(),
+            b"Failed to create anim\0",
+            Some(fixed_view),
+        );
         buf_free(ac.result_view());
         // SAFETY: `ac.ator_result_view()` is the context's own result
         // allocator, torn down exactly once here.
@@ -2371,12 +2369,10 @@ pub(crate) unsafe fn bake_anim(
         // C copies the fixed error into the caller's slot; the `Result` shape
         // carries it by value (the shim owns the slot writes).
         let mut fixed: Error = Error::default();
-        // SAFETY: `bc.error_mut_ptr()` is the context's own error slot and
-        // `&raw mut fixed` this frame's live `Error`, which `fix_error_type`
-        // accepts.
-        unsafe {
-            fix_error_type(bc.error_mut_ptr(), b"Failed to bake anim\0", &raw mut fixed);
-        }
+        // SAFETY: `&raw mut fixed` addresses this frame's live, write-capable
+        // `Error` local, unmoved for the mint's borrow.
+        let fixed_view = unsafe { crate::native::error::ErrorView::from_ptr(&raw mut fixed) };
+        fix_error_type(bc.error_view(), b"Failed to bake anim\0", Some(fixed_view));
         buf_free(bc.result_view());
         // SAFETY: `bc.ator_result_view()` is the context's own result
         // allocator, torn down exactly once here.
@@ -4499,15 +4495,10 @@ pub(crate) unsafe fn tessellate_nurbs_curve(
         // C copies the fixed error into the caller's slot; the `Result` shape
         // carries it by value (the shim owns the slot writes).
         let mut fixed: Error = Error::default();
-        // SAFETY: `error_mut_ptr()` addresses `tc`'s own error; the byte literal
-        // is NUL-terminated; `&raw mut fixed` is this frame's live `Error`.
-        unsafe {
-            fix_error_type(
-                tc.error_mut_ptr(),
-                b"Failed to tessellate\0",
-                &raw mut fixed,
-            );
-        }
+        // SAFETY: `&raw mut fixed` addresses this frame's live, write-capable
+        // `Error` local, unmoved for the mint's borrow.
+        let fixed_view = unsafe { crate::native::error::ErrorView::from_ptr(&raw mut fixed) };
+        fix_error_type(tc.error_view(), b"Failed to tessellate\0", Some(fixed_view));
         buf_free(tc.result_view());
         // SAFETY: `ator_result_view()` addresses `tc`'s own result allocator,
         // torn down exactly once here.
@@ -4598,15 +4589,10 @@ pub(crate) unsafe fn tessellate_nurbs_surface(
         // C copies the fixed error into the caller's slot; the `Result` shape
         // carries it by value (the shim owns the slot writes).
         let mut fixed: Error = Error::default();
-        // SAFETY: `error_mut_ptr()` addresses `tc`'s own error; the byte literal
-        // is NUL-terminated; `&raw mut fixed` is this frame's live `Error`.
-        unsafe {
-            fix_error_type(
-                tc.error_mut_ptr(),
-                b"Failed to tessellate\0",
-                &raw mut fixed,
-            );
-        }
+        // SAFETY: `&raw mut fixed` addresses this frame's live, write-capable
+        // `Error` local, unmoved for the mint's borrow.
+        let fixed_view = unsafe { crate::native::error::ErrorView::from_ptr(&raw mut fixed) };
+        fix_error_type(tc.error_view(), b"Failed to tessellate\0", Some(fixed_view));
         buf_free(tc.result_view());
         // SAFETY: `ator_result_view()` addresses `tc`'s own result allocator,
         // torn down exactly once here.

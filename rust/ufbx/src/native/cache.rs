@@ -2167,15 +2167,7 @@ pub(crate) unsafe fn cache_load(cc: &CacheContext, filename: String) -> *mut Geo
         // C: `return &cc->imp->cache;` — commit the finished imp across the ABI.
         finished_imp.into_payload()
     } else {
-        // SAFETY: `error_mut_ptr` addresses `cc`'s own live `Error` field, and
-        // the default description is a NUL-terminated byte literal.
-        unsafe {
-            fix_error_type(
-                cc.error_mut_ptr(),
-                b"Failed to load geometry cache\0",
-                core::ptr::null_mut(),
-            );
-        }
+        fix_error_type(cc.error_view(), b"Failed to load geometry cache\0", None);
         if !cc.owned_by_scene() {
             // On the failure path the result buf never reached an `imp`, so
             // `cc` still owns the string-pool buf and the result allocator.

@@ -353,15 +353,9 @@ pub(crate) unsafe fn generate_indices(
     } else {
         // SAFETY: `error` is non-null and points at a live `Error` — the sole
         // caller (`api::generate_indices`) substitutes a local error slot for
-        // null, and `fix_error_type` dereferences it unchecked; the description
-        // literal carries its NUL.
-        unsafe {
-            fix_error_type(
-                error,
-                b"Failed to generate indices\0",
-                core::ptr::null_mut(),
-            )
-        };
+        // null — so this is a write-capable mint of the caller's slot.
+        let err = unsafe { crate::native::error::ErrorView::from_ptr(error) };
+        fix_error_type(err, b"Failed to generate indices\0", None);
     }
 
     if !streams.is_null() && streams != local_streams_ptr {

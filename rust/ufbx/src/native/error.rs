@@ -1194,15 +1194,12 @@ pub(crate) use ufbxi_fail_msg;
 // evaluate", ...) substituted when none was set. All literals are part of
 // byte-exact error parity (PORTING.md trap #13).
 #[inline(never)]
-pub(crate) unsafe fn fix_error_type(
-    error: *mut Error,
+pub(crate) fn fix_error_type(
+    error: &ErrorView,
     default_desc: &'static [u8],
-    p_error: *mut Error,
+    p_error: Option<&ErrorView>,
 ) {
-    // SAFETY: the caller's contract is that `error` points at a live,
-    // unaliased `Error` (the entry points pass their own context error).
-    let error = unsafe { &mut *error };
-    let desc_ptr = error.description.data;
+    let desc_ptr = error.description_view().data();
     let desc: &[u8] = if desc_ptr.is_null() {
         default_desc
     } else {
@@ -1211,62 +1208,64 @@ pub(crate) unsafe fn fix_error_type(
         // stays live for this whole fn.
         unsafe { crate::prelude::slice_from_ptr(desc_ptr, strlen(desc_ptr)) }
     };
-    error.type_ = ErrorType::Unknown;
+    error.set_type_(ErrorType::Unknown);
     if c_strcmp(desc, b"Out of memory\0") == 0 {
-        error.type_ = ErrorType::OutOfMemory;
+        error.set_type_(ErrorType::OutOfMemory);
     } else if c_strcmp(desc, b"Memory limit exceeded\0") == 0 {
-        error.type_ = ErrorType::MemoryLimit;
+        error.set_type_(ErrorType::MemoryLimit);
     } else if c_strcmp(desc, b"Allocation limit exceeded\0") == 0 {
-        error.type_ = ErrorType::AllocationLimit;
+        error.set_type_(ErrorType::AllocationLimit);
     } else if c_strcmp(desc, b"Truncated file\0") == 0 {
-        error.type_ = ErrorType::TruncatedFile;
+        error.set_type_(ErrorType::TruncatedFile);
     } else if c_strcmp(desc, b"IO error\0") == 0 {
-        error.type_ = ErrorType::Io;
+        error.set_type_(ErrorType::Io);
     } else if c_strcmp(desc, b"Cancelled\0") == 0 {
-        error.type_ = ErrorType::Cancelled;
+        error.set_type_(ErrorType::Cancelled);
     } else if c_strcmp(desc, b"Unrecognized file format\0") == 0 {
-        error.type_ = ErrorType::UnrecognizedFileFormat;
+        error.set_type_(ErrorType::UnrecognizedFileFormat);
     } else if c_strcmp(desc, b"File not found\0") == 0 {
-        error.type_ = ErrorType::FileNotFound;
+        error.set_type_(ErrorType::FileNotFound);
     } else if c_strcmp(desc, b"Empty file\0") == 0 {
-        error.type_ = ErrorType::EmptyFile;
+        error.set_type_(ErrorType::EmptyFile);
     } else if c_strcmp(desc, b"External file not found\0") == 0 {
-        error.type_ = ErrorType::ExternalFileNotFound;
+        error.set_type_(ErrorType::ExternalFileNotFound);
     } else if c_strcmp(desc, b"Uninitialized options\0") == 0 {
-        error.type_ = ErrorType::UninitializedOptions;
+        error.set_type_(ErrorType::UninitializedOptions);
     } else if c_strcmp(desc, b"Zero vertex size\0") == 0 {
-        error.type_ = ErrorType::ZeroVertexSize;
+        error.set_type_(ErrorType::ZeroVertexSize);
     } else if c_strcmp(desc, b"Truncated vertex stream\0") == 0 {
-        error.type_ = ErrorType::TruncatedVertexStream;
+        error.set_type_(ErrorType::TruncatedVertexStream);
     } else if c_strcmp(desc, b"Invalid UTF-8\0") == 0 {
-        error.type_ = ErrorType::InvalidUtf8;
+        error.set_type_(ErrorType::InvalidUtf8);
     } else if c_strcmp(desc, b"Feature disabled\0") == 0 {
-        error.type_ = ErrorType::FeatureDisabled;
+        error.set_type_(ErrorType::FeatureDisabled);
     } else if c_strcmp(desc, b"Bad NURBS geometry\0") == 0 {
-        error.type_ = ErrorType::BadNurbs;
+        error.set_type_(ErrorType::BadNurbs);
     } else if c_strcmp(desc, b"Bad index\0") == 0 {
-        error.type_ = ErrorType::BadIndex;
+        error.set_type_(ErrorType::BadIndex);
     } else if c_strcmp(desc, b"Node depth limit exceeded\0") == 0 {
-        error.type_ = ErrorType::NodeDepthLimit;
+        error.set_type_(ErrorType::NodeDepthLimit);
     } else if c_strcmp(desc, b"Threaded ASCII parse error\0") == 0 {
-        error.type_ = ErrorType::ThreadedAsciiParse;
+        error.set_type_(ErrorType::ThreadedAsciiParse);
     } else if c_strcmp(desc, b"Unsafe options\0") == 0 {
-        error.type_ = ErrorType::UnsafeOptions;
+        error.set_type_(ErrorType::UnsafeOptions);
     } else if c_strcmp(desc, b"Duplicate override\0") == 0 {
-        error.type_ = ErrorType::DuplicateOverride;
+        error.set_type_(ErrorType::DuplicateOverride);
     }
-    error.description.data = desc.as_ptr();
+    error.description_view().set_data(desc.as_ptr());
     // C: `error->description.length = strlen(desc);` — the default literal
     // carries its trailing NUL inside the slice, so cut at the first NUL.
-    error.description.length = desc.iter().position(|&b| b == 0).unwrap_or(desc.len());
-    if !p_error.is_null() {
+    error
+        .description_view()
+        .set_length(desc.iter().position(|&b| b == 0).unwrap_or(desc.len()));
+    if let Some(p_error) = p_error {
         // memcpy(p_error, error, sizeof(ufbx_error));
-        // SAFETY: `p_error` is non-null and the caller's contract is that it
-        // points at a writable `Error`; `error` is the live `Error` borrowed
-        // above, and the two are distinct objects at every call site (the
-        // context error vs. the user's out-param), so the copy is
-        // non-overlapping.
-        unsafe { core::ptr::copy_nonoverlapping(error as *const Error, p_error, 1) };
+        // SAFETY: both views were minted over live, write-capable `Error`
+        // objects (the `View::from_ptr` contract), so each addresses
+        // `size_of::<Error>()` accessible bytes; the two are distinct objects
+        // at every call site (the context error vs. the caller's out-slot), so
+        // the copy is non-overlapping.
+        unsafe { core::ptr::copy_nonoverlapping(error.get() as *const Error, p_error.get(), 1) };
     }
 }
 
@@ -1536,7 +1535,13 @@ mod tests {
             assert_eq!(desc_bytes(&err), b"Out of memory");
 
             let mut p_error = Error::default();
-            fix_error_type(&mut err, b"Failed to load\0", &mut p_error);
+            // SAFETY: both locals are live, write-capable `Error` slots of this
+            // frame, unmoved for the mints' borrows.
+            fix_error_type(
+                ErrorView::from_ptr(&raw mut err),
+                b"Failed to load\0",
+                Some(ErrorView::from_ptr(&raw mut p_error)),
+            );
             assert_eq!(err.type_, ErrorType::OutOfMemory);
             assert_eq!(desc_bytes(&err), b"Out of memory");
             assert_eq!(p_error.type_, ErrorType::OutOfMemory);
@@ -1548,7 +1553,13 @@ mod tests {
         unsafe {
             // No description set -> per-entry-point default, type Unknown.
             let mut err = Error::default();
-            fix_error_type(&mut err, b"Failed to evaluate\0", core::ptr::null_mut());
+            // SAFETY: `err` is a live, write-capable `Error` local of this
+            // frame, unmoved for the mint's borrow.
+            fix_error_type(
+                ErrorView::from_ptr(&raw mut err),
+                b"Failed to evaluate\0",
+                None,
+            );
             assert_eq!(err.type_, ErrorType::Unknown);
             assert_eq!(desc_bytes(&err), b"Failed to evaluate");
 
@@ -1556,7 +1567,9 @@ mod tests {
             let mut err = Error::default();
             err.description.data = b"Threaded ASCII parse error\0".as_ptr();
             err.description.length = 26;
-            fix_error_type(&mut err, b"Failed to load\0", core::ptr::null_mut());
+            // SAFETY: `err` is a live, write-capable `Error` local of this
+            // frame, unmoved for the mint's borrow.
+            fix_error_type(ErrorView::from_ptr(&raw mut err), b"Failed to load\0", None);
             assert_eq!(err.type_, ErrorType::ThreadedAsciiParse);
         }
     }

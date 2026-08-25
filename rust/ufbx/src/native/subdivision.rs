@@ -3311,15 +3311,13 @@ pub(crate) unsafe fn subdivide_mesh(
         // boundary shim.)
         Ok(finished_imp.into_payload())
     } else {
-        // SAFETY: `error_mut_ptr()` is `sc`'s own live error slot; the description
         // C copies the fixed error into the caller's slot; the `Result` shape
         // carries it by value (the shim owns the slot writes).
         let mut fixed: Error = Error::default();
-        // is a `'static` NUL-terminated literal; `&raw mut fixed` is this
-        // frame's live `Error`, which `fix_error_type` accepts.
-        unsafe {
-            fix_error_type(sc.error_mut_ptr(), b"Failed to subdivide\0", &raw mut fixed);
-        }
+        // SAFETY: `&raw mut fixed` addresses this frame's live, write-capable
+        // `Error` local, unmoved for the mint's borrow.
+        let fixed_view = unsafe { crate::native::error::ErrorView::from_ptr(&raw mut fixed) };
+        fix_error_type(sc.error_view(), b"Failed to subdivide\0", Some(fixed_view));
         buf_free(sc.result_view());
         // SAFETY: both allocators are `sc`'s own live temp/result allocators,
         // torn down exactly once here.
