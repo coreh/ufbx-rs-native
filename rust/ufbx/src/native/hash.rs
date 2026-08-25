@@ -355,6 +355,10 @@ impl MapView {
         view_read!(self, size)
     }
     #[inline(always)]
+    pub(crate) fn capacity(&self) -> u32 {
+        view_read!(self, capacity)
+    }
+    #[inline(always)]
     pub(crate) fn items(&self) -> *mut core::ffi::c_void {
         view_read!(self, items)
     }
@@ -873,12 +877,18 @@ pub(crate) unsafe fn map_grow_size_imp(map: &MapView, item_size: usize, min_size
 }
 
 // ufbx.c:4576-4588 `ufbxi_map_grow_size`
+//
+// # Safety
+// `size` is the map's element stride — the size the map's other typed
+// operations use for the same map. The map is item-type-erased in C (`items` is
+// a `void *`) and stays so here, so the stride is not expressible in the
+// signature: it reaches `map_grow_size_imp`, which sizes the replacement block
+// and copies the existing items with it.
 #[inline(always)]
-pub(crate) unsafe fn map_grow_size(map: *mut Map, size: usize, min_size: usize) -> bool {
+pub(crate) unsafe fn map_grow_size(map: &MapView, size: usize, min_size: usize) -> bool {
     #[cfg(feature = "regression")]
     {
-        // SAFETY: caller contract — `map` points at a live `Map`.
-        let ator = unsafe { (*map).ator };
+        let ator = map.ator();
         ufbxi_check_return_err_msg!(
             unsafe { crate::native::error::ErrorView::from_ptr((*ator).error) },
             // SAFETY: `ator` is the map's own live allocator, just read above.
@@ -891,14 +901,12 @@ pub(crate) unsafe fn map_grow_size(map: *mut Map, size: usize, min_size: usize) 
         unsafe { (*ator).num_allocs += 1 };
     }
 
-    // SAFETY: caller contract — `map` points at a live `Map`.
-    if unsafe { (*map).size < (*map).capacity && (*map).capacity as usize >= min_size } {
+    if map.size() < map.capacity() && map.capacity() as usize >= min_size {
         return true;
     }
-    // SAFETY: forwards this fn's contract (live `map`, `size` matching the
-    // map's element stride) to the growth implementation; `MapView::from_ptr`
-    // mints the handle over that same live, writable `Map`.
-    unsafe { map_grow_size_imp(MapView::from_ptr(map), size, min_size) }
+    // SAFETY: forwards this fn's contract (`size` matching the map's element
+    // stride) to the growth implementation, over the same view.
+    unsafe { map_grow_size_imp(map, size, min_size) }
 }
 
 // ufbx.c:4590-4617 `ufbxi_map_find_size`
@@ -969,9 +977,10 @@ pub(crate) unsafe fn map_insert_size(
     hash: u32,
     value: *const c_void,
 ) -> *mut c_void {
-    // SAFETY: forwards this fn's contract (live `map`, `size` the element
+    // SAFETY: the mint carries this fn's caller contract (live, writable `Map`)
+    // into the view; the call forwards this fn's contract (`size` the element
     // stride) to the growth routine.
-    if !unsafe { map_grow_size(map, size, 64) } {
+    if !unsafe { map_grow_size(MapView::from_ptr(map), size, 64) } {
         return core::ptr::null_mut();
     }
 
@@ -1059,9 +1068,9 @@ pub(crate) unsafe fn map_insert_size(
 // ufbx.c:4657 `ufbxi_map_grow(map, type, min_size)`
 #[inline(always)]
 pub(crate) unsafe fn map_grow<T>(map: *mut Map, min_size: usize) -> bool {
-    // SAFETY: forwards this fn's contract (live `map`) to the size-generic
-    // routine with `T`'s size as the element stride.
-    unsafe { map_grow_size(map, size_of::<T>(), min_size) }
+    // SAFETY: the mint carries this fn's caller contract (live, writable `Map`)
+    // into the view; the call passes `T`'s size as the element stride.
+    unsafe { map_grow_size(MapView::from_ptr(map), size_of::<T>(), min_size) }
 }
 
 // ufbx.c:4658 `ufbxi_map_find(map, type, hash, value)`

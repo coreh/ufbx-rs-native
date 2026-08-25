@@ -229,8 +229,12 @@ pub(crate) unsafe fn generate_indices(
         );
     }
 
-    // SAFETY: the raw address identifies the map initialized above.
-    if num_indices > 0 && !unsafe { map_grow_size(&raw mut map, packed_size, num_indices) } {
+    // SAFETY: the view is minted over the map initialized above, a local that
+    // outlives the call; `packed_size` is the map's element stride, the same
+    // stride `map_init` above set the comparator up for.
+    if num_indices > 0
+        && !unsafe { map_grow_size(MapView::from_ptr(&raw mut map), packed_size, num_indices) }
+    {
         fail = true;
     }
 
