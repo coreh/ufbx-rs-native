@@ -6339,11 +6339,11 @@ pub(crate) fn sub_epsilon(a: f64, epsilon: f64) -> f64 {
 // ufbx.c:26973-27015 `ufbxi_postprocess_step`
 #[cfg(feature = "baking")]
 #[inline(never)]
-pub(crate) unsafe fn postprocess_step(
+pub(crate) fn postprocess_step(
     bc: &BakeContext,
     prev_time: f64,
     next_time: f64,
-    p_time: *mut f64,
+    p_time: &mut f64,
     flags: BakedKeyFlags,
 ) -> bool {
     ufbxi_dev_assert!(
@@ -6356,9 +6356,7 @@ pub(crate) unsafe fn postprocess_step(
     // widened to `double` only for the add.
     let mut epsilon: f64 = 1.0 + (math::FLT_EPSILON * 4.0f32) as f64;
 
-    // SAFETY: `p_time` points to the caller's live `double` slot — this
-    // `unsafe fn`'s contract.
-    let mut time: f64 = unsafe { *p_time };
+    let mut time: f64 = *p_time;
     // C: `switch (bc->opts.step_handling)` — an if-ladder over the discriminant
     // value, with the trailing `else` standing in for C's `default:` arm, which
     // is reachable because `bc->opts` is a verbatim copy of unvalidated user
@@ -6379,13 +6377,11 @@ pub(crate) unsafe fn postprocess_step(
     } else if step_handling == BakeStepHandling::AdjacentDouble as u32 {
         if left {
             time = math::nextafter(time, -math::INFINITY);
-            // SAFETY: `p_time` is the caller's live `double` slot.
-            unsafe { *p_time = time };
+            *p_time = time;
             return time > prev_time;
         } else {
             time = math::nextafter(time, math::INFINITY);
-            // SAFETY: `p_time` is the caller's live `double` slot.
-            unsafe { *p_time = time };
+            *p_time = time;
             return time < next_time;
         }
     } else if step_handling == BakeStepHandling::Ignore as u32 {
@@ -6398,14 +6394,12 @@ pub(crate) unsafe fn postprocess_step(
     if left {
         let min_time: f64 = math::fmax(prev_time + step, add_epsilon(prev_time, epsilon));
         time = math::fmin(time - step, sub_epsilon(time, epsilon));
-        // SAFETY: `p_time` is the caller's live `double` slot.
-        unsafe { *p_time = time };
+        *p_time = time;
         time > min_time
     } else {
         let max_time: f64 = math::fmin(next_time - step, sub_epsilon(next_time, epsilon));
         time = math::fmax(time + step, add_epsilon(time, epsilon));
-        // SAFETY: `p_time` is the caller's live `double` slot.
-        unsafe { *p_time = time };
+        *p_time = time;
         time < max_time
     }
 }
@@ -6462,11 +6456,7 @@ pub(crate) unsafe fn bake_postprocess_vec3(
                 & (BakedKeyFlags::STEP_LEFT.raw() | BakedKeyFlags::STEP_RIGHT.raw()))
                 != 0
             {
-                // SAFETY: `postprocess_step` needs a live `double` slot, and
-                // `cur.time` is a field of this live local.
-                keep = unsafe {
-                    postprocess_step(bc, prev_time, next_time, &raw mut cur.time, cur.flags)
-                };
+                keep = postprocess_step(bc, prev_time, next_time, &mut cur.time, cur.flags);
             }
             if keep {
                 // C: `src.data[dst] = cur; dst++; prev_time = cur.time;`
@@ -6617,11 +6607,7 @@ pub(crate) unsafe fn bake_postprocess_quat(
                 & (BakedKeyFlags::STEP_LEFT.raw() | BakedKeyFlags::STEP_RIGHT.raw()))
                 != 0
             {
-                // SAFETY: `postprocess_step` needs a live `double` slot, and
-                // `cur.time` is a field of this live local.
-                keep = unsafe {
-                    postprocess_step(bc, prev_time, next_time, &raw mut cur.time, cur.flags)
-                };
+                keep = postprocess_step(bc, prev_time, next_time, &mut cur.time, cur.flags);
             }
             if keep {
                 prev_time = cur.time;
