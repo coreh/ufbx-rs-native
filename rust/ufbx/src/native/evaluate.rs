@@ -7940,6 +7940,9 @@ pub(crate) fn bake_anim(bc: &BakeContext) -> Result<(), Fail> {
             finalize_bake_times(bc, &mut weight_times)?;
 
             bc.layer_weight_times_view().set_count(weight_times.count);
+            // SAFETY: `finalize_bake_times` filled `weight_times` with a run of
+            // exactly `count` `ufbxi_bake_time` items live in bc's own
+            // `tmp_prop` buf, which is what the copy reads into bc's `tmp`.
             bc.layer_weight_times_view().set_data(unsafe {
                 bc.tmp_view()
                     .push_copy_raw::<BakeTime>(weight_times.count, weight_times.data)
