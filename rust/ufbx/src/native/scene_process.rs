@@ -6770,11 +6770,14 @@ pub(crate) unsafe fn scale_vec3_list(v_list: *const c_void, scale: Real, stride:
 /// `stride` must be `0` or the size of the viewed list's own element type `T`,
 /// so that every strided slot the walk visits begins a live `ufbx_vec3`-shaped
 /// triple inside that list's run. That pairing is the C `void *` contract and
-/// is not expressible in the parameter types.
+/// is not expressible in the parameter types. `matrix` must point to a live
+/// `ufbx_matrix` for the duration of the walk; it stays a raw pointer so C's
+/// `&geo_node->geometry_to_node` transcribes as an address-of over arena memory
+/// rather than a frozen shared borrow held across the strided writes.
 #[inline(never)]
 pub(crate) unsafe fn transform_vec3_list<T>(
     v_list: Option<&ListView<T>>,
-    matrix: &Matrix,
+    matrix: *const Matrix,
     stride: usize,
 ) {
     let mut stride: usize = stride;
@@ -6794,7 +6797,7 @@ pub(crate) unsafe fn transform_vec3_list<T>(
         let v: *mut Vec3 = p as *mut Vec3;
         // SAFETY: `p` walks the `count` strided slots of the viewed list's own
         // run, each a live `ufbx_vec3` per the `stride` contract above; `matrix`
-        // borrows a live `ufbx_matrix`.
+        // addresses a live `ufbx_matrix` per the fn contract.
         unsafe { *v = transform_position(matrix, *v) };
         p = p.wrapping_add(stride);
     }
@@ -7227,10 +7230,14 @@ pub(crate) fn modify_geometry<'a>(uc: &'a Context) -> Result<(), Fail> {
 
                 transform_vec3_list(
                     Some(mesh.vertex_position().values_view()),
-                    &(*geo_node).geometry_to_node,
+                    &raw const (*geo_node).geometry_to_node,
                     0,
                 );
-                transform_vec3_list(Some(mesh.vertex_normal().values_view()), &normal_matrix, 0);
+                transform_vec3_list(
+                    Some(mesh.vertex_normal().values_view()),
+                    &raw const normal_matrix,
+                    0,
+                );
                 normalize_vec3_list(mesh.vertex_normal().values_view());
 
                 // C: `ufbxi_for_list(ufbx_uv_set, set, mesh->uv_sets)`
@@ -7241,12 +7248,12 @@ pub(crate) fn modify_geometry<'a>(uc: &'a Context) -> Result<(), Fail> {
                 for set in sets {
                     transform_vec3_list(
                         Some(set.vertex_tangent().values_view()),
-                        &tangent_matrix,
+                        &raw const tangent_matrix,
                         0,
                     );
                     transform_vec3_list(
                         Some(set.vertex_bitangent().values_view()),
-                        &tangent_matrix,
+                        &raw const tangent_matrix,
                         0,
                     );
                     normalize_vec3_list(set.vertex_tangent().values_view());
@@ -7295,7 +7302,7 @@ pub(crate) fn modify_geometry<'a>(uc: &'a Context) -> Result<(), Fail> {
                 // control-point list header, whose provenance is write-capable.
                 transform_vec3_list(
                     Some(ListView::from_ptr(&raw mut (*curve).control_points)),
-                    &(*geo_node).geometry_to_node,
+                    &raw const (*geo_node).geometry_to_node,
                     0,
                 );
             }
@@ -7341,7 +7348,7 @@ pub(crate) fn modify_geometry<'a>(uc: &'a Context) -> Result<(), Fail> {
                 // control-point list header, whose provenance is write-capable.
                 transform_vec3_list(
                     Some(ListView::from_ptr(&raw mut (*curve).control_points)),
-                    &(*geo_node).geometry_to_node,
+                    &raw const (*geo_node).geometry_to_node,
                     size_of::<Vec4>(),
                 );
             }
@@ -7389,7 +7396,7 @@ pub(crate) fn modify_geometry<'a>(uc: &'a Context) -> Result<(), Fail> {
                 // control-point list header, whose provenance is write-capable.
                 transform_vec3_list(
                     Some(ListView::from_ptr(&raw mut (*surface).control_points)),
-                    &(*geo_node).geometry_to_node,
+                    &raw const (*geo_node).geometry_to_node,
                     size_of::<Vec4>(),
                 );
             }
