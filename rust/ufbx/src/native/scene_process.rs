@@ -7677,40 +7677,40 @@ pub(crate) unsafe fn absolute_to_relative_path(
 
 // ufbx.c:21437-21450 `ufbxi_resolve_filenames`
 #[inline(never)]
-pub(crate) unsafe fn resolve_filenames(
+pub(crate) fn resolve_filenames(
     uc: &Context,
-    filename: *mut Strblob,
-    absolute_filename: *mut Strblob,
-    relative_filename: *mut Strblob,
+    filename: &View<Strblob>,
+    absolute_filename: &View<Strblob>,
+    relative_filename: &View<Strblob>,
     raw: bool,
 ) -> Result<(), Fail> {
-    // SAFETY: `relative_filename` points to a live `ufbx_strblob` — the element
-    // field being resolved (fn contract).
-    if unsafe { strblob_length(relative_filename, raw) } == 0 {
+    // SAFETY: `relative_filename` views a live `ufbx_strblob` — the element
+    // field being resolved (view mint invariant).
+    if unsafe { strblob_length(relative_filename.as_ptr(), raw) } == 0 {
         let original_file_path: *const Strblob = if raw {
             uc.scene_view().metadata_view().raw_original_file_path_ptr() as *const Strblob
         } else {
             uc.scene_view().metadata_view().original_file_path_ptr() as *const Strblob
         };
 
-        // SAFETY: `relative_filename`/`absolute_filename` are live strblobs of the
-        // element being resolved (fn contract), and `original_file_path` addresses
-        // the scene metadata's own path field, which the accessors above hand out
-        // as a `Strblob`-shaped view of the matching `raw`-ness.
+        // SAFETY: `relative_filename`/`absolute_filename` view live strblobs of the
+        // element being resolved (view mint invariant), and `original_file_path`
+        // addresses the scene metadata's own path field, which the accessors above
+        // hand out as a `Strblob`-shaped view of the matching `raw`-ness.
         unsafe {
             absolute_to_relative_path(
                 uc,
-                relative_filename,
+                relative_filename.get(),
                 original_file_path,
-                absolute_filename,
+                absolute_filename.get(),
                 raw,
             )
         }?;
     }
 
-    // SAFETY: `filename`/`relative_filename` are live strblobs of the element
-    // being resolved (fn contract).
-    unsafe { resolve_relative_filename(uc, filename, relative_filename, raw) }?;
+    // SAFETY: `filename`/`relative_filename` view live strblobs of the element
+    // being resolved (view mint invariant).
+    unsafe { resolve_relative_filename(uc, filename.get(), relative_filename.as_ptr(), raw) }?;
 
     Ok(())
 }
@@ -7854,7 +7854,8 @@ pub(crate) fn resolve_file_content<'a>(uc: &'a Context) -> Result<(), Fail> {
 
     // SAFETY: walks the stored `videos` element-pointer run of the uc-owned scene
     // (`count` entries); the resolve/push helpers receive `&raw mut` places inside
-    // that same video.
+    // that same video, whose write-capable provenance also backs the strblob views
+    // minted over them.
     unsafe {
         // C: `ufbxi_for_ptr_list(ufbx_video, p_video, uc->scene.videos)`
         let mut p_video: *mut *mut Video = uc.scene_view().videos_view().data() as *mut *mut Video;
@@ -7863,16 +7864,16 @@ pub(crate) fn resolve_file_content<'a>(uc: &'a Context) -> Result<(), Fail> {
             let video: *mut Video = *p_video;
             resolve_filenames(
                 uc,
-                &raw mut (*video).filename as *mut Strblob,
-                &raw mut (*video).absolute_filename as *mut Strblob,
-                &raw mut (*video).relative_filename as *mut Strblob,
+                View::<Strblob>::from_ptr(&raw mut (*video).filename as *mut Strblob),
+                View::<Strblob>::from_ptr(&raw mut (*video).absolute_filename as *mut Strblob),
+                View::<Strblob>::from_ptr(&raw mut (*video).relative_filename as *mut Strblob),
                 false,
             )?;
             resolve_filenames(
                 uc,
-                &raw mut (*video).raw_filename as *mut Strblob,
-                &raw mut (*video).raw_absolute_filename as *mut Strblob,
-                &raw mut (*video).raw_relative_filename as *mut Strblob,
+                View::<Strblob>::from_ptr(&raw mut (*video).raw_filename as *mut Strblob),
+                View::<Strblob>::from_ptr(&raw mut (*video).raw_absolute_filename as *mut Strblob),
+                View::<Strblob>::from_ptr(&raw mut (*video).raw_relative_filename as *mut Strblob),
                 true,
             )?;
             push_file_content(
@@ -7887,7 +7888,8 @@ pub(crate) fn resolve_file_content<'a>(uc: &'a Context) -> Result<(), Fail> {
     // SAFETY: walks the stored `audio_clips` element-pointer run of the uc-owned
     // scene (`count` entries); each clip's props are reached through an
     // arena-anchored view with NUL-terminated literal names, and the resolve/push
-    // helpers receive `&raw mut` places inside that same clip.
+    // helpers receive `&raw mut` places inside that same clip, whose write-capable
+    // provenance also backs the strblob views minted over them.
     unsafe {
         // C: `ufbxi_for_ptr_list(ufbx_audio_clip, p_clip, uc->scene.audio_clips)`
         let mut p_clip: *mut *mut AudioClip =
@@ -7907,16 +7909,16 @@ pub(crate) fn resolve_file_content<'a>(uc: &'a Context) -> Result<(), Fail> {
                 find_blob_len(clip_view.props_view(), b"RelPath", EMPTY_BLOB.0);
             resolve_filenames(
                 uc,
-                &raw mut (*clip).filename as *mut Strblob,
-                &raw mut (*clip).absolute_filename as *mut Strblob,
-                &raw mut (*clip).relative_filename as *mut Strblob,
+                View::<Strblob>::from_ptr(&raw mut (*clip).filename as *mut Strblob),
+                View::<Strblob>::from_ptr(&raw mut (*clip).absolute_filename as *mut Strblob),
+                View::<Strblob>::from_ptr(&raw mut (*clip).relative_filename as *mut Strblob),
                 false,
             )?;
             resolve_filenames(
                 uc,
-                &raw mut (*clip).raw_filename as *mut Strblob,
-                &raw mut (*clip).raw_absolute_filename as *mut Strblob,
-                &raw mut (*clip).raw_relative_filename as *mut Strblob,
+                View::<Strblob>::from_ptr(&raw mut (*clip).raw_filename as *mut Strblob),
+                View::<Strblob>::from_ptr(&raw mut (*clip).raw_absolute_filename as *mut Strblob),
+                View::<Strblob>::from_ptr(&raw mut (*clip).raw_relative_filename as *mut Strblob),
                 true,
             )?;
             push_file_content(
@@ -9078,27 +9080,31 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
 
         // SAFETY: each `*_raw()` addresses one of the viewed cache file's own
         // `ufbx_string` filename fields, which are `Strblob`-shaped for `raw`
-        // `false`.
-        unsafe {
-            resolve_filenames(
-                uc,
-                cache_view.filename_raw() as *mut Strblob,
-                cache_view.absolute_filename_raw() as *mut Strblob,
-                cache_view.relative_filename_raw() as *mut Strblob,
-                false,
-            )
-        }?;
+        // `false`, and carries the cache-file view's write-capable provenance.
+        resolve_filenames(
+            uc,
+            unsafe { View::<Strblob>::from_ptr(cache_view.filename_raw() as *mut Strblob) },
+            unsafe {
+                View::<Strblob>::from_ptr(cache_view.absolute_filename_raw() as *mut Strblob)
+            },
+            unsafe {
+                View::<Strblob>::from_ptr(cache_view.relative_filename_raw() as *mut Strblob)
+            },
+            false,
+        )?;
         // SAFETY: as above, for its own `ufbx_blob` raw filename fields, which are
         // `Strblob`-shaped for `raw` `true`.
-        unsafe {
-            resolve_filenames(
-                uc,
-                cache_view.raw_filename_raw() as *mut Strblob,
-                cache_view.raw_absolute_filename_raw() as *mut Strblob,
-                cache_view.raw_relative_filename_raw() as *mut Strblob,
-                true,
-            )
-        }?;
+        resolve_filenames(
+            uc,
+            unsafe { View::<Strblob>::from_ptr(cache_view.raw_filename_raw() as *mut Strblob) },
+            unsafe {
+                View::<Strblob>::from_ptr(cache_view.raw_absolute_filename_raw() as *mut Strblob)
+            },
+            unsafe {
+                View::<Strblob>::from_ptr(cache_view.raw_relative_filename_raw() as *mut Strblob)
+            },
+            true,
+        )?;
     }
 
     ufbx_assert!(
@@ -10296,27 +10302,28 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
         finalize_shader_texture(uc, texture)?;
 
         // SAFETY: the projections address the viewed texture's own `ufbx_string`
-        // filename fields, which are `Strblob`-shaped for `raw` `false`.
-        unsafe {
-            resolve_filenames(
-                uc,
-                texture.filename_raw() as *mut Strblob,
-                texture.absolute_filename_raw() as *mut Strblob,
-                texture.relative_filename_raw() as *mut Strblob,
-                false,
-            )
-        }?;
+        // filename fields, which are `Strblob`-shaped for `raw` `false`, and carry
+        // the texture view's write-capable provenance.
+        resolve_filenames(
+            uc,
+            unsafe { View::<Strblob>::from_ptr(texture.filename_raw() as *mut Strblob) },
+            unsafe { View::<Strblob>::from_ptr(texture.absolute_filename_raw() as *mut Strblob) },
+            unsafe { View::<Strblob>::from_ptr(texture.relative_filename_raw() as *mut Strblob) },
+            false,
+        )?;
         // SAFETY: as above, for its own `ufbx_blob` raw filename fields, which are
         // `Strblob`-shaped for `raw` `true`.
-        unsafe {
-            resolve_filenames(
-                uc,
-                texture.raw_filename_raw() as *mut Strblob,
-                texture.raw_absolute_filename_raw() as *mut Strblob,
-                texture.raw_relative_filename_raw() as *mut Strblob,
-                true,
-            )
-        }?;
+        resolve_filenames(
+            uc,
+            unsafe { View::<Strblob>::from_ptr(texture.raw_filename_raw() as *mut Strblob) },
+            unsafe {
+                View::<Strblob>::from_ptr(texture.raw_absolute_filename_raw() as *mut Strblob)
+            },
+            unsafe {
+                View::<Strblob>::from_ptr(texture.raw_relative_filename_raw() as *mut Strblob)
+            },
+            true,
+        )?;
 
         // Fetch layered texture layers and patch alphas/blend modes
         if texture.type_() == TextureType::Layered {
