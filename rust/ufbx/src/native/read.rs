@@ -5110,15 +5110,11 @@ pub(crate) fn read_nurbs_surface(
 
 // ufbx.c:13896-13955 `ufbxi_read_line`
 #[inline(never)]
-pub(crate) unsafe fn read_line(
-    uc: &Context,
-    node: &NodeView,
-    info: *mut ElementInfo,
-) -> Result<(), Fail> {
-    // SAFETY: `info` is the caller's live `ufbxi_element_info` and `LineCurve` is
-    // the element struct for `ElementType::LineCurve`.
+pub(crate) fn read_line(uc: &Context, node: &NodeView, info: &ElementInfoView) -> Result<(), Fail> {
+    // SAFETY: `info` views the caller's live `ufbxi_element_info` and `LineCurve`
+    // is the element struct for `ElementType::LineCurve`.
     let line: *mut LineCurve =
-        unsafe { push_element::<LineCurve>(uc, info, ElementType::LineCurve) };
+        unsafe { push_element::<LineCurve>(uc, info.get(), ElementType::LineCurve) };
     ufbxi_check!(uc, !line.is_null(), "line");
 
     if !uc.opts_view().ignore_geometry() {
@@ -7217,7 +7213,14 @@ pub(crate) unsafe fn read_synthetic_attribute(
             if find_child(node, sp::PointsIndex.as_ptr()).is_none() {
                 return Ok(());
             }
-            read_line(uc, node, &raw mut attrib_info)?;
+            // SAFETY: `attrib_info` is this frame's own `ufbxi_element_info`
+            // local — write-capable provenance, live and unmoved across the
+            // call.
+            read_line(
+                uc,
+                node,
+                View::<ElementInfo, Mut>::from_ptr(&raw mut attrib_info),
+            )?;
         } else if sub_type == sp::TrimNurbsSurface.as_ptr() {
             if find_child(node, sp::Layer.as_ptr()).is_none() {
                 return Ok(());
@@ -7505,7 +7508,9 @@ pub(crate) fn read_object(uc: &Context, node: &NodeView) -> Result<(), Fail> {
                 // write-capable provenance, live and unmoved across the call.
                 read_nurbs_surface(uc, node, View::<ElementInfo, Mut>::from_ptr(&raw mut info))?;
             } else if sub_type == sp::Line.as_ptr() {
-                read_line(uc, node, &raw mut info)?;
+                // SAFETY: `info` is this frame's own `ufbxi_element_info` local —
+                // write-capable provenance, live and unmoved across the call.
+                read_line(uc, node, View::<ElementInfo, Mut>::from_ptr(&raw mut info))?;
             } else if sub_type == sp::TrimNurbsSurface.as_ptr() {
                 read_element(
                     uc,
