@@ -7097,7 +7097,8 @@ pub(crate) fn modify_geometry<'a>(uc: &'a Context) -> Result<(), Fail> {
                     continue;
                 }
 
-                (*node).geometry_transform = get_geometry_transform(node_view.props_view(), node);
+                (*node).geometry_transform =
+                    get_geometry_transform(node_view.props_view(), node_view);
                 if !is_transform_identity(&raw const (*node).geometry_transform) {
                     (*node).geometry_to_node =
                         transform_to_matrix(&raw const (*node).geometry_transform);
@@ -10890,7 +10891,7 @@ pub(crate) fn mirror_rotation(p_quat: &mut Quat, axis: MirrorAxis) {
 // ufbx.c:22758-22784 `ufbxi_get_geometry_transform`
 // (forward-declared at ufbx.c:21070-21071 for `ufbxi_modify_geometry`)
 #[inline(never)]
-pub(crate) unsafe fn get_geometry_transform(props: &PropsView, node: *mut Node) -> Transform {
+pub(crate) fn get_geometry_transform(props: &PropsView, node: &NodeView) -> Transform {
     let translation: Vec3 = find_vec3(props, &sp::GeometricTranslation, 0.0, 0.0, 0.0);
     let rotation: Vec3 = find_vec3(props, &sp::GeometricRotation, 0.0, 0.0, 0.0);
     let scaling: Vec3 = find_vec3(props, &sp::GeometricScaling, 1.0, 1.0, 1.0);
@@ -10921,23 +10922,17 @@ pub(crate) unsafe fn get_geometry_transform(props: &PropsView, node: *mut Node) 
     mul_rotate(&mut t, rotation, RotationOrder::Xyz);
     add_translate(&mut t, translation);
 
-    // SAFETY: `node` points to the live, initialized `ufbx_node` whose geometry
-    // transform is being computed (fn contract).
-    unsafe {
-        if (*node).has_adjust_transform {
-            t.translation.x *= (*node).adjust_translation_scale;
-            t.translation.y *= (*node).adjust_translation_scale;
-            t.translation.z *= (*node).adjust_translation_scale;
-        }
+    if node.has_adjust_transform() {
+        t.translation.x *= node.adjust_translation_scale();
+        t.translation.y *= node.adjust_translation_scale();
+        t.translation.z *= node.adjust_translation_scale();
     }
 
-    // SAFETY: `node` is live (see above); the branch condition established that
-    // the axis is not `None`, which is `ufbxi_mirror_translation`'s contract.
-    unsafe {
-        if (*node).adjust_mirror_axis != MirrorAxis::None {
-            mirror_translation(&mut t.translation, (*node).adjust_mirror_axis);
-            mirror_rotation(&mut t.rotation, (*node).adjust_mirror_axis);
-        }
+    if node.adjust_mirror_axis() != MirrorAxis::None {
+        // SAFETY: the branch condition established that the axis is not `None`,
+        // which is `ufbxi_mirror_translation`'s contract.
+        unsafe { mirror_translation(&mut t.translation, node.adjust_mirror_axis()) };
+        mirror_rotation(&mut t.rotation, node.adjust_mirror_axis());
     }
 
     t
@@ -11405,11 +11400,8 @@ pub(crate) fn update_node(node_view: &NodeView, overrides: &[TransformOverride])
         let node_to_parent: Matrix =
             unsafe { transform_to_matrix(node_view.local_transform_ptr()) };
         node_view.set_node_to_parent(node_to_parent);
-        // SAFETY: `ufbxi_get_geometry_transform` takes the node whose geometry
-        // transform it composes by raw pointer and only reads it;
-        // `node_view.get()` is the view's own live storage.
         let geometry_transform: Transform =
-            unsafe { get_geometry_transform(node_view.props_view(), node_view.get()) };
+            get_geometry_transform(node_view.props_view(), node_view);
         node_view.set_geometry_transform(geometry_transform);
     } else {
         node_view.set_geometry_transform(IDENTITY_TRANSFORM);
