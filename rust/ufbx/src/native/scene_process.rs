@@ -1237,7 +1237,9 @@ pub(crate) fn pre_finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
                         && uc.opts_view().inherit_mode_handling()
                             != InheritModeHandling::CompensateNoFallback
                     {
-                        setup_scale_helper(uc, node, fbx_id)?;
+                        // SAFETY: `node` is this element's arena pointer, whose
+                        // write-capable provenance spans the whole node.
+                        setup_scale_helper(uc, View::<Node>::from_ptr(node), fbx_id)?;
 
                         // If we added a geometry transform helper that may scale further helpers
                         // recursively for all child nodes using `UFBX_INHERIT_MODE_COMPONENTWISE_SCALE`
@@ -1259,7 +1261,14 @@ pub(crate) fn pre_finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
 
                                     let child_fbx_id: u64 =
                                         *fbx_ids.add((*pre_child).element_id as usize);
-                                    setup_scale_helper(uc, child, child_fbx_id)?;
+                                    // SAFETY: `child` is that element's arena
+                                    // pointer, whose write-capable provenance
+                                    // spans the whole node.
+                                    setup_scale_helper(
+                                        uc,
+                                        View::<Node>::from_ptr(child),
+                                        child_fbx_id,
+                                    )?;
                                     (*child).is_scale_compensate_parent = false;
 
                                     // Traverse to children if any

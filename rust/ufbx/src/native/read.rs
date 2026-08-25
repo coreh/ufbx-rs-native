@@ -1862,9 +1862,9 @@ static SCALE_HELPER_PROPS: [ScaleHelperProp; 4] = [
 
 // ufbx.c:12560-12599 `ufbxi_setup_scale_helper`
 #[inline(never)]
-pub(crate) unsafe fn setup_scale_helper(
+pub(crate) fn setup_scale_helper(
     uc: &Context,
-    node: *mut UfbxNode,
+    node: &View<UfbxNode, Mut>,
     node_fbx_id: u64,
 ) -> Result<(), Fail> {
     // C: `uint64_t scale_fbx_id;` — written by `ufbxi_push_synthetic_element`
@@ -1894,25 +1894,25 @@ pub(crate) unsafe fn setup_scale_helper(
         .is_null(),
         "((uint32_t*)ufbxi_push_size_copy((&uc->tmp_node_ids), sizeof(uint32_t), (1), (&scale_node->element.element_id)))"
     );
-    // C: `scale_node->element.dom_node = node->element.dom_node;`
-    // SAFETY: both projections address live `dom_node` fields — `node` is the
-    // caller's node and `scale_node` the fresh element above; the field has no
-    // drop glue, so the bitwise read duplicates it safely.
+    // C: `scale_node->element.dom_node = node->element.dom_node;` — pointer
+    // copy; `Option<Ref<T>>` is niche-packed to a bare pointer.
+    // SAFETY: the projection addresses `scale_node`'s own live `dom_node`
+    // field — `scale_node` is the fresh element above; the field has no drop
+    // glue, so the bitwise copy stores safely.
     unsafe {
-        (*scale_node).element.dom_node = core::ptr::read(&raw const (*node).element.dom_node);
+        (*scale_node).element.dom_node = node.element().dom_node();
     }
 
-    // SAFETY: `node` is the caller's live `ufbx_node`; `scale_node` is the
-    // fresh non-null element above, which outlives this scene's nodes.
-    unsafe { (*node).scale_helper = Some(Ref::from_ptr(scale_node)) };
+    // SAFETY: `scale_node` is the fresh non-null element checked above, which
+    // outlives this scene's nodes.
+    node.set_scale_helper(Some(unsafe { Ref::from_ptr(scale_node) }));
     // SAFETY: `scale_node` is the fresh non-null element above.
     unsafe { (*scale_node).is_scale_helper = true };
 
     connect_oo(uc, scale_fbx_id, node_fbx_id)?;
     uc.set_has_scale_helper_nodes(true);
 
-    // SAFETY: `node` is the caller's live `ufbx_node`.
-    let extra: *mut NodeExtra = push_element_extra(uc, unsafe { (*node).element.element_id });
+    let extra: *mut NodeExtra = push_element_extra(uc, node.element().element_id());
     ufbxi_check!(uc, !extra.is_null(), "extra");
     // SAFETY: `extra` is the fresh non-null extra-data slot checked above and
     // `scale_node` the fresh element above.
@@ -1924,10 +1924,10 @@ pub(crate) unsafe fn setup_scale_helper(
 
     let mut num_props: usize = 0;
     // C: `ufbx_props props_copy = node->props;` — struct memcpy.
-    // SAFETY: `node` is the caller's live `ufbx_node`, so the projection
-    // addresses its own `element.props`; `Props` has no drop glue, so the
+    // SAFETY: `props_ptr()` addresses the viewed node's own live
+    // `element.props` (the view's mint vouch); `Props` has no drop glue, so the
     // bitwise read duplicates it without double-free (forgotten below).
-    let mut props_copy: Props = unsafe { core::ptr::read(&raw const (*node).element.props) };
+    let mut props_copy: Props = unsafe { core::ptr::read(node.element().props_ptr()) };
     props_copy.defaults = None;
     let mut i: usize = 0;
     while i < max_props {
