@@ -6860,25 +6860,14 @@ pub(crate) unsafe fn flip_winding(uc: &Context, mesh: &View<Mesh>) -> Result<(),
         // C: struct assignment (memcpy) of the vertex-attribute headers; the
         // `Vertex*` structs are not `Copy` in the generated bindings, so the
         // copy is spelled as a byte-identical `copy_nonoverlapping`.
-        // SAFETY: `uv_sets.count > 0`, so element `0` of the mesh's UV-set run is
-        // live and initialized; each destination is the mesh's own header of the
-        // matching name, a distinct field of the same type.
+        let set0 = mesh.uv_sets_view().at(0);
+        // SAFETY: each source is element `0`'s own header field, addressed
+        // through that element's view; each destination is the mesh's own header
+        // of the matching name, a distinct field of the same type.
         unsafe {
-            ptr::copy_nonoverlapping(
-                &raw const (*(mesh.uv_sets().data as *mut UvSet).add(0)).vertex_uv,
-                mesh.vertex_uv_raw(),
-                1,
-            );
-            ptr::copy_nonoverlapping(
-                &raw const (*(mesh.uv_sets().data as *mut UvSet).add(0)).vertex_bitangent,
-                mesh.vertex_bitangent_raw(),
-                1,
-            );
-            ptr::copy_nonoverlapping(
-                &raw const (*(mesh.uv_sets().data as *mut UvSet).add(0)).vertex_tangent,
-                mesh.vertex_tangent_raw(),
-                1,
-            );
+            ptr::copy_nonoverlapping(set0.vertex_uv_ptr(), mesh.vertex_uv_raw(), 1);
+            ptr::copy_nonoverlapping(set0.vertex_bitangent_ptr(), mesh.vertex_bitangent_raw(), 1);
+            ptr::copy_nonoverlapping(set0.vertex_tangent_ptr(), mesh.vertex_tangent_raw(), 1);
         }
     }
     if mesh.color_sets().count > 0 {
@@ -6896,16 +6885,11 @@ pub(crate) unsafe fn flip_winding(uc: &Context, mesh: &View<Mesh>) -> Result<(),
             // index list, whose span matches the mesh that owns the set run.
             unsafe { flip_attrib_winding(uc, mesh, set.vertex_color().indices_view(), false) }?;
         }
-        // SAFETY: `color_sets.count > 0`, so element `0` of the mesh's color-set
-        // run is live and initialized; the destination is the mesh's own
-        // `vertex_color` header, a distinct field of the same type.
-        unsafe {
-            ptr::copy_nonoverlapping(
-                &raw const (*(mesh.color_sets().data as *mut ColorSet).add(0)).vertex_color,
-                mesh.vertex_color_raw(),
-                1,
-            )
-        };
+        let set0 = mesh.color_sets_view().at(0);
+        // SAFETY: the source is element `0`'s own `vertex_color` header,
+        // addressed through that element's view; the destination is the mesh's
+        // own `vertex_color` header, a distinct field of the same type.
+        unsafe { ptr::copy_nonoverlapping(set0.vertex_color_ptr(), mesh.vertex_color_raw(), 1) };
     }
     // SAFETY: `skinned_position().indices_view()` views the mesh's own
     // `skinned_position` index list.
