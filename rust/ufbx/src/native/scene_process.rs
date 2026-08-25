@@ -10636,11 +10636,19 @@ pub(crate) fn mul_quat(a: Quat, b: Quat) -> Quat {
 }
 
 // ufbx.c:22672-22677 `ufbxi_add_weighted_vec3`
+// The target stays a raw pointer: C's `&vertices[index]` at
+// `ufbx_add_blend_shape_vertex_offsets` (ufbx.c:32078) addresses caller- or
+// arena-owned memory that other raw pointers also reach, so a `&mut` retag
+// there would mint an exclusivity claim C never made.
 #[inline(always)]
-pub(crate) fn add_weighted_vec3(r: &mut Vec3, b: Vec3, w: Real) {
-    r.x += b.x * w;
-    r.y += b.y * w;
-    r.z += b.z * w;
+pub(crate) unsafe fn add_weighted_vec3(r: *mut Vec3, b: Vec3, w: Real) {
+    // SAFETY: `r` points at a live, initialized, writable `ufbx_vec3` per this
+    // fn's contract; each field is read-modify-written in place through it.
+    unsafe {
+        (*r).x += b.x * w;
+        (*r).y += b.y * w;
+        (*r).z += b.z * w;
+    }
 }
 
 // ufbx.c:22679-22685 `ufbxi_add_weighted_quat`
@@ -10662,15 +10670,14 @@ pub(crate) fn add_weighted_mat(r: &mut Matrix, b: &Matrix, w: Real) {
     let b_cols: *const Vec3 = (&raw const *b).cast::<Vec3>();
     // SAFETY: `r` and `b` borrow live `ufbx_matrix` values, each laid out as
     // exactly four consecutive `ufbx_vec3` columns, so column `0` of both is in
-    // bounds; the column borrow carries `r`'s own exclusive provenance and ends
-    // with the call.
-    unsafe { add_weighted_vec3(&mut *r_cols.add(0), *b_cols.add(0), w) };
+    // bounds; the column pointer carries `r`'s own whole-matrix provenance.
+    unsafe { add_weighted_vec3(r_cols.add(0), *b_cols.add(0), w) };
     // SAFETY: as above, for column `1` of both matrices.
-    unsafe { add_weighted_vec3(&mut *r_cols.add(1), *b_cols.add(1), w) };
+    unsafe { add_weighted_vec3(r_cols.add(1), *b_cols.add(1), w) };
     // SAFETY: as above, for column `2` of both matrices.
-    unsafe { add_weighted_vec3(&mut *r_cols.add(2), *b_cols.add(2), w) };
+    unsafe { add_weighted_vec3(r_cols.add(2), *b_cols.add(2), w) };
     // SAFETY: as above, for column `3` of both matrices.
-    unsafe { add_weighted_vec3(&mut *r_cols.add(3), *b_cols.add(3), w) };
+    unsafe { add_weighted_vec3(r_cols.add(3), *b_cols.add(3), w) };
 }
 
 // ufbx.c:22695-22709 `ufbxi_mul_rotate`

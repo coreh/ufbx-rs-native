@@ -3720,7 +3720,9 @@ pub(crate) unsafe fn catch_get_skin_vertex_matrix<M: Mode>(
             let vqe: Quat = mul_quat(vqt, vq0);
             add_weighted_quat(&mut q0, vq0, weight.weight);
             add_weighted_quat(&mut qe, vqe, weight.weight);
-            add_weighted_vec3(&mut qs, t.scale, weight.weight);
+            // SAFETY: `qs` is a live, initialized stack `ufbx_vec3`; C takes
+            // its address the same way.
+            unsafe { add_weighted_vec3(&raw mut qs, t.scale, weight.weight) };
         }
 
         if skin_vertex.dq_weight < 1.0 {
@@ -3926,7 +3928,10 @@ pub(crate) unsafe fn get_blend_vertex_offset(blend: *const BlendDeformer, vertex
                 unsafe { get_blend_shape_vertex_offset(ref_ptr(&raw const (*key).shape), vertex) };
             // SAFETY: same live `BlendKeyframe`; reading its own
             // `effective_weight` field.
-            add_weighted_vec3(&mut offset, key_offset, unsafe { (*key).effective_weight });
+            // SAFETY: `offset` is a live, initialized stack `ufbx_vec3` (C takes
+            // its address the same way); `key` is the same live `BlendKeyframe`,
+            // reading its own `effective_weight` field.
+            unsafe { add_weighted_vec3(&raw mut offset, key_offset, (*key).effective_weight) };
         }
         // SAFETY: `p_chan` is before `p_chan_end`, so stepping one element stays
         // within the channel pointer list (up to one-past-end).
@@ -3974,15 +3979,13 @@ pub(crate) unsafe fn add_blend_shape_vertex_offsets(
                 vertex_weight *= unsafe { *weights_data.add(i) };
             }
             // SAFETY: `index < num_vertices` bounds `vertices.add(index)` within
-            // the caller's `vertices` buffer, which this fn's contract gives it
-            // exclusive write access to for the call; `i < num_offsets` bounds
-            // `offsets.add(i)` within the shape's `position_offsets` list.
+            // the caller's writable `vertices` buffer; `i < num_offsets` bounds
+            // `offsets.add(i)` within the shape's `position_offsets` list. The
+            // target stays a raw pointer (C: `&vertices[index]`): the buffer may
+            // be arena memory other raw pointers also address, so no `&mut`
+            // retag is taken over it.
             unsafe {
-                add_weighted_vec3(
-                    &mut *vertices.add(index as usize),
-                    *offsets.add(i),
-                    vertex_weight,
-                )
+                add_weighted_vec3(vertices.add(index as usize), *offsets.add(i), vertex_weight)
             };
         }
     }
