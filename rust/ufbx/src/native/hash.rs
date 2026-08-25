@@ -418,24 +418,37 @@ impl MapView {
 
     // Safe typed map operations over the view (ufbx.c:4657-4659 macros).
     //
-    // `K` is the key type the map's `cmp_fn` was initialized for (untyped
-    // `const void *` in C). Key validity: the cmp may dereference pointers
-    // *inside* `K` (e.g. `map_cmp_const_char_ptr` follows the stored `char *`
-    // to a NUL-terminated string) — callers must pass keys meeting that
-    // pointee contract, same standing as the printf `%s` PrintArg contract.
+    // Two caller disciplines stand behind these wrappers, both of them the C
+    // macros' own (the C `ufbxi_map` is item-type-erased: `items` is a
+    // `void *`, `cmp_fn` takes `const void *`), neither expressible in a
+    // signature:
+    //
+    // * `T` is the map's item type — the `type` argument every C macro on this
+    //   same map passes — so `size_of::<T>()` is the map's element stride.
+    //   The stride sizes the item block, the item copy on growth, and every
+    //   `items + stride * index` address; a `T` unrelated to the map's items
+    //   is an out-of-bounds access.
+    // * `K` is the key type the map's `cmp_fn` was initialized for. Key
+    //   validity: the cmp may dereference pointers *inside* `K` (e.g.
+    //   `map_cmp_const_char_ptr` follows the stored `char *` to a
+    //   NUL-terminated string) — callers must pass keys meeting that pointee
+    //   contract, same standing as the printf `%s` PrintArg contract.
 
     // ufbx.c:4657 `ufbxi_map_grow(map, type, min_size)`
     #[inline(always)]
     pub(crate) fn grow<T>(&self, min_size: usize) -> bool {
-        map_grow::<T>(self, min_size)
+        // SAFETY: `T` is this map's item type (see impl-level note), so
+        // `size_of::<T>()` is the element stride `map_grow` requires.
+        unsafe { map_grow::<T>(self, min_size) }
     }
 
     // ufbx.c:4658 `ufbxi_map_find(map, type, hash, key)`
     #[inline(always)]
     pub(crate) fn find<T, K>(&self, hash: u32, key: &K) -> *mut T {
-        // SAFETY: `cmp_fn` is the C-callback contract the map was initialized
-        // with, comparing `key` against stored items of the same key discipline
-        // (see impl-level note).
+        // SAFETY: `T` is this map's item type, so `size_of::<T>()` is its
+        // element stride; `cmp_fn` is the C-callback contract the map was
+        // initialized with, comparing `key` against stored items of the same
+        // key discipline (see impl-level note).
         unsafe { map_find::<T>(self, hash, key as *const K as *const c_void) }
     }
 
@@ -443,7 +456,8 @@ impl MapView {
     #[inline(always)]
     #[must_use]
     pub(crate) fn insert<T, K>(&self, hash: u32, key: &K) -> *mut T {
-        // SAFETY: same as `find` — `key` meets the map's own key discipline.
+        // SAFETY: same as `find` — `T` is this map's item type and `key` meets
+        // the map's own key discipline.
         unsafe { map_insert::<T>(self, hash, key as *const K as *const c_void) }
     }
 }
@@ -1075,10 +1089,18 @@ pub(crate) unsafe fn map_insert_size(
 // -- Typed wrappers (ufbx.c:4657-4659)
 
 // ufbx.c:4657 `ufbxi_map_grow(map, type, min_size)`
+//
+// # Safety
+// `T` is the map's item type — the C macro's `type` argument — so
+// `size_of::<T>()` is the map's element stride. The map is item-type-erased in
+// C (`items` is a `void *`) and stays so here, so the relation between `T` and
+// the map is not expressible in the signature: the stride reaches
+// `map_grow_size_imp`, which sizes the replacement block with it and copies
+// `stride * size` bytes out of the existing items region.
 #[inline(always)]
-pub(crate) fn map_grow<T>(map: &MapView, min_size: usize) -> bool {
-    // SAFETY: `T` is the C macro's `type` argument, so `size_of::<T>()` is the
-    // element stride `map_grow_size` requires for this map.
+pub(crate) unsafe fn map_grow<T>(map: &MapView, min_size: usize) -> bool {
+    // SAFETY: forwards this fn's contract — `size_of::<T>()` is the map's
+    // element stride — to `map_grow_size`.
     unsafe { map_grow_size(map, size_of::<T>(), min_size) }
 }
 
@@ -1088,13 +1110,17 @@ pub(crate) fn map_grow<T>(map: &MapView, min_size: usize) -> bool {
 // with ufbxi_fbx_id_entry at ufbx.c:12310), so `value` is *const c_void here.
 //
 // # Safety
-// `value` is the untyped key the map's `cmp_fn` was initialized for: the
-// comparator may dereference pointers inside it (see `map_init`), a
-// pointee-and-liveness contract no Rust type carries.
+// `T` is the map's item type — the C macro's `type` argument — so
+// `size_of::<T>()` is the map's element stride, which is not expressible in the
+// signature over the item-type-erased map: `map_find_size` addresses candidate
+// items as `items + stride * index` before handing them to `cmp_fn`. `value` is
+// the untyped key the map's `cmp_fn` was initialized for: the comparator may
+// dereference pointers inside it (see `map_init`), a pointee-and-liveness
+// contract no Rust type carries.
 #[inline(always)]
 pub(crate) unsafe fn map_find<T>(map: &MapView, hash: u32, value: *const c_void) -> *mut T {
-    // SAFETY: forwards this fn's contract (`value` a key of the map's
-    // discipline) with `T`'s size — the C macro's `type` — as the stride.
+    // SAFETY: forwards this fn's contract — `size_of::<T>()` the map's
+    // element stride, `value` a key of the map's discipline.
     ufbxi_maybe_null!(unsafe { map_find_size(map, size_of::<T>(), hash, value) } as *mut T)
 }
 
@@ -1102,13 +1128,16 @@ pub(crate) unsafe fn map_find<T>(map: &MapView, hash: u32, value: *const c_void)
 // C-parity: `value` is untyped in the C macro (see map_find above).
 //
 // # Safety
-// As `map_find`: `value` is the untyped key the map's `cmp_fn` was initialized
-// for, whose pointees the comparator may follow.
+// As `map_find`: `T` is the map's item type, so `size_of::<T>()` is the map's
+// element stride — `map_insert_size` grows the map with it and addresses both
+// the returned item and the AA-tree overflow value as `items + stride * index`
+// — and `value` is the untyped key the map's `cmp_fn` was initialized for,
+// whose pointees the comparator may follow.
 #[inline(always)]
 pub(crate) unsafe fn map_insert<T>(map: &MapView, hash: u32, value: *const c_void) -> *mut T {
-    // SAFETY: forwards this fn's contract (`value` a key of the map's
-    // discipline) to the size-generic insert with `T`'s size — the C macro's
-    // `type` — as the stride.
+    // SAFETY: forwards this fn's contract — `size_of::<T>()` the map's
+    // element stride, `value` a key of the map's discipline — to the
+    // size-generic insert.
     ufbxi_maybe_null!(unsafe { map_insert_size(map, size_of::<T>(), hash, value) } as *mut T)
 }
 
