@@ -202,6 +202,21 @@ pub(crate) fn does_overflow(total: usize, a: usize, b: usize) -> bool {
 // the allocator, so the fn is safe; the residual `unsafe` blocks below reach
 // the allocator's own slots as raw field places and invoke the user callbacks
 // stored in them.
+//
+// Those residual blocks rest on an `Allocator` TYPE INVARIANT rather than on a
+// per-call obligation: every `Allocator` is established by `init_ator`
+// (ufbx.c:6936-6953), which wires the `error` slot to a live `ufbx_error`
+// outliving the allocator, the `name` slot to a `'static` NUL-terminated
+// string, and `ator.allocator` to the caller's `ufbx_allocator` — whose
+// callbacks ufbx contracts to be valid for the allocator's lifetime. Every
+// minter of an `AllocatorView` owes that invariant, so it holds for all views
+// alike and the deref/dispatch sites below need no caller-side promise.
+//
+// This is why `alloc_size` is safe while the sibling teardown `free_ator`
+// stays an `unsafe fn`: `free_ator`'s obligation is about CALL ORDER (this is
+// the final teardown, performed at most once), which no type invariant can
+// discharge, whereas `alloc_size` may be called any number of times on any
+// initialized allocator.
 #[inline(never)]
 pub(crate) fn alloc_size(ator: &AllocatorView, size: usize, n: usize) -> *mut c_void {
     // Always succeed with an empty non-NULL buffer for empty allocations
