@@ -1067,12 +1067,17 @@ pub(crate) fn validate_fbx_id(uc: &Context, p_fbx_id: &mut u64) -> Result<(), Fa
 }
 
 // ufbx.c:12271-12305 `ufbxi_split_type_and_name`
+//
+// # Safety
+//
+// `type_and_name` must describe a live run readable for `length` bytes — the
+// `ufbx_string` pair carries no such guarantee itself.
 #[inline(never)]
 pub(crate) unsafe fn split_type_and_name(
     uc: &Context,
     type_and_name: String,
-    type_: *mut String,
-    name: *mut String,
+    type_: &mut String,
+    name: &mut String,
 ) -> Result<(), Fail> {
     // Name and type are packed in a single property as Type::Name (in ASCII)
     // or Name\x00\x01Type (in binary)
@@ -1100,40 +1105,31 @@ pub(crate) unsafe fn split_type_and_name(
     // ???: ASCII and binary store type and name in different order
     if type_end <= type_and_name.length {
         if uc.from_ascii() {
-            // SAFETY: `name` and `type_` are the caller's writable `ufbx_string`
-            // out-params; `type_end <= type_and_name.length`, so the split
-            // pointer lands at most one past the string's end.
-            unsafe {
-                (*name).data = type_and_name.data.add(type_end);
-                (*name).length = type_and_name.length - type_end;
-                (*type_).data = type_and_name.data;
-                (*type_).length = type_end - 2;
-            }
+            // SAFETY: `type_end <= type_and_name.length`, so the split pointer
+            // lands at most one past the string's end.
+            name.data = unsafe { type_and_name.data.add(type_end) };
+            name.length = type_and_name.length - type_end;
+            type_.data = type_and_name.data;
+            type_.length = type_end - 2;
         } else {
+            name.data = type_and_name.data;
+            name.length = type_end - 2;
             // SAFETY: as above, with the type/name halves swapped.
-            unsafe {
-                (*name).data = type_and_name.data;
-                (*name).length = type_end - 2;
-                (*type_).data = type_and_name.data.add(type_end);
-                (*type_).length = type_and_name.length - type_end;
-            }
+            type_.data = unsafe { type_and_name.data.add(type_end) };
+            type_.length = type_and_name.length - type_end;
         }
     } else {
-        // SAFETY: `name` and `type_` are the caller's writable `ufbx_string`
-        // out-params.
-        unsafe {
-            *name = type_and_name;
-            (*type_).data = EMPTY_CHAR.as_ptr();
-            (*type_).length = 0;
-        }
+        *name = type_and_name;
+        type_.data = EMPTY_CHAR.as_ptr();
+        type_.length = 0;
     }
 
-    // SAFETY: `type_`/`name` are the caller's `ufbx_string` slots, each holding
-    // a data/length pair written above, and the pool is uc's own string pool —
-    // `push_string_place_str`'s contract.
+    // SAFETY: `type_`/`name` are exclusive borrows of live `ufbx_string` slots,
+    // each holding a data/length pair written above, and the pool is uc's own
+    // string pool — `push_string_place_str`'s contract.
     unsafe {
-        push_string_place_str(uc.string_pool_mut_ptr(), type_, false)?;
-        push_string_place_str(uc.string_pool_mut_ptr(), name, false)?;
+        push_string_place_str(uc.string_pool_mut_ptr(), &raw mut *type_, false)?;
+        push_string_place_str(uc.string_pool_mut_ptr(), &raw mut *name, false)?;
     }
 
     Ok(())
@@ -6980,13 +6976,13 @@ pub(crate) unsafe fn read_synthetic_attribute(
         let (mut attrib_type_str, mut attrib_name_str): (String, String) =
             unsafe { (core::mem::zeroed(), core::mem::zeroed()) };
         // SAFETY: `type_and_name` was fully written by the `'s'` fetch above, so
-        // it spans `length` readable bytes; the two out-pointers are live locals.
+        // it spans `length` readable bytes.
         unsafe {
             split_type_and_name(
                 uc,
                 type_and_name,
-                &raw mut attrib_type_str,
-                &raw mut attrib_name_str,
+                &mut attrib_type_str,
+                &mut attrib_name_str,
             )
         }?;
         if attrib_name_str.length > 0 {
@@ -7260,10 +7256,9 @@ pub(crate) fn read_object(uc: &Context, node: &NodeView) -> Result<(), Fail> {
 
     // C: `ufbx_string type_str;` — fully written by `ufbxi_split_type_and_name`.
     // SAFETY: all-zero is a valid `ufbx_string`; `type_and_name` is the pooled
-    // string read above, and the two out-params are an unaliased local and
-    // `info`'s own `name` field.
+    // string read above, so it spans `length` readable bytes.
     let mut type_str: String = unsafe { core::mem::zeroed() };
-    unsafe { split_type_and_name(uc, type_and_name, &raw mut type_str, &raw mut info.name)? };
+    unsafe { split_type_and_name(uc, type_and_name, &mut type_str, &mut info.name)? };
 
     let name: *const u8 = node.name();
     let sub_type: *const u8 = sub_type_str.data;
@@ -9977,9 +9972,8 @@ pub(crate) unsafe fn read_legacy_mesh(
                 "ufbxi_get_val1(child, \"s\", &type_and_name)"
             );
             // SAFETY: `type_and_name` was fully written by the `'s'` fetch above,
-            // so it spans `length` readable bytes; the out-pointers are live
-            // locals.
-            unsafe { split_type_and_name(uc, type_and_name, &raw mut type_, &raw mut name) }?;
+            // so it spans `length` readable bytes.
+            unsafe { split_type_and_name(uc, type_and_name, &mut type_, &mut name) }?;
             // SAFETY: `&raw mut fbx_id` is a live local `uint64_t` slot and `name.data`
             // is the NUL-terminated interned name the split produced.
             unsafe { read_legacy_material(uc, child, &raw mut fbx_id, name.data) }?;
@@ -9999,9 +9993,8 @@ pub(crate) unsafe fn read_legacy_mesh(
                 "ufbxi_get_val1(child, \"s\", &type_and_name)"
             );
             // SAFETY: `type_and_name` was fully written by the `'s'` fetch above,
-            // so it spans `length` readable bytes; the out-pointers are live
-            // locals.
-            unsafe { split_type_and_name(uc, type_and_name, &raw mut type_, &raw mut name) }?;
+            // so it spans `length` readable bytes.
+            unsafe { split_type_and_name(uc, type_and_name, &mut type_, &mut name) }?;
             // SAFETY: `&raw mut fbx_id` is a live local `uint64_t` slot and `name.data`
             // is the NUL-terminated interned name the split produced.
             unsafe { read_legacy_link(uc, child, &raw mut fbx_id, name.data) }?;
@@ -10096,7 +10089,7 @@ pub(crate) fn read_legacy_model(uc: &Context, node: &NodeView) -> Result<(), Fai
         "ufbxi_get_val1(node, \"s\", &type_and_name)"
     )
     .0;
-    unsafe { split_type_and_name(uc, type_and_name, &raw mut type_, &raw mut name)? };
+    unsafe { split_type_and_name(uc, type_and_name, &mut type_, &mut name)? };
 
     // SAFETY: all-zero is a valid `ufbxi_element_info`; `info` is an unaliased
     // local, `type_and_name.data` is the pooled string read above, `node` is a
