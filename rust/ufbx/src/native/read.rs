@@ -146,6 +146,7 @@ use crate::native::warnings::ufbxi_warnf;
 use crate::prelude::as_f64;
 use crate::prelude::{
     slice_from_ptr, Blob, BlobView, List, ListView, OpenFileContext, Real, Ref, ScalarView, String,
+    StringView,
 };
 
 // ufbx.h:3618 `UFBX_ENUM_TYPE(ufbx_thumbnail_format, UFBX_THUMBNAIL_FORMAT, UFBX_THUMBNAIL_FORMAT_RGBA_32);`
@@ -3152,7 +3153,7 @@ pub(crate) fn read_shape(
 
 // Rust-port infrastructure (not a ufbx.c section): the read surface the
 // per-element readers need on a `ufbxi_element_info` they receive as a view —
-// the FBX id leaf and the property table as a sub-view.
+// the FBX id leaf, and the name and property table as sub-views.
 pub(crate) type ElementInfoView = View<ElementInfo>;
 
 impl ElementInfoView {
@@ -3163,6 +3164,10 @@ impl ElementInfoView {
     #[inline(always)]
     pub(crate) fn props_view(&self) -> &PropsView {
         view_project!(self, props)
+    }
+    #[inline(always)]
+    pub(crate) fn name_view(&self) -> &StringView {
+        view_project!(self, name)
     }
 }
 
@@ -6662,48 +6667,37 @@ pub(crate) fn read_video(
 
 // ufbx.c:14626-14643 `ufbxi_read_anim_stack`
 #[inline(never)]
-pub(crate) unsafe fn read_anim_stack(
+pub(crate) fn read_anim_stack(
     uc: &Context,
     node: &NodeView,
-    info: *mut ElementInfo,
+    info: &View<ElementInfo, Mut>,
 ) -> Result<(), Fail> {
     let _ = node; // C: `(void)node;`
 
-    // SAFETY: `info` is the caller's live `ufbxi_element_info` — write-capable
-    // provenance, live and unmoved across the call — whose `name` is a pooled
-    // NUL-terminated string and whose `props`/`dom_node` point into uc's own
-    // buffers, so all three survive being stored into the element by pointer;
-    // `AnimStack` is the element struct for `ElementType::AnimStack`.
-    let stack: *mut AnimStack = unsafe {
-        push_element::<AnimStack>(
-            uc,
-            View::<ElementInfo>::from_ptr(info),
-            ElementType::AnimStack,
-        )
-    };
+    // SAFETY: `info` views the caller's live `ufbxi_element_info`, whose `name`
+    // is a pooled NUL-terminated string and whose `props`/`dom_node` point into
+    // uc's own buffers, so all three survive being stored into the element by
+    // pointer; `AnimStack` is the element struct for `ElementType::AnimStack`.
+    let stack: *mut AnimStack =
+        unsafe { push_element::<AnimStack>(uc, info, ElementType::AnimStack) };
     ufbxi_check!(uc, !stack.is_null(), "stack");
 
-    // SAFETY: `info` is the caller's live `ufbxi_element_info`, so
-    // `(*info).name.data` is its interned name pointer.
-    let hash: u32 = unsafe { crate::native::hash::hash_ptr!((*info).name.data) };
-    // SAFETY: `info` is live, so `&(*info).name.data` borrows a live `*const u8`
-    // key; the map is uc's own `anim_stack_map`, keyed by that same interned
-    // name-pointer type.
-    let mut entry: *mut TmpAnimStack = unsafe {
-        uc.anim_stack_map_view()
-            .find::<TmpAnimStack, _>(hash, &(*info).name.data)
-    };
+    let hash: u32 = crate::native::hash::hash_ptr!(info.name_view().data());
+    // The map's comparator (`map_cmp_const_char_ptr`) only READS the key slot,
+    // so a temporary holding the same interned name pointer stands in for C's
+    // `&info->name.data`.
+    let mut entry: *mut TmpAnimStack = uc
+        .anim_stack_map_view()
+        .find::<TmpAnimStack, _>(hash, &info.name_view().data());
     if entry.is_null() {
-        // SAFETY: as the `find` above — same live key and same map.
-        entry = unsafe {
-            uc.anim_stack_map_view()
-                .insert::<TmpAnimStack, _>(hash, &(*info).name.data)
-        };
+        entry = uc
+            .anim_stack_map_view()
+            .insert::<TmpAnimStack, _>(hash, &info.name_view().data());
         ufbxi_check!(uc, !entry.is_null(), "entry");
-        // SAFETY: `entry` is the fresh non-null map entry checked above and
-        // `info` is the caller's live `ufbxi_element_info`.
+        // SAFETY: `entry` is the fresh non-null map entry checked above, an
+        // arena `ufbxi_tmp_anim_stack` whose two fields are written here.
         unsafe {
-            (*entry).name = (*info).name.data;
+            (*entry).name = info.name_view().data();
             (*entry).stack = stack;
         }
     }
@@ -7843,7 +7837,9 @@ pub(crate) fn read_object(uc: &Context, node: &NodeView) -> Result<(), Fail> {
             // write-capable provenance, live and unmoved across the call.
             read_video(uc, node, View::<ElementInfo, Mut>::from_ptr(&raw mut info))?;
         } else if name == sp::AnimationStack.as_ptr() {
-            read_anim_stack(uc, node, &raw mut info)?;
+            // SAFETY: `info` is this frame's own `ufbxi_element_info` local —
+            // write-capable provenance, live and unmoved across the call.
+            read_anim_stack(uc, node, View::<ElementInfo, Mut>::from_ptr(&raw mut info))?;
         } else if name == sp::AnimationLayer.as_ptr() {
             read_element(
                 uc,
