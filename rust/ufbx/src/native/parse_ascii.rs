@@ -62,7 +62,7 @@ use crate::native::string_pool::{push_sanitized_string, push_string, push_string
 use crate::native::thread::{thread_pool_create_task, thread_pool_run_task, Task};
 use crate::native::view::{view_read, view_write, Mut, View};
 use crate::native::warnings::ufbxi_warnf;
-use crate::prelude::{Real, String};
+use crate::prelude::{Real, String, StringView};
 
 // ufbx.c:9406 `#define UFBXI_ASCII_END '\0'`
 pub(crate) const ASCII_END: u8 = b'\0';
@@ -1654,13 +1654,21 @@ pub(crate) fn setup_base64(uc: &Context) -> Result<(), Fail> {
 }
 
 // ufbx.c:10241-10282 `ufbxi_decode_base64`
+///
+/// # Safety
+/// `src` must be readable for `src_length` bytes, unmoved and unwritten for the
+/// call (a raw run: the pointer and its length are separate parameters, so no
+/// type carries the relation). `p_result`'s `data` must address a writable
+/// output buffer of at least `src_length / 4 * 3 + 3` bytes — the capacity the
+/// caller sizes and pushes (ufbx.c:10412-10414); the decode writes 3 bytes per
+/// 4 input bytes.
 #[inline(never)]
 pub(crate) unsafe fn decode_base64(
     uc: &Context,
-    p_result: *mut String,
+    p_result: &StringView,
     src: *const u8,
     src_length: usize,
-    p_failed: *mut bool,
+    p_failed: &mut bool,
 ) -> Result<(), Fail> {
     if uc.base64_table().is_null() {
         setup_base64(uc)?;
@@ -1670,9 +1678,9 @@ pub(crate) unsafe fn decode_base64(
     let mut error_mask: u32 = 0;
     let mut pad_error: u32 = 0;
 
-    // SAFETY: `p_result` is the caller's valid `String` out-param; its `data`
-    // field is the freshly pushed output buffer sized for the decode.
-    let mut p: *mut u8 = unsafe { (*p_result).data } as *mut u8;
+    // `p_result`'s `data` field is the freshly pushed output buffer sized for
+    // the decode (fn contract).
+    let mut p: *mut u8 = p_result.data() as *mut u8;
     let mut i: usize = 0;
     while i + 4 <= src_length {
         // SAFETY: `i + 4 <= src_length`, so `src + i + 0..3` are readable source
@@ -1722,10 +1730,7 @@ pub(crate) unsafe fn decode_base64(
         }
     }
 
-    // SAFETY: `p_failed` is the caller's valid `bool` out-param.
-    if ((error_mask & 0x80) != 0 || (pad_error & 0x40) != 0 || src_length % 4 != 0)
-        && !unsafe { *p_failed }
-    {
+    if ((error_mask & 0x80) != 0 || (pad_error & 0x40) != 0 || src_length % 4 != 0) && !*p_failed {
         ufbxi_check!(
             uc,
             ufbxi_warnf!(
@@ -1736,18 +1741,12 @@ pub(crate) unsafe fn decode_base64(
             .is_ok(),
             "ufbxi_warnf(UFBX_WARNING_BAD_BASE64_CONTENT, \"Ignored bad base64 embedded content\")"
         );
-        // SAFETY: `p_failed` is the caller's valid `bool` out-param.
-        unsafe {
-            *p_failed = true;
-        }
+        *p_failed = true;
     }
 
-    // SAFETY: `p_result` is the caller's valid `String` out-param; `p` advanced
-    // from `p_result->data` within the output buffer, so their difference is the
-    // decoded byte count, stored back into its `length`.
-    unsafe {
-        (*p_result).length = to_size(p as isize - (*p_result).data as isize);
-    }
+    // `p` advanced from `p_result->data` within the output buffer, so their
+    // difference is the decoded byte count, stored back into its `length`.
+    p_result.set_length(to_size(p as isize - p_result.data() as isize));
     Ok(())
 }
 
@@ -2018,16 +2017,18 @@ unsafe fn ascii_parse_node_rec(
                         }
                         // SAFETY: `v` is the live pushed slot; reads back its `data`.
                         ufbxi_check!(uc, !unsafe { (*v).data }.is_null(), "v->data");
-                        // SAFETY: `v` is the live pushed slot (the base64 out-param);
-                        // `tok`'s `str_data`/`str_len` are its readable base64 bytes;
-                        // `arr_error` is a local flag out-param.
+                        // SAFETY: `v` is the live pushed `String` slot (the base64
+                        // out-param), write-capable arena provenance from the tmp
+                        // stack and unmoved for the call, and its `data` addresses
+                        // the freshly pushed `capacity`-byte output buffer; `tok`'s
+                        // `str_data`/`str_len` are its readable base64 bytes.
                         unsafe {
                             decode_base64(
                                 uc,
-                                v,
+                                StringView::from_ptr(v),
                                 (*tok).str_data,
                                 (*tok).str_len,
-                                &raw mut arr_error,
+                                &mut arr_error,
                             )?;
                         }
                         // SAFETY: `v` is the live pushed slot; reads back its length.
