@@ -1099,10 +1099,17 @@ pub(crate) unsafe fn get_prop_element(
     if element.is_null() || prop.is_null() {
         return core::ptr::null_mut();
     }
+    // C hands `prop->name.data` straight to `ufbxi_find_dst_connections`, which
+    // probes it by interned-pointer identity (`a->dst_prop.data == prop`), so
+    // the span minted here keeps that exact base address — the zero-length case
+    // included, where the interned name is `ufbxi_empty_char` and C matches
+    // every connection with an empty `dst_prop`. `slice_from_ptr`'s empty branch
+    // yields a dangling `&[]` instead, so the span is formed directly.
     // SAFETY: `prop` is non-null (checked) and points at a live `Prop` — the
     // raw-pointer contract of this `unsafe fn`; `(*prop).name.data` reads the
     // prop's own name pointer, which is null or a NUL-terminated interned pool
-    // string, so the measure and the measured run are that same string. C
+    // string, so the measure and the measured run are that same string, and a
+    // non-null `u8` pointer is aligned and readable for a zero-length span. C
     // substitutes `ufbxi_empty_char` for the null case inside
     // `ufbxi_find_dst_connections`, which `None` reproduces.
     let prop_name: Option<&[u8]> = unsafe {
@@ -1110,7 +1117,7 @@ pub(crate) unsafe fn get_prop_element(
         if name_data.is_null() {
             None
         } else {
-            Some(crate::prelude::slice_from_ptr(name_data, strlen(name_data)))
+            Some(core::slice::from_raw_parts(name_data, strlen(name_data)))
         }
     };
     // SAFETY: `element` is non-null (checked) and points at a live `Element` —
