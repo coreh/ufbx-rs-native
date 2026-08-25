@@ -2070,10 +2070,16 @@ pub(crate) unsafe fn init_skin_weights(
 // ufbx.c:29548-29594 `ufbxi_subdivide_weights`
 #[cfg(feature = "subdivision")]
 #[inline(never)]
+/// # Safety
+/// `src` addresses a live `SubdivisionVertexWeights` run covering every source
+/// vertex the layer subdivision reaches — `sc.src_mesh.vertex_indices` indexes
+/// it at `size_of::<SubdivisionVertexWeights>()` stride — and each element's
+/// `weights` addresses a live `num_weights` run. Those lengths are a caller
+/// promise the parameter types cannot carry, so this stays an `unsafe fn`.
 pub(crate) unsafe fn subdivide_weights(
     sc: &SubdivideContext,
-    ranges: *mut crate::prelude::List<SubdivisionWeightRange>,
-    weights: *mut crate::prelude::List<SubdivisionWeight>,
+    ranges: &ListView<SubdivisionWeightRange>,
+    weights: &ListView<SubdivisionWeight>,
     src: *const SubdivisionVertexWeights,
 ) -> Result<(), crate::native::error::Fail> {
     ufbxi_check_err!(sc.error_view(), !src.is_null(), "src");
@@ -2128,13 +2134,9 @@ pub(crate) unsafe fn subdivide_weights(
         .result_view()
         .push::<SubdivisionWeight>(sc.total_weights());
     // C-parity: upstream checks the OUT parameters `ranges && weights`, not the
-    // freshly pushed `dst_ranges && dst_weights` (ufbx.c:29573) — ported
-    // verbatim.
-    ufbxi_check_err!(
-        sc.error_view(),
-        !ranges.is_null() && !weights.is_null(),
-        "ranges && weights"
-    );
+    // freshly pushed `dst_ranges && dst_weights` (ufbx.c:29573); both call
+    // sites pass the address of a list field, so the condition holds for every
+    // caller and the reference parameters carry it in the type.
 
     // SAFETY: `output` addresses the populated `output_mem`; its `values` is the
     // `num_vertices`-element `SubdivisionVertexWeights` buffer `subdivide_layer`
@@ -2174,13 +2176,10 @@ pub(crate) unsafe fn subdivide_weights(
         vi += 1;
     }
 
-    // SAFETY: `ranges`/`weights` are the non-null out-parameters checked above.
-    unsafe {
-        (*ranges).data = dst_ranges;
-        (*ranges).count = num_vertices;
-        (*weights).data = dst_weights;
-        (*weights).count = sc.total_weights();
-    }
+    ranges.set_data(dst_ranges);
+    ranges.set_count(num_vertices);
+    weights.set_data(dst_weights);
+    weights.set_count(sc.total_weights());
 
     Ok(())
 }
@@ -2641,14 +2640,16 @@ pub(crate) unsafe fn subdivide_mesh_level(
                 weights = init_source_vertex_weights(sc, mesh.num_vertices());
             }
 
-            // SAFETY: `weights` is the per-vertex weight array built just above,
-            // and the out-params address `result_sub`'s own live source-vertex
-            // list fields — `subdivide_weights`' contract.
+            // SAFETY: `weights` is the per-vertex weight array built just above
+            // — a live run covering every source vertex, each element's own
+            // weight run live — `subdivide_weights`' contract; the out-param
+            // views address `result_sub`'s own live source-vertex list fields,
+            // carrying the context's write-capable provenance.
             unsafe {
                 subdivide_weights(
                     sc,
-                    result_sub_view.source_vertex_ranges_raw(),
-                    result_sub_view.source_vertex_weights_raw(),
+                    ListView::from_ptr(result_sub_view.source_vertex_ranges_raw()),
+                    ListView::from_ptr(result_sub_view.source_vertex_weights_raw()),
                     weights,
                 )
             }?;
@@ -2689,14 +2690,16 @@ pub(crate) unsafe fn subdivide_mesh_level(
                 };
             }
 
-            // SAFETY: `weights` is the per-vertex weight array built just above,
-            // and the out-params address `result_sub`'s own live skin-cluster
-            // list fields — `subdivide_weights`' contract.
+            // SAFETY: `weights` is the per-vertex weight array built just above
+            // — a live run covering every source vertex, each element's own
+            // weight run live — `subdivide_weights`' contract; the out-param
+            // views address `result_sub`'s own live skin-cluster list fields,
+            // carrying the context's write-capable provenance.
             unsafe {
                 subdivide_weights(
                     sc,
-                    result_sub_view.skin_cluster_ranges_raw(),
-                    result_sub_view.skin_cluster_weights_raw(),
+                    ListView::from_ptr(result_sub_view.skin_cluster_ranges_raw()),
+                    ListView::from_ptr(result_sub_view.skin_cluster_weights_raw()),
                     weights,
                 )
             }?;
