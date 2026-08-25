@@ -2759,10 +2759,13 @@ pub(crate) fn transform_to_axes(uc: &Context, dst_axes: CoordinateAxes) {
                 .metadata_view()
                 .set_mirror_axis(uc.mirror_axis());
 
-            // SAFETY: in-place update of uc's own `axis_matrix` storage,
-            // then a pure value read of it.
+            // SAFETY: `axis_matrix_mut_ptr()` projects uc's own live,
+            // initialized, write-capable `axis_matrix` storage.
+            let axis_matrix_view: &View<Matrix> =
+                unsafe { View::<Matrix>::from_ptr(uc.axis_matrix_mut_ptr()) };
+            mirror_matrix_dst(axis_matrix_view, uc.mirror_axis());
+            // SAFETY: a pure value read of uc's own live axis-matrix field.
             unsafe {
-                mirror_matrix_dst(uc.axis_matrix_mut_ptr(), uc.mirror_axis());
                 ufbxi_dev_assert!(matrix_determinant(uc.axis_matrix_mut_ptr()) >= 0.0f32 as Real);
             }
 
@@ -2797,7 +2800,12 @@ pub(crate) fn transform_to_axes(uc: &Context, dst_axes: CoordinateAxes) {
                 axis_mat = matrix_mul(&raw const root_mat, &raw const axis_mat);
             }
 
-            mirror_matrix(&raw mut axis_mat, uc.mirror_axis());
+            // SAFETY: `axis_mat` is a live, fully written stack local, so
+            // `&raw mut` over it is write-capable and stays valid for the call.
+            mirror_matrix(
+                View::<Matrix>::from_ptr(&raw mut axis_mat),
+                uc.mirror_axis(),
+            );
 
             (*root_node).local_transform = matrix_to_transform(&raw const axis_mat);
             (*root_node).node_to_parent = axis_mat;

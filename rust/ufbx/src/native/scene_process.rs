@@ -12378,22 +12378,43 @@ pub(crate) fn update_anim(scene_view: &SceneView) {
     }
 }
 
+// Rust-port infrastructure (not a ufbx.c section): the world matrices
+// `ufbxi_mirror_matrix` flips in place, projected so the `ufbx_matrix *`
+// parameter travels as a view over scene-arena memory.
+impl View<SkinCluster> {
+    #[inline(always)]
+    pub(crate) fn bind_to_world_view(&self) -> &View<Matrix> {
+        view_project!(self, bind_to_world)
+    }
+
+    #[inline(always)]
+    pub(crate) fn mesh_node_to_bone_view(&self) -> &View<Matrix> {
+        view_project!(self, mesh_node_to_bone)
+    }
+}
+
+impl View<BonePose> {
+    #[inline(always)]
+    pub(crate) fn bone_to_world_view(&self) -> &View<Matrix> {
+        view_project!(self, bone_to_world)
+    }
+}
+
 // ufbx.c:23497-23505 `ufbxi_mirror_matrix_dst`
 // C indexes the `ufbx_matrix` value union's `ufbx_vec3 cols[4]` view and then
 // each column's `ufbx_real v[3]`; the generated struct keeps only the named
 // `m00`..`m23` scalars, which are laid out as exactly four consecutive
 // `ufbx_vec3` columns (same device as `ufbxi_add_weighted_mat`).
 #[inline(always)]
-pub(crate) unsafe fn mirror_matrix_dst(m: *mut Matrix, axis: MirrorAxis) {
+pub(crate) fn mirror_matrix_dst(m: &View<Matrix>, axis: MirrorAxis) {
     // C: `if (axis == 0) return;`
     if axis as u32 == 0 {
         return;
     }
     let ax: i32 = axis as i32 - 1;
-    let cols: *mut Vec3 = m as *mut Vec3;
-    // SAFETY: `m` points to a live, initialized, writable `ufbx_matrix` (fn
-    // contract) laid out as four consecutive `ufbx_vec3` columns, so column `0`
-    // is in bounds.
+    let cols: *mut Vec3 = m.get() as *mut Vec3;
+    // SAFETY: the view covers a live, initialized, writable `ufbx_matrix` laid
+    // out as four consecutive `ufbx_vec3` columns, so column `0` is in bounds.
     let c0: *mut Real = unsafe { cols.add(0) } as *mut Real;
     // SAFETY: a column is three consecutive `ufbx_real`s, and the early return
     // above established `axis != None`, so `ax = axis - 1` is in `0..3`.
@@ -12437,16 +12458,13 @@ pub(crate) fn mirror_matrix_src(m: &View<Matrix>, axis: MirrorAxis) {
 
 // ufbx.c:23516-23521 `ufbxi_mirror_matrix`
 #[inline(never)]
-pub(crate) unsafe fn mirror_matrix(m: *mut Matrix, axis: MirrorAxis) {
+pub(crate) fn mirror_matrix(m: &View<Matrix>, axis: MirrorAxis) {
     // C: `if (axis == 0) return;`
     if axis as u32 == 0 {
         return;
     }
-    // SAFETY: `m` points to a live, initialized `ufbx_matrix` whose provenance
-    // is write-capable (fn contract), so it is a legal `Mut` view root.
-    mirror_matrix_src(unsafe { View::<Matrix>::from_ptr(m) }, axis);
-    // SAFETY: as above, for `ufbxi_mirror_matrix_dst`.
-    unsafe { mirror_matrix_dst(m, axis) };
+    mirror_matrix_src(m, axis);
+    mirror_matrix_dst(m, axis);
 }
 
 // ufbx.c:23523-23619 `ufbxi_update_initial_clusters`
@@ -12518,9 +12536,7 @@ pub(crate) fn update_initial_clusters(scene_view: &SceneView) {
                 (*bind_cols.add(3)).y *= translation_scale;
                 (*bind_cols.add(3)).z *= translation_scale;
             }
-            // SAFETY: `bind_to_world_raw()` projects the cluster's own live,
-            // initialized, writable bind matrix.
-            unsafe { mirror_matrix(cluster.bind_to_world_raw(), mirror_axis) };
+            mirror_matrix(cluster.bind_to_world_view(), mirror_axis);
         }
 
         // C: `ufbxi_for_ptr_list(ufbx_pose, p_pose, scene->poses)`
@@ -12546,9 +12562,7 @@ pub(crate) fn update_initial_clusters(scene_view: &SceneView) {
                     (*pose_cols.add(3)).y *= translation_scale;
                     (*pose_cols.add(3)).z *= translation_scale;
                 }
-                // SAFETY: `bone_to_world_raw()` projects the bone pose's own
-                // live, initialized, writable matrix.
-                unsafe { mirror_matrix(pose.bone_to_world_raw(), mirror_axis) };
+                mirror_matrix(pose.bone_to_world_view(), mirror_axis);
             }
         }
     }
@@ -12631,9 +12645,7 @@ pub(crate) fn update_initial_clusters(scene_view: &SceneView) {
             });
         } else {
             // If `mesh_node_to_bone` is explicit, we may need to modify it for space conversion.
-            // SAFETY: `mesh_node_to_bone_raw()` projects the cluster's own live,
-            // initialized, writable matrix.
-            unsafe { mirror_matrix(cluster.mesh_node_to_bone_raw(), mirror_axis) };
+            mirror_matrix(cluster.mesh_node_to_bone_view(), mirror_axis);
             if geometry_scale != 1.0 {
                 // C: `cluster->mesh_node_to_bone.cols[3].x` — the `cols[4]` overlay.
                 let cols: *mut Vec3 = cluster.mesh_node_to_bone_raw() as *mut Vec3;
