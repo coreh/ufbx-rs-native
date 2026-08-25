@@ -56,9 +56,8 @@ use crate::native::scene_process::finalize_mesh_material;
 use crate::native::string_pool::slow_normalize3;
 #[cfg(feature = "tessellation")]
 use crate::native::view::view_raw_mut;
-#[cfg(feature = "tessellation")]
-use crate::native::view::View;
 use crate::native::view::{view_raw_const, view_read, view_write};
+use crate::native::view::{Mode, View};
 #[cfg(feature = "tessellation")]
 use crate::prelude::Ref;
 use crate::prelude::{List, Real};
@@ -69,26 +68,31 @@ pub(crate) const MAX_NURBS_ORDER: usize = 128;
 
 // ufbx.c:27771-27780 `ufbxi_nurbs_weight`
 // C copies `ufbx_real_list` by value at the call sites and passes `&knots`;
-// `List` is not `Copy`, so the Rust callers pass a pointer to the same data.
+// `List` is not `Copy`, so the Rust callers pass a view over the same data.
+///
+/// # Safety
+/// The `knots->count - knot < degree` early-out admits `knot + degree ==
+/// count`, so the `knot + degree` element read reaches one past the knot run
+/// on that boundary (C-parity: the C body has the same gap). The caller must
+/// supply `knot`/`degree` whose span stays inside the knot vector.
 #[inline(always)]
-pub(crate) unsafe fn nurbs_weight(
-    knots: *const List<Real>,
+pub(crate) unsafe fn nurbs_weight<M: Mode>(
+    knots: &View<List<Real>, M>,
     knot: usize,
     degree: usize,
     u: Real,
 ) -> Real {
-    // SAFETY: caller passes a live, valid knot list (fn raw-param contract).
-    let knots: &List<Real> = unsafe { &*knots };
-    if knot >= knots.count {
+    if knot >= knots.count() {
         return 0.0f32 as Real;
     }
-    if knots.count - knot < degree {
+    if knots.count() - knot < degree {
         return 0.0f32 as Real;
     }
-    // SAFETY: both indices are within the knot run per the count/degree
-    // early-outs above (same bounds discipline as the C code).
-    let prev_u: Real = unsafe { *knots.data.add(knot) };
-    let next_u: Real = unsafe { *knots.data.add(knot + degree) };
+    // SAFETY: `knot` is within the view's own knot run per the first early-out,
+    // and `knot + degree <= count` per the second; the caller vouches for the
+    // `==` boundary (fn contract above).
+    let prev_u: Real = unsafe { *knots.data().add(knot) };
+    let next_u: Real = unsafe { *knots.data().add(knot + degree) };
     if prev_u >= next_u {
         return 0.0f32 as Real;
     }
@@ -102,20 +106,28 @@ pub(crate) unsafe fn nurbs_weight(
 }
 
 // ufbx.c:27782-27789 `ufbxi_nurbs_deriv`
+///
+/// # Safety
+/// Same knot-span obligation as [`nurbs_weight`]: the `knots->count - knot <
+/// degree` early-out admits `knot + degree == count`, whose element read
+/// reaches one past the knot run (C-parity).
 #[inline(always)]
-pub(crate) unsafe fn nurbs_deriv(knots: *const List<Real>, knot: usize, degree: usize) -> Real {
-    // SAFETY: caller passes a live, valid knot list (fn raw-param contract).
-    let knots: &List<Real> = unsafe { &*knots };
-    if knot >= knots.count {
+pub(crate) unsafe fn nurbs_deriv<M: Mode>(
+    knots: &View<List<Real>, M>,
+    knot: usize,
+    degree: usize,
+) -> Real {
+    if knot >= knots.count() {
         return 0.0f32 as Real;
     }
-    if knots.count - knot < degree {
+    if knots.count() - knot < degree {
         return 0.0f32 as Real;
     }
-    // SAFETY: both indices are within the knot run per the count/degree
-    // early-outs above (same bounds discipline as the C code).
-    let prev_u: Real = unsafe { *knots.data.add(knot) };
-    let next_u: Real = unsafe { *knots.data.add(knot + degree) };
+    // SAFETY: `knot` is within the view's own knot run per the first early-out,
+    // and `knot + degree <= count` per the second; the caller vouches for the
+    // `==` boundary (fn contract above).
+    let prev_u: Real = unsafe { *knots.data().add(knot) };
+    let next_u: Real = unsafe { *knots.data().add(knot + degree) };
     if prev_u >= next_u {
         return 0.0f32 as Real;
     }

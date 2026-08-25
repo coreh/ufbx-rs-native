@@ -4087,6 +4087,10 @@ pub(crate) unsafe fn evaluate_nurbs_basis(
     // SAFETY: same live `NurbsBasis`; the raw field address preserves C's
     // address-of semantics without creating a Rust reference.
     let knots: *const List<Real> = unsafe { &raw const (*basis).knot_vector };
+    // SAFETY: `knots` addresses the live basis's own knot-vector list header,
+    // which nothing writes while this read-only view is live.
+    let knots_view: &View<List<Real>, Const> =
+        unsafe { View::<List<Real>, Const>::from_ptr(knots) };
     let mut knot: usize = usize::MAX;
 
     // SAFETY: same live `NurbsBasis`; reading its own `t_min` field.
@@ -4149,21 +4153,22 @@ pub(crate) unsafe fn evaluate_nurbs_basis(
     }
     for p in 1..=degree {
         let mut prev: Real = 0.0f32 as Real;
-        // SAFETY: `knots` points at the basis's live knot-vector list; the index
-        // stays within it for `p <= degree` (the C algorithm's span window).
-        let mut g: Real = 1.0f32 as Real - unsafe { nurbs_weight(knots, knot - p + 1, p, u) };
+        // SAFETY: the knot span stays within the basis's knot vector for
+        // `p <= degree` (the C algorithm's span window), discharging the
+        // knot-span obligation of `nurbs_weight`.
+        let mut g: Real = 1.0f32 as Real - unsafe { nurbs_weight(knots_view, knot - p + 1, p, u) };
         let mut dg: Real = 0.0f32 as Real;
         if !derivatives.is_null() && p == degree {
             // SAFETY: as above.
-            dg = unsafe { nurbs_deriv(knots, knot - p + 1, p) };
+            dg = unsafe { nurbs_deriv(knots_view, knot - p + 1, p) };
         }
 
         // C: `for (size_t i = p; i > 0; i--)`
         let mut i: usize = p;
         while i > 0 {
-            // SAFETY: `knots` points at the basis's live knot-vector list; the
-            // index stays within it for `i <= p <= degree`.
-            let f: Real = unsafe { nurbs_weight(knots, knot - p + i, p, u) };
+            // SAFETY: the knot span stays within the basis's knot vector for
+            // `i <= p <= degree`, discharging the knot-span obligation.
+            let f: Real = unsafe { nurbs_weight(knots_view, knot - p + i, p, u) };
             // SAFETY: `weights` has `num_weights >= order > degree >= i` entries,
             // so `i - 1` is in bounds of the caller's weight buffer.
             let weight: Real = unsafe { *weights.add(i - 1) };
@@ -4173,8 +4178,9 @@ pub(crate) unsafe fn evaluate_nurbs_basis(
             }
 
             if !derivatives.is_null() && p == degree {
-                // SAFETY: `knots` points at the basis's live knot-vector list.
-                let df: Real = unsafe { nurbs_deriv(knots, knot - p + i, p) };
+                // SAFETY: as above, the knot span stays within the basis's
+                // knot vector.
+                let df: Real = unsafe { nurbs_deriv(knots_view, knot - p + i, p) };
                 if i < num_derivatives {
                     // SAFETY: `derivatives` is non-null here with `num_derivatives`
                     // entries and `i < num_derivatives`, so `i` is in bounds.
