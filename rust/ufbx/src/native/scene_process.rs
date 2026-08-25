@@ -259,7 +259,7 @@ use crate::native::view::{
 use crate::native::warnings::ufbxi_warnf_tag;
 use crate::prelude::as_f64;
 use crate::prelude::{
-    slice_from_ptr, Blob, List, ListView, Real, Ref, RefList, RefListView, String,
+    slice_from_ptr, Blob, List, ListView, Real, Ref, RefList, RefListView, String, StringView,
 };
 
 // Rust-port infrastructure (not a ufbx.c section): reinterpret-in-place VIEWS
@@ -5439,10 +5439,14 @@ pub(crate) unsafe fn generate_normals(uc: &Context, mesh: &View<Mesh>) -> Result
 }
 
 // ufbx.c:20405-20427 `ufbxi_push_prop_prefix`
+///
+/// # Safety
+/// `prefix` must be a valid `ufbx_string`: `data` readable for `length` bytes,
+/// unmoved and unwritten for the call.
 #[inline(never)]
 pub(crate) unsafe fn push_prop_prefix(
     uc: &Context,
-    dst: *mut String,
+    dst: &StringView,
     mut prefix: String,
 ) -> Result<(), Fail> {
     let mut stack_size: usize = 0;
@@ -5468,8 +5472,10 @@ pub(crate) unsafe fn push_prop_prefix(
     // is a local whose `data`/`length` span is either the caller's or the
     // `tmp_stack` copy above — both readable for `length` bytes.
     unsafe { sp::push_string_place_str(uc.string_pool_mut_ptr(), &raw mut prefix, false)? };
-    // SAFETY: `dst` points to a writable `ufbx_string` slot (fn contract).
-    unsafe { *dst = prefix };
+    // C: `*dst = prefix;` — the `ufbx_string` assignment (memcpy of the two
+    // POD members) is spelled as the viewed slot's two leaf writes.
+    dst.set_data(prefix.data);
+    dst.set_length(prefix.length);
 
     if stack_size > 0 {
         // SAFETY: `stack_size > 0` only when the push above ran, so those bytes
@@ -5537,11 +5543,17 @@ pub(crate) unsafe fn shader_texture_find_prefix(
                 continue;
             }
             // SAFETY: the entry's `name` and `suffix` are both `ufbx_string`
-            // spans, which is what `ends_with` compares; `shader` is live, so
-            // `&raw mut (*shader).prop_prefix` addresses its own string slot.
+            // spans, which is what `ends_with` compares; `shader` points to a
+            // live, arena-owned `ufbx_shader_texture`, so the view mint's
+            // liveness and write-capable provenance hold, and its
+            // `prop_prefix` projection addresses the shader's own string slot.
             unsafe {
                 if sp::ends_with(prop.name(), suffix) {
-                    push_prop_prefix(uc, &raw mut (*shader).prop_prefix, prop.name())?;
+                    push_prop_prefix(
+                        uc,
+                        ShaderTextureView::from_ptr(shader).prop_prefix_view(),
+                        prop.name(),
+                    )?;
                     return Ok(());
                 }
             }
@@ -5588,11 +5600,16 @@ pub(crate) unsafe fn shader_texture_find_prefix(
 
             // SAFETY: `name` is a prefix of the prop's interned span and
             // `suffix` a live `ufbx_string`, which is what `ends_with` compares;
-            // `shader` is live (see above), so `&raw mut (*shader).prop_prefix`
-            // addresses its own string slot.
+            // `shader` is live (see above), so the view mint's liveness and
+            // write-capable provenance hold, and its `prop_prefix` projection
+            // addresses the shader's own string slot.
             unsafe {
                 if sp::ends_with(name, suffix) {
-                    push_prop_prefix(uc, &raw mut (*shader).prop_prefix, name)?;
+                    push_prop_prefix(
+                        uc,
+                        ShaderTextureView::from_ptr(shader).prop_prefix_view(),
+                        name,
+                    )?;
                     return Ok(());
                 }
             }
