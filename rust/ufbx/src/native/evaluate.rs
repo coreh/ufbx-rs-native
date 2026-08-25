@@ -4674,25 +4674,28 @@ impl<M: Mode> View<RawPropOverrideDesc, M> {
 }
 
 // ufbx.c:26498-26510 `ufbxi_check_string`
+///
+/// # Safety
+/// `src` must hold one of the two shapes this entry accepts: `length !=
+/// SIZE_MAX` with `data` readable for `length` bytes, or the `SIZE_MAX`
+/// sentinel with `data` addressing a NUL-terminated run. Only the first is the
+/// view's own per-leaf discipline; the sentinel's terminator is a caller
+/// promise no parameter type carries.
 #[inline(never)]
 pub(crate) unsafe fn check_string(
-    error: *mut Error,
-    dst: *mut String,
-    src: *const String,
+    error: &crate::native::error::ErrorView,
+    dst: &StringView,
+    src: &View<String, Const>,
 ) -> Result<(), Fail> {
-    // SAFETY (each deref): `src` points to the caller's live `ufbx_string` —
-    // this `unsafe fn`'s contract. The `SIZE_MAX` length sentinel means the
-    // string is NUL-terminated, so `strlen` stays inside it.
-    let length: usize = if unsafe { (*src).length } != usize::MAX {
-        unsafe { (*src).length }
+    let length: usize = if src.length() != usize::MAX {
+        src.length()
     } else {
-        // SAFETY: as above; `strlen` requires the NUL-terminated buffer the
-        // `SIZE_MAX` sentinel promises.
-        unsafe { strlen((*src).data) }
+        // SAFETY: `strlen` requires the NUL-terminated buffer the `SIZE_MAX`
+        // sentinel promises — this `unsafe fn`'s contract.
+        unsafe { strlen(src.data()) }
     };
     let data: *const u8 = if length != 0 {
-        // SAFETY: `src` points to the caller's live `ufbx_string`.
-        unsafe { (*src).data }
+        src.data()
     } else {
         EMPTY_CHAR.as_ptr()
     };
@@ -4700,20 +4703,13 @@ pub(crate) unsafe fn check_string(
         // SAFETY: `data` is the source string's own data pointer and `length` is
         // that string's length (or its `strlen`), so the whole span is readable.
         let valid_length: usize = unsafe { utf8_valid_length(data, length) };
-        ufbxi_check_err_msg!(
-            unsafe { crate::native::error::ErrorView::from_ptr(error) },
-            valid_length == length,
-            "Invalid UTF-8"
-        );
+        ufbxi_check_err_msg!(error, valid_length == length, "Invalid UTF-8");
     }
 
-    // SAFETY: `dst` points to the caller's live `ufbx_string` slot — this
-    // `unsafe fn`'s contract — and the pair of writes retargets it at the
-    // validated span.
-    unsafe {
-        (*dst).data = data;
-        (*dst).length = length;
-    }
+    // C: `dst->data = data; dst->length = length;` — the pair of member writes
+    // is spelled as the viewed slot's two leaf writes.
+    dst.set_data(data);
+    dst.set_length(length);
     Ok(())
 }
 
@@ -4936,20 +4932,23 @@ pub(crate) fn create_anim_imp(ac: &CreateAnimContext) -> Result<FinishedImp<Anim
             }
 
             // C: `ufbxi_check_err(&ac->error, ufbxi_check_string(&ac->error, &dst->prop_name, &src->prop_name));`
-            // SAFETY: `check_string`'s contract is a live destination and
-            // source `ufbx_string`; both are field addresses projected from
-            // the two element views above (`RawString` is the layout twin of
-            // `String`), and ac's error slot is its own.
+            // SAFETY (both calls): `check_string`'s residual contract covers
+            // the source string alone — a caller-supplied descriptor member,
+            // which the public options contract states is either a real span or
+            // the `SIZE_MAX` NUL-terminated sentinel. Each mint reinterprets one
+            // field address of the frozen descriptor view above (`RawString` is
+            // the layout twin of `String`), and that view's own freeze is what
+            // keeps the member unwritten for the call.
             unsafe {
                 check_string(
-                    ac.error_mut_ptr(),
-                    dst.prop_name_raw(),
-                    src.prop_name_ptr() as *const String,
+                    ac.error_view(),
+                    dst.prop_name_view(),
+                    View::<String, Const>::from_ptr(src.prop_name_ptr() as *const String),
                 )?;
                 check_string(
-                    ac.error_mut_ptr(),
-                    dst.value_str_raw(),
-                    src.value_str_ptr() as *const String,
+                    ac.error_view(),
+                    dst.value_str_view(),
+                    View::<String, Const>::from_ptr(src.value_str_ptr() as *const String),
                 )?;
             }
 
