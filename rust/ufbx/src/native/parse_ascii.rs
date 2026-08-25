@@ -1714,11 +1714,11 @@ pub(crate) unsafe fn decode_base64(
 // recursive body (which C splits into `ufbxi_ascii_parse_node_rec`); otherwise
 // the macro is empty and the wrapper is a plain call.
 #[inline(never)]
-pub(crate) unsafe fn ascii_parse_node(
+pub(crate) fn ascii_parse_node(
     uc: &Context,
     depth: u32,
     parent_state: ParseState,
-    p_end: *mut bool,
+    p_end: &mut bool,
     tmp_buf: &BufView,
     recursive: bool,
 ) -> Result<(), Fail> {
@@ -1731,18 +1731,13 @@ pub(crate) unsafe fn ascii_parse_node(
             ufbx_assert!(d.get() < MAX_NODE_DEPTH + 1);
             d.set(d.get() + 1);
         });
-        // SAFETY: forwards the caller's `p_end`/`tmp_buf` validity contract to the
-        // recursive body unchanged.
-        let ret =
-            unsafe { ascii_parse_node_rec(uc, depth, parent_state, p_end, tmp_buf, recursive) };
+        let ret = ascii_parse_node_rec(uc, depth, parent_state, p_end, tmp_buf, recursive);
         UFBXI_RECURSION_DEPTH.with(|d| d.set(d.get() - 1));
         ret
     }
     #[cfg(not(feature = "regression"))]
     {
-        // SAFETY: forwards the caller's `p_end`/`tmp_buf` validity contract to the
-        // recursive body unchanged.
-        unsafe { ascii_parse_node_rec(uc, depth, parent_state, p_end, tmp_buf, recursive) }
+        ascii_parse_node_rec(uc, depth, parent_state, p_end, tmp_buf, recursive)
     }
 }
 
@@ -1750,11 +1745,11 @@ pub(crate) unsafe fn ascii_parse_node(
 // verbatim even though every branch overwrites it.
 #[allow(unused_assignments)]
 #[inline(never)]
-unsafe fn ascii_parse_node_rec(
+fn ascii_parse_node_rec(
     uc: &Context,
     depth: u32,
     parent_state: ParseState,
-    p_end: *mut bool,
+    p_end: &mut bool,
     tmp_buf: &BufView,
     recursive: bool,
 ) -> Result<(), Fail> {
@@ -1765,20 +1760,14 @@ unsafe fn ascii_parse_node_rec(
     if unsafe { (*ua).token.type_ } == b'}' {
         // `uc`'s own `ascii.token` is retokenized in place.
         ascii_next_token(uc, uc.ascii_view().token_view())?;
-        // SAFETY: `p_end` is the caller's valid out-param.
-        unsafe {
-            *p_end = true;
-        }
+        *p_end = true;
         return Ok(());
     }
 
     // SAFETY: `ua` is `uc`'s own live `ascii` sub-context; reads its token type.
     if unsafe { (*ua).token.type_ } == ASCII_END {
         ufbxi_check_msg!(uc, depth == 0, "Truncated file");
-        // SAFETY: `p_end` is the caller's valid out-param.
-        unsafe {
-            *p_end = true;
-        }
+        *p_end = true;
         return Ok(());
     }
 
@@ -2580,11 +2569,7 @@ unsafe fn ascii_parse_node_rec(
             let mut num_children: usize = 0;
             loop {
                 let mut end: bool = false;
-                // SAFETY: `end` is a local out-param; `tmp_buf` is the caller's live
-                // scratch buf forwarded to the child parse.
-                unsafe {
-                    ascii_parse_node(uc, depth + 1, parse_state, &raw mut end, tmp_buf, recursive)?;
-                }
+                ascii_parse_node(uc, depth + 1, parse_state, &mut end, tmp_buf, recursive)?;
                 if end {
                     break;
                 }

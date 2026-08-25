@@ -7025,11 +7025,7 @@ pub(crate) fn parse_toplevel_child_imp(
 ) -> Result<bool, Fail> {
     let mut end: bool = false;
     if uc.from_ascii() {
-        // SAFETY: `&raw mut end` is an unaliased local `bool` slot — a valid
-        // `*mut bool` out-flag, the node parsers' contract.
-        unsafe {
-            crate::native::parse_ascii::ascii_parse_node(uc, 0, state, &raw mut end, buf, true)?
-        };
+        crate::native::parse_ascii::ascii_parse_node(uc, 0, state, &mut end, buf, true)?;
     } else {
         // SAFETY: as above.
         unsafe {
@@ -7068,18 +7064,14 @@ pub(crate) unsafe fn parse_toplevel(uc: &Context, name: *const u8) -> Result<(),
         // Parse the next top-level node
         let mut end: bool = false;
         if uc.from_ascii() {
-            // SAFETY: `&raw mut end` is a valid `*mut bool` out-flag — the node
-            // parsers' contract.
-            unsafe {
-                crate::native::parse_ascii::ascii_parse_node(
-                    uc,
-                    0,
-                    ParseState::Root,
-                    &raw mut end,
-                    uc.tmp_view(),
-                    false,
-                )?
-            };
+            crate::native::parse_ascii::ascii_parse_node(
+                uc,
+                0,
+                ParseState::Root,
+                &mut end,
+                uc.tmp_view(),
+                false,
+            )?;
         } else {
             // SAFETY: as above.
             unsafe {
@@ -7267,19 +7259,19 @@ pub(crate) fn parse_legacy_toplevel(uc: &Context) -> Result<(), Fail> {
     ufbx_assert!(uc.top_nodes_len() == 0);
 
     let mut end: bool = false;
-    // SAFETY: the `end` out-param is an unaliased local; the destination buf is
-    // `uc`'s own `tmp`, reached through its view accessor.
-    unsafe {
-        if uc.from_ascii() {
-            crate::native::parse_ascii::ascii_parse_node(
-                uc,
-                0,
-                ParseState::Root,
-                &raw mut end,
-                uc.tmp_view(),
-                true,
-            )?;
-        } else {
+    if uc.from_ascii() {
+        crate::native::parse_ascii::ascii_parse_node(
+            uc,
+            0,
+            ParseState::Root,
+            &mut end,
+            uc.tmp_view(),
+            true,
+        )?;
+    } else {
+        // SAFETY: the `end` out-param is an unaliased local; the destination buf is
+        // `uc`'s own `tmp`, reached through its view accessor.
+        unsafe {
             crate::native::parse_binary::binary_parse_node(
                 uc,
                 0,
