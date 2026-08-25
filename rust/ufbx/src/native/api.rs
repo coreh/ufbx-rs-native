@@ -1081,10 +1081,9 @@ pub(crate) fn find_element_len<M: Mode>(
     );
 
     match index {
-        // SAFETY: `index` is a hit, so `at(index)` is the matched live
-        // `NameElement`; `element_ptr()` addresses its own `Ref<Element>`
-        // field, which `ref_ptr` follows.
-        Some(index) => unsafe { ref_ptr(scene.elements_by_name_view().at(index).element_ptr()) },
+        // `index` is a hit, so `at(index)` is the matched live `NameElement`;
+        // its own `element` ref forwards as the bare C pointer.
+        Some(index) => scene.elements_by_name_view().at(index).element().ptr(),
         None => core::ptr::null_mut(),
     }
 }
@@ -1880,44 +1879,40 @@ pub(crate) unsafe fn evaluate_transform_flags(
     let mut scale_factor: Vec3 = ONE_VEC3;
     let mut use_scale_factor: bool = false;
 
-    // SAFETY: `&raw const (*node).parent` addresses the live `node`'s own parent
-    // ref, which `opt_ptr` unwraps to a nullable node pointer.
-    if !unsafe { opt_ptr(&raw const (*node).parent) }.is_null()
-        && (flags
-            & (TransformFlags::INCLUDE_SCALE.raw() | TransformFlags::INCLUDE_TRANSLATION.raw()))
-            != 0
-    {
-        // SAFETY: as above; `parent` is the live parent node (non-null here).
-        let parent: *mut Node = unsafe { opt_ptr(&raw const (*node).parent) };
+    // SAFETY: `node` is non-null (checked) and points at a live `Node` — the
+    // raw-pointer contract of this `unsafe fn`; the node graph is only read
+    // while this frozen view (and the views reached from it) are live.
+    let node_view: &View<Node, Const> = unsafe { View::<Node, Const>::from_ptr(node) };
 
-        // SAFETY: `&raw const (*parent).inherit_scale_node` addresses the live
-        // parent's own ref, unwrapped by `opt_ptr`.
+    // C: `if (node->parent && (flags & (…SCALE|…TRANSLATION)) != 0)`, then
+    // `const ufbx_node *parent = node->parent;` — `filter` keeps C's
+    // short-circuit order (parent read first, flags only when it is non-null).
+    if let Some(parent) = node_view.parent_view().filter(|_| {
+        (flags & (TransformFlags::INCLUDE_SCALE.raw() | TransformFlags::INCLUDE_TRANSLATION.raw()))
+            != 0
+    }) {
         if (flags & TransformFlags::IGNORE_COMPONENTWISE_SCALE.raw()) == 0
-            && !unsafe { opt_ptr(&raw const (*parent).inherit_scale_node) }.is_null()
+            && parent.inherit_scale_node_view().is_some()
         {
-            // SAFETY: as above.
-            let mut p: *mut Node = unsafe { opt_ptr(&raw const (*parent).inherit_scale_node) };
+            let mut p: Option<&View<Node, Const>> = parent.inherit_scale_node_view();
 
             // SAFETY: live `node` per above; reading its own `is_scale_helper`.
             if unsafe { (*node).is_scale_helper } {
                 use_scale_factor = true;
             }
 
-            // SAFETY: `p` is null-or-live and `&raw const (*p).scale_helper`
-            // addresses its own ref when live, unwrapped by `opt_ptr`.
-            while !p.is_null() && !unsafe { opt_ptr(&raw const (*p).scale_helper) }.is_null() {
+            while let Some(p_view) = p {
+                let Some(helper) = p_view.scale_helper_view() else {
+                    break;
+                };
                 // C: `ufbx_prop scale = ufbx_evaluate_prop(anim, &p->scale_helper->element, ufbxi_Lcl_Scaling, time);`
-                // SAFETY: `anim` is the live anim param and `p`'s scale-helper is
-                // non-null (loop condition), so `&raw const (*helper).element`
-                // addresses its live element — both read-only for the call, which
-                // is what the `Const` mints ask for; `sp::Lcl_Scaling` is a
+                // SAFETY: `anim` is the live anim param, read-only for the call —
+                // which is what the `Const` mint asks for; `sp::Lcl_Scaling` is a
                 // NUL-terminated static name.
                 let scale: Prop = unsafe {
                     evaluate_prop(
                         View::<Anim, Const>::from_ptr(anim),
-                        View::<Element, Const>::from_ptr(
-                            &raw const (*opt_ptr(&raw const (*p).scale_helper)).element,
-                        ),
+                        helper.element(),
                         sp::Lcl_Scaling.as_ptr(),
                         time,
                     )
@@ -1926,28 +1921,23 @@ pub(crate) unsafe fn evaluate_transform_flags(
                 scale_factor.x *= scale.value_vec4.x;
                 scale_factor.y *= scale.value_vec4.y;
                 scale_factor.z *= scale.value_vec4.z;
-                // SAFETY: live `p` here; `&raw const (*p).inherit_scale_node`
-                // addresses its own ref, unwrapped by `opt_ptr`.
-                p = unsafe { opt_ptr(&raw const (*p).inherit_scale_node) };
+                p = p_view.inherit_scale_node_view();
             }
         }
 
-        // SAFETY: `&raw const (*parent).scale_helper` addresses the live parent's
-        // own ref, unwrapped by `opt_ptr`.
-        if !unsafe { opt_ptr(&raw const (*parent).scale_helper) }.is_null()
-            && (flags & TransformFlags::IGNORE_SCALE_HELPER.raw()) == 0
+        // C: `if (parent->scale_helper && (flags & …IGNORE_SCALE_HELPER) == 0)` —
+        // `filter` keeps C's short-circuit order (helper read first).
+        if let Some(helper) = parent
+            .scale_helper_view()
+            .filter(|_| (flags & TransformFlags::IGNORE_SCALE_HELPER.raw()) == 0)
         {
-            // SAFETY: `anim` is the live anim param and the parent's scale-helper
-            // is non-null (checked), so `&raw const (*helper).element` addresses
-            // its live element — both read-only for the call, which is what the
-            // `Const` mints ask for; `sp::Lcl_Scaling` is a NUL-terminated static
-            // name.
+            // SAFETY: `anim` is the live anim param, read-only for the call —
+            // which is what the `Const` mint asks for; `sp::Lcl_Scaling` is a
+            // NUL-terminated static name.
             helper_scale.write(unsafe {
                 evaluate_prop(
                     View::<Anim, Const>::from_ptr(anim),
-                    View::<Element, Const>::from_ptr(
-                        &raw const (*opt_ptr(&raw const (*parent).scale_helper)).element,
-                    ),
+                    helper.element(),
                     sp::Lcl_Scaling.as_ptr(),
                     time,
                 )
@@ -2321,8 +2311,9 @@ pub(crate) unsafe fn bake_anim(
     if anim.is_null() {
         // SAFETY: `scene` is non-null (asserted) and points at a live `Scene` —
         // the raw-pointer contract of this `unsafe fn`; `&raw const (*scene).anim`
-        // addresses its own default anim ref, which `ref_ptr` follows.
-        anim = unsafe { ref_ptr(&raw const (*scene).anim) };
+        // addresses its own default anim ref, read out by value (`Ref` is `Copy`)
+        // and forwarded as the bare C pointer.
+        anim = unsafe { core::ptr::read(&raw const (*scene).anim) }.ptr();
     }
 
     // C: `ufbxi_bake_context bc = { UFBX_ERROR_NONE };`
@@ -2743,7 +2734,7 @@ pub(crate) unsafe fn get_bone_pose(pose: *const Pose, node: *const Node) -> *mut
     // `Node` — the raw-pointer contract of this `unsafe fn`; the search spans the
     // pose's own sorted `bone_poses` run `0..count`, every probe pointer the
     // comparators receive addresses a live `BonePose` whose `bone_node` ref is
-    // readable, compared against the live `node`.
+    // readable by value (`Ref` is `Copy`), compared against the live `node`.
     unsafe {
         macro_lower_bound_eq::<BonePose>(
             8,
@@ -2751,8 +2742,14 @@ pub(crate) unsafe fn get_bone_pose(pose: *const Pose, node: *const Node) -> *mut
             (*pose).bone_poses.data,
             0,
             (*pose).bone_poses.count,
-            |a| (*ref_ptr(&raw const (*a).bone_node)).element.typed_id < (*node).element.typed_id,
-            |a| std::ptr::eq(ref_ptr(&raw const (*a).bone_node), node),
+            |a| {
+                core::ptr::read(&raw const (*a).bone_node)
+                    .view::<Mut>()
+                    .element()
+                    .typed_id()
+                    < (*node).element.typed_id
+            },
+            |a| std::ptr::eq(core::ptr::read(&raw const (*a).bone_node).ptr(), node),
         )
     };
     if index < usize::MAX {
@@ -2789,8 +2786,9 @@ pub(crate) unsafe fn find_prop_texture_len(material: *const Material, name: &[u8
     }
     if index < usize::MAX {
         // SAFETY: `index < count` here, so `textures.data.add(index)` addresses a
-        // live `MaterialTexture`; the raw address identifies its own `texture` field.
-        unsafe { ref_ptr(&raw const (*(*material).textures.data.add(index)).texture) }
+        // live `MaterialTexture`; its own `texture` ref is read out by value
+        // (`Ref` is `Copy`) and forwarded as the bare C pointer.
+        unsafe { core::ptr::read(&raw const (*(*material).textures.data.add(index)).texture) }.ptr()
     } else {
         core::ptr::null_mut()
     }
@@ -3692,10 +3690,10 @@ pub(crate) unsafe fn catch_get_skin_vertex_matrix<M: Mode>(
             *(skin.clusters().data as *const *mut SkinCluster).add(weight.cluster_index as usize)
         };
         // C: `const ufbx_node *node = cluster->bone_node; if (!node) continue;`
-        // SAFETY: `cluster` is a live `SkinCluster` from the list; `opt_ptr`
-        // reads its own `bone_node` field.
-        let node: *const Node = unsafe { opt_ptr(&raw const (*cluster).bone_node) };
-        if node.is_null() {
+        // SAFETY: `cluster` is a live `SkinCluster` from the list; reading its
+        // own `bone_node` field by value (`Option<Ref>` is `Copy`).
+        let node = unsafe { core::ptr::read(&raw const (*cluster).bone_node) };
+        if node.is_none() {
             continue;
         }
 
@@ -3929,10 +3927,15 @@ pub(crate) unsafe fn get_blend_vertex_offset(blend: *const BlendDeformer, vertex
                 continue;
             }
 
-            // SAFETY: same live `BlendKeyframe`; the raw address identifies its
-            // own `shape` field and feeds `get_blend_shape_vertex_offset`.
-            let key_offset: Vec3 =
-                unsafe { get_blend_shape_vertex_offset(ref_ptr(&raw const (*key).shape), vertex) };
+            // SAFETY: same live `BlendKeyframe`; its own `shape` ref is read out
+            // by value (`Ref` is `Copy`) and fed to
+            // `get_blend_shape_vertex_offset` as the bare C pointer.
+            let key_offset: Vec3 = unsafe {
+                get_blend_shape_vertex_offset(
+                    core::ptr::read(&raw const (*key).shape).ptr(),
+                    vertex,
+                )
+            };
             // SAFETY: same live `BlendKeyframe`; reading its own
             // `effective_weight` field.
             // SAFETY: `offset` is a live, initialized stack `ufbx_vec3` (C takes
@@ -4037,11 +4040,12 @@ pub(crate) unsafe fn add_blend_vertex_offsets(
             if unsafe { (*key).effective_weight } == 0.0 {
                 continue;
             }
-            // SAFETY: same live `BlendKeyframe`; the raw address identifies its
-            // own `shape` field and the weight reads its own `effective_weight`.
+            // SAFETY: same live `BlendKeyframe`; its own `shape` ref is read out
+            // by value (`Ref` is `Copy`) and forwarded as the bare C pointer, and
+            // the weight reads its own `effective_weight`.
             unsafe {
                 add_blend_shape_vertex_offsets(
-                    ref_ptr(&raw const (*key).shape),
+                    core::ptr::read(&raw const (*key).shape).ptr(),
                     vertices,
                     num_vertices,
                     weight * (*key).effective_weight,
