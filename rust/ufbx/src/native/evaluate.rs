@@ -2000,11 +2000,8 @@ pub(crate) unsafe fn evaluate_props(
         };
         if layer_view.weight_is_animated() && layer_view.blended() {
             // C: `ufbx_anim_prop *weight_aprop = ufbxi_find_anim_prop_start(layer, &layer->element);`
-            // SAFETY: `layer` is the scene-owned layer and the projection
-            // addresses its own `element` header, which is the key
-            // `find_anim_prop_start` searches its anim props for.
             let weight_aprop: *mut AnimProp =
-                unsafe { find_anim_prop_start(layer, layer_view.element().as_ptr()) };
+                find_anim_prop_start(layer_view, layer_view.element());
             if !weight_aprop.is_null() {
                 // SAFETY: `weight_aprop` is a non-null (checked above) anim prop
                 // of `layer` — live and unwritten during evaluation, the `Const`
@@ -2035,9 +2032,7 @@ pub(crate) unsafe fn evaluate_props(
             }
         }
 
-        // SAFETY: `layer` is the scene-owned layer and `element` the caller's
-        // live element, which is the key the search compares against.
-        let mut aprop: *mut AnimProp = unsafe { find_anim_prop_start(layer, element) };
+        let mut aprop: *mut AnimProp = find_anim_prop_start(layer_view, element_view);
         if aprop.is_null() {
             continue;
         }

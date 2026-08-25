@@ -3284,33 +3284,25 @@ pub(crate) unsafe extern "C" fn bone_pose_less(
 }
 
 // ufbx.c:19329-19335 `ufbxi_find_anim_prop_start`
+// `layer: &View<AnimLayer>` carries C's `ufbx_anim_layer *`; `element:
+// &View<Element, M>` carries C's `const ufbx_element *`, which the search uses
+// as a pointer-identity key and never dereferences.
 #[inline(never)]
 #[must_use]
-pub(crate) unsafe fn find_anim_prop_start(
-    layer: *mut AnimLayer,
-    element: *const Element,
+pub(crate) fn find_anim_prop_start<M: Mode>(
+    layer: &View<AnimLayer>,
+    element: &View<Element, M>,
 ) -> *mut AnimProp {
-    let mut index: usize = usize::MAX;
-    // SAFETY: `layer` points to a live `ufbx_anim_layer` (fn contract) whose
-    // `anim_props` is its own `data`/`count` span of initialized `AnimProp`s, so
-    // the search range `0..count` is in bounds and every probe pointer the two
-    // closures receive addresses a live anim prop whose `element` ref names a live
-    // scene element.
-    unsafe {
-        macro_lower_bound_eq(
-            16,
-            &mut index,
-            (*layer).anim_props.data,
-            0,
-            (*layer).anim_props.count,
-            |a| (ref_ptr(&raw const (*a).element) as *const Element) < element,
-            |a| std::ptr::eq(ref_ptr(&raw const (*a).element), element),
-        )
-    };
-    if index != usize::MAX {
-        // SAFETY: `index` is a hit position within `0..anim_props.count`, so the
-        // offset stays inside the layer's anim-prop array.
-        unsafe { (*layer).anim_props.data.add(index) as *mut AnimProp }
+    let element: *const Element = element.as_ptr();
+    let index: Option<usize> = layer.anim_props_view().lower_bound_eq(
+        16,
+        |a| (a.element_target_ptr() as *const Element) < element,
+        |a| std::ptr::eq(a.element_target_ptr(), element),
+    );
+    if let Some(index) = index {
+        // `index` is a hit position within `0..anim_props.count`; the result is
+        // derived from the list's own base so it keeps whole-run provenance.
+        layer.anim_props_view().data().wrapping_add(index) as *mut AnimProp
     } else {
         ptr::null_mut()
     }
