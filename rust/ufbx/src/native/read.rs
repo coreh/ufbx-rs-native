@@ -157,9 +157,9 @@ pub(crate) const THUMBNAIL_FORMAT_COUNT: i32 = ThumbnailFormat::Rgba32 as i32 + 
 
 // ufbx.c:11764-11796 `ufbxi_read_embedded_blob`
 #[inline(never)]
-pub(crate) unsafe fn read_embedded_blob(
+pub(crate) fn read_embedded_blob(
     uc: &Context,
-    dst_blob: *mut Blob,
+    dst_blob: &BlobView,
     node: Option<&NodeView>,
 ) -> Result<(), Fail> {
     let node: &NodeView = match node {
@@ -214,11 +214,8 @@ pub(crate) unsafe fn read_embedded_blob(
             }
         }
 
-        // SAFETY: `dst_blob` is the caller's writable `ufbx_blob` out-pointer.
-        unsafe {
-            (*dst_blob).data = content.data;
-            (*dst_blob).size = content.length;
-        }
+        dst_blob.set_data(content.data);
+        dst_blob.set_size(content.length);
     }
 
     Ok(())
@@ -359,8 +356,10 @@ pub(crate) unsafe fn read_property(
     if node.num_children() > 0 {
         let binary = find_child(node, sp::BinaryData.as_ptr());
         // SAFETY: `value_blob_raw()` is the viewed prop's own `value_blob`
-        // field, which is what `read_embedded_blob` writes.
-        unsafe { read_embedded_blob(uc, prop.value_blob_raw(), binary) }?;
+        // field, which is what `read_embedded_blob` writes — arena memory
+        // reached through a write-capable view, live and unmoved for the call.
+        let dst_blob: &BlobView = unsafe { BlobView::from_ptr(prop.value_blob_raw()) };
+        read_embedded_blob(uc, dst_blob, binary)?;
         flags |= PropFlags::VALUE_BLOB.raw();
     }
 
@@ -6488,8 +6487,10 @@ pub(crate) unsafe fn read_video(
 
     let content_node = find_child(node, sp::Content.as_ptr());
     // SAFETY: `video` is the fresh non-null element, so `&raw mut (*video).content`
-    // is the live `ufbx_blob` out-slot `read_embedded_blob` writes.
-    unsafe { read_embedded_blob(uc, &raw mut (*video).content, content_node) }?;
+    // is the live `ufbx_blob` out-slot `read_embedded_blob` writes — arena memory
+    // with write-capable provenance, live and unmoved for the call.
+    let content_blob: &BlobView = unsafe { BlobView::from_ptr(&raw mut (*video).content) };
+    read_embedded_blob(uc, content_blob, content_node)?;
 
     Ok(())
 }
@@ -6878,8 +6879,10 @@ pub(crate) unsafe fn read_audio_clip(
 
     let content_node = find_child(node, sp::Content.as_ptr());
     // SAFETY: `audio` is the fresh non-null element pushed above, so
-    // `&raw mut (*audio).content` is a live `ufbx_blob` destination.
-    unsafe { read_embedded_blob(uc, &raw mut (*audio).content, content_node) }?;
+    // `&raw mut (*audio).content` is a live `ufbx_blob` destination with
+    // write-capable provenance, live and unmoved for the call.
+    let content_blob: &BlobView = unsafe { BlobView::from_ptr(&raw mut (*audio).content) };
+    read_embedded_blob(uc, content_blob, content_node)?;
 
     Ok(())
 }
