@@ -108,6 +108,10 @@ impl StringPoolView {
         unsafe { &*(&raw mut (*self.get()).map as *mut crate::native::hash::MapView) }
     }
     #[inline(always)]
+    pub(crate) fn initial_size(&self) -> usize {
+        view_read!(self, initial_size)
+    }
+    #[inline(always)]
     pub(crate) fn set_initial_size(&self, initial_size: usize) {
         view_write!(self, initial_size, initial_size)
     }
@@ -158,12 +162,24 @@ pub(crate) type SanitizedStringView = crate::native::view::View<SanitizedString>
 
 impl SanitizedStringView {
     #[inline(always)]
+    pub(crate) fn raw_data(&self) -> *const u8 {
+        view_read!(self, raw_data)
+    }
+    #[inline(always)]
     pub(crate) fn set_raw_data(&self, raw_data: *const u8) {
         view_write!(self, raw_data, raw_data)
     }
     #[inline(always)]
+    pub(crate) fn raw_length(&self) -> u32 {
+        view_read!(self, raw_length)
+    }
+    #[inline(always)]
     pub(crate) fn set_raw_length(&self, raw_length: u32) {
         view_write!(self, raw_length, raw_length)
+    }
+    #[inline(always)]
+    pub(crate) fn utf8_length(&self) -> u32 {
+        view_read!(self, utf8_length)
     }
     #[inline(always)]
     pub(crate) fn set_utf8_length(&self, utf8_length: u32) {
@@ -713,125 +729,83 @@ pub(crate) fn sanitize_string(
 
 // ufbx.c:5168-5209 `ufbxi_push_sanitized_string`
 #[inline(never)]
-pub(crate) unsafe fn push_sanitized_string(
-    pool: *mut StringPool,
-    sanitized: *mut SanitizedString,
-    str_: *const u8,
-    length: usize,
+pub(crate) fn push_sanitized_string(
+    pool: &StringPoolView,
+    sanitized: &SanitizedStringView,
+    str_: &[u8],
     mut hash: u32,
     raw: bool,
 ) -> Result<(), Fail> {
-    // SAFETY: the caller vouches `str_` is readable for `length` bytes, the run
+    // C's `length` parameter is the source slice's own length.
+    let length = str_.len();
+
+    // SAFETY: `str_` is a shared slice, readable for its own length — the run
     // `hash_string` hashes.
-    ufbxi_regression_assert!(hash == unsafe { hash_string(str_, length) });
+    ufbxi_regression_assert!(hash == unsafe { hash_string(str_.as_ptr(), length) });
 
     ufbxi_check_err!(
-        unsafe { crate::native::error::ErrorView::from_ptr((*pool).error) },
+        pool.error_view(),
         length <= u32::MAX as usize,
         "length <= UINT32_MAX"
     );
     ufbxi_check_err!(
-        unsafe { crate::native::error::ErrorView::from_ptr((*pool).error) },
-        // SAFETY: the caller vouches `pool` addresses a live `StringPool`, so
-        // `from_ptr` reinterprets a live pool and `(*pool).initial_size` reads it.
-        unsafe { StringPoolView::from_ptr(pool) }
-            .map_view()
-            .grow::<String>(unsafe { (*pool).initial_size }),
+        pool.error_view(),
+        pool.map_view().grow::<String>(pool.initial_size()),
         "ufbxi_map_grow_size((&pool->map), sizeof(ufbx_string), (pool->initial_size))"
     );
 
-    let mut total_data: *const u8 = str_;
+    let mut total_data: *const u8 = str_.as_ptr();
     let mut total_length: usize = length;
 
-    // SAFETY: the caller vouches `sanitized` addresses a live `SanitizedString`.
-    unsafe {
-        (*sanitized).raw_length = length as u32;
-        (*sanitized).utf8_length = 0;
-    }
+    sanitized.set_raw_length(length as u32);
+    sanitized.set_utf8_length(0);
 
     if !raw {
-        // SAFETY: `str_` is readable for `length` bytes.
-        let valid_length = unsafe { utf8_valid_length(str_, length) };
+        // SAFETY: `str_` is a shared slice, readable for its own length.
+        let valid_length = unsafe { utf8_valid_length(str_.as_ptr(), length) };
         if valid_length != length {
             // C: `ufbxi_check_err(pool->error, ufbxi_sanitize_string(...))` — `?`
             // per PORTING.md error threading. `valid_length < length` (just
             // checked) is the precondition `sanitize_string` asserts.
-            sanitize_string(
-                // SAFETY: the caller vouches `pool` addresses the live,
-                // context-owned `StringPool`, reinterpreted in place.
-                unsafe { StringPoolView::from_ptr(pool) },
-                // SAFETY: the caller vouches `sanitized` addresses a live
-                // `SanitizedString` out-slot with write provenance (an arena
-                // `ufbxi_value.s` member or a stack local).
-                unsafe { SanitizedStringView::from_ptr(sanitized) },
-                // SAFETY: the caller vouches `str_` is readable for `length`
-                // bytes and unwritten for the borrow — in particular it is not
-                // the pool's own temp buffer, which the callee writes.
-                unsafe { crate::prelude::slice_from_ptr(str_, length) },
-                valid_length,
-                true,
-            )?;
-            // SAFETY: `sanitized` is live; `sanitize_string` wrote its fields.
-            total_data = unsafe { (*sanitized).raw_data };
+            sanitize_string(pool, sanitized, str_, valid_length, true)?;
+            total_data = sanitized.raw_data();
             // C-parity: `sanitized->raw_length + sanitized->utf8_length + 1` is
             // computed in uint32_t (wraps) before widening to size_t.
-            // SAFETY: `sanitized` is live with the fields just written.
-            total_length = unsafe {
-                (*sanitized)
-                    .raw_length
-                    .wrapping_add((*sanitized).utf8_length)
-                    .wrapping_add(1)
-            } as usize;
-            // SAFETY: `str_` is readable for `length` bytes.
-            hash = unsafe { hash_string(str_, length) };
+            total_length = sanitized
+                .raw_length()
+                .wrapping_add(sanitized.utf8_length())
+                .wrapping_add(1) as usize;
+            // SAFETY: `str_` is a shared slice, readable for its own length.
+            hash = unsafe { hash_string(str_.as_ptr(), length) };
         }
     }
 
     let ref_ = String::new_c(total_data, total_length);
 
-    // SAFETY: the caller vouches `pool` addresses a live `StringPool`, which
-    // `from_ptr` reinterprets in place.
-    let entry: *mut String = unsafe { StringPoolView::from_ptr(pool) }
-        .map_view()
-        .find::<String, _>(hash, &ref_);
+    let entry: *mut String = pool.map_view().find::<String, _>(hash, &ref_);
     if !entry.is_null() {
-        // SAFETY: `entry` is a non-null map slot addressing a live `String`, and
-        // `sanitized` is live.
-        unsafe { (*sanitized).raw_data = (*entry).data };
+        // SAFETY: `entry` is a non-null map slot addressing a live `String`.
+        sanitized.set_raw_data(unsafe { (*entry).data });
     } else {
-        // SAFETY: `pool` addresses a live `StringPool`, reinterpreted in place.
-        let entry = unsafe { StringPoolView::from_ptr(pool) }
-            .map_view()
-            .insert::<String, _>(hash, &ref_);
-        ufbxi_check_err!(
-            unsafe { crate::native::error::ErrorView::from_ptr((*pool).error) },
-            !entry.is_null(),
-            "entry"
-        );
+        let entry = pool.map_view().insert::<String, _>(hash, &ref_);
+        ufbxi_check_err!(pool.error_view(), !entry.is_null(), "entry");
         // SAFETY: `entry` is the just-inserted non-null map slot.
         unsafe { (*entry).length = total_length };
-        // SAFETY: `pool` addresses a live `StringPool`, reinterpreted in place.
-        let dst: *mut u8 = unsafe { StringPoolView::from_ptr(pool) }
-            .buf_view()
-            .push::<u8>(total_length + 1);
-        ufbxi_check_err!(
-            unsafe { crate::native::error::ErrorView::from_ptr((*pool).error) },
-            !dst.is_null(),
-            "dst"
-        );
+        let dst: *mut u8 = pool.buf_view().push::<u8>(total_length + 1);
+        ufbxi_check_err!(pool.error_view(), !dst.is_null(), "dst");
         // SAFETY: `dst` is a non-null run of `total_length + 1` bytes just pushed
         // onto the pool's arena, so it is writable for the `total_length` copied
         // bytes plus the trailing NUL; `total_data` is readable for
-        // `total_length` bytes and is a distinct object from the fresh arena run.
+        // `total_length` bytes — the source slice, or the pool's temp buffer as
+        // packed by `sanitize_string` — and is a distinct object from the fresh
+        // arena run.
         unsafe {
             ptr::copy_nonoverlapping(total_data, dst, total_length);
             *dst.add(total_length) = b'\0';
         }
-        // SAFETY: `entry` is the live inserted slot and `sanitized` is live.
-        unsafe {
-            (*entry).data = dst;
-            (*sanitized).raw_data = dst;
-        }
+        // SAFETY: `entry` is the live inserted slot.
+        unsafe { (*entry).data = dst };
+        sanitized.set_raw_data(dst);
     }
 
     Ok(())
@@ -2073,6 +2047,9 @@ mod tests {
     fn test_push_sanitized_string() {
         unsafe {
             let mut fx = make_fixture(UnicodeErrorHandling::ReplacementCharacter);
+            // SAFETY: the fixture owns `pool`, live and unmoved for the whole
+            // test, so its address is write-capable memory for the view.
+            let pool = StringPoolView::from_ptr(&raw mut fx.pool);
 
             // Valid UTF-8: raw_length = length, utf8_length = 0, interned copy.
             let mut san = SanitizedString {
@@ -2082,7 +2059,15 @@ mod tests {
             };
             let hash = hash_string(b"Model".as_ptr(), 5);
             assert_eq!(
-                push_sanitized_string(&mut fx.pool, &mut san, b"Model".as_ptr(), 5, hash, false),
+                push_sanitized_string(
+                    pool,
+                    // SAFETY: the local `san` out-slot is write-capable and
+                    // outlives the call.
+                    SanitizedStringView::from_ptr(&raw mut san),
+                    b"Model",
+                    hash,
+                    false
+                ),
                 Ok(())
             );
             assert_eq!(san.raw_length, 5);
@@ -2097,7 +2082,15 @@ mod tests {
                 utf8_length: 0,
             };
             assert_eq!(
-                push_sanitized_string(&mut fx.pool, &mut san2, b"Model".as_ptr(), 5, hash, false),
+                push_sanitized_string(
+                    pool,
+                    // SAFETY: the local `san2` out-slot is write-capable and
+                    // outlives the call.
+                    SanitizedStringView::from_ptr(&raw mut san2),
+                    b"Model",
+                    hash,
+                    false
+                ),
                 Ok(())
             );
             assert_eq!(san2.raw_data, san.raw_data);
@@ -2111,7 +2104,15 @@ mod tests {
                 utf8_length: 0,
             };
             assert_eq!(
-                push_sanitized_string(&mut fx.pool, &mut san3, inp.as_ptr(), 3, h, false),
+                push_sanitized_string(
+                    pool,
+                    // SAFETY: the local `san3` out-slot is write-capable and
+                    // outlives the call.
+                    SanitizedStringView::from_ptr(&raw mut san3),
+                    inp,
+                    h,
+                    false
+                ),
                 Ok(())
             );
             assert_eq!(san3.raw_length, 3);
@@ -2128,7 +2129,15 @@ mod tests {
                 utf8_length: 0,
             };
             assert_eq!(
-                push_sanitized_string(&mut fx.pool, &mut san4, inp.as_ptr(), 3, h, true),
+                push_sanitized_string(
+                    pool,
+                    // SAFETY: the local `san4` out-slot is write-capable and
+                    // outlives the call.
+                    SanitizedStringView::from_ptr(&raw mut san4),
+                    inp,
+                    h,
+                    true
+                ),
                 Ok(())
             );
             assert_eq!(san4.raw_length, 3);

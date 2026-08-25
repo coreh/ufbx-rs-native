@@ -46,7 +46,9 @@ use crate::native::platform::{
     read_u64, read_u8, ufbx_assert, ufbxi_dev_assert, ufbxi_unreachable,
     MIN_THREADED_DEFLATE_BYTES,
 };
-use crate::native::string_pool::{push_sanitized_string, push_string, push_string_place_str};
+use crate::native::string_pool::{
+    push_sanitized_string, push_string, push_string_place_str, SanitizedStringView,
+};
 use crate::native::thread::{thread_pool_create_task, thread_pool_run_task, Task};
 use crate::prelude::{slice_from_ptr, String};
 
@@ -1565,19 +1567,21 @@ fn binary_parse_node_rec(
                         // classifies value `i` under `parent_state`.
                         let raw: bool =
                             !non_ascii || unsafe { is_raw_string(uc, parent_state, name, i) };
-                        // SAFETY: `i < num_values`, so the raw address of
-                        // `(*vals.add(i)).s` identifies a live `String` slot;
-                        // `str_` is the `length`-byte run to intern into the pool.
-                        unsafe {
-                            push_sanitized_string(
-                                uc.string_pool_mut_ptr(),
-                                &raw mut (*vals.add(i)).s,
-                                str_,
-                                length as usize,
-                                hash,
-                                raw,
-                            )
-                        }?;
+                        push_sanitized_string(
+                            uc.string_pool_view(),
+                            // SAFETY: `i < num_values`, so the raw address of
+                            // `(*vals.add(i)).s` identifies a live
+                            // `SanitizedString` slot — write-capable arena memory
+                            // outliving the call.
+                            unsafe { SanitizedStringView::from_ptr(&raw mut (*vals.add(i)).s) },
+                            // SAFETY: `str_` is the non-null `length`-byte run read
+                            // above, unwritten for the borrow — in particular it is
+                            // not the pool's own temp buffer, which the callee
+                            // writes.
+                            unsafe { slice_from_ptr(str_, length as usize) },
+                            hash,
+                            raw,
+                        )?;
 
                         // Mark the data as invalid UTF-8
                         if non_ascii && raw {

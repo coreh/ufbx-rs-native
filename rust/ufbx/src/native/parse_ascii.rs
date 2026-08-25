@@ -58,7 +58,9 @@ use crate::native::platform::{
     add_ptr, f64_to_i32, f64_to_i64, max_sz, min32, sub_ptr, to_size, ufbx_assert,
     ufbxi_dev_assert, MIN_THREADED_ASCII_VALUES,
 };
-use crate::native::string_pool::{push_sanitized_string, push_string, push_string_place_str};
+use crate::native::string_pool::{
+    push_sanitized_string, push_string, push_string_place_str, SanitizedStringView,
+};
 use crate::native::thread::{thread_pool_create_task, thread_pool_run_task, Task};
 use crate::native::view::{view_read, view_write, Mut, View};
 use crate::native::warnings::ufbxi_warnf;
@@ -2016,19 +2018,20 @@ fn ascii_parse_node_rec(
                     // matches it against known raw-string node fields.
                     let raw: bool = !non_ascii
                         || unsafe { is_raw_string(uc, parent_state, name, num_values as usize) };
-                    // SAFETY: `v` is a live `vals` slot; `&raw mut (*v).s` projects
-                    // its own `s` field as the sanitize out-param; `str_`/`length`
-                    // are the readable token string interned via `uc`'s string pool.
-                    unsafe {
-                        push_sanitized_string(
-                            uc.string_pool_mut_ptr(),
-                            &raw mut (*v).s,
-                            str_,
-                            length,
-                            hash,
-                            raw,
-                        )?;
-                    }
+                    push_sanitized_string(
+                        uc.string_pool_view(),
+                        // SAFETY: `v` is a live `vals` slot; `&raw mut (*v).s`
+                        // projects its own `s` field — write-capable arena memory
+                        // outliving the call — as the sanitize out-param.
+                        unsafe { SanitizedStringView::from_ptr(&raw mut (*v).s) },
+                        // SAFETY: `str_` is readable for `length` bytes (the token
+                        // string) and unwritten for the borrow — in particular it
+                        // is not the pool's own temp buffer, which the callee
+                        // writes.
+                        unsafe { slice_from_ptr(str_, length) },
+                        hash,
+                        raw,
+                    )?;
                     if non_ascii && raw {
                         // SAFETY: `v` is a live `vals` slot; writes its `s.utf8_length`.
                         unsafe {
