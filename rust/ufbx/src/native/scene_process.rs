@@ -2517,27 +2517,30 @@ pub(crate) unsafe fn fetch_dst_elements(
 }
 
 // ufbx.c:19085-19121 `ufbxi_fetch_src_elements`
+//
+// C's `void *p_dst_list` is typed here as the element-ref list header every
+// call site passes (C: `ufbx_element_list *list = (ufbx_element_list*)p_dst_list;`),
+// and the nullable `const char *prop` as `Option<&[u8]>` (see
+// `find_src_connections`).
+//
+// # Safety
+// `element` heads a live, arena-owned `ufbx_element` whose provenance spans the
+// ENCLOSING element struct: with `search_node` the walk reaches
+// `ufbxi_get_element_node`, which reads `ufbx_node` fields past
+// `size_of::<Element>()`, so a pointer derived from a header-only
+// `&View<Element>` may not address them.
 #[inline(never)]
 pub(crate) unsafe fn fetch_src_elements(
     uc: &Context,
-    p_dst_list: *mut c_void,
+    p_dst_list: &RefListView<Element>,
     element: *mut Element,
     search_node: bool,
     ignore_duplicates: bool,
-    prop: *const u8,
+    prop: Option<&[u8]>,
     dst_type: ElementType,
 ) -> Result<(), Fail> {
     let mut element: *mut Element = element;
     let mut num_elements: usize = 0;
-
-    // SAFETY: `prop` is null or a NUL-terminated interned property name (fn
-    // contract) — the measure and the measured run are that contract; minted
-    // once here as `find_src_connections`' query span.
-    let prop: Option<&[u8]> = if prop.is_null() {
-        None
-    } else {
-        Some(unsafe { slice_from_ptr(prop, strlen(prop)) })
-    };
 
     loop {
         let conns: List<Connection> = find_src_connections(
@@ -2605,33 +2608,24 @@ pub(crate) unsafe fn fetch_src_elements(
         }
     }
 
-    let list: *mut RefList<Element> = p_dst_list as *mut RefList<Element>;
-    // SAFETY: `p_dst_list` is the caller's out-list, which every call site passes
-    // as a `ufbx_*_list` of element refs (C: the `void*` out-parameter of
-    // `ufbxi_fetch_src_elements`).
-    unsafe {
-        (*list).data = uc
-            .result_view()
+    // C: `ufbx_element_list *list = (ufbx_element_list*)p_dst_list;` — the
+    // cast is the parameter type here.
+    p_dst_list.set_data(
+        uc.result_view()
             .push_pop::<*mut Element>(uc.tmp_stack_view(), num_elements)
-            as *const Ref<Element>;
-        (*list).count = num_elements;
-        ufbxi_check!(uc, !(*list).data.is_null(), "list->data");
-    }
+            as *const Ref<Element>,
+    );
+    p_dst_list.set_count(num_elements);
+    ufbxi_check!(uc, !p_dst_list.data().is_null(), "list->data");
 
     if ignore_duplicates {
-        // C: `ufbxi_for_ptr_list(ufbx_element, p_elem, *list)`
-        // SAFETY: as above.
-        let mut p_elem: *mut *mut Element = unsafe { (*list).data } as *mut *mut Element;
-        // SAFETY: `list` holds the `count`-element run just popped into `result`,
-        // so the one-past-the-end pointer is in range.
-        let p_elem_end: *mut *mut Element = unsafe { add_ptr(p_elem, (*list).count) };
-        while p_elem != p_elem_end {
-            // SAFETY: `p_elem` is inside that run and holds a live element
-            // pointer, whose `element_id` indexes the per-element flag bytes.
-            unsafe { *uc.tmp_element_flag().add((**p_elem).element_id as usize) = 0 };
-            // SAFETY: `p_elem != p_elem_end`, so the advance lands at or before
-            // the one-past-the-end pointer.
-            p_elem = unsafe { p_elem.add(1) };
+        // C: `ufbxi_for_ptr_list(ufbx_element, p_elem, *list)` — indexed here
+        // over the same run of element refs the fetch just wrote.
+        for elem_ix in 0..p_dst_list.count() {
+            let p_elem: &ElementView = p_dst_list.at(elem_ix);
+            // SAFETY: `tmp_element_flag` is a byte per scene element and the
+            // listed element's `element_id` indexes the scene's element array.
+            unsafe { *uc.tmp_element_flag().add(p_elem.element_id() as usize) = 0 };
         }
     }
 
@@ -8709,18 +8703,16 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
         // C: `ufbxi_for_ptr_list(ufbx_element, p_elem, uc->scene.elements_by_type[type])`
         for elem_ix in 0..typed_elems.count() {
             let elem: &ElementView = typed_elems.at(elem_ix);
-            // SAFETY: `ufbxi_fetch_src_elements` fills the list header it is handed
-            // from the source connections of the element it is handed (fn
-            // contract); both are projections of this element's own view, and the
-            // fn touches only `ufbx_element` header fields through the latter.
+            // SAFETY: `elem.get()` addresses that element's header with
+            // whole-struct provenance.
             unsafe {
                 fetch_src_elements(
                     uc,
-                    elem.instances_raw() as *mut c_void,
+                    elem.instances_view().as_element_list(),
                     elem.get(),
                     false,
                     true,
-                    ptr::null(),
+                    None,
                     ElementType::Node,
                 )
             }?;
