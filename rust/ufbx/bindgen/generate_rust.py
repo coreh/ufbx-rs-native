@@ -576,6 +576,40 @@ pub fn find_node<'a>(scene: &'a Scene, name: &str) -> Option<&'a Node> {
 }
 """
 
+override_functions["ufbx_find_anim_stack_len"] = """
+#[allow(clippy::needless_lifetimes)]
+pub fn find_anim_stack<'a>(scene: &'a Scene, name: &str) -> Option<&'a AnimStack> {
+    let result = crate::native::api::find_anim_stack_len(
+        Some(unsafe {
+            crate::native::view::View::<Scene, crate::native::view::Const>::from_ptr(scene as *const Scene)
+        }),
+        name.as_bytes(),
+    );
+    if result.is_null() {
+        None
+    } else {
+        unsafe { Some(&*result) }
+    }
+}
+"""
+
+override_functions["ufbx_find_material_len"] = """
+#[allow(clippy::needless_lifetimes)]
+pub fn find_material<'a>(scene: &'a Scene, name: &str) -> Option<&'a Material> {
+    let result = crate::native::api::find_material_len(
+        Some(unsafe {
+            crate::native::view::View::<Scene, crate::native::view::Const>::from_ptr(scene as *const Scene)
+        }),
+        name.as_bytes(),
+    );
+    if result.is_null() {
+        None
+    } else {
+        unsafe { Some(&*result) }
+    }
+}
+"""
+
 override_functions["ufbx_find_anim_prop_len"] = """
 #[allow(clippy::needless_lifetimes)]
 pub fn find_anim_prop<'a>(

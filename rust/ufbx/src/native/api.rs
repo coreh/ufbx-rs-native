@@ -1131,25 +1131,19 @@ pub(crate) fn find_node_len<M: Mode>(scene: Option<&View<Scene, M>>, name: &[u8]
 }
 
 // ufbx.c:30765-30768 `ufbx_find_anim_stack_len`
-pub(crate) unsafe fn find_anim_stack_len(scene: *const Scene, name: &[u8]) -> *mut AnimStack {
-    find_element_len(
-        // SAFETY: `scene` is null-or-live — this fn's own raw-pointer contract,
-        // which is exactly what the read-only `Const` mint asks for.
-        unsafe { scene_const_view(scene) },
-        ElementType::AnimStack,
-        name,
-    ) as *mut AnimStack
+pub(crate) fn find_anim_stack_len<M: Mode>(
+    scene: Option<&View<Scene, M>>,
+    name: &[u8],
+) -> *mut AnimStack {
+    find_element_len(scene, ElementType::AnimStack, name) as *mut AnimStack
 }
 
 // ufbx.c:30770-30773 `ufbx_find_material_len`
-pub(crate) unsafe fn find_material_len(scene: *const Scene, name: &[u8]) -> *mut Material {
-    find_element_len(
-        // SAFETY: `scene` is null-or-live — this fn's own raw-pointer contract,
-        // which is exactly what the read-only `Const` mint asks for.
-        unsafe { scene_const_view(scene) },
-        ElementType::Material,
-        name,
-    ) as *mut Material
+pub(crate) fn find_material_len<M: Mode>(
+    scene: Option<&View<Scene, M>>,
+    name: &[u8],
+) -> *mut Material {
+    find_element_len(scene, ElementType::Material, name) as *mut Material
 }
 
 // ufbx.c:30775-30790 `ufbx_find_anim_prop_len`
@@ -7164,7 +7158,12 @@ pub(crate) unsafe fn find_anim_stack(scene: *const Scene, name: *const u8) -> *m
     // SAFETY: `name` is this fn's NUL-terminated raw-pointer string param;
     // `strlen` measures it, and the measured run (with `scene`) is exactly the
     // slice minted for the `_len` impl.
-    unsafe { find_anim_stack_len(scene, crate::prelude::slice_from_ptr(name, strlen(name))) }
+    unsafe {
+        find_anim_stack_len(
+            scene_const_view(scene),
+            crate::prelude::slice_from_ptr(name, strlen(name)),
+        )
+    }
 }
 
 // ufbx.c:33153 `ufbx_find_material`
@@ -7172,7 +7171,12 @@ pub(crate) unsafe fn find_material(scene: *const Scene, name: *const u8) -> *mut
     // SAFETY: `name` is this fn's NUL-terminated raw-pointer string param;
     // `strlen` measures it, and the measured run (with `scene`) is exactly the
     // slice minted for the `_len` impl.
-    unsafe { find_material_len(scene, crate::prelude::slice_from_ptr(name, strlen(name))) }
+    unsafe {
+        find_material_len(
+            scene_const_view(scene),
+            crate::prelude::slice_from_ptr(name, strlen(name)),
+        )
+    }
 }
 
 // ufbx.c:33154 `ufbx_find_anim_prop`
@@ -7707,11 +7711,11 @@ mod tests {
             // The typed wrappers just pin the element type.
             assert_eq!(find_node_len(scene_view, b"alpha"), ptrs[0] as *mut Node);
             assert_eq!(
-                find_material_len(&scene, b"gamma"),
+                find_material_len(scene_view, b"gamma"),
                 ptrs[2] as *mut Material
             );
             assert_eq!(
-                find_anim_stack_len(&scene, b"beta"),
+                find_anim_stack_len(scene_view, b"beta"),
                 ptrs[3] as *mut AnimStack
             );
             assert!(find_node_len(scene_view, b"gamma").is_null());

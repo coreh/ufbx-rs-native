@@ -736,13 +736,13 @@ pub unsafe extern "C" fn ufbx_find_anim_stack_len(
     name: *const u8,
     name_len: usize,
 ) -> *mut crate::generated::AnimStack {
-    // SAFETY: an ABI shim; the raw struct pointer carries this `unsafe fn`'s
-    // own raw-pointer contract, and the caller's name/len key-buffer contract
-    // becomes the slice mint (`slice_from_ptr` maps the null/0 case to the
-    // empty slice).
+    // SAFETY: an ABI shim; the caller's null-or-live scene contract becomes the
+    // read-only `View<_, Const>` mint (legal for any readable provenance), and
+    // the name/len key-buffer contract becomes the slice mint
+    // (`slice_from_ptr` maps the null/0 case to the empty slice).
     unsafe {
         crate::native::api::find_anim_stack_len(
-            scene,
+            crate::native::api::scene_const_view(scene),
             crate::prelude::slice_from_ptr(name, name_len),
         )
     }
@@ -755,12 +755,15 @@ pub unsafe extern "C" fn ufbx_find_material_len(
     name: *const u8,
     name_len: usize,
 ) -> *mut crate::generated::Material {
-    // SAFETY: an ABI shim; the raw struct pointer carries this `unsafe fn`'s
-    // own raw-pointer contract, and the caller's name/len key-buffer contract
-    // becomes the slice mint (`slice_from_ptr` maps the null/0 case to the
-    // empty slice).
+    // SAFETY: an ABI shim; the caller's null-or-live scene contract becomes the
+    // read-only `View<_, Const>` mint (legal for any readable provenance), and
+    // the name/len key-buffer contract becomes the slice mint
+    // (`slice_from_ptr` maps the null/0 case to the empty slice).
     unsafe {
-        crate::native::api::find_material_len(scene, crate::prelude::slice_from_ptr(name, name_len))
+        crate::native::api::find_material_len(
+            crate::native::api::scene_const_view(scene),
+            crate::prelude::slice_from_ptr(name, name_len),
+        )
     }
 }
 
