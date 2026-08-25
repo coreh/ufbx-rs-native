@@ -949,12 +949,11 @@ pub(crate) fn read_definitions(uc: &Context) -> Result<(), Fail> {
 }
 
 // ufbx.c:12195-12218 `ufbxi_find_template`
+// C-parity: `name` and `sub_type` are matched by POINTER IDENTITY against the
+// interned `tmpl->type` / `tmpl->sub_type.data` runs, so each slice borrows the
+// interned run itself; their lengths are never read.
 #[must_use]
-pub(crate) unsafe fn find_template(
-    uc: &Context,
-    name: *const u8,
-    sub_type: *const u8,
-) -> *mut Props {
+pub(crate) fn find_template(uc: &Context, name: &[u8], sub_type: &[u8]) -> *mut Props {
     // TODO: Binary search
     // C: `ufbxi_for(ufbxi_template, tmpl, uc->templates, uc->num_templates)`
     let mut tmpl = uc.templates();
@@ -962,7 +961,7 @@ pub(crate) unsafe fn find_template(
     while tmpl != tmpl_end {
         // SAFETY: `tmpl` walks `uc.templates()..+ uc.num_templates()`, uc's own
         // result-buffer run of live `ufbxi_template` values.
-        if unsafe { (*tmpl).type_ } == name {
+        if unsafe { (*tmpl).type_ } == name.as_ptr() {
             // Check that sub_type matches unless the type is Material, Model, AnimationStack, AnimationLayer.
             // Those match to all sub-types.
             // SAFETY: as above — `tmpl` addresses a live template.
@@ -973,7 +972,7 @@ pub(crate) unsafe fn find_template(
                     && (*tmpl).type_ != sp::AnimationLayer.as_ptr()
             } {
                 // SAFETY: as above.
-                if unsafe { (*tmpl).sub_type.data } != sub_type {
+                if unsafe { (*tmpl).sub_type.data } != sub_type.as_ptr() {
                     return core::ptr::null_mut();
                 }
             }
@@ -7279,13 +7278,26 @@ pub(crate) fn read_object(uc: &Context, node: &NodeView) -> Result<(), Fail> {
     let name: *const u8 = node.name();
     let sub_type: *const u8 = sub_type_str.data;
     // SAFETY: `&raw mut info.props` is a local `ufbx_props` out-param, exclusively
-    // owned by this frame — write-capable provenance, stable for the call;
-    // `name`/`sub_type` are pooled strings, which is what the template lookup
-    // compares by pointer identity, and its result points into uc's own template
-    // array (or is null, mapped to `None`).
+    // owned by this frame — write-capable provenance, stable for the call.
     unsafe {
         read_properties(uc, node, PropsView::from_ptr(&raw mut info.props))?;
-        info.props.defaults = opt_ref(find_template(uc, name, sub_type));
+    }
+    // `find_template` matches on the interned runs' ADDRESSES, so borrow the
+    // bytes `name` / `sub_type` already point at. `slice::from_raw_parts` (not
+    // `slice_from_ptr`) keeps a zero-length run's own pointer, which the
+    // identity comparison needs.
+    // SAFETY: `name` is the parse node's pooled name, readable for
+    // `node.name_len()` bytes, and `sub_type` is the pooled `sub_type_str`,
+    // readable for its own `length` bytes; interned pool strings are non-null
+    // and are never moved or rewritten.
+    let name_bytes: &[u8] = unsafe { core::slice::from_raw_parts(name, node.name_len() as usize) };
+    // SAFETY: as above.
+    let sub_type_bytes: &[u8] =
+        unsafe { core::slice::from_raw_parts(sub_type, sub_type_str.length) };
+    // SAFETY: the template lookup's result points into uc's own template array
+    // (or is null, mapped to `None`), which outlives `info`.
+    unsafe {
+        info.props.defaults = opt_ref(find_template(uc, name_bytes, sub_type_bytes));
     }
 
     // SAFETY (this whole dispatch): every arm hands the same parse-tree
