@@ -129,7 +129,9 @@ use crate::native::view::{
 use crate::native::view::{Const, Mode, Mut, View};
 use crate::native::warnings::{pop_warnings, ufbxi_warnf};
 use crate::prelude::as_f64;
-#[cfg(feature = "scene-eval")]
+#[cfg(feature = "baking")]
+use crate::prelude::ListView;
+#[cfg(any(feature = "scene-eval", feature = "baking"))]
 use crate::prelude::ScalarView;
 use crate::prelude::{List, OpenFileContext, RawStringView, Real, Ref, String, StringView};
 
@@ -6483,12 +6485,18 @@ pub(crate) fn postprocess_step(
 }
 
 // ufbx.c:27017-27097 `ufbxi_bake_postprocess_vec3`
+//
+// Stays an `unsafe fn` for one untypeable obligation: `src` is a C run —
+// `src.data` must address `src.count` live, WRITABLE `ufbx_baked_vec3`s, since
+// the postprocess passes compact the keys in place before `push_copy` reads
+// them. No pointer type carries that length-and-writability promise; the
+// destination slots are typed (`p_dst`, `p_constant`).
 #[cfg(feature = "baking")]
 #[inline(never)]
 pub(crate) unsafe fn bake_postprocess_vec3(
     bc: &BakeContext,
-    p_dst: *mut List<BakedVec3>,
-    p_constant: *mut bool,
+    p_dst: &ListView<BakedVec3>,
+    p_constant: &ScalarView<bool>,
     mut src: List<BakedVec3>,
 ) -> Result<(), Fail> {
     if src.count == 0 {
@@ -6613,23 +6621,14 @@ pub(crate) unsafe fn bake_postprocess_vec3(
             break;
         }
     }
-    // SAFETY: `p_constant` points to the caller's live `bool` slot — this
-    // `unsafe fn`'s contract.
-    unsafe { *p_constant = constant };
+    p_constant.set(constant);
 
-    // SAFETY: `p_dst` points to the caller's live `ufbx_baked_vec3_list` slot —
-    // this `unsafe fn`'s contract; `data` addresses `src.count` live elements,
-    // which is the run `push_copy` reads, and `bc.result` is `bc`'s own buffer.
-    unsafe {
-        (*p_dst).count = src.count;
-        (*p_dst).data = bc.result_view().push_copy_raw::<BakedVec3>(src.count, data);
-    }
-    ufbxi_check_err!(
-        bc.error_view(),
-        // SAFETY: as above — `p_dst` is the caller's live list slot, just written.
-        !unsafe { (*p_dst).data }.is_null(),
-        "p_dst->data"
-    );
+    p_dst.set_count(src.count);
+    // SAFETY: `data` addresses `src.count` live elements, which is the run
+    // `push_copy` reads — this `unsafe fn`'s contract — and `bc.result` is
+    // `bc`'s own buffer.
+    p_dst.set_data(unsafe { bc.result_view().push_copy_raw::<BakedVec3>(src.count, data) });
+    ufbxi_check_err!(bc.error_view(), !p_dst.data().is_null(), "p_dst->data");
 
     Ok(())
 }
@@ -7408,29 +7407,46 @@ pub(crate) unsafe fn bake_node_imp(
 
     baked_node_view.set_element_id(node.element().element_id());
     baked_node_view.set_typed_id(node.element().typed_id());
-    // SAFETY: each pair of projections addresses the pushed baked node's own key
-    // list and constant flag, and `keys_t`/`keys_r`/`keys_s` describe the live
-    // runs of `ix_t`/`ix_r`/`ix_s` written keys pushed onto `bc.tmp_prop`.
+    // SAFETY: the projection addresses the pushed baked node's own
+    // `constant_translation` field, reached through a `Mut` view, so it is a
+    // live write-capable `bool` slot in arena-owned interior-mutable storage —
+    // the storage the shared `&ScalarView` (`Cell`) writes through.
+    let constant_translation: &ScalarView<bool> =
+        unsafe { &*(baked_node_view.constant_translation_raw() as *const ScalarView<bool>) };
+    // SAFETY: as above, for the pushed baked node's own `constant_scale` field.
+    let constant_scale: &ScalarView<bool> =
+        unsafe { &*(baked_node_view.constant_scale_raw() as *const ScalarView<bool>) };
+    // SAFETY: `keys_t` describes the live run of `ix_t` written keys pushed onto
+    // `bc.tmp_prop` — `bake_postprocess_vec3`'s run contract.
     unsafe {
         bake_postprocess_vec3(
             bc,
-            baked_node_view.translation_keys_raw(),
-            baked_node_view.constant_translation_raw(),
+            baked_node_view.translation_keys_view(),
+            constant_translation,
             keys_t,
-        )?;
+        )
+    }?;
+    // SAFETY: the pair of projections addresses the pushed baked node's own key
+    // list and constant flag, and `keys_r` describes the live run of `ix_r`
+    // written keys pushed onto `bc.tmp_prop`.
+    unsafe {
         bake_postprocess_quat(
             bc,
             baked_node_view.rotation_keys_raw(),
             baked_node_view.constant_rotation_raw(),
             keys_r,
-        )?;
+        )
+    }?;
+    // SAFETY: `keys_s` describes the live run of `ix_s` written keys pushed onto
+    // `bc.tmp_prop` — `bake_postprocess_vec3`'s run contract.
+    unsafe {
         bake_postprocess_vec3(
             bc,
-            baked_node_view.scale_keys_raw(),
-            baked_node_view.constant_scale_raw(),
+            baked_node_view.scale_keys_view(),
+            constant_scale,
             keys_s,
-        )?;
-    }
+        )
+    }?;
 
     // SAFETY: `node` views a live scene node, so its `typed_id` indexes
     // `bc.baked_nodes()`, which `bake_anim` sizes with one slot per scene node.
@@ -7666,16 +7682,19 @@ pub(crate) unsafe fn bake_anim_prop(
         "baked_prop->name.data"
     );
 
-    // SAFETY: the two projections address the pushed baked prop's own key list
-    // and constant flag, and `keys` describes the run just written above.
-    unsafe {
-        bake_postprocess_vec3(
-            bc,
-            &raw mut (*baked_prop).keys,
-            &raw mut (*baked_prop).constant_value,
-            keys,
-        )
-    }?;
+    // SAFETY: `baked_prop` is the non-null (checked) zeroed `ufbx_baked_prop`
+    // pushed onto `bc.tmp_props`, arena memory with write-capable provenance
+    // that stays put for the bake.
+    let baked_prop_view: &View<BakedProp> = unsafe { View::<BakedProp>::from_ptr(baked_prop) };
+    // SAFETY: the projection addresses the pushed baked prop's own
+    // `constant_value` field, reached through a `Mut` view, so it is a live
+    // write-capable `bool` slot in arena-owned interior-mutable storage — the
+    // storage the shared `&ScalarView` (`Cell`) writes through.
+    let constant_value: &ScalarView<bool> =
+        unsafe { &*(baked_prop_view.constant_value_raw() as *const ScalarView<bool>) };
+    // SAFETY: `keys` describes the run just written above —
+    // `bake_postprocess_vec3`'s run contract.
+    unsafe { bake_postprocess_vec3(bc, baked_prop_view.keys_view(), constant_value, keys) }?;
 
     // SAFETY: `bc.tmp_prop` is `bc`'s own scratch buffer, live for the borrow.
     unsafe { buf_clear(bc.tmp_prop_mut_ptr()) };
