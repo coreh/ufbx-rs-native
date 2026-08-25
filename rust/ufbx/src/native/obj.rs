@@ -1395,21 +1395,27 @@ pub(crate) fn obj_pop_vertices(
 }
 
 // ufbx.c:17434-17481 `ufbxi_obj_setup_attrib`
+//
+// # Safety
+// `tmp_indices` must address a writable `u64` run holding at least
+// `mesh->num_indices` elements (C's caller-sized scratch run) — a run length
+// the parameter types cannot carry.
 #[cfg(feature = "obj")]
 #[inline(never)]
 pub(crate) unsafe fn obj_setup_attrib(
     uc: &Context,
     mesh: &ObjMeshView,
     tmp_indices: *mut u64,
-    dst: *mut VertexAttrib,
-    p_data: *const List<Real>,
+    dst: &View<VertexAttrib>,
+    p_data: &List<Real>,
     attrib: u32,
     non_disjoint: bool,
     required: bool,
 ) -> Result<(), Fail> {
     // C: `ufbx_real_list data = *p_data;`
-    // SAFETY: caller contract — `p_data` is a readable `List<Real>` (a plain
-    // Copy descriptor, so reading it out leaves the source valid).
+    // SAFETY: `p_data` is a live borrow of a `List<Real>`, and `List` is the
+    // plain `{ data, count }` descriptor with no `Drop`, so the bitwise copy
+    // out leaves the source valid (C struct assignment is memcpy).
     let data: List<Real> = unsafe { core::ptr::read(p_data) };
 
     let num_indices: usize = mesh.num_indices();
@@ -1452,11 +1458,6 @@ pub(crate) unsafe fn obj_setup_attrib(
 
     let dst_indices: *mut u32 = uc.result_view().push::<u32>(num_indices);
     ufbxi_check!(uc, !dst_indices.is_null(), "dst_indices");
-
-    // SAFETY: caller contract — `dst` is a writable `VertexAttrib` out-param
-    // reached through the caller's own arena-owned mesh element, so its
-    // provenance is write-capable.
-    let dst: &View<VertexAttrib> = unsafe { View::<VertexAttrib>::from_ptr(dst) };
 
     // `data` is the value run the caller popped for this attribute and
     // `dst_indices` the fresh non-null `num_indices` run pushed above.
@@ -1728,16 +1729,20 @@ pub(crate) fn obj_pop_meshes(uc: &Context) -> Result<(), Fail> {
                 }
             }
 
-            // SAFETY: each attribute slot is a distinct field of `fbx_mesh`
-            // (the union-compatible `VertexAttrib` reinterpretation of the
-            // generated typed views), `tmp_indices` is the scratch run sized
-            // for the widest mesh, and `vertices[..]` are unaliased locals.
+            // SAFETY: `obj_setup_attrib` is an `unsafe fn` taking the raw
+            // `tmp_indices` scratch run, sized for the widest mesh (its
+            // contract). Each attribute view is minted over a distinct
+            // vertex-attribute field of `fbx_mesh`, live and write-capable
+            // through this mesh element, reinterpreted onto the shared
+            // `ufbx_vertex_attrib` layout prefix (C's cast).
             unsafe {
                 obj_setup_attrib(
                     uc,
                     mesh,
                     tmp_indices,
-                    fbx_mesh.vertex_position_raw() as *mut VertexAttrib,
+                    View::<VertexAttrib>::from_ptr(
+                        fbx_mesh.vertex_position_raw() as *mut VertexAttrib
+                    ),
                     &vertices[ObjAttrib::Position as usize],
                     ObjAttrib::Position as u32,
                     non_disjoint[ObjAttrib::Position as usize],
@@ -1748,7 +1753,7 @@ pub(crate) fn obj_pop_meshes(uc: &Context) -> Result<(), Fail> {
                     uc,
                     mesh,
                     tmp_indices,
-                    fbx_mesh.vertex_uv_raw() as *mut VertexAttrib,
+                    View::<VertexAttrib>::from_ptr(fbx_mesh.vertex_uv_raw() as *mut VertexAttrib),
                     &vertices[ObjAttrib::Uv as usize],
                     ObjAttrib::Uv as u32,
                     non_disjoint[ObjAttrib::Uv as usize],
@@ -1759,7 +1764,9 @@ pub(crate) fn obj_pop_meshes(uc: &Context) -> Result<(), Fail> {
                     uc,
                     mesh,
                     tmp_indices,
-                    fbx_mesh.vertex_normal_raw() as *mut VertexAttrib,
+                    View::<VertexAttrib>::from_ptr(
+                        fbx_mesh.vertex_normal_raw() as *mut VertexAttrib
+                    ),
                     &vertices[ObjAttrib::Normal as usize],
                     ObjAttrib::Normal as u32,
                     non_disjoint[ObjAttrib::Normal as usize],
