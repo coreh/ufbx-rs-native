@@ -2942,7 +2942,7 @@ pub(crate) unsafe fn fetch_blend_keyframes(
 #[inline(never)]
 pub(crate) fn fetch_texture_layers(
     uc: &Context,
-    list: &View<List<TextureLayer>>,
+    list: &ListView<TextureLayer>,
     element: &View<Element>,
 ) -> Result<(), Fail> {
     let mut num_layers: usize = 0;
