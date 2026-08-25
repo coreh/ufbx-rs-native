@@ -2367,11 +2367,14 @@ pub(crate) unsafe fn init_prop_iter(
 }
 
 // ufbx.c:25876-25914 `ufbxi_next_prop_slow`
+///
+/// # Safety
+/// `iter`'s cursors must be as `init_prop_iter` left them: its `prop`/`over`
+/// cursors sit inside the element's prop run and the anim's override run and
+/// stop at the matching `*_end`. This fn dereferences those raw run cursors, an
+/// obligation the `&View<PropIter, Mut>` type cannot carry.
 #[inline(never)]
-pub(crate) fn next_prop_slow(iter: &View<PropIter, Mut>) -> *const Prop {
-    // The `prop`/`over` cursors are as `init_prop_iter` left them: inside the
-    // element's prop run and the anim's override run, stopping at the matching
-    // `*_end`.
+pub(crate) unsafe fn next_prop_slow(iter: &View<PropIter, Mut>) -> *const Prop {
     let prop: *const Prop = iter.prop();
     let over: *const PropOverride = iter.over();
     if prop == iter.prop_end() && over == iter.over_end() {
@@ -2468,7 +2471,11 @@ pub(crate) unsafe fn next_prop(iter: *mut PropIter) -> *const Prop {
         // contract of this `unsafe fn` — reached through `*mut`, so its
         // provenance is write-capable.
         let iter_view: &View<PropIter, Mut> = unsafe { View::<PropIter, Mut>::from_ptr(iter) };
-        next_prop_slow(iter_view)
+        // SAFETY: `iter` is as `init_prop_iter` left it, so its `prop`/`over`
+        // cursors sit inside the element's prop run and the anim's override run
+        // and stop at the matching `*_end` — the run-bounds contract of
+        // `next_prop_slow`.
+        unsafe { next_prop_slow(iter_view) }
     }
 }
 
