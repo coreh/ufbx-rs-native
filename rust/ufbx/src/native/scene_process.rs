@@ -3364,8 +3364,19 @@ pub(crate) fn sort_bone_poses(uc: &Context, pose: &View<Pose>) -> Result<(), Fai
 }
 
 // ufbx.c:19345-19356 `ufbxi_sort_skin_weights`
+//
+// # Safety
+//
+// Every `skin.vertices` entry must describe a run that lies inside
+// `skin.weights`: `weight_begin + num_weights <= weights.count`, with
+// `num_weights <= skin.max_weights_per_vertex`. The view type vouches only that
+// `vertices` and `weights` are each a valid run on their own; relating one
+// list's contents to the other's bounds is the caller's obligation.
 #[inline(never)]
-pub(crate) fn sort_skin_weights(uc: &Context, skin: &View<SkinDeformer>) -> Result<(), Fail> {
+pub(crate) unsafe fn sort_skin_weights(
+    uc: &Context,
+    skin: &View<SkinDeformer>,
+) -> Result<(), Fail> {
     ufbxi_check!(
         uc,
         // SAFETY: the three pointers are `uc`'s own live `ator_tmp` and the
@@ -3385,11 +3396,11 @@ pub(crate) fn sort_skin_weights(uc: &Context, skin: &View<SkinDeformer>) -> Resu
     for i in 0..skin.vertices_view().count() {
         // C: `ufbx_skin_vertex v = skin->vertices.data[i];`
         let v: &View<SkinVertex> = skin.vertices_view().at(i);
-        // SAFETY: a `SkinVertex` describes the half-open range
-        // `weight_begin .. weight_begin + num_weights` of the deformer's `weights`
-        // array, so the run sorted here is in bounds; `num_weights` is at most
-        // `max_weights_per_vertex`, the count `tmp_arr` was just grown for, so the
-        // scratch run is large enough and disjoint from `weights`.
+        // SAFETY: by the fn contract the half-open range
+        // `weight_begin .. weight_begin + num_weights` lies inside the deformer's
+        // `weights` array, so the run sorted here is in bounds; `num_weights` is at
+        // most `max_weights_per_vertex`, the count `tmp_arr` was just grown for, so
+        // the scratch run is large enough and disjoint from `weights`.
         unsafe {
             macro_stable_sort::<SkinWeight>(
                 32,
@@ -8968,7 +8979,11 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
             }
 
             // Sort the vertex weights by descending weight value
-            sort_skin_weights(uc, skin_view)?;
+            // SAFETY: the counting pass above gave each `vertices` entry its own
+            // `num_weights <= max_weights_per_vertex` slots starting at
+            // `weight_begin` inside the `total_weights`-long `weights` run, so
+            // every vertex run named here lies inside `weights`.
+            unsafe { sort_skin_weights(uc, skin_view) }?;
         }
     }
 
