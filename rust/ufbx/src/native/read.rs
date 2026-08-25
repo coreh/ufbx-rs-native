@@ -2968,10 +2968,10 @@ pub(crate) unsafe fn sort_blend_offsets(
 
 // ufbx.c:13010-13075 `ufbxi_read_shape`
 #[inline(never)]
-pub(crate) unsafe fn read_shape(
+pub(crate) fn read_shape(
     uc: &Context,
     node: &NodeView,
-    info: *mut ElementInfo,
+    info: &View<ElementInfo, Mut>,
 ) -> Result<(), Fail> {
     let node_vertices = find_child(node, sp::Vertices.as_ptr());
     let node_indices = find_child(node, sp::Indexes.as_ptr());
@@ -2982,10 +2982,10 @@ pub(crate) unsafe fn read_shape(
     let node_vertices: &NodeView = node_vertices.unwrap();
     let node_indices: &NodeView = node_indices.unwrap();
 
-    // SAFETY: `info` is the caller's live `ufbxi_element_info` and `BlendShape`
+    // SAFETY: `info` views the caller's live `ufbxi_element_info` and `BlendShape`
     // is the element struct for `ElementType::BlendShape`.
     let shape: *mut BlendShape =
-        unsafe { push_element::<BlendShape>(uc, info, ElementType::BlendShape) };
+        unsafe { push_element::<BlendShape>(uc, info.get(), ElementType::BlendShape) };
     ufbxi_check!(uc, !shape.is_null(), "shape");
 
     if uc.opts_view().ignore_geometry() {
@@ -3265,8 +3265,11 @@ pub(crate) unsafe fn read_synthetic_blend_shapes(
         shape_info.name = name;
         shape_info.dom_node = get_dom_node(uc, Some(n));
 
-        // SAFETY: `&raw mut shape_info` is a live local `ufbxi_element_info`.
-        unsafe { read_shape(uc, n, &raw mut shape_info) }?;
+        // SAFETY: `shape_info` is this frame's own `ufbxi_element_info` local —
+        // write-capable provenance, live and unmoved across the call.
+        read_shape(uc, n, unsafe {
+            View::<ElementInfo, Mut>::from_ptr(&raw mut shape_info)
+        })?;
 
         connect_oo(uc, channel_fbx_id, deformer_fbx_id)?;
         connect_oo(uc, shape_info.fbx_id, channel_fbx_id)?;
@@ -7464,7 +7467,9 @@ pub(crate) fn read_object(uc: &Context, node: &NodeView) -> Result<(), Fail> {
             if sub_type == sp::Mesh.as_ptr() {
                 read_mesh(uc, node, &raw mut info)?;
             } else if sub_type == sp::Shape.as_ptr() {
-                read_shape(uc, node, &raw mut info)?;
+                // SAFETY: `info` is this frame's own `ufbxi_element_info` local —
+                // write-capable provenance, live and unmoved across the call.
+                read_shape(uc, node, View::<ElementInfo, Mut>::from_ptr(&raw mut info))?;
             } else if sub_type == sp::NurbsCurve.as_ptr() {
                 read_nurbs_curve(uc, node, &raw mut info)?;
             } else if sub_type == sp::NurbsSurface.as_ptr() {
