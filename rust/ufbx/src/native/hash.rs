@@ -671,34 +671,37 @@ unsafe fn aa_tree_insert_rec(
 }
 
 // ufbx.c:4483-4498 `ufbxi_aa_tree_find`
+//
+// # Safety
+// As `aa_tree_insert`: `value` points at a key of the map's own key discipline
+// — the untyped `const void *` the map's `cmp_fn` was initialized for, whose
+// pointees the comparator may follow — and `item_size` is that map's element
+// stride. Neither is expressible in the signature: the map is key-type-erased
+// in C and stays so here.
 #[inline(never)]
 pub(crate) unsafe fn aa_tree_find(
-    map: *mut Map,
+    map: &MapView,
     value: *const c_void,
     item_size: usize,
 ) -> *mut c_void {
-    // SAFETY: caller contract — `map` points at a live `Map`.
-    let mut node = unsafe { (*map).aa_root };
-    while !node.is_null() {
-        // SAFETY: `node` is non-null (loop guard) and a valid tree node; its
-        // `index` addresses one of the map's `items`, whose element stride is
-        // the matching `item_size`, so `entry` lands inside `items`.
-        let entry = unsafe {
-            ((*map).items as *mut u8).add((*node).index as usize * item_size) as *mut c_void
-        };
+    let mut node = map.aa_root_view();
+    // C: `while (node)` — the null check is the `Some` arm.
+    while let Some(n) = node {
+        // SAFETY: `n`'s `index` addresses one of the map's `items`, whose
+        // element stride is the matching `item_size` (this fn's contract), so
+        // the computed `entry` lands inside `items`.
+        let entry =
+            unsafe { (map.items() as *mut u8).add(n.index() as usize * item_size) as *mut c_void };
         // C-parity: C calls through the raw `cmp_fn` pointer without a null check.
         // SAFETY: `map.cmp_fn` is the non-null comparator installed by
-        // `map_init`; calling it with `cmp_user` and the two same-key-discipline
-        // pointers `value`/`entry` is the C-callback contract.
-        let cmp = unsafe { ((*map).cmp_fn.unwrap_unchecked())((*map).cmp_user, value, entry) };
+        // `map_init`; calling it with the map's `cmp_user` and the two
+        // same-key-discipline pointers `value`/`entry` is the C-callback
+        // contract.
+        let cmp = unsafe { (map.cmp_fn().unwrap_unchecked())(map.cmp_user(), value, entry) };
         if cmp < 0 {
-            // SAFETY: `node` is a valid tree node; its `left` link is a valid
-            // (possibly null) tree pointer.
-            node = unsafe { (*node).left };
+            node = n.left_view();
         } else if cmp > 0 {
-            // SAFETY: `node` is a valid tree node; its `right` link is a valid
-            // (possibly null) tree pointer.
-            node = unsafe { (*node).right };
+            node = n.right_view();
         } else {
             return entry;
         }
@@ -932,10 +935,12 @@ pub(crate) unsafe fn map_find_size(
         } else if (entry & mask as u64) < scan as u64 {
             // SAFETY: caller contract — `map` points at a live `Map`.
             if unsafe { !(*map).aa_root.is_null() } {
-                // SAFETY: forwards this fn's contract (live `map`, `value`
-                // key-compatible, `size` the element stride) to the AA-tree
-                // fallback lookup.
-                return unsafe { aa_tree_find(map, value, size) };
+                // SAFETY: the mint carries this fn's caller contract (live,
+                // writable `Map`) into the view.
+                let map_view = unsafe { MapView::from_ptr(map) };
+                // SAFETY: forwards this fn's contract (`value` key-compatible,
+                // `size` the element stride) to the AA-tree fallback lookup.
+                return unsafe { aa_tree_find(map_view, value, size) };
             } else {
                 return core::ptr::null_mut();
             }
