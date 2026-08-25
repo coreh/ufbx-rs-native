@@ -3149,10 +3149,10 @@ pub(crate) fn read_shape(
                 }
             }
         }
-        // SAFETY: `uc.tmp_stack_mut_ptr()` is uc's own live `tmp_stack` buf and
-        // the `num_offsets` `BlendOffset` values pushed above are still its top;
+        // SAFETY: the `num_offsets` `BlendOffset` values pushed above are
+        // still the top of uc's own `tmp_stack` — `pop`'s depth obligation;
         // a null `dst` discards them.
-        unsafe { pop::<BlendOffset>(uc.tmp_stack_mut_ptr(), num_offsets, core::ptr::null_mut()) };
+        unsafe { pop::<BlendOffset>(uc.tmp_stack_view(), num_offsets, core::ptr::null_mut()) };
     }
 
     Ok(())
@@ -11190,7 +11190,7 @@ pub(crate) fn resolve_relative_filename<M: Mode>(
     // onto it above and are still its topmost allocation; a null destination
     // discards them.
     unsafe {
-        pop::<u8>(uc.tmp_stack_mut_ptr(), result_cap, core::ptr::null_mut());
+        pop::<u8>(uc.tmp_stack_view(), result_cap, core::ptr::null_mut());
     }
 
     // `dst` is the interned string, which outlives the popped scratch run.

@@ -2453,12 +2453,15 @@ fn ascii_parse_node_rec(
                 num_values = 0;
                 arr_data = ZERO_SIZE_BUFFER.as_ptr() as *mut c_void;
             } else {
-                // SAFETY: `arr_buf` and `uc`'s temp stack are live bufs; moves the
-                // `num_values` pushed elements from the stack into `arr_buf`.
+                // SAFETY: `arr_buf` addresses a live, initialized `Buf` in
+                // context/arena-owned memory with write-capable provenance —
+                // the `BufView::from_ptr` mint invariant; `uc`'s temp stack
+                // holds the `num_values` elements moved out of it into
+                // `arr_buf`, `push_pop_size`'s depth obligation.
                 arr_data = unsafe {
                     push_pop_size(
-                        arr_buf,
-                        uc.tmp_stack_mut_ptr(),
+                        BufView::from_ptr(arr_buf),
+                        uc.tmp_stack_view(),
                         arr_elem_size,
                         num_values as usize,
                     )

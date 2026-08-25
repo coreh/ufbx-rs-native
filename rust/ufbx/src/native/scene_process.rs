@@ -2304,8 +2304,8 @@ pub(crate) fn linearize_nodes(uc: &Context) -> Result<(), Fail> {
     // discarding the values.
     unsafe {
         // Pop the temporary arrays
-        pop::<usize>(uc.tmp_stack_mut_ptr(), num_nodes, ptr::null_mut());
-        pop::<*mut Node>(uc.tmp_stack_mut_ptr(), num_nodes, ptr::null_mut());
+        pop::<usize>(uc.tmp_stack_view(), num_nodes, ptr::null_mut());
+        pop::<*mut Node>(uc.tmp_stack_view(), num_nodes, ptr::null_mut());
     }
 
     Ok(())
@@ -5484,7 +5484,7 @@ pub(crate) unsafe fn generate_normals(uc: &Context, mesh: &View<Mesh>) -> Result
 
     // SAFETY: `tmp_stack` is `uc`'s own live buffer and the `num_indices`
     // `TopoEdge`s pushed above are still its topmost entries.
-    unsafe { pop::<TopoEdge>(uc.tmp_stack_mut_ptr(), num_indices, ptr::null_mut()) };
+    unsafe { pop::<TopoEdge>(uc.tmp_stack_view(), num_indices, ptr::null_mut()) };
 
     Ok(())
 }
@@ -5531,7 +5531,7 @@ pub(crate) unsafe fn push_prop_prefix(
     if stack_size > 0 {
         // SAFETY: `stack_size > 0` only when the push above ran, so those bytes
         // are still `tmp_stack`'s topmost entries.
-        unsafe { pop::<u8>(uc.tmp_stack_mut_ptr(), stack_size, ptr::null_mut()) };
+        unsafe { pop::<u8>(uc.tmp_stack_view(), stack_size, ptr::null_mut()) };
     }
 
     Ok(())
@@ -6518,7 +6518,7 @@ pub(crate) fn fetch_file_textures(uc: &Context) -> Result<(), Fail> {
         let mut texture: *mut Texture = ptr::null_mut();
         // SAFETY: pops one texture pointer from uc's own tmp stack (the loop
         // counter guarantees an entry is there) into an unaliased local.
-        unsafe { pop::<*mut Texture>(uc.tmp_stack_mut_ptr(), 1, &raw mut texture) };
+        unsafe { pop::<*mut Texture>(uc.tmp_stack_view(), 1, &raw mut texture) };
 
         // SAFETY: `states` is the fresh zeroed run pushed above, one byte per
         // scene texture, indexed here by the texture's own `typed_id`.
@@ -10168,12 +10168,12 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
                             mat.textures_view().set_data(texs);
                             mat.textures_view().set_count(num_textures_in_material);
                         } else {
-                            // SAFETY: `tmp_stack_mut_ptr` hands out `uc`'s own live
-                            // tmp stack, which holds the `num_textures_in_material`
-                            // material textures pushed for this material.
+                            // SAFETY: `uc`'s own live tmp stack holds the
+                            // `num_textures_in_material` material textures
+                            // pushed for this material.
                             unsafe {
                                 pop::<MaterialTexture>(
-                                    uc.tmp_stack_mut_ptr(),
+                                    uc.tmp_stack_view(),
                                     num_textures_in_material,
                                     ptr::null_mut(),
                                 )

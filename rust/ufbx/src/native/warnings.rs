@@ -18,7 +18,7 @@
 #![allow(dead_code, unused_macros, unused_imports)]
 
 use crate::generated::{Error, Warning, WarningType};
-use crate::native::buf::{self, Buf};
+use crate::native::buf::{self, Buf, BufView};
 use crate::native::error::{clean_string_utf8, ufbxi_check_err, vsnprintf, Fail, FailStr};
 use crate::native::printf::PrintArg;
 use crate::native::view::{view_raw_mut, view_write};
@@ -254,11 +254,17 @@ pub(crate) unsafe fn pop_warnings(
 ) -> Result<(), Fail> {
     // SAFETY: `ws` is uc's live warnings state and `warnings` the caller's
     // out-list (fn raw-param contract); the pop drains ws's own tmp_stack
-    // into ws's stored result buffer.
+    // into ws's stored result buffer. Both bufs are live, initialized and
+    // context-owned with write-capable provenance — the `BufView::from_ptr`
+    // mint invariant — and the popped count is read from `tmp_stack` itself,
+    // discharging `push_pop`'s depth obligation.
     unsafe {
         (*warnings).count = (*ws).tmp_stack.num_items;
-        (*warnings).data =
-            buf::push_pop::<Warning>((*ws).result, &raw mut (*ws).tmp_stack, (*warnings).count);
+        (*warnings).data = buf::push_pop::<Warning>(
+            BufView::from_ptr((*ws).result),
+            BufView::from_ptr(&raw mut (*ws).tmp_stack),
+            (*warnings).count,
+        );
     }
     ufbxi_check_err!(
         // SAFETY: `(*ws).error` is the context's live error slot (fn

@@ -1202,12 +1202,12 @@ pub(crate) fn obj_parse_comment(uc: &Context) -> Result<(), Fail> {
             // the arenas hold at least that much); null destination drops them.
             unsafe {
                 pop::<bool>(
-                    uc.obj().tmp_color_valid_mut_ptr(),
+                    uc.obj().tmp_color_valid_view(),
                     num_pop,
                     core::ptr::null_mut(),
                 );
                 pop::<Real>(
-                    uc.obj().tmp_vertices_mut_ptr(ObjAttrib::Color as usize),
+                    uc.obj().tmp_vertices_at(ObjAttrib::Color as usize),
                     num_pop * 4,
                     core::ptr::null_mut(),
                 );
@@ -1406,7 +1406,7 @@ pub(crate) fn obj_pop_vertices(
     // SAFETY: pops `count` items off this attribute's own `tmp_vertices` arena
     // (`count` is that arena's item count above `min_index`, computed above)
     // into the `count`-element tail of the fresh run.
-    unsafe { pop::<Real>(uc.obj().tmp_vertices_mut_ptr(attrib as usize), count, data) };
+    unsafe { pop::<Real>(uc.obj().tmp_vertices_at(attrib as usize), count, data) };
 
     dst.data = data;
     dst.count = count;
@@ -1454,7 +1454,7 @@ pub(crate) unsafe fn obj_setup_attrib(
         // attribute's own `tmp_indices` arena; a null destination drops them.
         unsafe {
             pop::<u64>(
-                uc.obj().tmp_indices_mut_ptr(attrib as usize),
+                uc.obj().tmp_indices_at(attrib as usize),
                 num_indices,
                 core::ptr::null_mut(),
             );
@@ -1469,7 +1469,7 @@ pub(crate) unsafe fn obj_setup_attrib(
     // sized for the widest mesh.
     unsafe {
         pop::<u64>(
-            uc.obj().tmp_indices_mut_ptr(attrib as usize),
+            uc.obj().tmp_indices_at(attrib as usize),
             num_indices,
             tmp_indices,
         );
@@ -1580,7 +1580,7 @@ pub(crate) fn obj_pop_meshes(uc: &Context) -> Result<(), Fail> {
         // filled (`num_left` of the attribute's own `tmp_indices` arena).
         unsafe {
             pop::<u64>(
-                uc.obj().tmp_indices_mut_ptr(i),
+                uc.obj().tmp_indices_at(i),
                 uc.obj().fast_indices_at(i).num_left(),
                 core::ptr::null_mut(),
             );
@@ -1743,7 +1743,7 @@ pub(crate) fn obj_pop_meshes(uc: &Context) -> Result<(), Fail> {
                     // off the obj parser's `tmp_face_group` arena.
                     unsafe {
                         pop::<u32>(
-                            uc.obj().tmp_face_group_mut_ptr(),
+                            uc.obj().tmp_face_group_view(),
                             num_faces,
                             core::ptr::null_mut(),
                         );

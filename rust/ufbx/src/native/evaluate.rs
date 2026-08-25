@@ -5696,12 +5696,6 @@ impl BakeContext {
         unsafe { &*(&raw mut (*self.get()).opts as *mut BakeOptsView) }
     }
 
-    // `tmp_bake_stack` — raw-ptr getter (address of field for out-param/mutation sites).
-    #[inline(always)]
-    pub(crate) fn tmp_bake_stack_mut_ptr(&self) -> *mut Buf {
-        view_raw_mut!(self, tmp_bake_stack)
-    }
-
     // `tmp_arr_size` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn tmp_arr_size_mut_ptr(&self) -> *mut usize {
@@ -7597,7 +7591,7 @@ pub(crate) unsafe fn bake_node(
         // SAFETY: `bc.tmp_bake_stack` is `bc`'s own buffer, holding at least one
         // `uint32_t` (the loop condition), and `child_id` is a live local slot
         // for the popped value.
-        unsafe { pop::<u32>(bc.tmp_bake_stack_mut_ptr(), 1, &raw mut child_id) };
+        unsafe { pop::<u32>(bc.tmp_bake_stack_view(), 1, &raw mut child_id) };
         // SAFETY: `child_id` was pushed as a scene element id by `bake_node_imp`,
         // and an empty prop run is described by a null base with count zero.
         unsafe { bake_node_imp(bc, child_id, ptr::null_mut(), 0) }?;

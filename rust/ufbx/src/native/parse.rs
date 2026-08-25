@@ -1123,10 +1123,6 @@ impl ObjContext {
     }
 
     #[inline(always)]
-    pub(crate) fn tmp_color_valid_mut_ptr(&self) -> *mut crate::native::buf::Buf {
-        view_raw_mut!(self, tmp_color_valid)
-    }
-    #[inline(always)]
     pub(crate) fn tmp_color_valid_view(&self) -> &crate::native::buf::BufView {
         unsafe { &*(&raw mut (*self.get()).tmp_color_valid as *mut crate::native::buf::BufView) }
     }
@@ -1151,10 +1147,6 @@ impl ObjContext {
         unsafe { &*(&raw mut (*self.get()).tmp_face_smoothing as *mut crate::native::buf::BufView) }
     }
 
-    #[inline(always)]
-    pub(crate) fn tmp_face_group_mut_ptr(&self) -> *mut crate::native::buf::Buf {
-        view_raw_mut!(self, tmp_face_group)
-    }
     #[inline(always)]
     pub(crate) fn tmp_face_group_view(&self) -> &crate::native::buf::BufView {
         unsafe { &*(&raw mut (*self.get()).tmp_face_group as *mut crate::native::buf::BufView) }
@@ -1391,18 +1383,10 @@ impl ObjContext {
     pub(crate) fn tmp_vertices_at(&self, i: usize) -> &crate::native::buf::BufView {
         unsafe { &*(&raw mut (*self.get()).tmp_vertices[i] as *mut crate::native::buf::BufView) }
     }
-    #[inline(always)]
-    pub(crate) fn tmp_vertices_mut_ptr(&self, i: usize) -> *mut crate::native::buf::Buf {
-        unsafe { &raw mut (*self.get()).tmp_vertices[i] }
-    }
 
     #[inline(always)]
     pub(crate) fn tmp_indices_at(&self, i: usize) -> &crate::native::buf::BufView {
         unsafe { &*(&raw mut (*self.get()).tmp_indices[i] as *mut crate::native::buf::BufView) }
-    }
-    #[inline(always)]
-    pub(crate) fn tmp_indices_mut_ptr(&self, i: usize) -> *mut crate::native::buf::Buf {
-        unsafe { &raw mut (*self.get()).tmp_indices[i] }
     }
 
     #[inline(always)]
@@ -3193,12 +3177,6 @@ impl Context {
     #[inline(always)]
     pub(crate) fn result_mut_ptr(&self) -> *mut Buf {
         view_raw_mut!(self, result)
-    }
-
-    // `tmp_stack` — raw-ptr getter (address of field for out-param/mutation sites).
-    #[inline(always)]
-    pub(crate) fn tmp_stack_mut_ptr(&self) -> *mut Buf {
-        view_raw_mut!(self, tmp_stack)
     }
 
     // Reborrow a raw `*mut InnerContext` as `&Context` (layout-identical via
@@ -6955,9 +6933,9 @@ pub(crate) unsafe fn parse_toplevel(uc: &Context, name: *const u8) -> Result<(),
         // SAFETY: `top_nodes_len >= 1` (just incremented), so `top_nodes_len - 1`
         // indexes the just-grown array's last slot.
         let node: *mut Node = unsafe { uc.top_nodes().add(uc.top_nodes_len() - 1) };
-        // SAFETY: `tmp_stack_mut_ptr` is `uc`'s own stack buffer and `node` is a
-        // live slot receiving the popped `Node` — `pop`'s contract.
-        unsafe { pop::<Node>(uc.tmp_stack_mut_ptr(), 1, node) };
+        // SAFETY: the node parsed above is the top of `uc`'s own stack buffer
+        // and `node` is a live slot receiving it — `pop`'s contract.
+        unsafe { pop::<Node>(uc.tmp_stack_view(), 1, node) };
         if uc.opts_view().retain_dom() {
             // SAFETY: `node` is a live top-node slot in `uc`'s own `top_nodes`
             // array, which outlives the call.
@@ -7053,9 +7031,10 @@ pub(crate) fn parse_toplevel_child<'a>(
                 ufbxi_check!(uc, !dst.is_null(), "dst");
             }
 
-            // SAFETY: `tmp_stack_mut_ptr` is `uc`'s own stack buffer and `dst` a
-            // live `Node` slot receiving the popped node — `pop`'s contract.
-            unsafe { pop::<Node>(uc.tmp_stack_mut_ptr(), 1, dst) };
+            // SAFETY: the node parsed above is the top of `uc`'s own stack
+            // buffer and `dst` a live `Node` slot receiving it — `pop`'s
+            // contract.
+            unsafe { pop::<Node>(uc.tmp_stack_view(), 1, dst) };
 
             // SAFETY: `dst` is the just-popped live `Node`, held either in uc's
             // own `top_child` field or in a `tmp_buf` push — uc-owned arena
@@ -7119,9 +7098,9 @@ pub(crate) fn parse_legacy_toplevel(uc: &Context) -> Result<(), Fail> {
     }
 
     // SAFETY: the parse above pushed the node onto `uc`'s own `tmp_stack`, so
-    // popping one `Node` into `uc`'s own `legacy_node` field (both addressed
-    // through their raw-ptr getters) matches what is stored there.
-    unsafe { pop::<Node>(uc.tmp_stack_mut_ptr(), 1, uc.legacy_node_mut_ptr()) };
+    // popping one `Node` into `uc`'s own `legacy_node` field (addressed through
+    // its raw-ptr getter) matches what is stored there.
+    unsafe { pop::<Node>(uc.tmp_stack_view(), 1, uc.legacy_node_mut_ptr()) };
     uc.set_top_child_index(0);
     uc.set_top_node(uc.legacy_node_mut_ptr());
 
