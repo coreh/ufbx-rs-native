@@ -133,7 +133,7 @@ pub(crate) unsafe fn swap_endian(
             // elements of one byte each.
             unsafe {
                 grow_array(
-                    uc.ator_tmp_mut_ptr(),
+                    uc.ator_tmp_view(),
                     uc.swap_arr_mut_ptr(),
                     uc.swap_arr_size_mut_ptr(),
                     total_size
@@ -1233,7 +1233,7 @@ fn binary_parse_node_rec(
                     // to hold `decoded_data_size` bytes.
                     unsafe {
                         grow_array(
-                            uc.ator_tmp_mut_ptr(),
+                            uc.ator_tmp_view(),
                             uc.tmp_arr_mut_ptr(),
                             uc.tmp_arr_size_mut_ptr(),
                             decoded_data_size

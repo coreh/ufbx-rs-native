@@ -119,7 +119,7 @@ pub(crate) fn ascii_refill(uc: &Context) -> u8 {
                     // allocator (uc construction invariant).
                     unsafe {
                         crate::native::allocator::grow_array::<u8>(
-                            uc.ator_tmp_mut_ptr(),
+                            uc.ator_tmp_view(),
                             uc.read_buffer_mut_ptr(),
                             uc.read_buffer_size_mut_ptr(),
                             new_size
@@ -398,7 +398,7 @@ pub(crate) fn ascii_push_token_char(
             // construction invariant).
             unsafe {
                 crate::native::allocator::grow_array::<u8>(
-                    uc.ator_tmp_mut_ptr(),
+                    uc.ator_tmp_view(),
                     token.str_data_mut_ptr(),
                     token.str_cap_mut_ptr(),
                     len
@@ -444,7 +444,7 @@ pub(crate) unsafe fn ascii_push_token_string(
             // construction invariant).
             unsafe {
                 crate::native::allocator::grow_array::<u8>(
-                    uc.ator_tmp_mut_ptr(),
+                    uc.ator_tmp_view(),
                     token.str_data_mut_ptr(),
                     token.str_cap_mut_ptr(),
                     len

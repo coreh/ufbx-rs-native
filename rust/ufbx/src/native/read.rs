@@ -395,7 +395,7 @@ pub(crate) unsafe fn sort_properties(
         // views — the matched triple `grow_array` requires.
         unsafe {
             grow_array::<u8>(
-                uc.ator_tmp_mut_ptr(),
+                uc.ator_tmp_view(),
                 uc.tmp_arr_mut_ptr(),
                 uc.tmp_arr_size_mut_ptr(),
                 count.wrapping_mul(size_of::<Prop>()),
@@ -2877,7 +2877,7 @@ pub(crate) unsafe fn sort_uv_sets(
         // views — the matched triple `grow_array` requires.
         unsafe {
             grow_array::<u8>(
-                uc.ator_tmp_mut_ptr(),
+                uc.ator_tmp_view(),
                 uc.tmp_arr_mut_ptr(),
                 uc.tmp_arr_size_mut_ptr(),
                 count * size_of::<UvSet>(),
@@ -2917,7 +2917,7 @@ pub(crate) unsafe fn sort_color_sets(
         // views — the matched triple `grow_array` requires.
         unsafe {
             grow_array::<u8>(
-                uc.ator_tmp_mut_ptr(),
+                uc.ator_tmp_view(),
                 uc.tmp_arr_mut_ptr(),
                 uc.tmp_arr_size_mut_ptr(),
                 count * size_of::<ColorSet>(),
@@ -2982,7 +2982,7 @@ pub(crate) unsafe fn sort_blend_offsets(
         // views — the matched triple `grow_array` requires.
         unsafe {
             grow_array::<u8>(
-                uc.ator_tmp_mut_ptr(),
+                uc.ator_tmp_view(),
                 uc.tmp_arr_mut_ptr(),
                 uc.tmp_arr_size_mut_ptr(),
                 count * size_of::<BlendOffset>(),
@@ -6828,7 +6828,7 @@ pub(crate) unsafe fn sort_shader_prop_bindings(
         uc,
         unsafe {
             grow_array::<u8>(
-                uc.ator_tmp_mut_ptr(),
+                uc.ator_tmp_view(),
                 uc.tmp_arr_mut_ptr(),
                 uc.tmp_arr_size_mut_ptr(),
                 count.wrapping_mul(size_of::<ShaderPropBinding>()),
@@ -8069,7 +8069,7 @@ pub(crate) unsafe fn read_objects_threaded(uc: &Context) -> Result<(), Fail> {
                     uc,
                     unsafe {
                         grow_array::<u8>(
-                            uc.ator_tmp_mut_ptr(),
+                            uc.ator_tmp_view(),
                             uc.read_buffer_mut_ptr(),
                             uc.read_buffer_size_mut_ptr(),
                             size,

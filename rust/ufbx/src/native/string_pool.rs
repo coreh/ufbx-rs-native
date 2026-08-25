@@ -546,12 +546,13 @@ pub(crate) fn sanitize_string(
         ufbxi_check_err!(
             pool.error_view(),
             // SAFETY: the growth targets are the pool's own `temp_str`/`temp_cap`
-            // buffer pair, grown through the pool's own `map.ator` — the pairing
-            // `grow_array` requires. The verbatim C condition text follows, so
-            // wrapping does not perturb the recorded error string.
+            // buffer pair, grown through the pool's own `map.ator`, minted from
+            // that live slot — the pairing `grow_array` requires. The verbatim C
+            // condition text follows, so wrapping does not perturb the recorded
+            // error string.
             unsafe {
                 grow_array::<u8>(
-                    pool.map_view().ator(),
+                    AllocatorView::from_ptr(pool.map_view().ator()),
                     pool.temp_str_mut_ptr(),
                     pool.temp_cap_mut_ptr(),
                     length * 2 + 64
@@ -581,12 +582,13 @@ pub(crate) fn sanitize_string(
         ufbxi_check_err!(
             pool.error_view(),
             // SAFETY: the growth targets are the pool's own `temp_str`/`temp_cap`
-            // buffer pair, grown through the pool's own `map.ator` — the pairing
-            // `grow_array` requires. The verbatim C condition text follows, so
-            // wrapping does not perturb the recorded error string.
+            // buffer pair, grown through the pool's own `map.ator`, minted from
+            // that live slot — the pairing `grow_array` requires. The verbatim C
+            // condition text follows, so wrapping does not perturb the recorded
+            // error string.
             unsafe {
                 grow_array::<u8>(
-                    pool.map_view().ator(),
+                    AllocatorView::from_ptr(pool.map_view().ator()),
                     pool.temp_str_mut_ptr(),
                     pool.temp_cap_mut_ptr(),
                     length + 64
@@ -612,12 +614,12 @@ pub(crate) fn sanitize_string(
                 pool.error_view(),
                 // SAFETY: the growth targets are the pool's own
                 // `temp_str`/`temp_cap` buffer pair, grown through the pool's own
-                // `map.ator` — the pairing `grow_array` requires. The verbatim C
-                // condition text follows, so wrapping does not perturb the
-                // recorded error string.
+                // `map.ator`, minted from that live slot — the pairing
+                // `grow_array` requires. The verbatim C condition text follows,
+                // so wrapping does not perturb the recorded error string.
                 unsafe {
                     grow_array::<u8>(
-                        pool.map_view().ator(),
+                        AllocatorView::from_ptr(pool.map_view().ator()),
                         pool.temp_str_mut_ptr(),
                         pool.temp_cap_mut_ptr(),
                         dst_len + 16

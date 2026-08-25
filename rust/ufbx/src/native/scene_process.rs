@@ -1409,7 +1409,7 @@ pub(crate) unsafe fn sort_name_elements(
         // `tmp_arr`/`tmp_arr_size` slots that pair with it.
         unsafe {
             grow_array::<u8>(
-                uc.ator_tmp_mut_ptr(),
+                uc.ator_tmp_view(),
                 uc.tmp_arr_mut_ptr(),
                 uc.tmp_arr_size_mut_ptr(),
                 count.wrapping_mul(size_of::<NameElement>()),
@@ -1481,7 +1481,7 @@ pub(crate) unsafe fn sort_node_ptrs(
         // `tmp_arr`/`tmp_arr_size` slots that pair with it.
         unsafe {
             grow_array::<u8>(
-                uc.ator_tmp_mut_ptr(),
+                uc.ator_tmp_view(),
                 uc.tmp_arr_mut_ptr(),
                 uc.tmp_arr_size_mut_ptr(),
                 count.wrapping_mul(size_of::<*mut Node>()),
@@ -1540,7 +1540,7 @@ pub(crate) unsafe fn sort_tmp_material_textures(
         // `tmp_arr`/`tmp_arr_size` slots that pair with it.
         unsafe {
             grow_array::<u8>(
-                uc.ator_tmp_mut_ptr(),
+                uc.ator_tmp_view(),
                 uc.tmp_arr_mut_ptr(),
                 uc.tmp_arr_size_mut_ptr(),
                 count.wrapping_mul(size_of::<TmpMaterialTexture>()),
@@ -1626,7 +1626,7 @@ pub(crate) unsafe fn sort_connections(
         // `tmp_arr`/`tmp_arr_size` slots that pair with it.
         unsafe {
             grow_array::<u8>(
-                uc.ator_tmp_mut_ptr(),
+                uc.ator_tmp_view(),
                 uc.tmp_arr_mut_ptr(),
                 uc.tmp_arr_size_mut_ptr(),
                 count.wrapping_mul(size_of::<Connection>()),
@@ -3245,7 +3245,7 @@ pub(crate) unsafe fn sort_anim_props(
         // `tmp_arr`/`tmp_arr_size` slots that pair with it.
         unsafe {
             grow_array::<u8>(
-                uc.ator_tmp_mut_ptr(),
+                uc.ator_tmp_view(),
                 uc.tmp_arr_mut_ptr(),
                 uc.tmp_arr_size_mut_ptr(),
                 count.wrapping_mul(size_of::<AnimProp>()),
@@ -3298,7 +3298,7 @@ pub(crate) unsafe fn sort_material_textures(
         // `tmp_arr`/`tmp_arr_size` slots that pair with it.
         unsafe {
             grow_array::<u8>(
-                uc.ator_tmp_mut_ptr(),
+                uc.ator_tmp_view(),
                 uc.tmp_arr_mut_ptr(),
                 uc.tmp_arr_size_mut_ptr(),
                 count.wrapping_mul(size_of::<MaterialTexture>()),
@@ -3385,7 +3385,7 @@ pub(crate) fn sort_bone_poses(uc: &Context, pose: &View<Pose>) -> Result<(), Fai
         // `tmp_arr`/`tmp_arr_size` slots that pair with it.
         unsafe {
             grow_array::<u8>(
-                uc.ator_tmp_mut_ptr(),
+                uc.ator_tmp_view(),
                 uc.tmp_arr_mut_ptr(),
                 uc.tmp_arr_size_mut_ptr(),
                 pose.bone_poses_view()
@@ -3433,7 +3433,7 @@ pub(crate) unsafe fn sort_skin_weights(
         // `tmp_arr`/`tmp_arr_size` slots that pair with it.
         unsafe {
             grow_array::<u8>(
-                uc.ator_tmp_mut_ptr(),
+                uc.ator_tmp_view(),
                 uc.tmp_arr_mut_ptr(),
                 uc.tmp_arr_size_mut_ptr(),
                 skin.max_weights_per_vertex()
@@ -3493,7 +3493,7 @@ pub(crate) unsafe fn sort_blend_keyframes(
         // `tmp_arr`/`tmp_arr_size` slots that pair with it.
         unsafe {
             grow_array::<u8>(
-                uc.ator_tmp_mut_ptr(),
+                uc.ator_tmp_view(),
                 uc.tmp_arr_mut_ptr(),
                 uc.tmp_arr_size_mut_ptr(),
                 count.wrapping_mul(size_of::<BlendKeyframe>()),
@@ -5980,7 +5980,7 @@ pub(crate) fn finalize_shader_texture<'a>(
             ufbxi_check!(
                 uc,
                 grow_array::<u8>(
-                    uc.ator_tmp_mut_ptr(),
+                    uc.ator_tmp_view(),
                     uc.tmp_arr_mut_ptr(),
                     uc.tmp_arr_size_mut_ptr(),
                     (*shader)
@@ -6395,7 +6395,7 @@ pub(crate) unsafe fn deduplicate_textures(
         // `tmp_arr`/`tmp_arr_size` slots that pair with it.
         unsafe {
             grow_array::<u8>(
-                uc.ator_tmp_mut_ptr(),
+                uc.ator_tmp_view(),
                 uc.tmp_arr_mut_ptr(),
                 uc.tmp_arr_size_mut_ptr(),
                 count.wrapping_mul(size_of::<OrderedTexture>()),
@@ -7050,7 +7050,7 @@ pub(crate) unsafe fn flip_winding(uc: &Context, mesh: &View<Mesh>) -> Result<(),
             // and tmp-array header.
             unsafe {
                 grow_array::<u8>(
-                    uc.ator_tmp_mut_ptr(),
+                    uc.ator_tmp_view(),
                     uc.tmp_arr_mut_ptr(),
                     uc.tmp_arr_size_mut_ptr(),
                     mesh.num_indices().wrapping_add(1).wrapping_mul(size_of::<u32>()),
@@ -7620,7 +7620,7 @@ pub(crate) unsafe fn absolute_to_relative_path(
         // tmp-array header.
         unsafe {
             grow_array::<u8>(
-                uc.ator_tmp_mut_ptr(),
+                uc.ator_tmp_view(),
                 uc.tmp_arr_mut_ptr(),
                 uc.tmp_arr_size_mut_ptr(),
                 max_length,
@@ -7801,7 +7801,7 @@ pub(crate) unsafe fn sort_file_contents(
         // tmp-array header.
         unsafe {
             grow_array::<u8>(
-                uc.ator_tmp_mut_ptr(),
+                uc.ator_tmp_view(),
                 uc.tmp_arr_mut_ptr(),
                 uc.tmp_arr_size_mut_ptr(),
                 count.wrapping_mul(size_of::<FileContent>()),

@@ -761,26 +761,27 @@ pub(crate) unsafe fn free<T>(ator: Option<&AllocatorView>, ptr: *mut T, n: usize
 }
 
 // ufbx.c:3806 `ufbxi_grow_array(ator, p_ptr, p_cap, n)` — `sizeof(**(p_ptr))`
+//
+// The `&AllocatorView` param carries the allocator's liveness and write-capable
+// provenance; the fn stays `unsafe` for `p_ptr`/`p_cap`, the same pair of raw
+// caller-memory slots `grow_array_size` declares.
+//
+// # Safety
+//
+// `p_ptr` must point at a live, writable `*mut T` slot and `p_cap` at the live,
+// writable `usize` capacity beside it, together describing either a block of
+// `*p_cap` `T`s allocated through `ator` or `(null, 0)`.
 #[inline(always)]
 #[must_use]
 pub(crate) unsafe fn grow_array<T>(
-    ator: *mut Allocator,
+    ator: &AllocatorView,
     p_ptr: *mut *mut T,
     p_cap: *mut usize,
     n: usize,
 ) -> bool {
-    // SAFETY: `ator` points at a live, unmoved `Allocator` — the raw-pointer
-    // contract of this `unsafe fn`; the mint hands that vouch to
-    // `grow_array_size`, as do the caller's live pointer/capacity slots.
-    unsafe {
-        grow_array_size(
-            AllocatorView::from_ptr(ator),
-            size_of::<T>(),
-            p_ptr as *mut c_void,
-            p_cap,
-            n,
-        )
-    }
+    // SAFETY: the caller's live pointer/capacity slots are exactly the
+    // `p_ptr`/`p_cap` contract of `grow_array_size`.
+    unsafe { grow_array_size(ator, size_of::<T>(), p_ptr as *mut c_void, p_cap, n) }
 }
 
 // ufbx.c:3808-3815 implementation-header magic values
@@ -1032,15 +1033,30 @@ mod tests {
 
             let mut ptr: *mut u32 = core::ptr::null_mut();
             let mut cap: usize = 0;
-            assert!(grow_array::<u32>(&mut ator, &mut ptr, &mut cap, 4));
+            assert!(grow_array::<u32>(
+                AllocatorView::from_ptr(&raw mut ator),
+                &mut ptr,
+                &mut cap,
+                4
+            ));
             assert!(!ptr.is_null());
             assert_eq!(cap, 4);
             // Growth doubles: n=5 with cap 4 grows to max(8, 5) = 8.
-            assert!(grow_array::<u32>(&mut ator, &mut ptr, &mut cap, 5));
+            assert!(grow_array::<u32>(
+                AllocatorView::from_ptr(&raw mut ator),
+                &mut ptr,
+                &mut cap,
+                5
+            ));
             assert_eq!(cap, 8);
             // No-op growth.
             let before = ptr;
-            assert!(grow_array::<u32>(&mut ator, &mut ptr, &mut cap, 8));
+            assert!(grow_array::<u32>(
+                AllocatorView::from_ptr(&raw mut ator),
+                &mut ptr,
+                &mut cap,
+                8
+            ));
             assert_eq!(ptr, before);
             assert_eq!(cap, 8);
 

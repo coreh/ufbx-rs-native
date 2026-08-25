@@ -681,7 +681,7 @@ pub(crate) fn obj_tokenize(uc: &Context) -> Result<(), Fail> {
             // growth state through uc's temp allocator.
             unsafe {
                 grow_array::<String>(
-                    uc.ator_tmp_mut_ptr(),
+                    uc.ator_tmp_view(),
                     uc.obj().tokens_mut_ptr(),
                     uc.obj().tokens_cap_mut_ptr(),
                     index + 1
@@ -1332,7 +1332,7 @@ pub(crate) fn obj_parse_material(uc: &Context) -> Result<(), Fail> {
             // `tmp_materials_cap` growth state through uc's temp allocator.
             unsafe {
                 grow_array::<*mut Material>(
-                    uc.ator_tmp_mut_ptr(),
+                    uc.ator_tmp_view(),
                     uc.obj().tmp_materials_mut_ptr(),
                     uc.obj().tmp_materials_cap_mut_ptr(),
                     id + 1

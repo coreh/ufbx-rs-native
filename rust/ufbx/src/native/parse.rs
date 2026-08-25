@@ -4638,7 +4638,7 @@ pub(crate) fn push_element_extra_size(uc: &Context, id: u32, size: usize) -> *mu
             // construction invariant).
             unsafe {
                 grow_array(
-                    uc.ator_tmp_mut_ptr(),
+                    uc.ator_tmp_view(),
                     uc.element_extra_arr_mut_ptr(),
                     uc.element_extra_cap_mut_ptr(),
                     id.wrapping_add(1) as usize
@@ -6922,7 +6922,7 @@ pub(crate) unsafe fn parse_toplevel(uc: &Context, name: *const u8) -> Result<(),
             // state through its temp allocator (uc construction invariant).
             unsafe {
                 grow_array(
-                    uc.ator_tmp_mut_ptr(),
+                    uc.ator_tmp_view(),
                     uc.top_nodes_mut_ptr(),
                     uc.top_nodes_cap_mut_ptr(),
                     uc.top_nodes_len()

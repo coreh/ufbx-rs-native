@@ -6180,7 +6180,7 @@ pub(crate) unsafe fn sort_bake_times(
         // the paired triple `grow_array` expects.
         unsafe {
             grow_array::<u8>(
-                bc.ator_tmp_mut_ptr(),
+                bc.ator_tmp_view(),
                 bc.tmp_arr_mut_ptr(),
                 bc.tmp_arr_size_mut_ptr(),
                 count.wrapping_mul(size_of::<BakeTime>()),

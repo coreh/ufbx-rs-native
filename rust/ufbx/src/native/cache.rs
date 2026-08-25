@@ -1143,11 +1143,12 @@ pub(crate) fn cache_load_mc(cc: &CacheContext) -> Result<(), Fail> {
                 ufbxi_check_err!(
                     cc.error_view(),
                     // SAFETY: growing cc's own paired `name_buf`/`name_cap`
-                    // growth state through its temp allocator (cc construction
+                    // growth state through its temp allocator, minted from the
+                    // live `ator_tmp` cc loads through (cc construction
                     // invariant).
                     unsafe {
                         grow_array::<u8>(
-                            cc.ator_tmp(),
+                            AllocatorView::from_ptr(cc.ator_tmp()),
                             cc.name_buf_mut_ptr(),
                             cc.name_cap_mut_ptr(),
                             padded_length
@@ -1320,14 +1321,15 @@ pub(crate) unsafe fn cache_sort_tmp_channels(
     count: usize,
 ) -> Result<(), Fail> {
     // SAFETY: the growth targets are `cc`'s own `tmp_arr` pointer/size pair,
-    // grown through `cc`'s own temp allocator — the pairing `grow_array`
-    // requires. The verbatim C condition text is supplied, so wrapping the
-    // condition does not perturb the recorded error string.
+    // grown through `cc`'s own temp allocator, minted from its live `ator_tmp`
+    // slot — the pairing `grow_array` requires. The verbatim C condition text
+    // is supplied, so wrapping the condition does not perturb the recorded
+    // error string.
     ufbxi_check_err!(
         cc.error_view(),
         unsafe {
             grow_array::<u8>(
-                cc.ator_tmp(),
+                AllocatorView::from_ptr(cc.ator_tmp()),
                 cc.tmp_arr_mut_ptr(),
                 cc.tmp_arr_size_mut_ptr(),
                 count.wrapping_mul(size_of::<CacheTmpChannel>())
@@ -1852,14 +1854,15 @@ pub(crate) unsafe fn cache_sort_frames(
     count: usize,
 ) -> Result<(), Fail> {
     // SAFETY: the growth targets are `cc`'s own `tmp_arr` pointer/size pair,
-    // grown through `cc`'s own temp allocator — the pairing `grow_array`
-    // requires. The verbatim C condition text is supplied, so wrapping the
-    // condition does not perturb the recorded error string.
+    // grown through `cc`'s own temp allocator, minted from its live `ator_tmp`
+    // slot — the pairing `grow_array` requires. The verbatim C condition text
+    // is supplied, so wrapping the condition does not perturb the recorded
+    // error string.
     ufbxi_check_err!(
         cc.error_view(),
         unsafe {
             grow_array::<u8>(
-                cc.ator_tmp(),
+                AllocatorView::from_ptr(cc.ator_tmp()),
                 cc.tmp_arr_mut_ptr(),
                 cc.tmp_arr_size_mut_ptr(),
                 count.wrapping_mul(size_of::<CacheFrame>())

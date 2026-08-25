@@ -1041,7 +1041,7 @@ pub(crate) fn subdivide_layer(
         // requires.
         unsafe {
             grow_array::<SubdivideInput>(
-                sc.ator_tmp_mut_ptr(),
+                sc.ator_tmp_view(),
                 sc.inputs_mut_ptr(),
                 sc.inputs_cap_mut_ptr(),
                 min_inputs,
@@ -1500,7 +1500,7 @@ pub(crate) fn subdivide_layer(
                             // live allocator/inputs/cap fields per the grow contract.
                             unsafe {
                                 grow_array::<SubdivideInput>(
-                                    sc.ator_tmp_mut_ptr(),
+                                    sc.ator_tmp_view(),
                                     sc.inputs_mut_ptr(),
                                     sc.inputs_cap_mut_ptr(),
                                     num_inputs.wrapping_add(1),
@@ -1551,7 +1551,7 @@ pub(crate) fn subdivide_layer(
                             // live allocator/inputs/cap fields per the grow contract.
                             unsafe {
                                 grow_array::<SubdivideInput>(
-                                    sc.ator_tmp_mut_ptr(),
+                                    sc.ator_tmp_view(),
                                     sc.inputs_mut_ptr(),
                                     sc.inputs_cap_mut_ptr(),
                                     num_inputs.wrapping_add(2),

@@ -475,10 +475,11 @@ pub(crate) fn xml_push_token_char(xc: &XmlContext, c: u8) -> Result<(), Fail> {
         ufbxi_check_err!(
             xc.error_view(),
             // SAFETY: growing xc's own paired `tok`/`tok_cap` growth state
-            // through its allocator (xc construction invariant).
+            // through its allocator, minted from the live `ator` xc parses
+            // through (xc construction invariant).
             unsafe {
                 grow_array::<u8>(
-                    xc.ator(),
+                    AllocatorView::from_ptr(xc.ator()),
                     xc.tok_mut_ptr(),
                     xc.tok_cap_mut_ptr(),
                     xc.tok_len() + 1
