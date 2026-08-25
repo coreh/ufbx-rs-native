@@ -4763,9 +4763,10 @@ pub fn find_prop_element<'a>(
 ) -> Option<&'a Element> {
     let result = unsafe {
         crate::native::api::find_prop_element_len(
-            element as *const Element,
-            name.as_ptr(),
-            name.len(),
+            crate::native::view::View::<Element, crate::native::view::Const>::from_ptr(
+                element as *const Element,
+            ),
+            name.as_bytes(),
             type_,
         )
     };
@@ -4778,9 +4779,15 @@ pub fn find_prop_element<'a>(
 
 #[allow(clippy::needless_lifetimes)]
 pub fn find_element<'a>(scene: &'a Scene, type_: ElementType, name: &str) -> Option<&'a Element> {
-    let result = unsafe {
-        crate::native::api::find_element_len(scene as *const Scene, type_, name.as_bytes())
-    };
+    let result = crate::native::api::find_element_len(
+        Some(unsafe {
+            crate::native::view::View::<Scene, crate::native::view::Const>::from_ptr(
+                scene as *const Scene,
+            )
+        }),
+        type_,
+        name.as_bytes(),
+    );
     if result.is_null() {
         None
     } else {
@@ -4790,8 +4797,14 @@ pub fn find_element<'a>(scene: &'a Scene, type_: ElementType, name: &str) -> Opt
 
 #[allow(clippy::needless_lifetimes)]
 pub fn find_node<'a>(scene: &'a Scene, name: &str) -> Option<&'a Node> {
-    let result =
-        unsafe { crate::native::api::find_node_len(scene as *const Scene, name.as_bytes()) };
+    let result = crate::native::api::find_node_len(
+        Some(unsafe {
+            crate::native::view::View::<Scene, crate::native::view::Const>::from_ptr(
+                scene as *const Scene,
+            )
+        }),
+        name.as_bytes(),
+    );
     if result.is_null() {
         None
     } else {

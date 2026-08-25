@@ -66,14 +66,14 @@ use crate::generated::{
     Camera, CameraSwitcher, Character, Constraint, CoordinateAxes, CoordinateAxis, CurvePoint,
     DisplayLayer, DomNode, DomValue, DomValueType, Element, ElementType, Empty, Error, ErrorFrame,
     ErrorType, Face, GeometryCache, Light, LineCurve, LodGroup, Marker, Material, MaterialTexture,
-    Matrix, Mesh, MetadataObject, NameElement, Node, NurbsBasis, NurbsCurve, NurbsSurface,
-    NurbsTrimBoundary, NurbsTrimSurface, OpenFileInfo, Panic, Pose, ProceduralGeometry, Prop,
-    Props, Quat, RawAllocatorOpts, RawGeometryCacheDataOpts, RawGeometryCacheOpts, RawLoadOpts,
-    RawOpenFileOpts, RawOpenMemoryOpts, RawStream, RawVertexStream, RotationOrder, Scene,
-    SelectionNode, SelectionSet, Shader, ShaderBinding, ShaderPropBinding, ShaderTexture,
-    ShaderTextureInput, SkinCluster, SkinDeformer, SkinVertex, SkinWeight, StereoCamera,
-    SurfacePoint, Texture, TopoEdge, Transform, Unknown, Vec2, Vec3, Vec4, VertexReal, VertexVec2,
-    VertexVec3, VertexVec4, Video,
+    Matrix, Mesh, MetadataObject, Node, NurbsBasis, NurbsCurve, NurbsSurface, NurbsTrimBoundary,
+    NurbsTrimSurface, OpenFileInfo, Panic, Pose, ProceduralGeometry, Prop, Props, Quat,
+    RawAllocatorOpts, RawGeometryCacheDataOpts, RawGeometryCacheOpts, RawLoadOpts, RawOpenFileOpts,
+    RawOpenMemoryOpts, RawStream, RawVertexStream, RotationOrder, Scene, SelectionNode,
+    SelectionSet, Shader, ShaderBinding, ShaderPropBinding, ShaderTexture, ShaderTextureInput,
+    SkinCluster, SkinDeformer, SkinVertex, SkinWeight, StereoCamera, SurfacePoint, Texture,
+    TopoEdge, Transform, Unknown, Vec2, Vec3, Vec4, VertexReal, VertexVec2, VertexVec3, VertexVec4,
+    Video,
 };
 #[cfg(feature = "geometry-cache")]
 use crate::generated::{CacheDataEncoding, CacheDataFormat, OpenFileType};
@@ -1042,42 +1042,50 @@ pub(crate) unsafe fn find_prop_concat<'a, M: Mode>(
     None
 }
 
+// Public-boundary root for the nullable `const ufbx_scene *` the find-by-name
+// surface takes: mint a read-only `Const` view — legal for ANY readable
+// provenance, including a safe wrapper's `&Scene`, unlike the interior-mutable
+// `Mut` view (Miri SB — see the topology finding). One named home for the
+// mint, so each raw-boundary caller states the contract once.
+//
+// # Safety
+// `scene` is null, or points at a live `Scene` that stays alive, unmoved and
+// unwritten through any parent pointer while the returned view is used.
+pub(crate) unsafe fn scene_const_view<'a>(scene: *const Scene) -> Option<&'a View<Scene, Const>> {
+    if scene.is_null() {
+        None
+    } else {
+        // SAFETY: non-null (checked) and live/frozen per this fn's contract.
+        Some(unsafe { View::<Scene, Const>::from_ptr(scene) })
+    }
+}
+
 // ufbx.c:30730-30741 `ufbx_find_element_len`
 // `name: &[u8]` carries C's `(name, name_len)` pair (see `find_prop_len`).
-pub(crate) unsafe fn find_element_len(
-    scene: *const Scene,
+// `scene: Option<&View<Scene, M>>` carries C's nullable `const ufbx_scene *`
+// (the `!scene` guard becomes the `None` arm).
+pub(crate) fn find_element_len<M: Mode>(
+    scene: Option<&View<Scene, M>>,
     type_: ElementType,
     name: &[u8],
 ) -> *mut Element {
-    if scene.is_null() {
+    let Some(scene) = scene else {
         return core::ptr::null_mut();
-    }
+    };
     let key: u32 = get_name_key(name);
 
-    let mut index: usize = usize::MAX;
-    // SAFETY: `scene` is non-null (checked) and points at a live `Scene`; the
-    // search spans its own sorted `elements_by_name` run `0..count`, and every
-    // probe pointer the comparators receive addresses a live `NameElement` whose
-    // `name` is an interned span readable for its own length (`as_bytes`).
-    unsafe {
-        macro_lower_bound_eq::<NameElement>(
-            16,
-            &mut index,
-            (*scene).elements_by_name.data,
-            0,
-            (*scene).elements_by_name.count,
-            |a| cmp_name_element_less_ref(a, name, type_, key),
-            |a| str_equal((*a).name.as_bytes(), name) && (*a).type_ == type_,
-        )
-    };
+    let index: Option<usize> = scene.elements_by_name_view().lower_bound_eq(
+        16,
+        |a| cmp_name_element_less_ref(a, name, type_, key),
+        |a| str_equal(a.name_view().bytes(), name) && a.type_() == type_,
+    );
 
-    if index < usize::MAX {
-        // SAFETY: `index < count` (a hit), so `elements_by_name.data.add(index)`
-        // addresses the `index`-th live `NameElement`; the raw field address
-        // identifies its own `Ref<Element>` field, which `ref_ptr` follows.
-        unsafe { ref_ptr(&raw const (*(*scene).elements_by_name.data.add(index)).element) }
-    } else {
-        core::ptr::null_mut()
+    match index {
+        // SAFETY: `index` is a hit, so `at(index)` is the matched live
+        // `NameElement`; `element_ptr()` addresses its own `Ref<Element>`
+        // field, which `ref_ptr` follows.
+        Some(index) => unsafe { ref_ptr(scene.elements_by_name_view().at(index).element_ptr()) },
+        None => core::ptr::null_mut(),
     }
 }
 
@@ -1098,53 +1106,50 @@ pub(crate) unsafe fn get_prop_element(
 }
 
 // ufbx.c:30750-30758 `ufbx_find_prop_element_len`
-pub(crate) unsafe fn find_prop_element_len(
-    element: *const Element,
-    name: *const u8,
-    name_len: usize,
+// `name: &[u8]` carries C's `(name, name_len)` pair (see `find_prop_len`);
+// `element: &View<Element, M>` carries C's non-nullable `const ufbx_element *`
+// (C dereferences it unconditionally).
+pub(crate) fn find_prop_element_len<M: Mode>(
+    element: &View<Element, M>,
+    name: &[u8],
     type_: ElementType,
 ) -> *mut Element {
-    // Public-boundary root: `element` is a caller-owned `*const Element` whose
-    // provenance can be a read-only `&Element` (safe Rust wrapper), so mint a
-    // read-only `Const` view — legal for any readable provenance, unlike the
-    // interior-mutable `Mut` view (Miri SB — see the topology finding).
-    // `&raw` avoids forming an intermediate `&Props`.
-    // SAFETY: `element` points at a live `Element` — the raw-pointer contract of
-    // this `unsafe fn`; `&raw const (*element).props` addresses its own `props`
-    // field, minted as a read-only `Const` view.
-    let props: &View<Props, Const> =
-        unsafe { View::<Props, Const>::from_ptr(&raw const (*element).props) };
-    // SAFETY: `name`/`name_len` are the caller's key-buffer params, minted as
-    // the query slice (`slice_from_ptr` maps the null/0 case to empty).
-    match find_prop_len(props, unsafe {
-        crate::prelude::slice_from_ptr(name, name_len)
-    }) {
-        // SAFETY: `element` is the live element and `prop.as_ptr()` addresses the
-        // matched live `Prop`; forwarded to `get_prop_element`.
-        Some(prop) => unsafe { get_prop_element(element, prop.as_ptr(), type_) },
+    // `&element->props` is the view's own `props` projection — no intermediate
+    // `&Props` is formed.
+    match find_prop_len(element.props(), name) {
+        // SAFETY: `element.as_ptr()` addresses the live viewed `Element` and
+        // `prop.as_ptr()` the matched live `Prop` — the raw-pointer contract
+        // `get_prop_element` asks for, discharged by both views.
+        Some(prop) => unsafe { get_prop_element(element.as_ptr(), prop.as_ptr(), type_) },
         None => core::ptr::null_mut(),
     }
 }
 
 // ufbx.c:30760-30763 `ufbx_find_node_len`
-pub(crate) unsafe fn find_node_len(scene: *const Scene, name: &[u8]) -> *mut Node {
-    // SAFETY: `scene` is null-or-live — the raw-pointer contract forwarded to
-    // `find_element_len`.
-    unsafe { find_element_len(scene, ElementType::Node, name) as *mut Node }
+pub(crate) fn find_node_len<M: Mode>(scene: Option<&View<Scene, M>>, name: &[u8]) -> *mut Node {
+    find_element_len(scene, ElementType::Node, name) as *mut Node
 }
 
 // ufbx.c:30765-30768 `ufbx_find_anim_stack_len`
 pub(crate) unsafe fn find_anim_stack_len(scene: *const Scene, name: &[u8]) -> *mut AnimStack {
-    // SAFETY: `scene` is null-or-live — the raw-pointer contract forwarded to
-    // `find_element_len`.
-    unsafe { find_element_len(scene, ElementType::AnimStack, name) as *mut AnimStack }
+    find_element_len(
+        // SAFETY: `scene` is null-or-live — this fn's own raw-pointer contract,
+        // which is exactly what the read-only `Const` mint asks for.
+        unsafe { scene_const_view(scene) },
+        ElementType::AnimStack,
+        name,
+    ) as *mut AnimStack
 }
 
 // ufbx.c:30770-30773 `ufbx_find_material_len`
 pub(crate) unsafe fn find_material_len(scene: *const Scene, name: &[u8]) -> *mut Material {
-    // SAFETY: `scene` is null-or-live — the raw-pointer contract forwarded to
-    // `find_element_len`.
-    unsafe { find_element_len(scene, ElementType::Material, name) as *mut Material }
+    find_element_len(
+        // SAFETY: `scene` is null-or-live — this fn's own raw-pointer contract,
+        // which is exactly what the read-only `Const` mint asks for.
+        unsafe { scene_const_view(scene) },
+        ElementType::Material,
+        name,
+    ) as *mut Material
 }
 
 // ufbx.c:30775-30790 `ufbx_find_anim_prop_len`
@@ -7110,9 +7115,17 @@ pub(crate) unsafe fn find_prop_element(
     name: *const u8,
     type_: ElementType,
 ) -> *mut Element {
-    // SAFETY: `name` is this fn's NUL-terminated raw-pointer string param;
-    // `strlen` measures it and both forward (with `element`) to the `_len` impl.
-    unsafe { find_prop_element_len(element, name, strlen(name), type_) }
+    // SAFETY: `name` is this fn's NUL-terminated raw-pointer string param, so
+    // `strlen` measures it and the measured run is the slice minted for the
+    // `_len` impl; `element` is this fn's live `*const Element` (C dereferences
+    // it unconditionally), minted as the read-only `Const` view.
+    unsafe {
+        find_prop_element_len(
+            View::<Element, Const>::from_ptr(element),
+            crate::prelude::slice_from_ptr(name, strlen(name)),
+            type_,
+        )
+    }
 }
 
 // ufbx.c:33150 `ufbx_find_element`
@@ -7126,7 +7139,7 @@ pub(crate) unsafe fn find_element(
     // slice minted for the `_len` impl.
     unsafe {
         find_element_len(
-            scene,
+            scene_const_view(scene),
             type_,
             crate::prelude::slice_from_ptr(name, strlen(name)),
         )
@@ -7138,7 +7151,12 @@ pub(crate) unsafe fn find_node(scene: *const Scene, name: *const u8) -> *mut Nod
     // SAFETY: `name` is this fn's NUL-terminated raw-pointer string param;
     // `strlen` measures it, and the measured run (with `scene`) is exactly the
     // slice minted for the `_len` impl.
-    unsafe { find_node_len(scene, crate::prelude::slice_from_ptr(name, strlen(name))) }
+    unsafe {
+        find_node_len(
+            scene_const_view(scene),
+            crate::prelude::slice_from_ptr(name, strlen(name)),
+        )
+    }
 }
 
 // ufbx.c:33152 `ufbx_find_anim_stack`
@@ -7356,6 +7374,7 @@ mod tests {
     #![allow(invalid_value)]
     use super::*;
     use crate::generated::Error;
+    use crate::generated::NameElement;
     use crate::generated::RawAllocatorOpts;
     use crate::native::allocator::{
         init_ator, ANIM_IMP_MAGIC, BAKED_ANIM_IMP_MAGIC, MESH_IMP_MAGIC,
@@ -7641,7 +7660,10 @@ mod tests {
     fn test_find_element_len_and_typed_lookups() {
         unsafe {
             // C: `if (!scene) return NULL;`
-            assert!(find_element_len(core::ptr::null(), ElementType::Node, b"a").is_null());
+            assert!(
+                find_element_len(scene_const_view(core::ptr::null()), ElementType::Node, b"a")
+                    .is_null()
+            );
 
             let names: [&[u8]; 4] = [b"alpha", b"beta", b"gamma", b"beta"];
             let types = [
@@ -7672,7 +7694,8 @@ mod tests {
             let mut scene: Scene = MaybeUninit::zeroed().assume_init();
             scene.elements_by_name = List::from_slice(&entries);
 
-            let find = |t, n: &[u8]| find_element_len(&scene, t, n);
+            let scene_view = scene_const_view(&raw const scene);
+            let find = |t, n: &[u8]| find_element_len(scene_view, t, n);
             assert_eq!(find(ElementType::Node, b"alpha"), ptrs[0]);
             // Same name, different type: the type is part of the sort key.
             assert_eq!(find(ElementType::Node, b"beta"), ptrs[1]);
@@ -7682,7 +7705,7 @@ mod tests {
             assert!(find(ElementType::Node, b"delta").is_null());
 
             // The typed wrappers just pin the element type.
-            assert_eq!(find_node_len(&scene, b"alpha"), ptrs[0] as *mut Node);
+            assert_eq!(find_node_len(scene_view, b"alpha"), ptrs[0] as *mut Node);
             assert_eq!(
                 find_material_len(&scene, b"gamma"),
                 ptrs[2] as *mut Material
@@ -7691,7 +7714,7 @@ mod tests {
                 find_anim_stack_len(&scene, b"beta"),
                 ptrs[3] as *mut AnimStack
             );
-            assert!(find_node_len(&scene, b"gamma").is_null());
+            assert!(find_node_len(scene_view, b"gamma").is_null());
 
             // String API wrappers: same results via `strlen`.
             assert_eq!(

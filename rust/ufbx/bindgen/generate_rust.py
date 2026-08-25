@@ -541,6 +541,41 @@ override_functions["ufbx_find_prop_concat"] = """
 // TODO: ufbx_find_prop_concat()
 """
 
+override_functions["ufbx_find_element_len"] = """
+#[allow(clippy::needless_lifetimes)]
+pub fn find_element<'a>(scene: &'a Scene, type_: ElementType, name: &str) -> Option<&'a Element> {
+    let result = crate::native::api::find_element_len(
+        Some(unsafe {
+            crate::native::view::View::<Scene, crate::native::view::Const>::from_ptr(scene as *const Scene)
+        }),
+        type_,
+        name.as_bytes(),
+    );
+    if result.is_null() {
+        None
+    } else {
+        unsafe { Some(&*result) }
+    }
+}
+"""
+
+override_functions["ufbx_find_node_len"] = """
+#[allow(clippy::needless_lifetimes)]
+pub fn find_node<'a>(scene: &'a Scene, name: &str) -> Option<&'a Node> {
+    let result = crate::native::api::find_node_len(
+        Some(unsafe {
+            crate::native::view::View::<Scene, crate::native::view::Const>::from_ptr(scene as *const Scene)
+        }),
+        name.as_bytes(),
+    );
+    if result.is_null() {
+        None
+    } else {
+        unsafe { Some(&*result) }
+    }
+}
+"""
+
 override_functions["ufbx_find_anim_prop_len"] = """
 #[allow(clippy::needless_lifetimes)]
 pub fn find_anim_prop<'a>(
@@ -1892,6 +1927,7 @@ const_view_args = {
     "ufbx_catch_generate_normal_mapping": {"mesh": "Mesh"},
     "ufbx_catch_compute_normals": {"mesh": "Mesh", "positions": "VertexVec3"},
     "ufbx_catch_get_weighted_face_normal": {"positions": "VertexVec3"},
+    "ufbx_find_prop_element_len": {"element": "Element"},
 }
 
 def apply_const_view_args(cname, arg_pass):

@@ -1337,25 +1337,20 @@ pub(crate) fn cmp_name_element_less<M: crate::native::view::Mode>(
 // ufbx.c:18564-18570 `ufbxi_cmp_name_element_less_ref`
 // `name: &[u8]` carries C's `ufbx_string` query key (see `find_prop_len`).
 #[inline(always)]
-pub(crate) unsafe fn cmp_name_element_less_ref(
-    a: *const NameElement,
+pub(crate) fn cmp_name_element_less_ref<M: crate::native::view::Mode>(
+    a: &crate::native::view::View<NameElement, M>,
     name: &[u8],
     type_: ElementType,
     key: u32,
 ) -> bool {
-    // SAFETY: `a` points to a live, initialized `NameElement` — the array
-    // element the bounded search is probing (fn contract); its `name` is an
-    // interned span readable for its own length (the `as_bytes` contract).
-    unsafe {
-        if (*a)._internal_key != key {
-            return (*a)._internal_key < key;
-        }
-        let cmp: i32 = str_cmp((*a).name.as_bytes(), name);
-        if cmp != 0 {
-            return cmp < 0;
-        }
-        ((*a).type_ as u32) < type_ as u32
+    if a._internal_key() != key {
+        return a._internal_key() < key;
     }
+    let cmp: i32 = str_cmp(a.name_view().bytes(), name);
+    if cmp != 0 {
+        return cmp < 0;
+    }
+    (a.type_() as u32) < type_ as u32
 }
 
 // ufbx.c:18572-18576 `ufbxi_cmp_prop_less_ref`

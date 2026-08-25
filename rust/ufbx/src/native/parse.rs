@@ -2070,6 +2070,19 @@ impl LoadOptsView {
 // scalars/Refs use value getters/setters or _ptr/_mut_ptr for addr-of sites.
 pub(crate) type SceneView = crate::native::view::View<crate::generated::Scene>;
 
+// Mode-generic `Scene` read accessors: served to both `Mut` (context/arena
+// provenance) and `Const` (a public caller's `&Scene`) roots, so the public
+// find-by-name surface can navigate a read-only scene (`native/api.rs`
+// `find_element_len`) through the same accessor the loader uses.
+impl<M: crate::native::view::Mode> crate::native::view::View<crate::generated::Scene, M> {
+    #[inline(always)]
+    pub(crate) fn elements_by_name_view(
+        &self,
+    ) -> &crate::native::view::View<crate::prelude::List<crate::generated::NameElement>, M> {
+        view_project!(self, elements_by_name)
+    }
+}
+
 impl SceneView {
     // `metadata` (Metadata) — typed VIEW handle (reinterpret-in-place).
     #[inline(always)]
@@ -2260,17 +2273,6 @@ impl SceneView {
         unsafe {
             &*(&raw mut (*self.get()).elements
                 as *mut crate::prelude::RefListView<crate::generated::Element>)
-        }
-    }
-
-    #[inline(always)]
-    pub(crate) fn elements_by_name_view(
-        &self,
-    ) -> &crate::prelude::ListView<crate::generated::NameElement> {
-        // SAFETY: reinterpret the List field in place; interior-mutable, no validity asserted.
-        unsafe {
-            &*(&raw mut (*self.get()).elements_by_name
-                as *mut crate::prelude::ListView<crate::generated::NameElement>)
         }
     }
 

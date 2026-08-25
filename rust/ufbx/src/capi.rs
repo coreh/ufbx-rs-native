@@ -663,13 +663,13 @@ pub unsafe extern "C" fn ufbx_find_element_len(
     name: *const u8,
     name_len: usize,
 ) -> *mut crate::generated::Element {
-    // SAFETY: an ABI shim; the raw struct pointer carries this `unsafe fn`'s
-    // own raw-pointer contract, and the caller's name/len key-buffer contract
-    // becomes the slice mint (`slice_from_ptr` maps the null/0 case to the
-    // empty slice).
+    // SAFETY: an ABI shim; the caller's null-or-live scene contract becomes the
+    // read-only `View<_, Const>` mint (legal for any readable provenance), and
+    // the name/len key-buffer contract becomes the slice mint
+    // (`slice_from_ptr` maps the null/0 case to the empty slice).
     unsafe {
         crate::native::api::find_element_len(
-            scene,
+            crate::native::api::scene_const_view(scene),
             type_,
             crate::prelude::slice_from_ptr(name, name_len),
         )
@@ -697,10 +697,17 @@ pub unsafe extern "C" fn ufbx_find_prop_element_len(
     name_len: usize,
     type_: crate::generated::ElementType,
 ) -> *mut crate::generated::Element {
-    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
-    // own raw-pointer contract and are forwarded unchanged to the native impl,
-    // whose contract is identical.
-    unsafe { crate::native::api::find_prop_element_len(element, name, name_len, type_) }
+    // SAFETY: an ABI shim; the caller's live-element contract becomes the
+    // read-only `View<_, Const>` mint (legal for any readable provenance), and
+    // the name/len key-buffer contract becomes the slice mint
+    // (`slice_from_ptr` maps the null/0 case to the empty slice).
+    unsafe {
+        crate::native::api::find_prop_element_len(
+            crate::native::view::View::<crate::generated::Element, crate::native::view::Const>::from_ptr(element),
+            crate::prelude::slice_from_ptr(name, name_len),
+            type_,
+        )
+    }
 }
 
 // ufbx.c:30760-30763 `ufbx_find_node_len` (impl: native/api.rs `find_node_len`)
@@ -710,12 +717,15 @@ pub unsafe extern "C" fn ufbx_find_node_len(
     name: *const u8,
     name_len: usize,
 ) -> *mut crate::generated::Node {
-    // SAFETY: an ABI shim; the raw struct pointer carries this `unsafe fn`'s
-    // own raw-pointer contract, and the caller's name/len key-buffer contract
-    // becomes the slice mint (`slice_from_ptr` maps the null/0 case to the
-    // empty slice).
+    // SAFETY: an ABI shim; the caller's null-or-live scene contract becomes the
+    // read-only `View<_, Const>` mint (legal for any readable provenance), and
+    // the name/len key-buffer contract becomes the slice mint
+    // (`slice_from_ptr` maps the null/0 case to the empty slice).
     unsafe {
-        crate::native::api::find_node_len(scene, crate::prelude::slice_from_ptr(name, name_len))
+        crate::native::api::find_node_len(
+            crate::native::api::scene_const_view(scene),
+            crate::prelude::slice_from_ptr(name, name_len),
+        )
     }
 }
 
