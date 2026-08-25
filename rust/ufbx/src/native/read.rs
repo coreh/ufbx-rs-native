@@ -9655,28 +9655,28 @@ static LEGACY_MATERIAL_PROPS: [LegacyProp; LEGACY_MATERIAL_PROPS_COUNT] = [
 // C returns `int` 0/1 without ever touching `uc->error` (callers do
 // `if (!ufbxi_read_legacy_prop(...)) continue;`), so this is a predicate, not
 // a `Result` — same shape as `ufbxi_get_val_at`.
+/// # Safety
+///
+/// `legacy_prop.node_fmt` points at a NUL-terminated format string — a
+/// contract `&LegacyProp` cannot carry, since the field is a bare
+/// `*const u8`.
 #[inline(never)]
 #[must_use]
 pub(crate) unsafe fn read_legacy_prop(
     node: &NodeView,
-    prop: *mut Prop,
-    legacy_prop: *const LegacyProp,
+    prop: &PropView,
+    legacy_prop: &LegacyProp,
 ) -> bool {
     let mut value_ix: usize = 0;
     let mut flags: u32 = 0;
 
-    // SAFETY: `prop` is the caller's live, writable `ufbx_prop` scratch slot (fn
-    // contract) — write-capable provenance, stable for this call.
-    let prop: &PropView = unsafe { PropView::from_ptr(prop) };
     // C-parity: `prop->value_real_arr` / `prop->value_real` are the first
     // members of `ufbx_prop`'s value union, which `generated.rs` collapses to
     // `value_vec4` — the four-`ufbx_real` union arm the C code indexes as
     // `value_real_arr`.
     let value_real_arr: *mut Real = prop.value_vec4_raw() as *mut Real;
 
-    // SAFETY: `legacy_prop` is the caller's live `ufbxi_legacy_prop` (fn
-    // contract).
-    let fmt: *const u8 = unsafe { (*legacy_prop).node_fmt };
+    let fmt: *const u8 = legacy_prop.node_fmt;
     let mut fmt_ix: usize = 0;
     // SAFETY: `fmt` is a NUL-terminated format literal from the legacy-prop
     // table, and the loop stops at that terminator, so `fmt_ix` stays in bounds.
@@ -9810,9 +9810,11 @@ pub(crate) unsafe fn read_legacy_props(
             Some(n) => n,
             None => continue,
         };
-        // SAFETY: `prop` is the in-bounds destination slot and `legacy_prop` the
-        // in-bounds table entry, both computed above.
-        if !unsafe { read_legacy_prop(n, prop, legacy_prop) } {
+        // SAFETY: `prop` is the in-bounds destination slot computed above —
+        // write-capable provenance into the caller's `ufbx_prop` scratch run —
+        // and `legacy_prop` the in-bounds table entry, whose `node_fmt` is a
+        // NUL-terminated literal.
+        if !unsafe { read_legacy_prop(n, PropView::from_ptr(prop), &*legacy_prop) } {
             continue;
         }
 
