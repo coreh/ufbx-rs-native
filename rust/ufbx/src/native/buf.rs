@@ -598,11 +598,11 @@ pub(crate) fn push_size_new_block(view: &BufView, size: usize) -> *mut c_void {
     // Align chunk sizes to 16 bytes
     chunk_size = align_to_mask(chunk_size, 0xf);
 
-    // SAFETY: `(*b).ator` is the buf's live allocator; `alloc_size` is its own
-    // `unsafe fn` contract (allocate `sizeof(BufChunk) + chunk_size` bytes).
-    let new_chunk = unsafe {
-        alloc_size((*b).ator, 1, size_of::<BufChunk>().wrapping_add(chunk_size)) as *mut BufChunk
-    };
+    // SAFETY: `(*b).ator` is the buf's live, unmoved allocator; the mint hands
+    // that vouch to `alloc_size`.
+    let ator = unsafe { AllocatorView::from_ptr((*b).ator) };
+    let new_chunk =
+        alloc_size(ator, 1, size_of::<BufChunk>().wrapping_add(chunk_size)) as *mut BufChunk;
     if new_chunk.is_null() {
         return core::ptr::null_mut();
     }

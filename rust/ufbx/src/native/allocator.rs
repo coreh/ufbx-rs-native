@@ -147,12 +147,36 @@ pub(crate) type AllocatorView = crate::native::view::View<Allocator>;
 
 impl AllocatorView {
     #[inline(always)]
+    pub(crate) fn error(&self) -> *mut Error {
+        view_read!(self, error)
+    }
+    #[inline(always)]
     pub(crate) fn current_size(&self) -> usize {
         view_read!(self, current_size)
     }
     #[inline(always)]
+    pub(crate) fn set_current_size(&self, current_size: usize) {
+        view_write!(self, current_size, current_size)
+    }
+    #[inline(always)]
+    pub(crate) fn max_size(&self) -> usize {
+        view_read!(self, max_size)
+    }
+    #[inline(always)]
     pub(crate) fn num_allocs(&self) -> usize {
         view_read!(self, num_allocs)
+    }
+    #[inline(always)]
+    pub(crate) fn set_num_allocs(&self, num_allocs: usize) {
+        view_write!(self, num_allocs, num_allocs)
+    }
+    #[inline(always)]
+    pub(crate) fn max_allocs(&self) -> usize {
+        view_read!(self, max_allocs)
+    }
+    #[inline(always)]
+    pub(crate) fn name(&self) -> *const u8 {
+        view_read!(self, name)
     }
     #[inline(always)]
     pub(crate) fn set_error(&self, error: *mut Error) {
@@ -173,8 +197,13 @@ pub(crate) fn does_overflow(total: usize, a: usize, b: usize) -> bool {
 }
 
 // ufbx.c:3656-3696 `ufbxi_alloc_size`
+//
+// The `&AllocatorView` param carries liveness and write-capable provenance of
+// the allocator, so the fn is safe; the residual `unsafe` blocks below reach
+// the allocator's own slots as raw field places and invoke the user callbacks
+// stored in them.
 #[inline(never)]
-pub(crate) unsafe fn alloc_size(ator: *mut Allocator, size: usize, n: usize) -> *mut c_void {
+pub(crate) fn alloc_size(ator: &AllocatorView, size: usize, n: usize) -> *mut c_void {
     // Always succeed with an empty non-NULL buffer for empty allocations
     ufbx_assert!(size > 0);
     if n == 0 {
@@ -183,118 +212,118 @@ pub(crate) unsafe fn alloc_size(ator: *mut Allocator, size: usize, n: usize) -> 
 
     let total = size.wrapping_mul(n);
     ufbxi_check_return_err!(
-        unsafe { crate::native::error::ErrorView::from_ptr((*ator).error) },
+        // SAFETY: `error` is the allocator's own error slot — a live
+        // `ufbx_error` wired at `init_ator` and outliving the allocator.
+        unsafe { crate::native::error::ErrorView::from_ptr(ator.error()) },
         !does_overflow(total, size, n),
         core::ptr::null_mut(),
         "!ufbxi_does_overflow(total, size, n)"
     );
     // Make sure it's always safe to double allocations
     ufbxi_check_return_err!(
-        unsafe { crate::native::error::ErrorView::from_ptr((*ator).error) },
+        // SAFETY: the allocator's own error slot, as above.
+        unsafe { crate::native::error::ErrorView::from_ptr(ator.error()) },
         total <= usize::MAX / 2,
         core::ptr::null_mut(),
         "total <= SIZE_MAX / 2"
     );
-    // SAFETY: `ator` points at a live `Allocator` — the raw-pointer contract of
-    // this `unsafe fn`; the two size counters are read together as one snapshot.
-    if !(total < unsafe { (*ator).max_size - (*ator).current_size }) {
-        // SAFETY: same live `Allocator`; this reborrow is the only reference to
-        // it in this branch and does not outlive the branch.
-        let a = unsafe { &mut *ator };
+    if !(total < ator.max_size() - ator.current_size()) {
         ufbxi_report_err_msg!(
-            unsafe { crate::native::error::ErrorView::from_ptr(a.error) },
+            // SAFETY: the allocator's own error slot, as above.
+            unsafe { crate::native::error::ErrorView::from_ptr(ator.error()) },
             "total <= ator->max_size - ator->current_size",
             "Memory limit exceeded"
         );
-        // SAFETY: `a.error` is the allocator's own error slot, non-null on
+        // SAFETY: `ator.error()` is the allocator's own error slot, non-null on
         // any failing-allocation path, so this is a write-capable mint of it.
         // C requires that too: the `ufbxi_report_err_msg!` just above bottoms
         // out in `ufbxi_fail_imp_err`, which reads `err->description.data`
         // unguarded (ufbx.c:3413). `ufbxi_init_ator` (ufbx.c:6947) only ever
         // stores a real error slot; the `ator.error = NULL` stores
         // (ufbx.c:25389, 26424) back retained, free-only refcount buffers
-        // whose allocator never allocates. `a.name` is its NUL-terminated
+        // whose allocator never allocates. `ator.name()` is its NUL-terminated
         // allocator name, the `%s` printf argument contract of `fmt_err_info`.
         unsafe {
             ufbxi_fmt_err_info!(
-                Some(crate::native::error::ErrorView::from_ptr(a.error)),
+                Some(crate::native::error::ErrorView::from_ptr(ator.error())),
                 "%s",
-                a.name
+                ator.name()
             )
         };
         return core::ptr::null_mut();
     }
-    // SAFETY: live `Allocator` per the fn contract; the two allocation counters
-    // are read together as one snapshot.
-    if !(unsafe { (*ator).num_allocs < (*ator).max_allocs }) {
-        // SAFETY: same live `Allocator`; branch-local reborrow, no other
-        // reference to it is live here.
-        let a = unsafe { &mut *ator };
+    if !(ator.num_allocs() < ator.max_allocs()) {
         ufbxi_report_err_msg!(
-            unsafe { crate::native::error::ErrorView::from_ptr(a.error) },
+            // SAFETY: the allocator's own error slot, as above.
+            unsafe { crate::native::error::ErrorView::from_ptr(ator.error()) },
             "ator->num_allocs < ator->max_allocs",
             "Allocation limit exceeded"
         );
-        // SAFETY: `a.error` is the allocator's own error slot, non-null on
+        // SAFETY: `ator.error()` is the allocator's own error slot, non-null on
         // any failing-allocation path, so this is a write-capable mint of it.
         // C requires that too: the `ufbxi_report_err_msg!` just above bottoms
         // out in `ufbxi_fail_imp_err`, which reads `err->description.data`
         // unguarded (ufbx.c:3413). `ufbxi_init_ator` (ufbx.c:6947) only ever
         // stores a real error slot; the `ator.error = NULL` stores
         // (ufbx.c:25389, 26424) back retained, free-only refcount buffers
-        // whose allocator never allocates. `a.name` is its NUL-terminated
+        // whose allocator never allocates. `ator.name()` is its NUL-terminated
         // allocator name, the `%s` printf argument contract of `fmt_err_info`.
         unsafe {
             ufbxi_fmt_err_info!(
-                Some(crate::native::error::ErrorView::from_ptr(a.error)),
+                Some(crate::native::error::ErrorView::from_ptr(ator.error())),
                 "%s",
-                a.name
+                ator.name()
             )
         };
         return core::ptr::null_mut();
     }
-    // SAFETY: live `Allocator` per the fn contract; bumping its own counter.
-    unsafe {
-        (*ator).num_allocs += 1;
-    }
+    ator.set_num_allocs(ator.num_allocs() + 1);
 
     let ptr: *mut c_void;
-    // SAFETY: live `Allocator` per the fn contract; both callback-slot reads in
-    // this dispatch chain go through it.
-    if let Some(alloc_fn) = unsafe { (*ator).ator.allocator.alloc_fn } {
+    // SAFETY (this dispatch chain): the view is minted over a live, unmoved
+    // `Allocator` (its `from_ptr` mint invariant); the callback and `user`
+    // slots are reached as raw field places through `get()` — no reference to
+    // the containing struct is formed.
+    if let Some(alloc_fn) = unsafe { (*ator.get()).ator.allocator.alloc_fn } {
         // SAFETY: `alloc_fn` is invoked with the `user` pointer stored beside it
         // in the same `ufbx_allocator` — the user-callback pairing contract.
-        ptr = unsafe { alloc_fn((*ator).ator.allocator.user, total) };
-    } else if let Some(realloc_fn) = unsafe { (*ator).ator.allocator.realloc_fn } {
+        ptr = unsafe { alloc_fn((*ator.get()).ator.allocator.user, total) };
+    } else if let Some(realloc_fn) = unsafe { (*ator.get()).ator.allocator.realloc_fn } {
         // SAFETY: `realloc_fn` paired with its own `user` pointer; a null old
         // block of size 0 is the allocate form of the realloc callback.
-        ptr = unsafe { realloc_fn((*ator).ator.allocator.user, core::ptr::null_mut(), 0, total) };
+        ptr = unsafe {
+            realloc_fn(
+                (*ator.get()).ator.allocator.user,
+                core::ptr::null_mut(),
+                0,
+                total,
+            )
+        };
     } else {
         ptr = ufbx_malloc(total);
     }
 
     if ptr.is_null() {
-        // SAFETY: live `Allocator` per the fn contract; branch-local reborrow.
-        let a = unsafe { &mut *ator };
         ufbxi_report_err_msg!(
-            unsafe { crate::native::error::ErrorView::from_ptr(a.error) },
+            // SAFETY: the allocator's own error slot, as above.
+            unsafe { crate::native::error::ErrorView::from_ptr(ator.error()) },
             "ptr",
             "Out of memory"
         );
-        // SAFETY: `a.error` is the allocator's own error slot, non-null on
+        // SAFETY: `ator.error()` is the allocator's own error slot, non-null on
         // any failing-allocation path, so this is a write-capable mint of it.
         // C requires that too: the `ufbxi_report_err_msg!` just above bottoms
         // out in `ufbxi_fail_imp_err`, which reads `err->description.data`
         // unguarded (ufbx.c:3413). `ufbxi_init_ator` (ufbx.c:6947) only ever
         // stores a real error slot; the `ator.error = NULL` stores
         // (ufbx.c:25389, 26424) back retained, free-only refcount buffers
-        // whose allocator never allocates. `a.name` is its NUL-terminated
+        // whose allocator never allocates. `ator.name()` is its NUL-terminated
         // allocator name, the `%s` printf argument contract of `fmt_err_info`.
         unsafe {
             ufbxi_fmt_err_info!(
-                Some(crate::native::error::ErrorView::from_ptr(a.error)),
+                Some(crate::native::error::ErrorView::from_ptr(ator.error())),
                 "%s",
-                a.name
+                ator.name()
             )
         };
         return core::ptr::null_mut();
@@ -309,11 +338,7 @@ pub(crate) unsafe fn alloc_size(ator: *mut Allocator, size: usize, n: usize) -> 
     // CI gate deliberately leaves off.
     (ptr as *mut u8).expose_provenance();
 
-    // SAFETY: live `Allocator` per the fn contract; recording the new block's
-    // size in its own accounting.
-    unsafe {
-        (*ator).current_size += total;
-    }
+    ator.set_current_size(ator.current_size() + total);
 
     ptr
 }
@@ -331,8 +356,9 @@ pub(crate) unsafe fn realloc_size(
     ufbx_assert!(size > 0);
     // realloc() with zero old/new size is equivalent to alloc()/free()
     if old_n == 0 {
-        // SAFETY: forwarding this fn's own `ator` contract to `alloc_size`.
-        return unsafe { alloc_size(ator, size, n) };
+        // SAFETY: `ator` points at a live, unmoved `Allocator` — the raw-pointer
+        // contract of this `unsafe fn`; the mint hands that vouch to `alloc_size`.
+        return alloc_size(unsafe { AllocatorView::from_ptr(ator) }, size, n);
     }
     if n == 0 {
         // SAFETY: forwarding this fn's `ator` contract, plus `old_ptr`/`old_n`
@@ -589,8 +615,10 @@ pub(crate) unsafe fn free_ator(ator: &AllocatorView) {
 // ufbx.c:3800 `ufbxi_alloc(ator, type, n)`
 #[inline(always)]
 pub(crate) unsafe fn alloc<T>(ator: *mut Allocator, n: usize) -> *mut T {
-    // SAFETY: forwarding this fn's `ator` contract to `alloc_size`.
-    ufbxi_maybe_null!(unsafe { alloc_size(ator, size_of::<T>(), n) } as *mut T)
+    // SAFETY: `ator` points at a live, unmoved `Allocator` — the raw-pointer
+    // contract of this `unsafe fn`; the mint hands that vouch to `alloc_size`.
+    let ator = unsafe { AllocatorView::from_ptr(ator) };
+    ufbxi_maybe_null!(alloc_size(ator, size_of::<T>(), n) as *mut T)
 }
 
 // ufbx.c:3802 `ufbxi_realloc(ator, type, old_ptr, old_n, n)`
@@ -759,7 +787,8 @@ mod tests {
             let mut ator = make_ator(&mut err, core::ptr::null());
 
             // Zero-size allocation returns the shared zero-size buffer, no accounting.
-            let z = alloc_size(&mut ator, 4, 0);
+            // SAFETY: `ator` is this frame's live, unmoved `Allocator` local.
+            let z = alloc_size(AllocatorView::from_ptr(&raw mut ator), 4, 0);
             assert_eq!(z as *const u8, ZERO_SIZE_BUFFER.as_ptr());
             assert_eq!(ator.num_allocs, 0);
             assert_eq!(ator.current_size, 0);
@@ -824,7 +853,8 @@ mod tests {
             let mut ator = make_ator(&mut err, &opts);
 
             // C check is `total < max_size - current_size`: exactly-at-limit fails.
-            let p = alloc_size(&mut ator, 1, 100);
+            // SAFETY: `ator` is this frame's live, unmoved `Allocator` local.
+            let p = alloc_size(AllocatorView::from_ptr(&raw mut ator), 1, 100);
             assert!(p.is_null());
             // SAFETY: `err` is a live, write-capable `Error` local of this
             // frame, unmoved for the mint's borrow.
@@ -835,7 +865,8 @@ mod tests {
             );
             assert_eq!(err.type_, ErrorType::MemoryLimit);
 
-            let p = alloc_size(&mut ator, 1, 99);
+            // SAFETY: `ator` is this frame's live, unmoved `Allocator` local.
+            let p = alloc_size(AllocatorView::from_ptr(&raw mut ator), 1, 99);
             assert!(!p.is_null());
             free_size(&mut ator, 1, p, 99);
         }
@@ -846,9 +877,15 @@ mod tests {
         unsafe {
             let mut err = Error::default();
             let mut ator = make_ator(&mut err, core::ptr::null());
-            let p = alloc_size(&mut ator, 8, usize::MAX / 4);
+            // SAFETY: `ator` is this frame's live, unmoved `Allocator` local.
+            let p = alloc_size(AllocatorView::from_ptr(&raw mut ator), 8, usize::MAX / 4);
             assert!(p.is_null());
-            let p = alloc_size(&mut ator, 1, usize::MAX / 2 + 1);
+            // SAFETY: `ator` is this frame's live, unmoved `Allocator` local.
+            let p = alloc_size(
+                AllocatorView::from_ptr(&raw mut ator),
+                1,
+                usize::MAX / 2 + 1,
+            );
             assert!(p.is_null());
             assert_eq!(ator.num_allocs, 0);
         }
