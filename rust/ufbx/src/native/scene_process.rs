@@ -2940,15 +2940,17 @@ pub(crate) unsafe fn fetch_blend_keyframes(
 
 // ufbx.c:19241-19262 `ufbxi_fetch_texture_layers`
 #[inline(never)]
-pub(crate) unsafe fn fetch_texture_layers(
+pub(crate) fn fetch_texture_layers(
     uc: &Context,
-    list: *mut List<TextureLayer>,
-    element: *mut Element,
+    list: &View<List<TextureLayer>>,
+    element: &View<Element>,
 ) -> Result<(), Fail> {
     let mut num_layers: usize = 0;
 
-    // SAFETY: `element` points to a live scene element (fn contract).
-    let conns: List<Connection> = unsafe { find_dst_connections(element, ptr::null()) };
+    // SAFETY: `element` views a live scene element, so its pointer satisfies
+    // `find_dst_connections`' contract; the null `prop` is its "no prop filter"
+    // argument.
+    let conns: List<Connection> = unsafe { find_dst_connections(element.get(), ptr::null()) };
     // C: `ufbxi_for_list(ufbx_connection, conn, conns)`
     let mut conn: *mut Connection = conns.data as *mut Connection;
     let conn_end: *mut Connection = add_ptr(conn, conns.count);
@@ -3000,14 +3002,12 @@ pub(crate) unsafe fn fetch_texture_layers(
         conn = unsafe { conn.add(1) };
     }
 
-    // SAFETY: `list` is the caller's out-list (fn contract).
-    unsafe {
-        (*list).data = uc
-            .result_view()
-            .push_pop::<TextureLayer>(uc.tmp_stack_view(), num_layers);
-        (*list).count = num_layers;
-        ufbxi_check!(uc, !(*list).data.is_null(), "list->data");
-    }
+    list.set_data(
+        uc.result_view()
+            .push_pop::<TextureLayer>(uc.tmp_stack_view(), num_layers),
+    );
+    list.set_count(num_layers);
+    ufbxi_check!(uc, !list.data().is_null(), "list->data");
 
     Ok(())
 }
@@ -10240,9 +10240,7 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
 
         // Fetch layered texture layers and patch alphas/blend modes
         if texture.type_() == TextureType::Layered {
-            // SAFETY: the projections address the viewed texture's own `layers`
-            // list header and element header.
-            unsafe { fetch_texture_layers(uc, texture.layers_raw(), texture.element_raw()) }?;
+            fetch_texture_layers(uc, texture.layers_view(), texture.element())?;
             if !extra.is_null() {
                 // SAFETY: `extra` is the non-null per-element extra fetched above,
                 // so it heads a live `ufbxi_texture_extra` in `uc`'s tmp arena.
