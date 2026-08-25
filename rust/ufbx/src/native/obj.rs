@@ -411,12 +411,16 @@ pub(crate) fn obj_init(uc: &Context) -> Result<(), Fail> {
     uc.obj().object_view().set_data(EMPTY_CHAR.as_ptr());
     uc.obj().group_view().set_data(EMPTY_CHAR.as_ptr());
 
-    map_init(
-        uc.obj().group_map_view(),
-        uc.ator_tmp_view(),
-        map_cmp_const_char_ptr,
-        core::ptr::null_mut(),
-    );
+    // SAFETY: `map_cmp_const_char_ptr` reads no user data, so the null
+    // `cmp_user` meets its contract.
+    unsafe {
+        map_init(
+            uc.obj().group_map_view(),
+            uc.ator_tmp_view(),
+            map_cmp_const_char_ptr,
+            core::ptr::null_mut(),
+        );
+    }
 
     // Add a nameless root node with the root ID
     {

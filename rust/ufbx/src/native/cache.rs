@@ -2230,14 +2230,17 @@ pub(crate) unsafe fn load_geometry_cache(
     cc.set_open_file_cb(opts.open_file_cb);
 
     cc.string_pool_view().set_error(cc.error_mut_ptr());
-    map_init(
-        cc.string_pool_view().map_view(),
-        // SAFETY: `cc.ator_tmp()` is `cc`'s temp allocator (initialized above),
-        // live and write-capable for the duration of the cache load.
-        unsafe { AllocatorView::from_ptr(cc.ator_tmp()) },
-        map_cmp_string,
-        core::ptr::null_mut(),
-    );
+    // SAFETY: `cc.ator_tmp()` is `cc`'s temp allocator (initialized above), live
+    // and write-capable for the duration of the cache load; `map_cmp_string`
+    // reads no user data, so the null `cmp_user` meets its contract.
+    unsafe {
+        map_init(
+            cc.string_pool_view().map_view(),
+            AllocatorView::from_ptr(cc.ator_tmp()),
+            map_cmp_string,
+            core::ptr::null_mut(),
+        );
+    }
     cc.string_pool_view()
         .buf_view()
         .set_ator(cc.ator_result_mut_ptr());

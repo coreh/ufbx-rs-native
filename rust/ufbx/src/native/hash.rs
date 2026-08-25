@@ -342,8 +342,25 @@ impl MapView {
 }
 
 // ufbx.c:4393-4419 `ufbxi_map_init`
+//
+// `map` and `ator` are borrows, but `cmp_user` stays an untyped `void *` (C:
+// `map->cmp_user`, ufbx.c:4418): it is stored verbatim and handed back to
+// `cmp_fn` on every later `find`/`insert`, which may DEREFERENCE it (e.g.
+// `map_cmp_vertex` reads a `usize` through it, ufbx.c:30089). No Rust type
+// carries that pointee-and-liveness contract, so the obligation is declared
+// here rather than silently dropped.
+//
+// # Safety
+//
+// `cmp_user` must be null or address a live value of the type `cmp_fn`
+// dereferences it as, valid for reads for as long as the map is used.
 #[inline(never)]
-pub(crate) fn map_init(map: &MapView, ator: &AllocatorView, cmp_fn: CmpFn, cmp_user: *mut c_void) {
+pub(crate) unsafe fn map_init(
+    map: &MapView,
+    ator: &AllocatorView,
+    cmp_fn: CmpFn,
+    cmp_user: *mut c_void,
+) {
     map.set_ator(ator.get());
     #[cfg(feature = "regression")]
     {
@@ -1152,13 +1169,16 @@ mod tests {
         let mut map = unsafe { MaybeUninit::<Map>::zeroed().assume_init() };
         // SAFETY: `&raw mut map` addresses the live, writable local `Map`, and
         // `ator` is the caller's live allocator (fn contract); both views are
-        // minted over memory that outlives this call.
-        map_init(
-            unsafe { MapView::from_ptr(&raw mut map) },
-            unsafe { AllocatorView::from_ptr(ator) },
-            cmp_fn,
-            core::ptr::null_mut(),
-        );
+        // minted over memory that outlives this call. The null `cmp_user` is
+        // what the test comparators expect (they read no user data).
+        unsafe {
+            map_init(
+                MapView::from_ptr(&raw mut map),
+                AllocatorView::from_ptr(ator),
+                cmp_fn,
+                core::ptr::null_mut(),
+            );
+        }
         map
     }
 

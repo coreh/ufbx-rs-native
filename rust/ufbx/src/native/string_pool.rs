@@ -1882,12 +1882,14 @@ mod tests {
         // its own allocator, both live for the fixture's lifetime;
         // `map_cmp_string` takes no user data, so the null `user` is what it
         // expects.
-        map_init(
-            unsafe { MapView::from_ptr(&raw mut fx.pool.map) },
-            unsafe { AllocatorView::from_ptr(ator) },
-            map_cmp_string,
-            core::ptr::null_mut(),
-        );
+        unsafe {
+            map_init(
+                MapView::from_ptr(&raw mut fx.pool.map),
+                AllocatorView::from_ptr(ator),
+                map_cmp_string,
+                core::ptr::null_mut(),
+            );
+        }
         fx.pool.initial_size = 64; // ufbx.c:7192 `string_pool.initial_size = 1024` (smaller for tests)
         fx.pool.error_handling = handling;
         fx.pool.warnings = core::ptr::null_mut();
