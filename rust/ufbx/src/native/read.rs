@@ -1328,18 +1328,22 @@ pub(crate) unsafe fn push_element_size(
 // ufbx.c:12384-12414 `ufbxi_push_synthetic_element_size`
 ///
 /// # Safety
-/// `name`'s bytes must stay live and unmoved for as long as the scene: C stores
-/// the pointer itself in `elem->name.data`, so the stored pointer outlives the
-/// `&[u8]` borrow — a lifetime the parameter type cannot carry. `size` must be
-/// the size of the element struct `type_` selects (the `ufbxi_push_synthetic_element`
-/// macro's `sizeof(type_name)`).
+/// `name` stays a raw pointer: it is null or NUL-terminated, and the pointer
+/// ITSELF is stored in `elem->name.data`, whose bytes are read past
+/// `name.length` — at minimum the terminator, by `ufbxi_cmp_name_element_less`
+/// (`strcmp`, ufbx.c:18559) and by every C-ABI reader of the public
+/// NUL-terminated `ufbx_string`. A `&[u8]` parameter would narrow the escaping
+/// pointer's provenance to the `strlen` run and could not carry the
+/// scene-long lifetime either: the bytes must stay live and unmoved for as
+/// long as the scene. `size` must be the size of the element struct `type_`
+/// selects (the `ufbxi_push_synthetic_element` macro's `sizeof(type_name)`).
 #[inline(never)]
 #[must_use]
 pub(crate) unsafe fn push_synthetic_element_size(
     uc: &Context,
     p_fbx_id: &ScalarView<u64>,
     node: Option<&NodeView>,
-    name: Option<&[u8]>,
+    name: *const u8,
     size: usize,
     type_: ElementType,
 ) -> *mut Element {
@@ -1384,13 +1388,14 @@ pub(crate) unsafe fn push_synthetic_element_size(
     // SAFETY: `get_dom_node` returns either null or a DOM node owned by uc's
     // buffers — `opt_ref`'s contract; `elem` is the fresh push result.
     unsafe { (*elem).dom_node = opt_ref(get_dom_node(uc, node)) };
-    if let Some(name) = name {
-        // C: `elem->name.data = name; elem->name.length = strlen(name);` — the
-        // slice carries the same pointer and the same `strlen` byte count.
-        // SAFETY: `elem` is the fresh push result.
+    if !name.is_null() {
+        // SAFETY: `name` is non-null (checked) and NUL-terminated (fn
+        // contract), which is what `strlen` requires; the pointer stored keeps
+        // its original whole-object provenance, as C's
+        // `elem->name.data = name` does; `elem` is the fresh push result.
         unsafe {
-            (*elem).name.data = name.as_ptr();
-            (*elem).name.length = name.len();
+            (*elem).name.data = name;
+            (*elem).name.length = strlen(name);
         }
     }
 
@@ -1453,18 +1458,11 @@ pub(crate) unsafe fn push_synthetic_element<T>(
     // contract), viewed for the call as an interior-mutable scalar cell —
     // `ScalarView<u64>` is `repr(transparent)` over `u64`.
     let p_fbx_id: &ScalarView<u64> = unsafe { &*(p_fbx_id as *const ScalarView<u64>) };
-    let name: Option<&[u8]> = if name.is_null() {
-        None
-    } else {
-        // SAFETY: `name` is non-null (checked) and NUL-terminated (fn
-        // contract), which is what `strlen` requires; the run it measures is
-        // therefore readable, and `from_raw_parts` keeps the pointer itself
-        // (including for the empty string, whose identity the element stores).
-        Some(unsafe { core::slice::from_raw_parts(name, strlen(name)) })
-    };
-    // SAFETY: `name`'s bytes are the caller's interned/pooled string, live for
-    // the scene, and `T` is the element struct whose `size_of` is passed as the
-    // element size — `push_synthetic_element_size`'s contract.
+    // SAFETY: `name` is null or NUL-terminated and its bytes are the caller's
+    // interned/pooled string, live for the scene — the pointer is passed
+    // through unnarrowed because the element stores it; `T` is the element
+    // struct whose `size_of` is passed as the element size —
+    // `push_synthetic_element_size`'s contract.
     ufbxi_maybe_null!(unsafe {
         push_synthetic_element_size(uc, p_fbx_id, node, name, size_of::<T>(), type_enum)
     } as *mut T)
