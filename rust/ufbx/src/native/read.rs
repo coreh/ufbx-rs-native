@@ -2789,9 +2789,7 @@ pub(crate) unsafe fn read_truncated_array(
         );
 
         let elem_size: usize = array_type_size(fmt);
-        // SAFETY: the buffer is uc's own result buffer; `elem_size` is the
-        // element size `fmt` denotes.
-        let new_data: *mut c_void = unsafe { push_size(uc.result_mut_ptr(), elem_size, size) };
+        let new_data: *mut c_void = push_size(uc.result_view(), elem_size, size);
         ufbxi_check!(uc, !new_data.is_null(), "new_data");
         // SAFETY: `arr.data` spans `arr.size * elem_size` readable bytes and
         // `new_data` is the fresh `size * elem_size`-byte run checked above,

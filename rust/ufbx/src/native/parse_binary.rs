@@ -764,9 +764,12 @@ pub(crate) fn push_array_data(
     } else if flags & ARRAY_FLAG_TMP_BUF as u32 != 0 {
         arr_buf = uc.tmp_mut_ptr();
     }
-    // SAFETY: `arr_buf` is a live `Buf` selected above (the view's own buffer or
-    // a context-owned one); `push_size` allocates `size` elements of `elem_size`.
-    let mut data: *mut u8 = unsafe { push_size(arr_buf, elem_size, size) } as *mut u8;
+    // SAFETY: `arr_buf` is a live, initialized `Buf` in context/arena-owned
+    // memory with write-capable provenance (the view's own buffer or a
+    // context-owned one, selected above) — the `BufView::from_ptr` mint
+    // invariant.
+    let mut data: *mut u8 =
+        push_size(unsafe { BufView::from_ptr(arr_buf) }, elem_size, size) as *mut u8;
     ufbxi_check_return!(uc, !data.is_null(), core::ptr::null_mut(), "data");
 
     if flags & ARRAY_FLAG_PAD_BEGIN as u32 != 0 {
@@ -1192,8 +1195,7 @@ fn binary_parse_node_rec(
                         // SAFETY: `t` is the live task; `push_size` allocates a
                         // `size`-element decode scratch of `src_elem_size` each.
                         unsafe {
-                            (*t).decoded_data =
-                                push_size(tmp_buf.get(), src_elem_size, size as usize)
+                            (*t).decoded_data = push_size(tmp_buf, src_elem_size, size as usize)
                         };
                         // SAFETY: `t` is the live task; read back its scratch ptr.
                         ufbxi_check!(

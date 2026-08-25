@@ -2416,16 +2416,15 @@ fn ascii_parse_node_rec(
             let mut arr_data: *mut c_void = core::ptr::null_mut();
 
             if deferred_size > 0 {
-                // SAFETY: `arr_buf` is a live buf (tmp/result/tmp_stack) chosen
-                // above; reserves `num_values + deferred_size` elements of
-                // `arr_elem_size` bytes.
-                arr_data = unsafe {
-                    push_size(
-                        arr_buf,
-                        arr_elem_size,
-                        num_values.wrapping_add(deferred_size) as usize,
-                    )
-                };
+                // SAFETY: `arr_buf` is a live, initialized `Buf` in
+                // context/arena-owned memory with write-capable provenance (the
+                // tmp/result/tmp_stack buf chosen above) — the
+                // `BufView::from_ptr` mint invariant.
+                arr_data = push_size(
+                    unsafe { BufView::from_ptr(arr_buf) },
+                    arr_elem_size,
+                    num_values.wrapping_add(deferred_size) as usize,
+                );
                 // Pop any previously pushed values
                 if num_values > 0 {
                     // SAFETY: `tmp_stack_mut_ptr` is `uc`'s own live temp stack; it

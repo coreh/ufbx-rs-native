@@ -674,8 +674,17 @@ pub(crate) fn push_size_new_block(view: &BufView, size: usize) -> *mut c_void {
 }
 
 // ufbx.c:4022-4072 `ufbxi_push_size`
+//
+// Safe fn: the buf handle carries its own liveness and write-provenance in the
+// type (the `BufView` mint invariant), and the allocator this reaches is the
+// buf's stored back-pointer — the same standing `push_size_new_block` and the
+// `BufView` push family rely on. The returned block is uninitialized memory
+// handed back as a raw pointer; DEREFERENCING it is the caller's obligation,
+// under its own narrow `unsafe`. The raw field ops below carry their own
+// per-leaf vouches.
 #[inline(never)]
-pub(crate) unsafe fn push_size(b: *mut Buf, size: usize, n: usize) -> *mut c_void {
+pub(crate) fn push_size(view: &BufView, size: usize, n: usize) -> *mut c_void {
+    let b: *mut Buf = view.get();
     // Always succeed with an empty non-NULL buffer for empty allocations
     ufbx_assert!(size > 0);
     if n == 0 {
@@ -689,8 +698,8 @@ pub(crate) unsafe fn push_size(b: *mut Buf, size: usize, n: usize) -> *mut c_voi
 
     #[cfg(feature = "regression")]
     {
-        // SAFETY: `b` addresses a live `Buf` (this fn's raw-pointer contract);
-        // reading its live stored allocator back-pointer.
+        // SAFETY: `b` is the view's write-provenance pointer to a live `Buf`
+        // (the mint); reading its live stored allocator back-pointer.
         let ator = unsafe { (*b).ator };
         ufbxi_check_return_err_msg!(
             unsafe { crate::native::error::ErrorView::from_ptr((*ator).error) },
@@ -749,11 +758,7 @@ pub(crate) unsafe fn push_size(b: *mut Buf, size: usize, n: usize) -> *mut c_voi
             }
             (unsafe { (padding as *mut u8).add(16) }) as *mut c_void
         } else {
-            // SAFETY: `b` addresses a live, initialized `Buf` in
-            // context/arena-owned memory with write-capable provenance (this
-            // fn's raw-pointer contract) — the `BufView::from_ptr` mint
-            // invariant.
-            push_size_new_block(unsafe { BufView::from_ptr(b) }, total)
+            push_size_new_block(view, total)
         }
     } else {
         // Try to push to the current block. Allocate a new block
@@ -774,11 +779,7 @@ pub(crate) unsafe fn push_size(b: *mut Buf, size: usize, n: usize) -> *mut c_voi
             unsafe { (*b).pos = pos + total };
             (unsafe { chunk_data((*b).chunks[0]).add(pos) }) as *mut c_void
         } else {
-            // SAFETY: `b` addresses a live, initialized `Buf` in
-            // context/arena-owned memory with write-capable provenance (this
-            // fn's raw-pointer contract) — the `BufView::from_ptr` mint
-            // invariant.
-            push_size_new_block(unsafe { BufView::from_ptr(b) }, total)
+            push_size_new_block(view, total)
         }
     }
 }
@@ -845,8 +846,10 @@ pub(crate) unsafe fn push_size_fast(b: *mut Buf, size: usize, n: usize) -> *mut 
 // ufbx.c:4107-4112 `ufbxi_push_size_zero`
 #[inline(never)]
 pub(crate) unsafe fn push_size_zero(b: *mut Buf, size: usize, n: usize) -> *mut c_void {
-    // SAFETY: forwarding this fn's live-`Buf` contract to `push_size`.
-    let ptr = unsafe { push_size(b, size, n) };
+    // SAFETY: `b` addresses a live, initialized `Buf` in context/arena-owned
+    // memory with write-capable provenance (this fn's raw-pointer contract) —
+    // the `BufView::from_ptr` mint invariant.
+    let ptr = push_size(unsafe { BufView::from_ptr(b) }, size, n);
     if !ptr.is_null() {
         // SAFETY: on a non-null return `push_size` handed back a region of at
         // least `size * n` writable bytes (its allocation size); zeroing it.
@@ -871,8 +874,10 @@ pub(crate) unsafe fn push_size_copy(
     }
 
     ufbx_assert!(!data.is_null());
-    // SAFETY: forwarding this fn's live-`Buf` contract to `push_size`.
-    let ptr = unsafe { push_size(b, size, n) };
+    // SAFETY: `b` addresses a live, initialized `Buf` in context/arena-owned
+    // memory with write-capable provenance (this fn's raw-pointer contract) —
+    // the `BufView::from_ptr` mint invariant.
+    let ptr = push_size(unsafe { BufView::from_ptr(b) }, size, n);
     if !ptr.is_null() {
         // SAFETY: on a non-null return `push_size` handed back a fresh region of
         // `size * n` writable bytes, and `data` is the caller's readable source
@@ -1123,9 +1128,10 @@ pub(crate) unsafe fn push_pop_size(
     size: usize,
     n: usize,
 ) -> *mut c_void {
-    // SAFETY: `dst`/`src` are live `Buf`s (this fn's raw-pointer contract);
-    // forwarding to `push_size`.
-    let data = unsafe { push_size(dst, size, n) };
+    // SAFETY: `dst` addresses a live, initialized `Buf` in context/arena-owned
+    // memory with write-capable provenance (this fn's raw-pointer contract) —
+    // the `BufView::from_ptr` mint invariant.
+    let data = push_size(unsafe { BufView::from_ptr(dst) }, size, n);
     if data.is_null() {
         return core::ptr::null_mut();
     }
@@ -1145,9 +1151,10 @@ pub(crate) unsafe fn push_peek_size(
     size: usize,
     n: usize,
 ) -> *mut c_void {
-    // SAFETY: `dst`/`src` are live `Buf`s (this fn's raw-pointer contract);
-    // forwarding to `push_size`.
-    let data = unsafe { push_size(dst, size, n) };
+    // SAFETY: `dst` addresses a live, initialized `Buf` in context/arena-owned
+    // memory with write-capable provenance (this fn's raw-pointer contract) —
+    // the `BufView::from_ptr` mint invariant.
+    let data = push_size(unsafe { BufView::from_ptr(dst) }, size, n);
     if data.is_null() {
         return core::ptr::null_mut();
     }
@@ -1302,8 +1309,10 @@ pub(crate) fn buf_clear(view: &BufView) {
 // ufbx.c:4346 `#define ufbxi_push(b, type, n)`
 #[inline(always)]
 pub(crate) unsafe fn push<T>(b: *mut Buf, n: usize) -> *mut T {
-    // SAFETY: forwarding this fn's live-`Buf` contract to `push_size`.
-    (unsafe { push_size(b, size_of::<T>(), n) }) as *mut T
+    // SAFETY: `b` addresses a live, initialized `Buf` in context/arena-owned
+    // memory with write-capable provenance (this fn's raw-pointer contract) —
+    // the `BufView::from_ptr` mint invariant.
+    (push_size(unsafe { BufView::from_ptr(b) }, size_of::<T>(), n)) as *mut T
 }
 
 // ufbx.c:4347 `#define ufbxi_push_zero(b, type, n)`
@@ -1434,11 +1443,15 @@ mod tests {
         let mut buf = make_buf(ator, false, false);
 
         // Zero-count push returns the shared zero-size buffer.
-        let z = unsafe { push_size(&mut buf, 4, 0) };
+        // SAFETY: a live stack-local `Buf` owned by this test; minting the
+        // `BufView` the push takes.
+        let z = push_size(unsafe { BufView::from_ptr(&raw mut buf) }, 4, 0);
         assert_eq!(z as *const u8, ZERO_SIZE_BUFFER.as_ptr());
         assert_eq!(buf.num_items, 0);
 
-        let p = unsafe { push_size(&mut buf, 4, 3) } as *mut u32;
+        // SAFETY: a live stack-local `Buf` owned by this test; minting the
+        // `BufView` the push takes.
+        let p = push_size(unsafe { BufView::from_ptr(&raw mut buf) }, 4, 3) as *mut u32;
         assert!(!p.is_null());
         assert_eq!(buf.num_items, 3);
         // First chunk: next_size 4096, chunk_size = 4096 - header, 16-aligned.
@@ -1452,7 +1465,9 @@ mod tests {
 
         // Aligned follow-up push in the same chunk (u64 after 12 bytes pads to 16,
         // ordered buffer writes a 16-byte padding record).
-        let q = unsafe { push_size(&mut buf, 8, 1) } as *mut u64;
+        // SAFETY: a live stack-local `Buf` owned by this test; minting the
+        // `BufView` the push takes.
+        let q = push_size(unsafe { BufView::from_ptr(&raw mut buf) }, 8, 1) as *mut u64;
         assert!(!q.is_null());
         unsafe {
             *q = 0x1122334455667788;
@@ -1474,13 +1489,17 @@ mod tests {
         let ator = ator.as_mut_ptr();
         let mut buf = make_buf(ator, false, false);
 
-        let p = unsafe { push_size(&mut buf, 1, 100) };
+        // SAFETY: a live stack-local `Buf` owned by this test; minting the
+        // `BufView` the push takes.
+        let p = push_size(unsafe { BufView::from_ptr(&raw mut buf) }, 1, 100);
         assert!(!p.is_null());
         assert_eq!(unsafe { (*buf.chunks[0]).next_size }, 4096);
 
         // Overflow the first chunk: next chunk doubles next_size.
         let big = buf.size; // larger than remaining space
-        let q = unsafe { push_size(&mut buf, 1, big) };
+                            // SAFETY: a live stack-local `Buf` owned by this test; minting the
+                            // `BufView` the push takes.
+        let q = push_size(unsafe { BufView::from_ptr(&raw mut buf) }, 1, big);
         assert!(!q.is_null());
         assert_eq!(unsafe { (*buf.chunks[0]).next_size }, 8192);
         // Retired chunk stored its final position.
@@ -1502,7 +1521,9 @@ mod tests {
         let mut buf = make_buf(ator, true, false);
 
         let huge = unsafe { (*ator).huge_size }; // 0x100000
-        let p = unsafe { push_size(&mut buf, 1, huge) };
+                                                 // SAFETY: a live stack-local `Buf` owned by this test; minting the
+                                                 // `BufView` the push takes.
+        let p = push_size(unsafe { BufView::from_ptr(&raw mut buf) }, 1, huge);
         assert!(!p.is_null());
         // Huge unordered pushes go to chunks[1]; chunks[0]/pos/size untouched.
         assert!(buf.chunks[0].is_null());
@@ -1617,8 +1638,12 @@ mod tests {
         let mut buf = make_buf(ator, false, false);
 
         // 12 bytes, then an 8-aligned push forces a padding record.
-        let _ = unsafe { push_size(&mut buf, 4, 3) };
-        let q = unsafe { push_size(&mut buf, 8, 1) };
+        // SAFETY: a live stack-local `Buf` owned by this test; minting the
+        // `BufView` the push takes.
+        let _ = push_size(unsafe { BufView::from_ptr(&raw mut buf) }, 4, 3);
+        // SAFETY: a live stack-local `Buf` owned by this test; minting the
+        // `BufView` the push takes.
+        let q = push_size(unsafe { BufView::from_ptr(&raw mut buf) }, 8, 1);
         assert!(!q.is_null());
         assert_eq!(buf.pos, 16 + 16 + 8);
         assert_eq!(unsafe { (*buf.chunks[0]).padding_pos }, 16 + 16 + 1);
@@ -1690,10 +1715,12 @@ mod tests {
 
         // Span two chunks, then pop everything back to zero.
         let n1 = 4000usize;
-        unsafe {
-            let _ = push_size(&mut buf, 1, n1);
-            let _ = push_size(&mut buf, 1, 1000);
-        }
+        // SAFETY: a live stack-local `Buf` owned by this test; minting the
+        // `BufView` the pushes take.
+        let _ = push_size(unsafe { BufView::from_ptr(&raw mut buf) }, 1, n1);
+        // SAFETY: a live stack-local `Buf` owned by this test; minting the
+        // `BufView` the push takes.
+        let _ = push_size(unsafe { BufView::from_ptr(&raw mut buf) }, 1, 1000);
         assert!(unsafe { !(*buf.chunks[0]).prev.is_null() });
         unsafe {
             pop_size(&mut buf, 1, 1000, core::ptr::null_mut(), false);
@@ -1725,12 +1752,14 @@ mod tests {
         let mut buf = make_buf(ator, true, true);
 
         // Normal chunks plus more huge chunks than UFBXI_HUGE_MAX_SCAN.
-        unsafe {
-            let _ = push_size(&mut buf, 1, 100);
-        }
+        // SAFETY: a live stack-local `Buf` owned by this test; minting the
+        // `BufView` the push takes.
+        let _ = push_size(unsafe { BufView::from_ptr(&raw mut buf) }, 1, 100);
         let huge = unsafe { (*ator).huge_size };
         for i in 0..(HUGE_MAX_SCAN + 4) {
-            let p = unsafe { push_size(&mut buf, 1, huge + i) };
+            // SAFETY: a live stack-local `Buf` owned by this test; minting the
+            // `BufView` the push takes.
+            let p = push_size(unsafe { BufView::from_ptr(&raw mut buf) }, 1, huge + i);
             assert!(!p.is_null());
         }
         assert!(!buf.chunks[1].is_null());

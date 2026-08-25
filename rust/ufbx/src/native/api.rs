@@ -7481,9 +7481,13 @@ mod tests {
         let mut buf = unsafe { core::mem::MaybeUninit::<Buf>::zeroed().assume_init() };
         buf.ator = &raw mut ator;
 
-        // SAFETY: `buf` is a live local backed by `ator`; `push_size` allocates
-        // `MeshImp`-sized storage from it.
-        let imp = unsafe { push_size(&mut buf, size_of::<MeshImp>(), 1) } as *mut MeshImp;
+        // SAFETY: `buf` is a live local backed by `ator`; minting the `BufView`
+        // the push allocates `MeshImp`-sized storage from.
+        let imp = push_size(
+            unsafe { BufView::from_ptr(&raw mut buf) },
+            size_of::<MeshImp>(),
+            1,
+        ) as *mut MeshImp;
         assert!(!imp.is_null());
         // SAFETY: `imp` is the non-null `MeshImp`-sized allocation just made; the
         // write zero-fills exactly its byte extent.
@@ -8037,7 +8041,10 @@ mod tests {
             init_ator(&mut error, &mut ator, &opts, c"test");
             let mut buf = core::mem::MaybeUninit::<Buf>::zeroed().assume_init();
             buf.ator = &raw mut ator;
-            let imp = push_size(&mut buf, size_of::<SceneImp>(), 1) as *mut SceneImp;
+            // SAFETY: `buf` is a live local backed by `ator`; minting the
+            // `BufView` the push allocates `SceneImp`-sized storage from.
+            let imp = push_size(BufView::from_ptr(&raw mut buf), size_of::<SceneImp>(), 1)
+                as *mut SceneImp;
             assert!(!imp.is_null());
             core::ptr::write_bytes(imp as *mut u8, 0, size_of::<SceneImp>());
             // Expose the wide allocation so `get_imp` can recover this header via
@@ -8087,9 +8094,13 @@ mod tests {
         let mut buf = unsafe { core::mem::MaybeUninit::<Buf>::zeroed().assume_init() };
         buf.ator = &raw mut ator;
 
-        // SAFETY: `buf` is a live local backed by `ator`; `push_size` allocates
-        // `T`-sized storage from it.
-        let imp = unsafe { push_size(&mut buf, size_of::<T>(), 1) } as *mut T;
+        // SAFETY: `buf` is a live local backed by `ator`; minting the `BufView`
+        // the push allocates `T`-sized storage from.
+        let imp = push_size(
+            unsafe { BufView::from_ptr(&raw mut buf) },
+            size_of::<T>(),
+            1,
+        ) as *mut T;
         assert!(!imp.is_null());
         // SAFETY: `imp` is the non-null `T`-sized allocation just made; the write
         // zero-fills exactly its byte extent.

@@ -403,12 +403,6 @@ impl SubdivideContext {
         unsafe { &*(&raw mut (*self.get()).opts as *mut SubdivideOptsView) }
     }
 
-    // `tmp` — raw-ptr getter (address of field for out-param/mutation sites).
-    #[inline(always)]
-    pub(crate) fn tmp_mut_ptr(&self) -> *mut Buf {
-        view_raw_mut!(self, tmp)
-    }
-
     // `src_mesh` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn src_mesh_mut_ptr(&self) -> *mut Mesh {
@@ -1023,9 +1017,7 @@ pub(crate) fn subdivide_layer(
     let num_initial_values: usize = num_edge_values
         .wrapping_add(mesh.num_faces())
         .wrapping_add(mesh.num_indices());
-    // SAFETY: `tmp_mut_ptr()` is `sc`'s own live scratch `Buf`, the push contract.
-    let values: *mut u8 =
-        unsafe { push_size(sc.tmp_mut_ptr(), stride, num_initial_values) } as *mut u8;
+    let values: *mut u8 = push_size(sc.tmp_view(), stride, num_initial_values) as *mut u8;
     ufbxi_check_err!(sc.error_view(), !values.is_null(), "values");
 
     let face_values: *mut u8 = values;
@@ -1765,9 +1757,8 @@ pub(crate) fn subdivide_layer(
     let num_values: usize = num_edge_values
         .wrapping_add(mesh.num_faces())
         .wrapping_add(num_vertex_values);
-    // SAFETY: `result_mut_ptr()` is `sc`'s own live result `Buf`, the push contract.
     let mut new_values: *mut u8 =
-        unsafe { push_size(sc.result_mut_ptr(), stride, num_values.wrapping_add(1)) } as *mut u8;
+        push_size(sc.result_view(), stride, num_values.wrapping_add(1)) as *mut u8;
     ufbxi_check_err!(sc.error_view(), !new_values.is_null(), "new_values");
 
     // SAFETY: `new_values` is a `(num_values+1)*stride`-byte push, so the leading
