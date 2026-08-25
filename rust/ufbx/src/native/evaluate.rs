@@ -1261,7 +1261,9 @@ pub(crate) fn free_temp(uc: &Context) {
         obj_free(uc);
     }
 
-    free_ator(uc.ator_tmp_view());
+    // SAFETY: `uc.ator_tmp_view()` is the context's own temp allocator, live
+    // for the borrow, torn down exactly once here.
+    unsafe { free_ator(uc.ator_tmp_view()) };
 }
 
 // ufbx.c:25464-25470 `ufbxi_free_result`
@@ -1274,7 +1276,9 @@ pub(crate) fn free_result(uc: &Context) {
         buf_free(uc.string_pool_view().buf_mut_ptr());
     }
 
-    free_ator(uc.ator_result_view());
+    // SAFETY: `uc.ator_result_view()` is the context's own result allocator,
+    // live for the borrow, torn down exactly once here.
+    unsafe { free_ator(uc.ator_result_view()) };
 }
 
 // ufbx.c:25472-25625 `ufbxi_load`
@@ -4506,8 +4510,8 @@ pub(crate) unsafe fn evaluate_scene(
         // for the borrow, and this is the last use of each.
         unsafe {
             buf_free(ec.tmp_mut_ptr());
+            free_ator(ec.ator_tmp_view());
         }
-        free_ator(ec.ator_tmp_view());
         // SAFETY: `evaluate_imp` succeeded, and its last act is storing the
         // retained `ufbxi_scene_imp` into `ec`, so `scene_imp()` is the live
         // result-buffer header whose own `scene` field is projected here.
@@ -4528,9 +4532,9 @@ pub(crate) unsafe fn evaluate_scene(
         unsafe {
             buf_free(ec.tmp_mut_ptr());
             buf_free(ec.result_mut_ptr());
+            free_ator(ec.ator_tmp_view());
+            free_ator(ec.ator_result_view());
         }
-        free_ator(ec.ator_tmp_view());
-        free_ator(ec.ator_result_view());
         Err(fixed)
     }
 }

@@ -2172,8 +2172,9 @@ pub(crate) unsafe fn cache_load(cc: &CacheContext, filename: String) -> *mut Geo
             string_pool_temp_free(cc.string_pool_mut_ptr());
         }
         // SAFETY: `cc.ator_tmp()` is that same live temp allocator, owned by
-        // `cc` alone here and unmoved for the duration of the call.
-        free_ator(unsafe { AllocatorView::from_ptr(cc.ator_tmp()) });
+        // `cc` alone here and unmoved for the duration of the call; this is its
+        // single, final teardown.
+        unsafe { free_ator(AllocatorView::from_ptr(cc.ator_tmp())) };
     }
 
     if let Ok(finished_imp) = result {
@@ -2193,8 +2194,10 @@ pub(crate) unsafe fn cache_load(cc: &CacheContext, filename: String) -> *mut Geo
             // SAFETY: on the failure path the result buf never reached an
             // `imp`, so `cc` still owns the string-pool buf and the result
             // allocator — both its own fields, freed exactly once here.
-            unsafe { buf_free(cc.string_pool_view().buf_mut_ptr()) };
-            free_ator(cc.ator_result_view());
+            unsafe {
+                buf_free(cc.string_pool_view().buf_mut_ptr());
+                free_ator(cc.ator_result_view());
+            }
         }
         core::ptr::null_mut()
     }

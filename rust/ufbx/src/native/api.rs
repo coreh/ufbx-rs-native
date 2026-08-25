@@ -252,8 +252,8 @@ pub(crate) unsafe fn release_ref(mut refcount: *mut Refcount) {
         // SAFETY: `buf` is the just-moved `Buf`, now owning its stack `ator`.
         unsafe { buf_free(&raw mut buf) };
         // SAFETY: `ator` is this frame's live, unmoved stack copy of the
-        // refcount's allocator.
-        free_ator(unsafe { AllocatorView::from_ptr(&raw mut ator) });
+        // refcount's allocator, torn down exactly once here.
+        unsafe { free_ator(AllocatorView::from_ptr(&raw mut ator)) };
 
         refcount = parent;
     }
@@ -2242,10 +2242,13 @@ pub(crate) unsafe fn create_anim(
                 &raw mut fixed,
             );
         }
-        // SAFETY: `ac.result_mut_ptr()` is the context's own result buffer.
-        unsafe { buf_free(ac.result_mut_ptr()) };
-        // `ac.ator_result_view()` is the context's own result allocator.
-        free_ator(ac.ator_result_view());
+        // SAFETY: `ac.result_mut_ptr()` is the context's own result buffer and
+        // `ac.ator_result_view()` its own result allocator, torn down exactly
+        // once here.
+        unsafe {
+            buf_free(ac.result_mut_ptr());
+            free_ator(ac.ator_result_view());
+        }
         Err(fixed)
     }
 }
@@ -2354,8 +2357,9 @@ pub(crate) unsafe fn bake_anim(
     // SAFETY: `bc.ator_tmp_mut_ptr()` is the context's own temp allocator and
     // `bc.tmp_arr()`/`bc.tmp_arr_size()` the block it allocated from it.
     unsafe { free::<u8>(bc.ator_tmp_mut_ptr(), bc.tmp_arr(), bc.tmp_arr_size()) };
-    // `bc.ator_tmp_view()` is the context's own temp allocator.
-    free_ator(bc.ator_tmp_view());
+    // SAFETY: `bc.ator_tmp_view()` is the context's own temp allocator, torn
+    // down exactly once here.
+    unsafe { free_ator(bc.ator_tmp_view()) };
 
     if ok.is_ok() {
         let imp: *mut BakedAnimImp = bc.imp();
@@ -2373,10 +2377,13 @@ pub(crate) unsafe fn bake_anim(
         unsafe {
             fix_error_type(bc.error_mut_ptr(), b"Failed to bake anim\0", &raw mut fixed);
         }
-        // SAFETY: `bc.result_mut_ptr()` is the context's own result buffer.
-        unsafe { buf_free(bc.result_mut_ptr()) };
-        // `bc.ator_result_view()` is the context's own result allocator.
-        free_ator(bc.ator_result_view());
+        // SAFETY: `bc.result_mut_ptr()` is the context's own result buffer and
+        // `bc.ator_result_view()` its own result allocator, torn down exactly
+        // once here.
+        unsafe {
+            buf_free(bc.result_mut_ptr());
+            free_ator(bc.ator_result_view());
+        }
         Err(fixed)
     }
 }
@@ -4478,8 +4485,9 @@ pub(crate) unsafe fn tessellate_nurbs_curve(
     // `FinishedImp` carries the finished imp through the teardown to the return.
     let result = tessellate_nurbs_curve_imp(&tc);
 
-    // `ator_tmp_view()` addresses `tc`'s own temp allocator.
-    free_ator(tc.ator_tmp_view());
+    // SAFETY: `ator_tmp_view()` addresses `tc`'s own temp allocator, torn down
+    // exactly once here.
+    unsafe { free_ator(tc.ator_tmp_view()) };
 
     if let Ok(finished_imp) = result {
         // C: `return &tc->imp->curve;` — commit the finished imp across the ABI. (The
@@ -4502,8 +4510,8 @@ pub(crate) unsafe fn tessellate_nurbs_curve(
         // `ator_result_view()` its own result allocator.
         unsafe {
             buf_free(tc.result_mut_ptr());
+            free_ator(tc.ator_result_view());
         }
-        free_ator(tc.ator_result_view());
         Err(fixed)
     }
 }
@@ -4575,8 +4583,9 @@ pub(crate) unsafe fn tessellate_nurbs_surface(
         buf_free(tc.tmp_mut_ptr());
         map_free(tc.position_map_mut_ptr());
     }
-    // `ator_tmp_view()` addresses `tc`'s own temp allocator.
-    free_ator(tc.ator_tmp_view());
+    // SAFETY: `ator_tmp_view()` addresses `tc`'s own temp allocator, torn down
+    // exactly once here.
+    unsafe { free_ator(tc.ator_tmp_view()) };
 
     if let Ok(finished_imp) = result {
         // C: `return &tc->imp->mesh;` — commit the finished imp across the ABI. (The
@@ -4599,8 +4608,8 @@ pub(crate) unsafe fn tessellate_nurbs_surface(
         // `ator_result_view()` its own result allocator.
         unsafe {
             buf_free(tc.result_mut_ptr());
+            free_ator(tc.ator_result_view());
         }
-        free_ator(tc.ator_result_view());
         Err(fixed)
     }
 }

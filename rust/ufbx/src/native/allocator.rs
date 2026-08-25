@@ -506,8 +506,23 @@ pub(crate) unsafe fn grow_array_size(
 }
 
 // ufbx.c:3789-3798 `ufbxi_free_ator`
+//
+// The `&AllocatorView` param discharges liveness and provenance, but the view
+// is a freely copied, interior-mutable handle mintable from safe accessors
+// (`uc.ator_tmp_view()`, …), so it cannot carry the remaining obligation: that
+// this is the allocator's FINAL teardown. The body invokes the user's
+// `free_allocator_fn` (ufbx.c:3796), which ufbx contracts to call exactly once
+// per allocator — a second call is a user-side double free. That obligation
+// stays declared on the signature, as on the sibling teardowns `buf_free`,
+// `map_free` and `string_pool_temp_free`.
+//
+// # Safety
+//
+// The caller must own this allocator's teardown: no live blocks remain (C
+// asserts `current_size == 0`), this is the last use of the allocator and of
+// any view handle to it, and `free_ator` is called at most once for it.
 #[inline(never)]
-pub(crate) fn free_ator(ator: &AllocatorView) {
+pub(crate) unsafe fn free_ator(ator: &AllocatorView) {
     ufbx_assert!(ator.current_size() == 0);
 
     // SAFETY: the view is minted over a live, unmoved `Allocator` (its

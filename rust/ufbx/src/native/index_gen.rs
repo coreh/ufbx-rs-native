@@ -372,8 +372,9 @@ pub(crate) unsafe fn generate_indices(
     // is freed through the allocator that owns its storage before that allocator
     // itself is torn down.
     unsafe { map_free(&raw mut map) };
-    // SAFETY: `ator` is that same live, unmoved local allocator.
-    free_ator(unsafe { AllocatorView::from_ptr(&raw mut ator) });
+    // SAFETY: `ator` is that same live, unmoved local allocator, torn down
+    // exactly once here.
+    unsafe { free_ator(AllocatorView::from_ptr(&raw mut ator)) };
 
     result_vertices
 }

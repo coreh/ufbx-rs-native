@@ -540,9 +540,10 @@ pub(crate) unsafe fn end_file_context(fc: &FileContext, ok: bool) -> Result<(), 
             .set_error(unsafe { (*fc.parent_ator()).error });
         unsafe { *fc.parent_ator() = fc.ator() };
     } else {
-        // With no parent, `fc` owns its `ator` field, which is live for the
-        // duration of the `&FileContext` borrow.
-        free_ator(fc.ator_view());
+        // SAFETY: with no parent, `fc` owns its `ator` field, which is live for
+        // the duration of the `&FileContext` borrow; this is its single, final
+        // teardown.
+        unsafe { free_ator(fc.ator_view()) };
     }
     if !ok {
         // C fixes into the caller's slot when one is present; the `Result`
@@ -1030,8 +1031,9 @@ pub(crate) unsafe extern "C" fn memory_close(user: *mut c_void) {
         // allocator with zero live bytes.
         unsafe { free::<u8>(&raw mut ator, stream as *mut u8, (*stream).self_size) };
         // SAFETY: `ator` is this frame's live, unmoved stack copy of the
-        // stream's allocator, which holds zero live bytes at this point.
-        free_ator(unsafe { AllocatorView::from_ptr(&raw mut ator) });
+        // stream's allocator, which holds zero live bytes at this point, and is
+        // torn down exactly once here.
+        unsafe { free_ator(AllocatorView::from_ptr(&raw mut ator)) };
     }
 }
 

@@ -3314,8 +3314,9 @@ pub(crate) unsafe fn subdivide_mesh(
     }
 
     if let Ok(finished_imp) = result {
-        // `ator_tmp_view()` is `sc`'s own live temp allocator.
-        free_ator(sc.ator_tmp_view());
+        // SAFETY: `ator_tmp_view()` is `sc`'s own live temp allocator, torn
+        // down exactly once here.
+        unsafe { free_ator(sc.ator_tmp_view()) };
 
         // C: `return &sc->imp->mesh;` — commit the finished imp across the ABI.
         // (The success-path `clear_error` of the caller's slot lives in the
@@ -3331,11 +3332,13 @@ pub(crate) unsafe fn subdivide_mesh(
         unsafe {
             fix_error_type(sc.error_mut_ptr(), b"Failed to subdivide\0", &raw mut fixed);
         }
-        // SAFETY: `result` is `sc`'s own live scratch buf.
-        unsafe { buf_free(sc.result_mut_ptr()) };
-        // Both allocators are `sc`'s own live temp/result allocators.
-        free_ator(sc.ator_tmp_view());
-        free_ator(sc.ator_result_view());
+        // SAFETY: `result` is `sc`'s own live scratch buf; both allocators are
+        // `sc`'s own live temp/result allocators, torn down exactly once here.
+        unsafe {
+            buf_free(sc.result_mut_ptr());
+            free_ator(sc.ator_tmp_view());
+            free_ator(sc.ator_result_view());
+        }
         Err(fixed)
     }
 }
