@@ -10839,10 +10839,10 @@ pub(crate) fn get_geometry_transform(props: &PropsView, node: &NodeView) -> Tran
 // function's composition chain. The two are pinned together by the
 // `ufbxi_regression_assert` at ufbx.c:22901.
 #[inline(never)]
-pub(crate) unsafe fn get_rotation<M: Mode>(
+pub(crate) fn get_rotation<M: Mode>(
     props: &View<Props, M>,
     order: RotationOrder,
-    node: *const Node,
+    node: &View<Node, Const>,
 ) -> Quat {
     let rotation: Vec3 = find_vec3(props, &sp::Lcl_Rotation, 0.0, 0.0, 0.0);
     let pre_rotation: Vec3 = find_vec3(props, &sp::PreRotation, 0.0, 0.0, 0.0);
@@ -10868,16 +10868,11 @@ pub(crate) unsafe fn get_rotation<M: Mode>(
         },
     };
 
-    // SAFETY: `node` points to the live, initialized `ufbx_node` whose rotation
-    // is being composed (fn contract).
-    unsafe {
-        if (*node).has_adjust_transform {
-            mul_rotate_quat(&mut t, (*node).adjust_post_rotation);
-        }
+    if node.has_adjust_transform() {
+        mul_rotate_quat(&mut t, node.adjust_post_rotation());
     }
 
-    // SAFETY: `node` is live (see above).
-    if unsafe { (*node).use_rotation_space } {
+    if node.use_rotation_space() {
         mul_inv_rotate(&mut t, post_rotation, RotationOrder::Xyz);
         mul_rotate(&mut t, rotation, order);
         mul_rotate(&mut t, pre_rotation, RotationOrder::Xyz);
@@ -10885,19 +10880,13 @@ pub(crate) unsafe fn get_rotation<M: Mode>(
         mul_rotate(&mut t, rotation, RotationOrder::Xyz);
     }
 
-    // SAFETY: `node` is live (see above).
-    unsafe {
-        if (*node).has_adjust_transform {
-            mul_rotate_quat(&mut t, (*node).adjust_pre_rotation);
-        }
+    if node.has_adjust_transform() {
+        mul_rotate_quat(&mut t, node.adjust_pre_rotation());
     }
 
     // C: `if (node->adjust_mirror_axis)` — enum truthiness.
-    // SAFETY: `node` is live (see above).
-    unsafe {
-        if (*node).adjust_mirror_axis != MirrorAxis::None {
-            mirror_rotation(&mut t.rotation, (*node).adjust_mirror_axis);
-        }
+    if node.adjust_mirror_axis() != MirrorAxis::None {
+        mirror_rotation(&mut t.rotation, node.adjust_mirror_axis());
     }
 
     t.rotation
@@ -11056,11 +11045,12 @@ pub(crate) unsafe fn get_transform<M: Mode>(
     }
 
     // Make sure the fast paths are identical to this function.
-    // SAFETY: `props` and `node` are the same arguments this fn received, so the
-    // rotation-only fast path's contract is discharged by this fn's own.
-    ufbxi_regression_assert!(is_quat_equal(t.rotation, unsafe {
-        get_rotation(props, order, node)
-    }));
+    // SAFETY: `node` is the same argument this fn received — live and unmoved,
+    // and nothing writes through it while the read-only view is held.
+    ufbxi_regression_assert!(is_quat_equal(
+        t.rotation,
+        get_rotation(props, order, unsafe { View::<Node, Const>::from_ptr(node) })
+    ));
     // SAFETY: as above, for the scale-only fast path.
     ufbxi_regression_assert!(is_vec3_equal(t.scale, unsafe { get_scale(props, node) }));
 

@@ -2035,13 +2035,14 @@ pub(crate) unsafe fn evaluate_transform_flags(
             (*t).translation = ZERO_VEC3;
         }
         if (components & TransformFlags::INCLUDE_ROTATION.raw()) != 0 {
-            // SAFETY: `t` is the local transform; `get_rotation` reads a read-only
-            // view over the local `props` and the live `node`.
+            // SAFETY: `t` is the local transform; `get_rotation` reads read-only
+            // views over the local `props` and the live `node`, neither written
+            // through while the views are held.
             unsafe {
                 (*t).rotation = get_rotation(
                     View::<Props, Const>::from_ptr(&raw const props),
                     order,
-                    node,
+                    View::<Node, Const>::from_ptr(node),
                 );
             }
         } else {
