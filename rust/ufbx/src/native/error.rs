@@ -776,19 +776,17 @@ pub(crate) use ufbxi_fail_err_no_msg;
 // ufbx.c:3546 (no-stack branch helper)
 #[cfg(not(feature = "error-stack"))]
 #[inline(never)]
-pub(crate) unsafe fn fail_imp_err_no_stack(err: *mut Error) -> i32 {
-    // SAFETY: this fn's own contract — `err` points at a live, write-capable
-    // `Error` that stays alive and unmoved for the call — is exactly the
-    // `ErrorView::from_ptr` mint invariant.
-    let err = unsafe { ErrorView::from_ptr(err) };
+pub(crate) fn fail_imp_err_no_stack(err: &ErrorView) -> i32 {
     fail_imp_err(err, None, None, 0)
 }
 
-// Safe wrapper over `fail_imp_err_no_stack` taking an anchored `&ErrorView`.
+// `Fail`-minting wrapper over `fail_imp_err_no_stack`: the C body returns `0`
+// (the int-shaped failure), the Rust callers need the `Fail` witness that an
+// error was written to the target.
 #[cfg(not(feature = "error-stack"))]
 #[inline]
 pub(crate) fn fail_err_no_stack(err: &ErrorView) -> Fail {
-    unsafe { fail_imp_err_no_stack(err.get()) };
+    fail_imp_err_no_stack(err);
     Fail(())
 }
 
