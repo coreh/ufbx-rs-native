@@ -289,7 +289,7 @@ pub(crate) unsafe fn generate_indices(
                 // SAFETY: same map and key contract as the lookup above.
                 entry = unsafe {
                     map_insert_size(
-                        &raw mut map,
+                        MapView::from_ptr(&raw mut map),
                         packed_size,
                         hash,
                         packed_vertex as *const c_void,
