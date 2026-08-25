@@ -1709,20 +1709,76 @@ pub(crate) fn pow_abs(v: f64, e: f64) -> f64 {
     sign * math::pow(v * sign, e)
 }
 
+// `ufbx_vec3` in/out slot: `ufbxi_combine_anim_layer`'s `ufbx_vec3 *result`
+// addresses the `ufbx_prop` value union inside the caller's prop run, which is
+// arena memory, so its components are read and written one at a time through a
+// view instead of a `&mut`.
+impl<M: Mode> View<Vec3, M> {
+    #[inline(always)]
+    pub(crate) fn x(&self) -> Real {
+        view_read_shared!(self, x)
+    }
+    #[inline(always)]
+    pub(crate) fn y(&self) -> Real {
+        view_read_shared!(self, y)
+    }
+    #[inline(always)]
+    pub(crate) fn z(&self) -> Real {
+        view_read_shared!(self, z)
+    }
+    // C reads the slot as a whole struct (`ufbx_euler_to_quat(*result, ...)`);
+    // `ufbx_vec3` is three `ufbx_real`s with no padding, so the field-wise copy
+    // moves the same bytes.
+    #[inline(always)]
+    pub(crate) fn vec3(&self) -> Vec3 {
+        Vec3 {
+            x: self.x(),
+            y: self.y(),
+            z: self.z(),
+        }
+    }
+}
+
+impl View<Vec3, Mut> {
+    #[inline(always)]
+    pub(crate) fn set_x(&self, value: Real) {
+        view_write!(self, x, value)
+    }
+    #[inline(always)]
+    pub(crate) fn set_y(&self, value: Real) {
+        view_write!(self, y, value)
+    }
+    #[inline(always)]
+    pub(crate) fn set_z(&self, value: Real) {
+        view_write!(self, z, value)
+    }
+    // C assigns the slot as a whole struct (`*result = *value;`); field-wise
+    // for the same reason as `vec3()`.
+    #[inline(always)]
+    pub(crate) fn set_vec3(&self, value: Vec3) {
+        self.set_x(value.x);
+        self.set_y(value.y);
+        self.set_z(value.z);
+    }
+}
+
 // Recursion is limited by the fact that we recurse only when the property name is "Lcl Rotation"
 // and when recursing we always evaluate the property "RotationOrder"
 // ufbx.c:25697-25749 `ufbxi_combine_anim_layer`
 // `ufbxi_recursive_function_void(ufbxi_combine_anim_layer, ..., 2, ...)`
 // (ufbx.c:25699-25700): under regression a thread-local depth guard wraps the
 // recursive body; otherwise the macro is empty and the wrapper is a plain call.
+// C's `const char *prop_name` is a string-pool pointer compared for interned
+// identity only and never dereferenced, so it carries no contract and stays a
+// bare `*const u8`.
 #[inline(never)]
-pub(crate) unsafe fn combine_anim_layer(
-    ctx: *mut AnimLayerCombineCtx,
-    layer: *mut AnimLayer,
+pub(crate) fn combine_anim_layer(
+    ctx: &mut AnimLayerCombineCtx,
+    layer: &View<AnimLayer>,
     weight: Real,
     prop_name: *const u8,
-    result: *mut Vec3,
-    value: *const Vec3,
+    result: &View<Vec3, Mut>,
+    value: &Vec3,
 ) {
     #[cfg(feature = "regression")]
     {
@@ -1733,50 +1789,39 @@ pub(crate) unsafe fn combine_anim_layer(
             ufbx_assert!(d.get() < 2);
             d.set(d.get() + 1);
         });
-        // SAFETY: every pointer is forwarded unchanged from this fn's own
-        // parameters, so the callee inherits the caller's contract.
-        unsafe { combine_anim_layer_rec(ctx, layer, weight, prop_name, result, value) };
+        combine_anim_layer_rec(ctx, layer, weight, prop_name, result, value);
         UFBXI_RECURSION_DEPTH.with(|d| d.set(d.get() - 1));
     }
-    // SAFETY: every pointer is forwarded unchanged from this fn's own
-    // parameters, so the callee inherits the caller's contract.
     #[cfg(not(feature = "regression"))]
-    unsafe {
-        combine_anim_layer_rec(ctx, layer, weight, prop_name, result, value)
-    }
+    combine_anim_layer_rec(ctx, layer, weight, prop_name, result, value);
 }
 
 // ufbx.c:25702-25749 `ufbxi_combine_anim_layer` body (the `_rec` half of the
 // `ufbxi_recursive_function` body; see the wrapper above)
 #[inline(never)]
-unsafe fn combine_anim_layer_rec(
-    ctx: *mut AnimLayerCombineCtx,
-    layer: *mut AnimLayer,
+fn combine_anim_layer_rec(
+    ctx: &mut AnimLayerCombineCtx,
+    layer: &View<AnimLayer>,
     weight: Real,
     prop_name: *const u8,
-    result: *mut Vec3,
-    value: *const Vec3,
+    result: &View<Vec3, Mut>,
+    value: &Vec3,
 ) {
-    // SAFETY (every `*ctx`, `*layer`, `*result` and `*value` access in this fn):
-    // all four are the caller's live pointers — the raw-pointer contract of this
-    // `unsafe fn`, threaded down from `ufbxi_combine_anim_layer`'s caller, which
-    // passes an anim layer of the scene, a stack-local combine context and the
-    // in/out `ufbx_vec3` slots it owns.
-    if unsafe { (*layer).compose_rotation }
-        && unsafe { (*layer).blended }
+    if layer.compose_rotation()
+        && layer.blended()
         && prop_name == sp::Lcl_Rotation.as_ptr()
-        && !unsafe { (*ctx).has_rotation_order }
+        && !ctx.has_rotation_order
     {
         // SAFETY: `ctx`'s `anim`/`element` are the live scene objects its
         // constructor stored, and the name run is the interned `RotationOrder`
         // static — `evaluate_prop_len`'s contract.
         let rp: Prop = unsafe {
             evaluate_prop_len(
-                (*ctx).anim,
-                (*ctx).element,
+                ctx.anim,
+                ctx.element,
                 sp::RotationOrder.as_ptr(),
                 sp::RotationOrder.len() - 1,
-                (*ctx).time,
+                ctx.time,
             )
         };
         // NOTE: Defaults to 0 (UFBX_ROTATION_XYZ) gracefully if property is not found
@@ -1785,69 +1830,64 @@ unsafe fn combine_anim_layer_rec(
             // SAFETY: the guard bounds `value_int` to `0..=Spheric`, which are
             // exactly the discriminants of the `repr(u32)` `ufbx_rotation_order`,
             // so the transmuted value is a valid variant.
-            unsafe {
-                (*ctx).rotation_order =
-                    core::mem::transmute::<u32, RotationOrder>(rp.value_int as u32)
-            };
+            ctx.rotation_order =
+                unsafe { core::mem::transmute::<u32, RotationOrder>(rp.value_int as u32) };
         } else {
-            unsafe { (*ctx).rotation_order = RotationOrder::Xyz };
+            ctx.rotation_order = RotationOrder::Xyz;
         }
-        unsafe { (*ctx).has_rotation_order = true };
+        ctx.has_rotation_order = true;
     }
 
-    if unsafe { (*layer).additive } {
-        if unsafe { (*layer).compose_scale } && prop_name == sp::Lcl_Scaling.as_ptr() {
+    if layer.additive() {
+        if layer.compose_scale() && prop_name == sp::Lcl_Scaling.as_ptr() {
             // C: `result->x *= (ufbx_real)ufbxi_pow_abs(value->x, weight);`
             // — `ufbxi_pow_abs` takes `double`, so both args promote to double
             // and the result narrows back to `ufbx_real` before the multiply.
-            unsafe { (*result).x *= pow_abs(as_f64!((*value).x), as_f64!(weight)) as Real };
-            unsafe { (*result).y *= pow_abs(as_f64!((*value).y), as_f64!(weight)) as Real };
-            unsafe { (*result).z *= pow_abs(as_f64!((*value).z), as_f64!(weight)) as Real };
-        } else if unsafe { (*layer).compose_rotation } && prop_name == sp::Lcl_Rotation.as_ptr() {
-            let a: Quat = unsafe { euler_to_quat(*result, (*ctx).rotation_order) };
-            let mut b: Quat = unsafe { euler_to_quat(*value, (*ctx).rotation_order) };
+            result.set_x(result.x() * pow_abs(as_f64!(value.x), as_f64!(weight)) as Real);
+            result.set_y(result.y() * pow_abs(as_f64!(value.y), as_f64!(weight)) as Real);
+            result.set_z(result.z() * pow_abs(as_f64!(value.z), as_f64!(weight)) as Real);
+        } else if layer.compose_rotation() && prop_name == sp::Lcl_Rotation.as_ptr() {
+            let a: Quat = euler_to_quat(result.vec3(), ctx.rotation_order);
+            let mut b: Quat = euler_to_quat(*value, ctx.rotation_order);
             b = quat_slerp(IDENTITY_QUAT, b, weight);
             let res: Quat = mul_quat(a, b);
-            unsafe { *result = quat_to_euler(res, (*ctx).rotation_order) };
+            result.set_vec3(quat_to_euler(res, ctx.rotation_order));
         } else {
-            unsafe { (*result).x += (*value).x * weight };
-            unsafe { (*result).y += (*value).y * weight };
-            unsafe { (*result).z += (*value).z * weight };
+            result.set_x(result.x() + value.x * weight);
+            result.set_y(result.y() + value.y * weight);
+            result.set_z(result.z() + value.z * weight);
         }
-    } else if unsafe { (*layer).blended } {
+    } else if layer.blended() {
         // C: `ufbx_real res_weight = 1.0f - weight;`
         let res_weight: Real = 1.0 - weight;
-        if unsafe { (*layer).compose_scale } && prop_name == sp::Lcl_Scaling.as_ptr() {
+        if layer.compose_scale() && prop_name == sp::Lcl_Scaling.as_ptr() {
             // C: `result->x = (ufbx_real)(ufbxi_pow_abs(result->x, res_weight) * ufbxi_pow_abs(value->x, weight));`
             // — `ufbxi_pow_abs` takes `double`; the product stays in double and
             // narrows to `ufbx_real` only on the assignment.
-            unsafe {
-                (*result).x = (pow_abs(as_f64!((*result).x), res_weight as f64)
-                    * pow_abs(as_f64!((*value).x), as_f64!(weight)))
-                    as Real
-            };
-            unsafe {
-                (*result).y = (pow_abs(as_f64!((*result).y), res_weight as f64)
-                    * pow_abs(as_f64!((*value).y), as_f64!(weight)))
-                    as Real
-            };
-            unsafe {
-                (*result).z = (pow_abs(as_f64!((*result).z), res_weight as f64)
-                    * pow_abs(as_f64!((*value).z), as_f64!(weight)))
-                    as Real
-            };
-        } else if unsafe { (*layer).compose_rotation } && prop_name == sp::Lcl_Rotation.as_ptr() {
-            let a: Quat = unsafe { euler_to_quat(*result, (*ctx).rotation_order) };
-            let b: Quat = unsafe { euler_to_quat(*value, (*ctx).rotation_order) };
+            result.set_x(
+                (pow_abs(as_f64!(result.x()), res_weight as f64)
+                    * pow_abs(as_f64!(value.x), as_f64!(weight))) as Real,
+            );
+            result.set_y(
+                (pow_abs(as_f64!(result.y()), res_weight as f64)
+                    * pow_abs(as_f64!(value.y), as_f64!(weight))) as Real,
+            );
+            result.set_z(
+                (pow_abs(as_f64!(result.z()), res_weight as f64)
+                    * pow_abs(as_f64!(value.z), as_f64!(weight))) as Real,
+            );
+        } else if layer.compose_rotation() && prop_name == sp::Lcl_Rotation.as_ptr() {
+            let a: Quat = euler_to_quat(result.vec3(), ctx.rotation_order);
+            let b: Quat = euler_to_quat(*value, ctx.rotation_order);
             let res: Quat = quat_slerp(a, b, weight);
-            unsafe { *result = quat_to_euler(res, (*ctx).rotation_order) };
+            result.set_vec3(quat_to_euler(res, ctx.rotation_order));
         } else {
-            unsafe { (*result).x = (*result).x * res_weight + (*value).x * weight };
-            unsafe { (*result).y = (*result).y * res_weight + (*value).y * weight };
-            unsafe { (*result).z = (*result).z * res_weight + (*value).z * weight };
+            result.set_x(result.x() * res_weight + value.x * weight);
+            result.set_y(result.y() * res_weight + value.y * weight);
+            result.set_z(result.z() * res_weight + value.z * weight);
         }
     } else {
-        unsafe { *result = *value };
+        result.set_vec3(*value);
     }
 }
 
@@ -2062,21 +2102,23 @@ pub(crate) unsafe fn evaluate_props(
                     // stays inside it.
                     unsafe { *(prop.value_vec4_raw() as *mut Vec3) = v };
                 } else {
-                    // SAFETY: the combine context is a live local of this frame,
-                    // `layer` is the scene-owned layer, the name is `prop`'s own
-                    // interned string, the in/out slot is `prop`'s own
-                    // `value_vec4` union viewed as a `ufbx_vec3`, and `v` is a
-                    // live local.
-                    unsafe {
-                        combine_anim_layer(
-                            &raw mut combine_ctx,
-                            layer,
-                            weight,
-                            prop.name().data,
-                            prop.value_vec4_raw() as *mut Vec3,
-                            &raw const v,
-                        )
-                    };
+                    // C: the in/out slot is `prop`'s own `value_vec4` union
+                    // viewed as a `ufbx_vec3`.
+                    // SAFETY: `value_vec4` is four `ufbx_real`s of the viewed
+                    // prop, so the leading `ufbx_vec3` stays inside it; the
+                    // prop is reached through the caller's `*mut` prop run,
+                    // which is the write-capable provenance the `Mut` mint
+                    // requires.
+                    let result: &View<Vec3, Mut> =
+                        unsafe { View::<Vec3, Mut>::from_ptr(prop.value_vec4_raw() as *mut Vec3) };
+                    combine_anim_layer(
+                        &mut combine_ctx,
+                        layer_view,
+                        weight,
+                        prop.name().data,
+                        result,
+                        &v,
+                    );
                 }
             }
         }
