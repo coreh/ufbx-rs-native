@@ -5868,14 +5868,44 @@ pub(crate) fn solve_tcb(
     *p_slope_right = (d10 * slope_left + d11 * slope_right) as f32;
 }
 
+// Rust-port infrastructure (not a ufbx.c section): the `ufbx_extrapolation *`
+// out-parameter of `ufbxi_read_extrapolation` travels as a view over the curve's
+// own extrapolation fields, projected in place out of the (scene-arena) element.
+impl View<AnimCurve> {
+    #[inline(always)]
+    pub(crate) fn pre_extrapolation_view(&self) -> &View<Extrapolation> {
+        view_project!(self, pre_extrapolation)
+    }
+
+    #[inline(always)]
+    pub(crate) fn post_extrapolation_view(&self) -> &View<Extrapolation> {
+        view_project!(self, post_extrapolation)
+    }
+}
+
+impl View<Extrapolation> {
+    #[inline(always)]
+    pub(crate) fn set_mode(&self, value: ExtrapolationMode) {
+        view_write!(self, mode, value)
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_repeat_count(&self, value: i32) {
+        view_write!(self, repeat_count, value)
+    }
+}
+
 // ufbx.c:14227-14255 `ufbxi_read_extrapolation`
+// `name` is the interned static run itself: `ufbxi_find_child` compares names by
+// pointer VALUE, so the run's own address is the identity and the bytes are never
+// dereferenced.
 #[inline(never)]
-pub(crate) unsafe fn read_extrapolation(
-    p_extrapolation: *mut Extrapolation,
+pub(crate) fn read_extrapolation(
+    p_extrapolation: &View<Extrapolation>,
     node: &NodeView,
-    name: *const u8,
+    name: &[u8],
 ) {
-    let child = find_child(node, name);
+    let child = find_child(node, name.as_ptr());
     let mut mode: ExtrapolationMode = ExtrapolationMode::Constant;
     let mut repeat_count: i32 = -1;
 
@@ -5907,12 +5937,8 @@ pub(crate) unsafe fn read_extrapolation(
         }
     }
 
-    // SAFETY: `p_extrapolation` is a live, writable `ufbx_extrapolation` out-slot
-    // (fn contract).
-    unsafe {
-        (*p_extrapolation).mode = mode;
-        (*p_extrapolation).repeat_count = repeat_count;
-    }
+    p_extrapolation.set_mode(mode);
+    p_extrapolation.set_repeat_count(repeat_count);
 }
 
 // ufbx.c:14257-14532 `ufbxi_read_animation_curve`
@@ -5940,25 +5966,12 @@ pub(crate) unsafe fn read_animation_curve(
     // the load.
     let curve: &View<AnimCurve> = unsafe { View::<AnimCurve>::from_ptr(curve) };
 
-    // SAFETY: `pre_extrapolation_raw()` addresses the viewed element's own
-    // `ufbx_extrapolation` field, the live out-slot `read_extrapolation`
-    // requires; `sp::Pre_Extrapolation` is a NUL-terminated static name.
-    unsafe {
-        read_extrapolation(
-            curve.pre_extrapolation_raw(),
-            node,
-            sp::Pre_Extrapolation.as_ptr(),
-        );
-    }
-    // SAFETY: as above, for the viewed element's own `post_extrapolation` field
-    // and the NUL-terminated `sp::Post_Extrapolation`.
-    unsafe {
-        read_extrapolation(
-            curve.post_extrapolation_raw(),
-            node,
-            sp::Post_Extrapolation.as_ptr(),
-        );
-    }
+    read_extrapolation(curve.pre_extrapolation_view(), node, &sp::Pre_Extrapolation);
+    read_extrapolation(
+        curve.post_extrapolation_view(),
+        node,
+        &sp::Post_Extrapolation,
+    );
 
     if uc.opts_view().ignore_animation() {
         return Ok(());
@@ -8423,20 +8436,12 @@ pub(crate) unsafe fn read_take_anim_channel(
     // `element.name` is the interned scene string the push installed.
     unsafe { connect_op(uc, curve_fbx_id, value_fbx_id, curve.element().name()) }?;
 
-    // SAFETY: each out-slot is a single-field projection of the live curve view,
-    // and the name is an interned NUL-terminated string pointer.
-    unsafe {
-        read_extrapolation(
-            curve.pre_extrapolation_raw(),
-            node,
-            sp::Pre_Extrapolation.as_ptr(),
-        );
-        read_extrapolation(
-            curve.post_extrapolation_raw(),
-            node,
-            sp::Post_Extrapolation.as_ptr(),
-        );
-    }
+    read_extrapolation(curve.pre_extrapolation_view(), node, &sp::Pre_Extrapolation);
+    read_extrapolation(
+        curve.post_extrapolation_view(),
+        node,
+        &sp::Post_Extrapolation,
+    );
 
     if uc.opts_view().ignore_animation() {
         return Ok(());
