@@ -10766,8 +10766,8 @@ pub(crate) fn read_legacy_root(uc: &Context) -> Result<(), Fail> {
     }
 
     if uc.opts_view().retain_dom() {
-        // SAFETY: a NULL node retains uc's whole current top-level run.
-        unsafe { retain_toplevel(uc, core::ptr::null_mut())? };
+        // C: a NULL node retains uc's whole current top-level run.
+        retain_toplevel(uc, None)?;
     }
 
     // Create the implicit animation stack if necessary

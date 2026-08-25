@@ -3150,6 +3150,14 @@ impl Context {
         view_raw_mut!(self, legacy_node)
     }
 
+    // `legacy_node` (Node) — typed VIEW handle (reinterpret-in-place); accessors on NodeView.
+    #[inline(always)]
+    pub(crate) fn legacy_node_view(&self) -> &NodeView {
+        // SAFETY: repr(transparent) over the `legacy_node` field inside the outer UnsafeCell;
+        // shared interior-mutable view, asserts no validity.
+        unsafe { &*(&raw mut (*self.get()).legacy_node as *mut NodeView) }
+    }
+
     // `tmp_mesh_textures` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn tmp_mesh_textures_mut_ptr(&self) -> *mut Buf {
@@ -6264,7 +6272,7 @@ fn retain_dom_node_rec(
 
 // ufbx.c:10813-10844 `ufbxi_retain_toplevel`
 #[inline(never)]
-pub(crate) unsafe fn retain_toplevel(uc: &Context, node: *mut Node) -> Result<(), Fail> {
+pub(crate) fn retain_toplevel(uc: &Context, node: Option<&NodeView>) -> Result<(), Fail> {
     if uc.dom_parse_num_children() > 0 {
         let children: *mut *mut DomNode = uc
             .result_view()
@@ -6280,10 +6288,7 @@ pub(crate) unsafe fn retain_toplevel(uc: &Context, node: *mut Node) -> Result<()
         uc.set_dom_parse_num_children(0);
     }
 
-    if !node.is_null() {
-        // SAFETY: `node` is non-null (just checked) and a valid parse node living
-        // in `uc`'s arena (fn contract), which outlives the call.
-        let node_view: &NodeView = unsafe { NodeView::from_ptr(node) };
+    if let Some(node_view) = node {
         // SAFETY: `dom_parse_toplevel_mut_ptr` addresses `uc`'s own
         // `dom_parse_toplevel` field — context-owned, write-capable memory live
         // for the call; `ScalarView` is `repr(transparent)` over the slot, and
@@ -7086,9 +7091,8 @@ pub(crate) unsafe fn parse_toplevel(uc: &Context, name: *const u8) -> Result<(),
             uc.set_top_child_index(0);
             uc.set_parsed_to_end(true);
             if uc.opts_view().retain_dom() {
-                // SAFETY: a null `node` tells `retain_toplevel` to finalize the
-                // DOM — an accepted argument.
-                unsafe { retain_toplevel(uc, core::ptr::null_mut())? };
+                // C: a null `node` tells `retain_toplevel` to finalize the DOM.
+                retain_toplevel(uc, None)?;
             }
 
             // Not needed anymore
@@ -7121,8 +7125,9 @@ pub(crate) unsafe fn parse_toplevel(uc: &Context, name: *const u8) -> Result<(),
         // live slot receiving the popped `Node` — `pop`'s contract.
         unsafe { pop::<Node>(uc.tmp_stack_mut_ptr(), 1, node) };
         if uc.opts_view().retain_dom() {
-            // SAFETY: `node` is a live top-node slot.
-            unsafe { retain_toplevel(uc, node)? };
+            // SAFETY: `node` is a live top-node slot in `uc`'s own `top_nodes`
+            // array, which outlives the call.
+            retain_toplevel(uc, Some(unsafe { NodeView::from_ptr(node) }))?;
         }
 
         // Return if we parsed the right one
@@ -7289,9 +7294,8 @@ pub(crate) fn parse_legacy_toplevel(uc: &Context) -> Result<(), Fail> {
     uc.set_top_node(uc.legacy_node_mut_ptr());
 
     if uc.opts_view().retain_dom() {
-        // SAFETY: `legacy_node` was just populated by the `pop` above and is
-        // `uc`'s own field.
-        unsafe { retain_toplevel(uc, uc.legacy_node_mut_ptr())? };
+        // C: `legacy_node` was just populated by the `pop` above.
+        retain_toplevel(uc, Some(uc.legacy_node_view()))?;
     }
 
     Ok(())
