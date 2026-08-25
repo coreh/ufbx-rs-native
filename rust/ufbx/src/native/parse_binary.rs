@@ -905,11 +905,11 @@ pub(crate) unsafe extern "C" fn deflate_task_fn(task: *mut Task) -> bool {
 // recursive body (which C splits into `ufbxi_binary_parse_node_rec`);
 // otherwise the macro is empty and the wrapper is a plain call.
 #[inline(never)]
-pub(crate) unsafe fn binary_parse_node(
+pub(crate) fn binary_parse_node(
     uc: &Context,
     depth: u32,
     parent_state: ParseState,
-    p_end: *mut bool,
+    p_end: &mut bool,
     tmp_buf: &BufView,
     recursive: bool,
 ) -> Result<(), Fail> {
@@ -922,31 +922,13 @@ pub(crate) unsafe fn binary_parse_node(
             ufbx_assert!(d.get() < MAX_NODE_DEPTH + 1);
             d.set(d.get() + 1);
         });
-        // SAFETY: `p_end` is the caller's live, exclusively owned `bool` output
-        // slot; the reborrow lasts only for the recursive call.
-        let ret = binary_parse_node_rec(
-            uc,
-            depth,
-            parent_state,
-            unsafe { &mut *p_end },
-            tmp_buf,
-            recursive,
-        );
+        let ret = binary_parse_node_rec(uc, depth, parent_state, p_end, tmp_buf, recursive);
         UFBXI_RECURSION_DEPTH.with(|d| d.set(d.get() - 1));
         ret
     }
     #[cfg(not(feature = "regression"))]
     {
-        // SAFETY: `p_end` is the caller's live, exclusively owned `bool` output
-        // slot; the reborrow lasts only for the recursive call.
-        binary_parse_node_rec(
-            uc,
-            depth,
-            parent_state,
-            unsafe { &mut *p_end },
-            tmp_buf,
-            recursive,
-        )
+        binary_parse_node_rec(uc, depth, parent_state, p_end, tmp_buf, recursive)
     }
 }
 
@@ -1660,9 +1642,7 @@ fn binary_parse_node_rec(
             }
 
             let mut end: bool = false;
-            // SAFETY: the raw address identifies the live local `bool` output
-            // flag; the recursive call parses the next child node.
-            unsafe { binary_parse_node(uc, depth + 1, parse_state, &raw mut end, tmp_buf, true) }?;
+            binary_parse_node(uc, depth + 1, parse_state, &mut end, tmp_buf, true)?;
             if end {
                 break;
             }

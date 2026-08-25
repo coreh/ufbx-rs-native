@@ -7027,11 +7027,7 @@ pub(crate) fn parse_toplevel_child_imp(
     if uc.from_ascii() {
         crate::native::parse_ascii::ascii_parse_node(uc, 0, state, &mut end, buf, true)?;
     } else {
-        // SAFETY: `&raw mut end` is an unaliased local `bool` slot — a valid
-        // `*mut bool` out-flag, the node parser's contract.
-        unsafe {
-            crate::native::parse_binary::binary_parse_node(uc, 0, state, &raw mut end, buf, true)?
-        };
+        crate::native::parse_binary::binary_parse_node(uc, 0, state, &mut end, buf, true)?;
     }
 
     Ok(end)
@@ -7074,19 +7070,14 @@ pub(crate) unsafe fn parse_toplevel(uc: &Context, name: *const u8) -> Result<(),
                 false,
             )?;
         } else {
-            // SAFETY: `&raw mut end` is an unaliased local `bool` slot — a valid
-            // `*mut bool` out-flag, the node parser's contract; the destination
-            // buf is `uc`'s own `tmp`, reached through its view accessor.
-            unsafe {
-                crate::native::parse_binary::binary_parse_node(
-                    uc,
-                    0,
-                    ParseState::Root,
-                    &raw mut end,
-                    uc.tmp_view(),
-                    false,
-                )?
-            };
+            crate::native::parse_binary::binary_parse_node(
+                uc,
+                0,
+                ParseState::Root,
+                &mut end,
+                uc.tmp_view(),
+                false,
+            )?;
         }
 
         // Top-level node not found
@@ -7272,18 +7263,14 @@ pub(crate) fn parse_legacy_toplevel(uc: &Context) -> Result<(), Fail> {
             true,
         )?;
     } else {
-        // SAFETY: the `end` out-param is an unaliased local; the destination buf is
-        // `uc`'s own `tmp`, reached through its view accessor.
-        unsafe {
-            crate::native::parse_binary::binary_parse_node(
-                uc,
-                0,
-                ParseState::Root,
-                &raw mut end,
-                uc.tmp_view(),
-                true,
-            )?;
-        }
+        crate::native::parse_binary::binary_parse_node(
+            uc,
+            0,
+            ParseState::Root,
+            &mut end,
+            uc.tmp_view(),
+            true,
+        )?;
     }
 
     // Top-level node not found
