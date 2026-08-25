@@ -36,8 +36,8 @@ use crate::generated::{
 use crate::native::allocator::{grow_array, Allocator};
 use crate::native::buf::{buf_clear, buf_free, pop, push_size_zero, Buf, BufView};
 use crate::native::error::{
-    memchr, memcmp, strcmp, strncmp, ufbxi_check, ufbxi_check_msg, ufbxi_check_return, ufbxi_fail,
-    Fail, EMPTY_CHAR,
+    c_strcmp, memchr, memcmp, strcmp, strncmp, ufbxi_check, ufbxi_check_msg, ufbxi_check_return,
+    ufbxi_fail, Fail, EMPTY_CHAR,
 };
 use crate::native::hash::{hash_uptr, Map, PtrId};
 use crate::native::parse_ascii::is_space;
@@ -5153,20 +5153,20 @@ pub(crate) unsafe fn update_parse_state(parent: ParseState, name: *const u8) -> 
 // The `info->flags = ...` assignments OVERWRITE the `retain_dom` seed while the
 // `info->flags |= ...` forms accumulate onto it — the split is load-bearing and
 // ports verbatim.
-pub(crate) unsafe fn is_array_node(
+// `name: &[u8]` carries the interned run itself: C compares it against the
+// interned `ufbxi_*` string constants by POINTER (see `update_parse_state`), so
+// the identity tests are `name.as_ptr() == sp::X.as_ptr()`; the `strcmp`
+// fallbacks — for names with no interned constant — become `c_strcmp`, which
+// stops at the run's end exactly where `strcmp` stops at the pool's NUL
+// terminator. `info: &mut ArrayInfo` is the caller's exclusively owned
+// out-slot; the body writes `flags` before reading it and every `true` path
+// writes `type_`.
+pub(crate) fn is_array_node(
     uc: &Context,
     parent: ParseState,
-    name: *const u8,
-    info: *mut ArrayInfo,
+    name: &[u8],
+    info: &mut ArrayInfo,
 ) -> bool {
-    // Sole raw pointer to `*info` in this function: local exclusive borrow for
-    // the whole body in place of repeated `info.field` derefs.
-    // SAFETY: the caller passes `info` addressing live, uniquely owned, writable
-    // `ArrayInfo` storage for the duration of this call — both parsers hand over
-    // a local `MaybeUninit<ArrayInfo>`, so the storage may be uninitialized; the
-    // body only writes its fields before reading any of them.
-    let info = unsafe { &mut *info };
-
     info.flags = 0;
 
     // Retain all arrays if user wants the DOM representation
@@ -5176,7 +5176,7 @@ pub(crate) unsafe fn is_array_node(
 
     match parent {
         ParseState::Thumbnail => {
-            if name == sp::ImageData.as_ptr() {
+            if name.as_ptr() == sp::ImageData.as_ptr() {
                 info.type_ = b'c';
                 info.flags = ARRAY_FLAG_RESULT;
                 return true;
@@ -5184,7 +5184,7 @@ pub(crate) unsafe fn is_array_node(
         }
 
         ParseState::Geometry | ParseState::Model => {
-            if name == sp::Vertices.as_ptr() {
+            if name.as_ptr() == sp::Vertices.as_ptr() {
                 info.type_ = if uc.opts_view().ignore_geometry() {
                     b'-'
                 } else {
@@ -5192,7 +5192,7 @@ pub(crate) unsafe fn is_array_node(
                 };
                 info.flags = ARRAY_FLAG_RESULT | ARRAY_FLAG_PAD_BEGIN;
                 return true;
-            } else if name == sp::PolygonVertexIndex.as_ptr() {
+            } else if name.as_ptr() == sp::PolygonVertexIndex.as_ptr() {
                 info.type_ = if uc.opts_view().ignore_geometry() {
                     b'-'
                 } else {
@@ -5200,54 +5200,14 @@ pub(crate) unsafe fn is_array_node(
                 };
                 info.flags = ARRAY_FLAG_RESULT;
                 return true;
-            } else if name == sp::Edges.as_ptr() {
+            } else if name.as_ptr() == sp::Edges.as_ptr() {
                 info.type_ = if uc.opts_view().ignore_geometry() {
                     b'-'
                 } else {
                     b'i'
                 };
                 return true;
-            } else if name == sp::Indexes.as_ptr() {
-                info.type_ = if uc.opts_view().ignore_geometry() {
-                    b'-'
-                } else {
-                    b'i'
-                };
-                info.flags = ARRAY_FLAG_RESULT;
-                return true;
-            } else if name == sp::Points.as_ptr() {
-                info.type_ = if uc.opts_view().ignore_geometry() {
-                    b'-'
-                } else {
-                    b'r'
-                };
-                info.flags = ARRAY_FLAG_RESULT;
-                return true;
-            } else if name == sp::KnotVector.as_ptr() {
-                info.type_ = if uc.opts_view().ignore_geometry() {
-                    b'-'
-                } else {
-                    b'r'
-                };
-                info.flags = ARRAY_FLAG_RESULT;
-                return true;
-            } else if name == sp::KnotVectorU.as_ptr() {
-                info.type_ = if uc.opts_view().ignore_geometry() {
-                    b'-'
-                } else {
-                    b'r'
-                };
-                info.flags = ARRAY_FLAG_RESULT;
-                return true;
-            } else if name == sp::KnotVectorV.as_ptr() {
-                info.type_ = if uc.opts_view().ignore_geometry() {
-                    b'-'
-                } else {
-                    b'r'
-                };
-                info.flags = ARRAY_FLAG_RESULT;
-                return true;
-            } else if name == sp::PointsIndex.as_ptr() {
+            } else if name.as_ptr() == sp::Indexes.as_ptr() {
                 info.type_ = if uc.opts_view().ignore_geometry() {
                     b'-'
                 } else {
@@ -5255,7 +5215,47 @@ pub(crate) unsafe fn is_array_node(
                 };
                 info.flags = ARRAY_FLAG_RESULT;
                 return true;
-            } else if name == sp::Normals.as_ptr() {
+            } else if name.as_ptr() == sp::Points.as_ptr() {
+                info.type_ = if uc.opts_view().ignore_geometry() {
+                    b'-'
+                } else {
+                    b'r'
+                };
+                info.flags = ARRAY_FLAG_RESULT;
+                return true;
+            } else if name.as_ptr() == sp::KnotVector.as_ptr() {
+                info.type_ = if uc.opts_view().ignore_geometry() {
+                    b'-'
+                } else {
+                    b'r'
+                };
+                info.flags = ARRAY_FLAG_RESULT;
+                return true;
+            } else if name.as_ptr() == sp::KnotVectorU.as_ptr() {
+                info.type_ = if uc.opts_view().ignore_geometry() {
+                    b'-'
+                } else {
+                    b'r'
+                };
+                info.flags = ARRAY_FLAG_RESULT;
+                return true;
+            } else if name.as_ptr() == sp::KnotVectorV.as_ptr() {
+                info.type_ = if uc.opts_view().ignore_geometry() {
+                    b'-'
+                } else {
+                    b'r'
+                };
+                info.flags = ARRAY_FLAG_RESULT;
+                return true;
+            } else if name.as_ptr() == sp::PointsIndex.as_ptr() {
+                info.type_ = if uc.opts_view().ignore_geometry() {
+                    b'-'
+                } else {
+                    b'i'
+                };
+                info.flags = ARRAY_FLAG_RESULT;
+                return true;
+            } else if name.as_ptr() == sp::Normals.as_ptr() {
                 info.type_ = if uc.opts_view().ignore_geometry() {
                     b'-'
                 } else {
@@ -5267,7 +5267,7 @@ pub(crate) unsafe fn is_array_node(
         }
 
         ParseState::LegacyModel => {
-            if name == sp::Vertices.as_ptr() {
+            if name.as_ptr() == sp::Vertices.as_ptr() {
                 info.type_ = if uc.opts_view().ignore_geometry() {
                     b'-'
                 } else {
@@ -5275,7 +5275,7 @@ pub(crate) unsafe fn is_array_node(
                 };
                 info.flags = ARRAY_FLAG_RESULT | ARRAY_FLAG_PAD_BEGIN;
                 return true;
-            } else if name == sp::Normals.as_ptr() {
+            } else if name.as_ptr() == sp::Normals.as_ptr() {
                 info.type_ = if uc.opts_view().ignore_geometry() {
                     b'-'
                 } else {
@@ -5283,7 +5283,7 @@ pub(crate) unsafe fn is_array_node(
                 };
                 info.flags = ARRAY_FLAG_RESULT | ARRAY_FLAG_PAD_BEGIN;
                 return true;
-            } else if name == sp::Materials.as_ptr() {
+            } else if name.as_ptr() == sp::Materials.as_ptr() {
                 info.type_ = if uc.opts_view().ignore_geometry() {
                     b'-'
                 } else {
@@ -5291,7 +5291,7 @@ pub(crate) unsafe fn is_array_node(
                 };
                 info.flags = ARRAY_FLAG_RESULT;
                 return true;
-            } else if name == sp::PolygonVertexIndex.as_ptr() {
+            } else if name.as_ptr() == sp::PolygonVertexIndex.as_ptr() {
                 info.type_ = if uc.opts_view().ignore_geometry() {
                     b'-'
                 } else {
@@ -5299,35 +5299,35 @@ pub(crate) unsafe fn is_array_node(
                 };
                 info.flags = ARRAY_FLAG_RESULT;
                 return true;
-            } else if name == sp::Children.as_ptr() {
+            } else if name.as_ptr() == sp::Children.as_ptr() {
                 info.type_ = b's';
                 return true;
             }
         }
 
         ParseState::AnimationCurve => {
-            if name == sp::KeyTime.as_ptr() {
+            if name.as_ptr() == sp::KeyTime.as_ptr() {
                 info.type_ = if uc.opts_view().ignore_animation() {
                     b'-'
                 } else {
                     b'l'
                 };
                 return true;
-            } else if name == sp::KeyValueFloat.as_ptr() {
+            } else if name.as_ptr() == sp::KeyValueFloat.as_ptr() {
                 info.type_ = if uc.opts_view().ignore_animation() {
                     b'-'
                 } else {
                     b'r'
                 };
                 return true;
-            } else if name == sp::KeyAttrFlags.as_ptr() {
+            } else if name.as_ptr() == sp::KeyAttrFlags.as_ptr() {
                 info.type_ = if uc.opts_view().ignore_animation() {
                     b'-'
                 } else {
                     b'i'
                 };
                 return true;
-            } else if name == sp::KeyAttrDataFloat.as_ptr() {
+            } else if name.as_ptr() == sp::KeyAttrDataFloat.as_ptr() {
                 // The float data in a keyframe attribute array is represented as integers
                 // in versions >= 7200 as some of the elements aren't actually floats (!)
                 info.type_ = if uc.from_ascii() && uc.version() >= 7200 {
@@ -5342,7 +5342,7 @@ pub(crate) unsafe fn is_array_node(
                     info.flags |= ARRAY_FLAG_ACCURATE_F32;
                 }
                 return true;
-            } else if name == sp::KeyAttrRefCount.as_ptr() {
+            } else if name.as_ptr() == sp::KeyAttrRefCount.as_ptr() {
                 info.type_ = if uc.opts_view().ignore_animation() {
                     b'-'
                 } else {
@@ -5353,11 +5353,9 @@ pub(crate) unsafe fn is_array_node(
         }
 
         ParseState::Texture => {
-            // SAFETY: `name` is a NUL-terminated interned parser name and each
-            // literal is NUL-terminated — `strcmp`'s contract.
-            if unsafe { strcmp(name, b"ModelUVTranslation\0".as_ptr()) } == 0
-                || unsafe { strcmp(name, b"ModelUVScaling\0".as_ptr()) } == 0
-                || unsafe { strcmp(name, b"Cropping\0".as_ptr()) } == 0
+            if c_strcmp(name, b"ModelUVTranslation\0") == 0
+                || c_strcmp(name, b"ModelUVScaling\0") == 0
+                || c_strcmp(name, b"Cropping\0") == 0
             {
                 info.type_ = if uc.opts_view().retain_dom() {
                     b'r'
@@ -5369,7 +5367,7 @@ pub(crate) unsafe fn is_array_node(
         }
 
         ParseState::Video => {
-            if name == sp::Content.as_ptr() {
+            if name.as_ptr() == sp::Content.as_ptr() {
                 info.type_ = if uc.opts_view().ignore_embedded() {
                     b'-'
                 } else {
@@ -5380,11 +5378,11 @@ pub(crate) unsafe fn is_array_node(
         }
 
         ParseState::LayeredTexture => {
-            if name == sp::BlendModes.as_ptr() {
+            if name.as_ptr() == sp::BlendModes.as_ptr() {
                 info.type_ = b'i';
                 info.flags |= ARRAY_FLAG_TMP_BUF;
                 return true;
-            } else if name == sp::Alphas.as_ptr() {
+            } else if name.as_ptr() == sp::Alphas.as_ptr() {
                 info.type_ = b'r';
                 info.flags |= ARRAY_FLAG_TMP_BUF;
                 return true;
@@ -5392,15 +5390,15 @@ pub(crate) unsafe fn is_array_node(
         }
 
         ParseState::SelectionNode => {
-            if name == sp::VertexIndexArray.as_ptr() {
+            if name.as_ptr() == sp::VertexIndexArray.as_ptr() {
                 info.type_ = b'i';
                 info.flags = ARRAY_FLAG_RESULT;
                 return true;
-            } else if name == sp::EdgeIndexArray.as_ptr() {
+            } else if name.as_ptr() == sp::EdgeIndexArray.as_ptr() {
                 info.type_ = b'i';
                 info.flags = ARRAY_FLAG_RESULT;
                 return true;
-            } else if name == sp::PolygonIndexArray.as_ptr() {
+            } else if name.as_ptr() == sp::PolygonIndexArray.as_ptr() {
                 info.type_ = b'i';
                 info.flags = ARRAY_FLAG_RESULT;
                 return true;
@@ -5408,7 +5406,7 @@ pub(crate) unsafe fn is_array_node(
         }
 
         ParseState::LayerElementNormal => {
-            if name == sp::Normals.as_ptr() {
+            if name.as_ptr() == sp::Normals.as_ptr() {
                 info.type_ = if uc.opts_view().ignore_geometry() {
                     b'-'
                 } else {
@@ -5416,7 +5414,7 @@ pub(crate) unsafe fn is_array_node(
                 };
                 info.flags = ARRAY_FLAG_RESULT | ARRAY_FLAG_PAD_BEGIN;
                 return true;
-            } else if name == sp::NormalsIndex.as_ptr() {
+            } else if name.as_ptr() == sp::NormalsIndex.as_ptr() {
                 info.type_ = if uc.opts_view().ignore_geometry() {
                     b'-'
                 } else {
@@ -5424,7 +5422,7 @@ pub(crate) unsafe fn is_array_node(
                 };
                 info.flags = ARRAY_FLAG_RESULT;
                 return true;
-            } else if name == sp::NormalsW.as_ptr() {
+            } else if name.as_ptr() == sp::NormalsW.as_ptr() {
                 info.type_ = if uc.retain_vertex_w() { b'r' } else { b'-' };
                 info.flags = ARRAY_FLAG_RESULT | ARRAY_FLAG_PAD_BEGIN;
                 return true;
@@ -5432,7 +5430,7 @@ pub(crate) unsafe fn is_array_node(
         }
 
         ParseState::LayerElementBinormal => {
-            if name == sp::Binormals.as_ptr() {
+            if name.as_ptr() == sp::Binormals.as_ptr() {
                 info.type_ = if uc.opts_view().ignore_geometry() {
                     b'-'
                 } else {
@@ -5440,7 +5438,7 @@ pub(crate) unsafe fn is_array_node(
                 };
                 info.flags = ARRAY_FLAG_RESULT | ARRAY_FLAG_PAD_BEGIN;
                 return true;
-            } else if name == sp::BinormalsIndex.as_ptr() {
+            } else if name.as_ptr() == sp::BinormalsIndex.as_ptr() {
                 info.type_ = if uc.opts_view().ignore_geometry() {
                     b'-'
                 } else {
@@ -5448,7 +5446,7 @@ pub(crate) unsafe fn is_array_node(
                 };
                 info.flags = ARRAY_FLAG_RESULT;
                 return true;
-            } else if name == sp::BinormalsW.as_ptr() {
+            } else if name.as_ptr() == sp::BinormalsW.as_ptr() {
                 info.type_ = if uc.retain_vertex_w() { b'r' } else { b'-' };
                 info.flags = ARRAY_FLAG_RESULT | ARRAY_FLAG_PAD_BEGIN;
                 return true;
@@ -5456,7 +5454,7 @@ pub(crate) unsafe fn is_array_node(
         }
 
         ParseState::LayerElementTangent => {
-            if name == sp::Tangents.as_ptr() {
+            if name.as_ptr() == sp::Tangents.as_ptr() {
                 info.type_ = if uc.opts_view().ignore_geometry() {
                     b'-'
                 } else {
@@ -5464,7 +5462,7 @@ pub(crate) unsafe fn is_array_node(
                 };
                 info.flags = ARRAY_FLAG_RESULT | ARRAY_FLAG_PAD_BEGIN;
                 return true;
-            } else if name == sp::TangentsIndex.as_ptr() {
+            } else if name.as_ptr() == sp::TangentsIndex.as_ptr() {
                 info.type_ = if uc.opts_view().ignore_geometry() {
                     b'-'
                 } else {
@@ -5472,7 +5470,7 @@ pub(crate) unsafe fn is_array_node(
                 };
                 info.flags = ARRAY_FLAG_RESULT;
                 return true;
-            } else if name == sp::TangentsW.as_ptr() {
+            } else if name.as_ptr() == sp::TangentsW.as_ptr() {
                 info.type_ = if uc.retain_vertex_w() { b'r' } else { b'-' };
                 info.flags = ARRAY_FLAG_RESULT | ARRAY_FLAG_PAD_BEGIN;
                 return true;
@@ -5480,7 +5478,7 @@ pub(crate) unsafe fn is_array_node(
         }
 
         ParseState::LayerElementUv => {
-            if name == sp::UV.as_ptr() {
+            if name.as_ptr() == sp::UV.as_ptr() {
                 info.type_ = if uc.opts_view().ignore_geometry() {
                     b'-'
                 } else {
@@ -5488,7 +5486,7 @@ pub(crate) unsafe fn is_array_node(
                 };
                 info.flags = ARRAY_FLAG_RESULT | ARRAY_FLAG_PAD_BEGIN;
                 return true;
-            } else if name == sp::UVIndex.as_ptr() {
+            } else if name.as_ptr() == sp::UVIndex.as_ptr() {
                 info.type_ = if uc.opts_view().ignore_geometry() {
                     b'-'
                 } else {
@@ -5500,7 +5498,7 @@ pub(crate) unsafe fn is_array_node(
         }
 
         ParseState::LayerElementColor => {
-            if name == sp::Colors.as_ptr() {
+            if name.as_ptr() == sp::Colors.as_ptr() {
                 info.type_ = if uc.opts_view().ignore_geometry() {
                     b'-'
                 } else {
@@ -5508,7 +5506,7 @@ pub(crate) unsafe fn is_array_node(
                 };
                 info.flags = ARRAY_FLAG_RESULT | ARRAY_FLAG_PAD_BEGIN;
                 return true;
-            } else if name == sp::ColorIndex.as_ptr() {
+            } else if name.as_ptr() == sp::ColorIndex.as_ptr() {
                 info.type_ = if uc.opts_view().ignore_geometry() {
                     b'-'
                 } else {
@@ -5520,7 +5518,7 @@ pub(crate) unsafe fn is_array_node(
         }
 
         ParseState::LayerElementVertexCrease => {
-            if name == sp::VertexCrease.as_ptr() {
+            if name.as_ptr() == sp::VertexCrease.as_ptr() {
                 info.type_ = if uc.opts_view().ignore_geometry() {
                     b'-'
                 } else {
@@ -5528,7 +5526,7 @@ pub(crate) unsafe fn is_array_node(
                 };
                 info.flags = ARRAY_FLAG_RESULT | ARRAY_FLAG_PAD_BEGIN;
                 return true;
-            } else if name == sp::VertexCreaseIndex.as_ptr() {
+            } else if name.as_ptr() == sp::VertexCreaseIndex.as_ptr() {
                 info.type_ = if uc.opts_view().ignore_geometry() {
                     b'-'
                 } else {
@@ -5540,7 +5538,7 @@ pub(crate) unsafe fn is_array_node(
         }
 
         ParseState::LayerElementEdgeCrease => {
-            if name == sp::EdgeCrease.as_ptr() {
+            if name.as_ptr() == sp::EdgeCrease.as_ptr() {
                 info.type_ = if uc.opts_view().ignore_geometry() {
                     b'-'
                 } else {
@@ -5552,7 +5550,7 @@ pub(crate) unsafe fn is_array_node(
         }
 
         ParseState::LayerElementSmoothing => {
-            if name == sp::Smoothing.as_ptr() {
+            if name.as_ptr() == sp::Smoothing.as_ptr() {
                 info.type_ = if uc.opts_view().ignore_geometry() {
                     b'-'
                 } else {
@@ -5564,7 +5562,7 @@ pub(crate) unsafe fn is_array_node(
         }
 
         ParseState::LayerElementVisibility => {
-            if name == sp::Visibility.as_ptr() {
+            if name.as_ptr() == sp::Visibility.as_ptr() {
                 info.type_ = if uc.opts_view().ignore_geometry() {
                     b'-'
                 } else {
@@ -5576,7 +5574,7 @@ pub(crate) unsafe fn is_array_node(
         }
 
         ParseState::LayerElementPolygonGroup => {
-            if name == sp::PolygonGroup.as_ptr() {
+            if name.as_ptr() == sp::PolygonGroup.as_ptr() {
                 info.type_ = if uc.opts_view().ignore_geometry() {
                     b'-'
                 } else {
@@ -5588,7 +5586,7 @@ pub(crate) unsafe fn is_array_node(
         }
 
         ParseState::LayerElementHole => {
-            if name == sp::Hole.as_ptr() {
+            if name.as_ptr() == sp::Hole.as_ptr() {
                 info.type_ = if uc.opts_view().ignore_geometry() {
                     b'-'
                 } else {
@@ -5600,7 +5598,7 @@ pub(crate) unsafe fn is_array_node(
         }
 
         ParseState::LayerElementMaterial => {
-            if name == sp::Materials.as_ptr() {
+            if name.as_ptr() == sp::Materials.as_ptr() {
                 info.type_ = if uc.opts_view().ignore_geometry() {
                     b'-'
                 } else {
@@ -5612,7 +5610,7 @@ pub(crate) unsafe fn is_array_node(
         }
 
         ParseState::LayerElementOther => {
-            if name == sp::TextureId.as_ptr() {
+            if name.as_ptr() == sp::TextureId.as_ptr() {
                 info.type_ = if uc.opts_view().ignore_geometry() {
                     b'-'
                 } else {
@@ -5620,14 +5618,14 @@ pub(crate) unsafe fn is_array_node(
                 };
                 info.flags |= ARRAY_FLAG_TMP_BUF;
                 return true;
-            } else if name == sp::UV.as_ptr() {
+            } else if name.as_ptr() == sp::UV.as_ptr() {
                 info.type_ = if uc.opts_view().retain_dom() {
                     b'r'
                 } else {
                     b'-'
                 };
                 return true;
-            } else if name == sp::UVIndex.as_ptr() {
+            } else if name.as_ptr() == sp::UVIndex.as_ptr() {
                 info.type_ = if uc.opts_view().retain_dom() {
                     b'i'
                 } else {
@@ -5638,7 +5636,7 @@ pub(crate) unsafe fn is_array_node(
         }
 
         ParseState::GeometryUvInfo => {
-            if name == sp::TextureUV.as_ptr() {
+            if name.as_ptr() == sp::TextureUV.as_ptr() {
                 info.type_ = if uc.opts_view().ignore_geometry() {
                     b'-'
                 } else {
@@ -5646,7 +5644,7 @@ pub(crate) unsafe fn is_array_node(
                 };
                 info.flags = ARRAY_FLAG_RESULT | ARRAY_FLAG_PAD_BEGIN;
                 return true;
-            } else if name == sp::TextureUVVerticeIndex.as_ptr() {
+            } else if name.as_ptr() == sp::TextureUVVerticeIndex.as_ptr() {
                 info.type_ = if uc.opts_view().ignore_geometry() {
                     b'-'
                 } else {
@@ -5658,7 +5656,7 @@ pub(crate) unsafe fn is_array_node(
         }
 
         ParseState::Shape => {
-            if name == sp::Indexes.as_ptr() {
+            if name.as_ptr() == sp::Indexes.as_ptr() {
                 info.type_ = if uc.opts_view().ignore_geometry() {
                     b'-'
                 } else {
@@ -5667,7 +5665,7 @@ pub(crate) unsafe fn is_array_node(
                 info.flags = ARRAY_FLAG_RESULT;
                 return true;
             }
-            if name == sp::Vertices.as_ptr() {
+            if name.as_ptr() == sp::Vertices.as_ptr() {
                 info.type_ = if uc.opts_view().ignore_geometry() {
                     b'-'
                 } else {
@@ -5676,7 +5674,7 @@ pub(crate) unsafe fn is_array_node(
                 info.flags = ARRAY_FLAG_RESULT | ARRAY_FLAG_PAD_BEGIN;
                 return true;
             }
-            if name == sp::Normals.as_ptr() {
+            if name.as_ptr() == sp::Normals.as_ptr() {
                 info.type_ = if uc.opts_view().ignore_geometry() {
                     b'-'
                 } else {
@@ -5688,13 +5686,13 @@ pub(crate) unsafe fn is_array_node(
         }
 
         ParseState::Deformer => {
-            if name == sp::Transform.as_ptr() {
+            if name.as_ptr() == sp::Transform.as_ptr() {
                 info.type_ = b'r';
                 return true;
-            } else if name == sp::TransformLink.as_ptr() {
+            } else if name.as_ptr() == sp::TransformLink.as_ptr() {
                 info.type_ = b'r';
                 return true;
-            } else if name == sp::Indexes.as_ptr() {
+            } else if name.as_ptr() == sp::Indexes.as_ptr() {
                 info.type_ = if uc.opts_view().ignore_geometry() {
                     b'-'
                 } else {
@@ -5702,7 +5700,7 @@ pub(crate) unsafe fn is_array_node(
                 };
                 info.flags = ARRAY_FLAG_RESULT;
                 return true;
-            } else if name == sp::Weights.as_ptr() {
+            } else if name.as_ptr() == sp::Weights.as_ptr() {
                 info.type_ = if uc.opts_view().ignore_geometry() {
                     b'-'
                 } else {
@@ -5710,7 +5708,7 @@ pub(crate) unsafe fn is_array_node(
                 };
                 info.flags = ARRAY_FLAG_RESULT;
                 return true;
-            } else if name == sp::BlendWeights.as_ptr() {
+            } else if name.as_ptr() == sp::BlendWeights.as_ptr() {
                 info.type_ = if uc.opts_view().ignore_geometry() {
                     b'-'
                 } else {
@@ -5718,7 +5716,7 @@ pub(crate) unsafe fn is_array_node(
                 };
                 info.flags = ARRAY_FLAG_RESULT;
                 return true;
-            } else if name == sp::FullWeights.as_ptr() {
+            } else if name.as_ptr() == sp::FullWeights.as_ptr() {
                 info.type_ = b'r';
                 info.flags |= if uc.blender_full_weights() {
                     ARRAY_FLAG_RESULT
@@ -5726,9 +5724,7 @@ pub(crate) unsafe fn is_array_node(
                     ARRAY_FLAG_TMP_BUF
                 };
                 return true;
-            // SAFETY: `name` is a NUL-terminated interned parser name and the
-            // literal is NUL-terminated — `strcmp`'s contract.
-            } else if unsafe { strcmp(name, b"TransformAssociateModel\0".as_ptr()) } == 0 {
+            } else if c_strcmp(name, b"TransformAssociateModel\0") == 0 {
                 info.type_ = if uc.opts_view().retain_dom() {
                     b'r'
                 } else {
@@ -5739,7 +5735,7 @@ pub(crate) unsafe fn is_array_node(
         }
 
         ParseState::AssociateModel => {
-            if name == sp::Transform.as_ptr() {
+            if name.as_ptr() == sp::Transform.as_ptr() {
                 info.type_ = if uc.opts_view().retain_dom() {
                     b'r'
                 } else {
@@ -5750,13 +5746,13 @@ pub(crate) unsafe fn is_array_node(
         }
 
         ParseState::LegacyLink => {
-            if name == sp::Transform.as_ptr() {
+            if name.as_ptr() == sp::Transform.as_ptr() {
                 info.type_ = b'r';
                 return true;
-            } else if name == sp::TransformLink.as_ptr() {
+            } else if name.as_ptr() == sp::TransformLink.as_ptr() {
                 info.type_ = b'r';
                 return true;
-            } else if name == sp::Indexes.as_ptr() {
+            } else if name.as_ptr() == sp::Indexes.as_ptr() {
                 info.type_ = if uc.opts_view().ignore_geometry() {
                     b'-'
                 } else {
@@ -5764,7 +5760,7 @@ pub(crate) unsafe fn is_array_node(
                 };
                 info.flags = ARRAY_FLAG_RESULT;
                 return true;
-            } else if name == sp::Weights.as_ptr() {
+            } else if name.as_ptr() == sp::Weights.as_ptr() {
                 info.type_ = if uc.opts_view().ignore_geometry() {
                     b'-'
                 } else {
@@ -5776,14 +5772,14 @@ pub(crate) unsafe fn is_array_node(
         }
 
         ParseState::PoseNode => {
-            if name == sp::Matrix.as_ptr() {
+            if name.as_ptr() == sp::Matrix.as_ptr() {
                 info.type_ = b'r';
                 return true;
             }
         }
 
         ParseState::Channel => {
-            if name == sp::Key.as_ptr() {
+            if name.as_ptr() == sp::Key.as_ptr() {
                 info.type_ = if uc.opts_view().ignore_animation() {
                     b'-'
                 } else {
@@ -5794,7 +5790,7 @@ pub(crate) unsafe fn is_array_node(
         }
 
         ParseState::Audio => {
-            if name == sp::Content.as_ptr() {
+            if name.as_ptr() == sp::Content.as_ptr() {
                 info.type_ = if uc.opts_view().ignore_embedded() {
                     b'-'
                 } else {
@@ -5805,7 +5801,7 @@ pub(crate) unsafe fn is_array_node(
         }
 
         _ => {
-            if name == sp::BinaryData.as_ptr() {
+            if name.as_ptr() == sp::BinaryData.as_ptr() {
                 info.type_ = if uc.opts_view().ignore_embedded() {
                     b'-'
                 } else {

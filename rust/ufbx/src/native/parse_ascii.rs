@@ -62,7 +62,7 @@ use crate::native::string_pool::{push_sanitized_string, push_string, push_string
 use crate::native::thread::{thread_pool_create_task, thread_pool_run_task, Task};
 use crate::native::view::{view_read, view_write, Mut, View};
 use crate::native::warnings::ufbxi_warnf;
-use crate::prelude::{Real, String, StringView};
+use crate::prelude::{slice_from_ptr, Real, String, StringView};
 
 // ufbx.c:9406 `#define UFBXI_ASCII_END '\0'`
 pub(crate) const ASCII_END: u8 = b'\0';
@@ -1880,15 +1880,18 @@ unsafe fn ascii_parse_node_rec(
     // Check if the values of the node we're parsing currently should be
     // treated as an array.
     let mut arr_info = core::mem::MaybeUninit::<ArrayInfo>::uninit();
-    let arr_info: *mut ArrayInfo = arr_info.as_mut_ptr();
-    // SAFETY: `arr_info` is the local `MaybeUninit<ArrayInfo>`'s address, which
-    // `is_array_node` fully initializes before returning `true`; `name` is the
-    // interned node name.
-    if unsafe { is_array_node(uc, parent_state, name, arr_info) } {
-        // SAFETY: `is_array_node` returned `true`, so `arr_info` is initialized;
-        // reads its `flags` and `type_` fields.
-        let flags: u8 = unsafe { (*arr_info).flags };
-        arr_type = normalize_array_type(unsafe { (*arr_info).type_ }, b'b');
+    // SAFETY: this frame's own `ArrayInfo` storage, borrowed exclusively for the
+    // rest of the body — nothing else names it; `is_array_node` writes `flags`
+    // before reading it and writes `type_` on every path returning `true`, so
+    // the reads below never touch uninitialized bytes.
+    let arr_info: &mut ArrayInfo = unsafe { &mut *arr_info.as_mut_ptr() };
+    // SAFETY: `name` is the non-null pooled node name checked above, addressing
+    // its `name_len` interned bytes; `is_array_node` compares the run by
+    // interned pointer identity.
+    let name_run: &[u8] = unsafe { slice_from_ptr(name, name_len) };
+    if is_array_node(uc, parent_state, name_run, arr_info) {
+        let flags: u8 = arr_info.flags;
+        arr_type = normalize_array_type(arr_info.type_, b'b');
         arr_buf = tmp_buf.get();
         if (flags & ARRAY_FLAG_RESULT) != 0 {
             arr_buf = uc.result_mut_ptr();
@@ -1909,8 +1912,7 @@ unsafe fn ascii_parse_node_rec(
         // Parse array values using strtof() if the array destination is 32-bit float
         // since KeyAttrDataFloat packs integer data (!) into floating point values so we
         // should try to be as exact as possible.
-        // SAFETY: `arr_info` is initialized (see above); reads its `flags`.
-        if (unsafe { (*arr_info).flags } & ARRAY_FLAG_ACCURATE_F32) != 0 {
+        if (arr_info.flags & ARRAY_FLAG_ACCURATE_F32) != 0 {
             // SAFETY: `ua` is `uc`'s own live `ascii` sub-context; sets its flag.
             unsafe {
                 (*ua).parse_as_f32 = true;
@@ -2527,8 +2529,7 @@ unsafe fn ascii_parse_node_rec(
                 };
             }
             ufbxi_check!(uc, !arr_data.is_null(), "arr_data");
-            // SAFETY: `arr_info` is initialized (array node); reads its `flags`.
-            if (unsafe { (*arr_info).flags } & ARRAY_FLAG_PAD_BEGIN) != 0 {
+            if (arr_info.flags & ARRAY_FLAG_PAD_BEGIN) != 0 {
                 // SAFETY: `node`'s live `content.array` points at the pushed
                 // `ValueArray`; `arr_data` has the 4-element pad prefix, so skipping
                 // `4 * arr_elem_size` bytes yields the real data start, and the size

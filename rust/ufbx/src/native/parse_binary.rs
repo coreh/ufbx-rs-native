@@ -48,7 +48,7 @@ use crate::native::platform::{
 };
 use crate::native::string_pool::{push_sanitized_string, push_string, push_string_place_str};
 use crate::native::thread::{thread_pool_create_task, thread_pool_run_task, Task};
-use crate::prelude::String;
+use crate::prelude::{slice_from_ptr, String};
 
 // -- Binary parsing
 
@@ -1056,18 +1056,21 @@ fn binary_parse_node_rec(
     // Check if the values of the node we're parsing currently should be
     // treated as an array.
     let mut arr_info = core::mem::MaybeUninit::<ArrayInfo>::uninit();
-    let arr_info: *mut ArrayInfo = arr_info.as_mut_ptr();
-    // SAFETY: `name` is the pooled node name, `arr_info` the local uninit
-    // `ArrayInfo` storage; `is_array_node` fills it in and reports whether the
-    // node's values form an array.
-    if unsafe { is_array_node(uc, parent_state, name, arr_info) } {
+    // SAFETY: this frame's own `ArrayInfo` storage, borrowed exclusively for the
+    // rest of the body — nothing else names it; `is_array_node` writes `flags`
+    // before reading it and writes `type_` on every path returning `true`, so
+    // the reads below never touch uninitialized bytes.
+    let arr_info: &mut ArrayInfo = unsafe { &mut *arr_info.as_mut_ptr() };
+    // SAFETY: `name` is the non-null pooled node name checked above, addressing
+    // its `name_len` interned bytes; `is_array_node` compares the run by
+    // interned pointer identity.
+    let name_run: &[u8] = unsafe { slice_from_ptr(name, name_len as usize) };
+    if is_array_node(uc, parent_state, name_run, arr_info) {
         // Normalize the array type (eg. 'r' to 'f'/'d' depending on the build)
         // and get the per-element size of the array.
         // Boolean arrays 'b' are normalized to 'c' as they are postprocessed
         // below based on `arr_info.type`.
-        // SAFETY: `is_array_node` returned true, so it initialized `arr_info`;
-        // read its `type_` field.
-        let dst_type: u8 = normalize_array_type(unsafe { (*arr_info).type_ }, b'c');
+        let dst_type: u8 = normalize_array_type(arr_info.type_, b'c');
 
         let arr: *mut ValueArray = tmp_buf.push::<ValueArray>(1);
         ufbxi_check!(uc, !arr.is_null(), "arr");
@@ -1078,9 +1081,9 @@ fn binary_parse_node_rec(
             (*node).value_type_mask = ValueType::Array as u16;
             (*node).content.array = arr;
         }
-        // SAFETY: `arr` is the live `ValueArray` just pushed; `arr_info` is
-        // initialized as above — write the array's element type.
-        unsafe { (*arr).type_ = normalize_array_type((*arr_info).type_, b'b') };
+        // SAFETY: `arr` is the live `ValueArray` just pushed — write the
+        // array's element type.
+        unsafe { (*arr).type_ = normalize_array_type(arr_info.type_, b'b') };
 
         // Peek the first bytes of the array. We can always look at least 13 bytes
         // ahead safely as valid FBX files must end in a 13/25 byte NULL record.
@@ -1137,12 +1140,8 @@ fn binary_parse_node_rec(
             let decoded_data_size: usize = src_elem_size.wrapping_mul(size as usize);
 
             // Allocate `size` elements for the array.
-            // SAFETY: `arr_info` addresses the local `ArrayInfo`, initialized by
-            // the `is_array_node` call above; nothing writes through the raw
-            // pointer while this borrow is live.
-            let arr_info_ref: &ArrayInfo = unsafe { &*arr_info };
             let arr_data: *mut u8 =
-                push_array_data(uc, arr_info_ref, size as usize, tmp_buf) as *mut u8;
+                push_array_data(uc, arr_info, size as usize, tmp_buf) as *mut u8;
             ufbxi_check!(uc, !arr_data.is_null(), "arr_data");
 
             let arr_begin: u64 = get_read_offset(uc);
@@ -1422,12 +1421,8 @@ fn binary_parse_node_rec(
             }
         } else {
             // Allocate `num_values` elements for the array and parse single values into it.
-            // SAFETY: `arr_info` addresses the local `ArrayInfo`, initialized by
-            // the `is_array_node` call above; nothing writes through the raw
-            // pointer while this borrow is live.
-            let arr_info_ref: &ArrayInfo = unsafe { &*arr_info };
             let arr_data: *mut u8 =
-                push_array_data(uc, arr_info_ref, num_values as usize, tmp_buf) as *mut u8;
+                push_array_data(uc, arr_info, num_values as usize, tmp_buf) as *mut u8;
             ufbxi_check!(uc, !arr_data.is_null(), "arr_data");
             // SAFETY: `arr_data` is the `num_values`-element destination just
             // allocated; the multivalue reader parses single values into it.
@@ -1448,8 +1443,7 @@ fn binary_parse_node_rec(
         }
 
         // Post-process boolean arrays
-        // SAFETY: `arr_info` is initialized; read its element type.
-        if !deferred && unsafe { (*arr_info).type_ } == b'b' {
+        if !deferred && arr_info.type_ == b'b' {
             // SAFETY: `arr` is the live `ValueArray`; its `data`/`size` describe
             // the just-filled bool run to normalize.
             unsafe { postprocess_bool_array((*arr).data as *mut u8, (*arr).size) };
