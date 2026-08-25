@@ -1895,20 +1895,19 @@ unsafe fn combine_anim_layer_rec(
 // ufbx.c:25751-25757 `ufbxi_anim_layer_might_contain_id`
 // C: `ufbxi_forceinline`.
 #[inline(always)]
-pub(crate) unsafe fn anim_layer_might_contain_id(layer: *const AnimLayer, id: u32) -> bool {
+pub(crate) fn anim_layer_might_contain_id<M: Mode>(layer: &View<AnimLayer, M>, id: u32) -> bool {
+    let element_id_bitmask = layer._element_id_bitmask();
     // C: `uint32_t id_mask = ufbxi_arraycount(layer->_element_id_bitmask) - 1;`
-    // SAFETY (every `*layer` access in this fn): `layer` is the caller's live
-    // `ufbx_anim_layer` — the raw-pointer contract of this `unsafe fn`.
-    let id_mask: u32 = (unsafe { (*layer)._element_id_bitmask.len() } - 1) as u32;
+    let id_mask: u32 = (element_id_bitmask.len() - 1) as u32;
     // C: `bool ok = id - layer->_min_element_id <= (layer->_max_element_id - layer->_min_element_id);`
     // — unsigned wrapping subtraction.
-    let mut ok: bool = id.wrapping_sub(unsafe { (*layer)._min_element_id })
-        <= unsafe { (*layer)._max_element_id }.wrapping_sub(unsafe { (*layer)._min_element_id });
-    // SAFETY: as above; `id_mask` is the bitmask array's length minus one and
-    // that length is a power of two, so `(id >> 5) & id_mask` indexes it.
-    ok &= (unsafe { (*layer)._element_id_bitmask[((id >> 5) & id_mask) as usize] }
-        & (1u32 << (id & 31)))
-        != 0;
+    let mut ok: bool = id.wrapping_sub(layer._min_element_id())
+        <= layer
+            ._max_element_id()
+            .wrapping_sub(layer._min_element_id());
+    // `id_mask` is the bitmask array's length minus one and that length is a
+    // power of two, so `(id >> 5) & id_mask` indexes it.
+    ok &= (element_id_bitmask[((id >> 5) & id_mask) as usize] & (1u32 << (id & 31))) != 0;
     ok
 }
 
@@ -1975,8 +1974,7 @@ pub(crate) unsafe fn evaluate_props(
         // reached through the stored `*mut` — write-capable provenance, the
         // `Mut` mint's contract — and no `&mut` to it is ever formed.
         let layer_view: &View<AnimLayer> = unsafe { View::<AnimLayer>::from_ptr(layer) };
-        // SAFETY: `layer` is that scene-owned `ufbx_anim_layer`.
-        if !unsafe { anim_layer_might_contain_id(layer, element_id) } {
+        if !anim_layer_might_contain_id(layer_view, element_id) {
             continue;
         }
 
