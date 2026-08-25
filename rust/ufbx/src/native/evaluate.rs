@@ -1687,10 +1687,16 @@ pub(crate) fn find_element_prop_overrides(
 }
 
 // ufbx.c:25681-25687 `ufbxi_anim_layer_combine_ctx`
+// C's `const ufbx_anim *anim` / `const ufbx_element *element` are read-only
+// borrows of the objects being evaluated, so the ctx carries them as frozen
+// `Const` views: the liveness contract is discharged once, at the view mint in
+// `evaluate_props`, instead of riding untyped inside raw pointers that any safe
+// construction site could fill with garbage — which is what lets
+// `combine_anim_layer` be an honest safe fn.
 #[repr(C)]
-pub(crate) struct AnimLayerCombineCtx {
-    pub anim: *const Anim,
-    pub element: *const Element,
+pub(crate) struct AnimLayerCombineCtx<'a> {
+    pub anim: &'a View<Anim, Const>,
+    pub element: &'a View<Element, Const>,
     pub time: f64,
     pub rotation_order: RotationOrder,
     pub has_rotation_order: bool,
@@ -1773,7 +1779,7 @@ impl View<Vec3, Mut> {
 // bare `*const u8`.
 #[inline(never)]
 pub(crate) fn combine_anim_layer(
-    ctx: &mut AnimLayerCombineCtx,
+    ctx: &mut AnimLayerCombineCtx<'_>,
     layer: &View<AnimLayer>,
     weight: Real,
     prop_name: *const u8,
@@ -1800,7 +1806,7 @@ pub(crate) fn combine_anim_layer(
 // `ufbxi_recursive_function` body; see the wrapper above)
 #[inline(never)]
 fn combine_anim_layer_rec(
-    ctx: &mut AnimLayerCombineCtx,
+    ctx: &mut AnimLayerCombineCtx<'_>,
     layer: &View<AnimLayer>,
     weight: Real,
     prop_name: *const u8,
@@ -1812,13 +1818,14 @@ fn combine_anim_layer_rec(
         && prop_name == sp::Lcl_Rotation.as_ptr()
         && !ctx.has_rotation_order
     {
-        // SAFETY: `ctx`'s `anim`/`element` are the live scene objects its
-        // constructor stored, and the name run is the interned `RotationOrder`
-        // static — `evaluate_prop_len`'s contract.
+        // SAFETY: `ctx`'s `anim`/`element` are `Const` views, so their pointees
+        // are live for the ctx's lifetime by the mint contract the view carries,
+        // and the name run is the interned `RotationOrder` static —
+        // `evaluate_prop_len`'s contract.
         let rp: Prop = unsafe {
             evaluate_prop_len(
-                ctx.anim,
-                ctx.element,
+                ctx.anim.as_ptr(),
+                ctx.element.as_ptr(),
                 sp::RotationOrder.as_ptr(),
                 sp::RotationOrder.len() - 1,
                 ctx.time,
@@ -1935,27 +1942,27 @@ pub(crate) unsafe fn evaluate_props(
     num_props: usize,
     flags: u32,
 ) {
-    // C: `ufbxi_anim_layer_combine_ctx combine_ctx = { anim, element, time };`
-    let mut combine_ctx = AnimLayerCombineCtx {
-        anim,
-        element,
-        time,
-        rotation_order: RotationOrder::Xyz,
-        has_rotation_order: false,
-    };
-
     // SAFETY: `anim` is the caller's live `ufbx_anim` — the raw-pointer contract
     // of this `unsafe fn` — and evaluation only reads it, so the frozen `Const`
     // tag stays valid for the whole body.
     let anim_view: &View<Anim, Const> = unsafe { View::<Anim, Const>::from_ptr(anim) };
 
-    let element_id: u32 = {
-        // SAFETY: `element` is the caller's live `ufbx_element` (the same
-        // raw-pointer contract) and this projection only reads its header.
-        let element_view: &View<Element, Const> =
-            unsafe { View::<Element, Const>::from_ptr(element) };
-        element_view.element_id()
+    // SAFETY: `element` is the caller's live `ufbx_element` (the same
+    // raw-pointer contract); evaluation reads the element and writes only the
+    // caller's separate `props` run, so the frozen `Const` tag stays valid for
+    // the whole body.
+    let element_view: &View<Element, Const> = unsafe { View::<Element, Const>::from_ptr(element) };
+
+    // C: `ufbxi_anim_layer_combine_ctx combine_ctx = { anim, element, time };`
+    let mut combine_ctx = AnimLayerCombineCtx {
+        anim: anim_view,
+        element: element_view,
+        time,
+        rotation_order: RotationOrder::Xyz,
+        has_rotation_order: false,
     };
+
+    let element_id: u32 = element_view.element_id();
     let num_layers: usize = anim_view.layers_view().count();
     for layer_ix in 0..num_layers {
         // C: `ufbx_anim_layer *layer = anim->layers.data[layer_ix];` — loaded
