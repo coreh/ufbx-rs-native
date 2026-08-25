@@ -710,20 +710,32 @@ pub(crate) unsafe fn aa_tree_find(
 }
 
 // ufbx.c:4500-4574 `ufbxi_map_grow_size_imp`
+//
+// # Safety
+// `item_size` is the map's element stride — the size the map's other typed
+// operations use for the same map. The map is item-type-erased in C (`items` is
+// a `void *`) and stays so here, so the stride is not expressible in the
+// signature: the item copy below reads `item_size * size` bytes out of the
+// existing `items` region, and the replacement block is sized from that same
+// stride.
 #[inline(never)]
-pub(crate) unsafe fn map_grow_size_imp(map: *mut Map, item_size: usize, min_size: usize) -> bool {
+pub(crate) unsafe fn map_grow_size_imp(map: &MapView, item_size: usize, min_size: usize) -> bool {
+    // The view is minted only over a live, writable `Map` (write provenance);
+    // `get()` is the raw pointer the C body operates on.
+    let map: *mut Map = map.get();
+
     ufbx_assert!(min_size > 0);
     let load_factor = 0.7f64;
 
     // Find the lowest power of two size that fits `min_size` within `load_factor`
     // C: `map->mask + 1` — uint32 arithmetic, then widened to size_t.
-    // SAFETY: caller contract — `map` points at a live `Map`.
+    // SAFETY: the view's mint invariant — `map` addresses a live `Map`.
     let mut num_entries = unsafe { (*map).mask }.wrapping_add(1) as usize;
     let mut new_size = (num_entries as f64 * load_factor) as usize;
     let mut min_size = min_size;
-    // SAFETY: caller contract — `map` points at a live `Map`.
+    // SAFETY: the view's mint invariant — `map` addresses a live `Map`.
     if min_size < unsafe { (*map).capacity }.wrapping_add(1) as usize {
-        // SAFETY: caller contract — `map` points at a live `Map`.
+        // SAFETY: the view's mint invariant — `map` addresses a live `Map`.
         min_size = unsafe { (*map).capacity }.wrapping_add(1) as usize;
     }
     while new_size < min_size {
@@ -749,8 +761,8 @@ pub(crate) unsafe fn map_grow_size_imp(map: *mut Map, item_size: usize, min_size
     );
     let data_size = alloc_size + new_size * item_size;
 
-    // SAFETY: `map.ator` is the map's own allocator (live `map` per caller
-    // contract), the pairing `alloc` requires for a `data_size`-byte block.
+    // SAFETY: `map.ator` is the map's own allocator (live `map` per the view's
+    // mint invariant), the pairing `alloc` requires for a `data_size`-byte block.
     let data = unsafe { alloc::<u8>((*map).ator, data_size) };
     ufbxi_check_return_err!(
         unsafe { crate::native::error::ErrorView::from_ptr((*(*map).ator).error) },
@@ -760,14 +772,14 @@ pub(crate) unsafe fn map_grow_size_imp(map: *mut Map, item_size: usize, min_size
     );
 
     // Copy the previous user items over
-    // SAFETY: caller contract — `map` points at a live `Map`.
+    // SAFETY: the view's mint invariant — `map` addresses a live `Map`.
     let old_entries = unsafe { (*map).entries };
     let new_entries = data as *mut u64;
     // SAFETY: `alloc_size` bytes at the front of the just-allocated `data_size`
     // block hold the entries; `data + alloc_size` is the in-bounds start of the
     // item region.
     let new_items = unsafe { data.add(alloc_size) } as *mut c_void;
-    // SAFETY: caller contract — `map` points at a live `Map`.
+    // SAFETY: the view's mint invariant — `map` addresses a live `Map`.
     if unsafe { (*map).size } > 0 {
         // SAFETY: the old `items` region holds `size` live elements of
         // `item_size` bytes each; the new item region was just allocated with
@@ -783,7 +795,7 @@ pub(crate) unsafe fn map_grow_size_imp(map: *mut Map, item_size: usize, min_size
     }
 
     // Re-hash the entries
-    // SAFETY: caller contract — `map` points at a live `Map`.
+    // SAFETY: the view's mint invariant — `map` addresses a live `Map`.
     let old_mask = unsafe { (*map).mask };
     let new_mask = (num_entries as u32).wrapping_sub(1);
     // SAFETY: `new_entries` is the `alloc_size`-byte entry region, room for
@@ -847,8 +859,8 @@ pub(crate) unsafe fn map_grow_size_imp(map: *mut Map, item_size: usize, min_size
     // pairing `free` requires (0/null for a never-grown map, which `free`
     // tolerates).
     unsafe { free::<u8>((*map).ator, old_entries as *mut u8, (*map).data_size) };
-    // SAFETY: caller contract — `map` points at a live, writable `Map`; these
-    // installs publish the freshly built table.
+    // SAFETY: the view's mint invariant — `map` addresses a live, writable
+    // `Map`; these installs publish the freshly built table.
     unsafe {
         (*map).items = new_items;
         (*map).data_size = data_size;
@@ -884,8 +896,9 @@ pub(crate) unsafe fn map_grow_size(map: *mut Map, size: usize, min_size: usize) 
         return true;
     }
     // SAFETY: forwards this fn's contract (live `map`, `size` matching the
-    // map's element type) to the growth implementation.
-    unsafe { map_grow_size_imp(map, size, min_size) }
+    // map's element stride) to the growth implementation; `MapView::from_ptr`
+    // mints the handle over that same live, writable `Map`.
+    unsafe { map_grow_size_imp(MapView::from_ptr(map), size, min_size) }
 }
 
 // ufbx.c:4590-4617 `ufbxi_map_find_size`
