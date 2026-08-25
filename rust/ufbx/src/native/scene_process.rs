@@ -2629,24 +2629,26 @@ pub(crate) unsafe fn fetch_src_elements(
 }
 
 // ufbx.c:19123-19135 `ufbxi_fetch_dst_element`
+//
+// C's nullable `const char *prop` is typed here as `Option<&[u8]>` (see
+// `find_dst_connections`).
+//
+// # Safety
+// `element` heads a live, arena-owned `ufbx_element`. With `search_node` set,
+// its provenance must additionally span the ENCLOSING element struct: the walk
+// then reaches `ufbxi_get_element_node`, which reads `ufbx_node` fields past
+// `size_of::<Element>()`, so a pointer derived from a header-only
+// `&View<Element>` may not address them. With `search_node` clear the walk
+// stays within the `ufbx_element` header, where header-only provenance suffices.
 #[inline(never)]
 #[must_use]
 pub(crate) unsafe fn fetch_dst_element(
     element: *mut Element,
     search_node: bool,
-    prop: *const u8,
+    prop: Option<&[u8]>,
     src_type: ElementType,
 ) -> *mut Element {
     let mut element: *mut Element = element;
-
-    // SAFETY: `prop` is null or a NUL-terminated interned property name (fn
-    // contract) — the measure and the measured run are that contract; minted
-    // once here as `find_dst_connections`' query span.
-    let prop: Option<&[u8]> = if prop.is_null() {
-        None
-    } else {
-        Some(unsafe { slice_from_ptr(prop, strlen(prop)) })
-    };
 
     loop {
         let conns: List<Connection> = find_dst_connections(
@@ -8759,7 +8761,7 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
         // destination is null or a live `ufbx_node`.
         cluster.set_bone_node(unsafe {
             opt_ref(
-                fetch_dst_element(cluster.element_raw(), false, ptr::null(), ElementType::Node)
+                fetch_dst_element(cluster.element_raw(), false, None, ElementType::Node)
                     as *mut Node,
             )
         });
@@ -9026,7 +9028,7 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
             opt_ref(fetch_dst_element(
                 deformer_view.element_raw(),
                 false,
-                ptr::null(),
+                None,
                 ElementType::CacheFile,
             ) as *mut CacheFile)
         });
@@ -9578,13 +9580,12 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
     for stereo_ix in 0..stereo_cameras.count() {
         let stereo: &View<StereoCamera> = stereo_cameras.at(stereo_ix);
         // SAFETY: `element_raw()` addresses the viewed stereo camera's own
-        // element header, the prop name is an interned NUL-terminated pool
-        // string, and the fetched destination is null or a live `ufbx_camera`.
+        // element header; the fetched destination is null or a live `ufbx_camera`.
         stereo.set_left(unsafe {
             opt_ref(fetch_dst_element(
                 stereo.element_raw(),
                 search_node,
-                sp::LeftCamera.as_ptr(),
+                Some(&sp::LeftCamera[..]),
                 ElementType::Camera,
             ) as *mut Camera)
         });
@@ -9593,7 +9594,7 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
             opt_ref(fetch_dst_element(
                 stereo.element_raw(),
                 search_node,
-                sp::RightCamera.as_ptr(),
+                Some(&sp::RightCamera[..]),
                 ElementType::Camera,
             ) as *mut Camera)
         });
@@ -9616,12 +9617,10 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
         // SAFETY: `element_raw()` addresses the viewed surface's own element
         // header; the fetched destination is null or a live `ufbx_material`.
         surface.set_material(unsafe {
-            opt_ref(fetch_dst_element(
-                surface.element_raw(),
-                true,
-                ptr::null(),
-                ElementType::Material,
-            ) as *mut Material)
+            opt_ref(
+                fetch_dst_element(surface.element_raw(), true, None, ElementType::Material)
+                    as *mut Material,
+            )
         });
     }
 
@@ -10274,12 +10273,10 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
         // SAFETY: `element_raw()` addresses the viewed texture's own element
         // header; the fetched destination is null or a live `ufbx_video`.
         texture.set_video(unsafe {
-            opt_ref(fetch_dst_element(
-                texture.element_raw(),
-                false,
-                ptr::null(),
-                ElementType::Video,
-            ) as *mut Video)
+            opt_ref(
+                fetch_dst_element(texture.element_raw(), false, None, ElementType::Video)
+                    as *mut Video,
+            )
         });
         if let Some(texture_video) = texture.video() {
             // SAFETY: a non-null `video` names a live `ufbx_video` element of
@@ -10475,15 +10472,13 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
         // element header; the fetched destination is null or a live `ufbx_node`.
         node.set_target_node(unsafe {
             opt_ref(
-                fetch_dst_element(node.element_raw(), false, ptr::null(), ElementType::Node)
-                    as *mut Node,
+                fetch_dst_element(node.element_raw(), false, None, ElementType::Node) as *mut Node,
             )
         });
         // SAFETY: as above, for a null-or-live `ufbx_mesh` destination.
         node.set_target_mesh(unsafe {
             opt_ref(
-                fetch_dst_element(node.element_raw(), false, ptr::null(), ElementType::Mesh)
-                    as *mut Mesh,
+                fetch_dst_element(node.element_raw(), false, None, ElementType::Mesh) as *mut Mesh,
             )
         });
         // C: `if (!node->target_mesh && node->target_node) ... else if

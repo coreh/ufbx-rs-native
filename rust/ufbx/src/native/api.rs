@@ -1099,10 +1099,23 @@ pub(crate) unsafe fn get_prop_element(
     if element.is_null() || prop.is_null() {
         return core::ptr::null_mut();
     }
-    // SAFETY: `element` and `prop` are non-null (checked) and point at a live
-    // `Element` and `Prop` — the raw-pointer contract of this `unsafe fn`;
-    // `(*prop).name.data` reads the prop's own interned name pointer.
-    unsafe { fetch_dst_element(element as *mut Element, false, (*prop).name.data, type_) }
+    // SAFETY: `prop` is non-null (checked) and points at a live `Prop` — the
+    // raw-pointer contract of this `unsafe fn`; `(*prop).name.data` reads the
+    // prop's own name pointer, which is null or a NUL-terminated interned pool
+    // string, so the measure and the measured run are that same string. C
+    // substitutes `ufbxi_empty_char` for the null case inside
+    // `ufbxi_find_dst_connections`, which `None` reproduces.
+    let prop_name: Option<&[u8]> = unsafe {
+        let name_data: *const u8 = (*prop).name.data;
+        if name_data.is_null() {
+            None
+        } else {
+            Some(crate::prelude::slice_from_ptr(name_data, strlen(name_data)))
+        }
+    };
+    // SAFETY: `element` is non-null (checked) and points at a live `Element` —
+    // the raw-pointer contract of this `unsafe fn`.
+    unsafe { fetch_dst_element(element as *mut Element, false, prop_name, type_) }
 }
 
 // ufbx.c:30750-30758 `ufbx_find_prop_element_len`
