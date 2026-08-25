@@ -638,13 +638,8 @@ pub(crate) fn ascii_try_ignore_string(uc: &Context, token: &AsciiTokenView) -> b
 
 // ufbx.c:9738-9896 `ufbxi_ascii_next_token`
 #[inline(never)]
-pub(crate) unsafe fn ascii_next_token(uc: &Context, token: *mut AsciiToken) -> Result<(), Fail> {
+pub(crate) fn ascii_next_token(uc: &Context, token: &AsciiTokenView) -> Result<(), Fail> {
     let ua: *mut Ascii = uc.ascii_mut_ptr();
-    // SAFETY: `token` points to a valid, live `AsciiToken` with write-capable
-    // provenance (caller contract; every call site passes an `ascii`
-    // sub-context token). `Mut` mode is interior-mutable, so the raw writes
-    // through `token` below coexist with this view.
-    let token_view: &AsciiTokenView = unsafe { AsciiTokenView::from_ptr(token) };
 
     // Replace `prev_token` with `token` but swap the buffers so `token` uses
     // the now-unused string buffer of the old `prev_token`.
@@ -659,16 +654,10 @@ pub(crate) unsafe fn ascii_next_token(uc: &Context, token: *mut AsciiToken) -> R
     }
 
     let mut c: u8 = ascii_skip_whitespace(uc);
-    // SAFETY: `token` points to a valid, live `AsciiToken` (caller contract).
-    unsafe {
-        (*token).str_len = 0;
-    }
+    token.set_str_len(0);
 
     if (c >= b'A' && c <= b'Z') || (c >= b'a' && c <= b'z') || c == b'_' {
-        // SAFETY: `token` is the caller's valid, live `AsciiToken` out-param.
-        unsafe {
-            (*token).type_ = ASCII_BARE_WORD;
-        }
+        token.set_type_(ASCII_BARE_WORD);
         while (c >= b'A' && c <= b'Z')
             || (c >= b'a' && c <= b'z')
             || (c >= b'0' && c <= b'9')
@@ -677,28 +666,21 @@ pub(crate) unsafe fn ascii_next_token(uc: &Context, token: *mut AsciiToken) -> R
             || c == b'('
             || c == b')'
         {
-            ascii_push_token_char(uc, token_view, c)?;
+            ascii_push_token_char(uc, token, c)?;
             c = ascii_next(uc);
         }
 
         // Skip whitespace to find if there's a following ':'
         c = ascii_skip_whitespace(uc);
         if c == b':' {
-            // SAFETY: `token` is the caller's valid, live `AsciiToken`; writes its
-            // own `value.name_len` (union) and `type_` fields from its `str_len`.
-            unsafe {
-                (*token).value.name_len = (*token).str_len;
-                (*token).type_ = ASCII_NAME;
-            }
+            token.set_value_name_len(token.str_len());
+            token.set_type_(ASCII_NAME);
             ascii_next(uc);
         }
     } else if (c >= b'0' && c <= b'9') || c == b'-' || c == b'+' || c == b'.' {
-        // SAFETY: `token` is the caller's valid, live `AsciiToken`; writes its
-        // own `type_` and `negative` fields.
-        unsafe {
-            (*token).type_ = ASCII_INT;
-            (*token).negative = c == b'-';
-        }
+        token.set_type_(ASCII_INT);
+
+        token.set_negative(c == b'-');
         while (c >= b'0' && c <= b'9')
             || c == b'-'
             || c == b'+'
@@ -707,12 +689,9 @@ pub(crate) unsafe fn ascii_next_token(uc: &Context, token: *mut AsciiToken) -> R
             || c == b'E'
         {
             if c == b'.' || c == b'e' || c == b'E' {
-                // SAFETY: `token` is the caller's valid, live `AsciiToken`.
-                unsafe {
-                    (*token).type_ = ASCII_FLOAT;
-                }
+                token.set_type_(ASCII_FLOAT);
             }
-            ascii_push_token_char(uc, token_view, c)?;
+            ascii_push_token_char(uc, token, c)?;
             c = ascii_next(uc);
         }
 
@@ -725,36 +704,28 @@ pub(crate) unsafe fn ascii_next_token(uc: &Context, token: *mut AsciiToken) -> R
             || c == b')'
         {
             nan_like = true;
-            ascii_push_token_char(uc, token_view, c)?;
+            ascii_push_token_char(uc, token, c)?;
             c = ascii_next(uc);
         }
-        ascii_push_token_char(uc, token_view, b'\0')?;
+        ascii_push_token_char(uc, token, b'\0')?;
         if nan_like {
-            // SAFETY: `token` is the caller's valid, live `AsciiToken`.
-            unsafe {
-                (*token).type_ = ASCII_FLOAT;
-            }
+            token.set_type_(ASCII_FLOAT);
         }
 
         let mut end: *const u8 = core::ptr::null();
-        // SAFETY: `token` is the caller's valid, live `AsciiToken`; reads its
-        // `type_` field.
-        if unsafe { (*token).type_ } == ASCII_INT {
+        if token.type_() == ASCII_INT {
             // SAFETY: `token->str_data` is its NUL-terminated number buffer just
-            // filled above; `parse_int64` scans it and stores its end in `end`,
-            // and the write targets `token`'s own `value.i64_` union member.
-            unsafe {
-                (*token).value.i64_ = parse_int64((*token).str_data, &raw mut end);
-            }
+            // filled above; `parse_int64` scans it and stores its end in `end`.
+            token.set_value_i64(unsafe { parse_int64(token.str_data(), &raw mut end) });
             ufbxi_check!(
                 uc,
                 // SAFETY: `token`'s buffer holds `str_len` bytes (the digits plus
                 // the trailing NUL), so `str_data + str_len - 1` is the NUL slot
                 // `parse_int64` stops at.
-                end == unsafe { (*token).str_data.add((*token).str_len - 1) },
+                end == unsafe { token.str_data().add(token.str_len() - 1) },
                 "end == token->str_data + token->str_len - 1"
             );
-        } else if unsafe { (*token).type_ } == ASCII_FLOAT {
+        } else if token.type_() == ASCII_FLOAT {
             let mut flags: u32 = uc.double_parse_flags();
             // SAFETY: `ua` is `uc`'s own live `ascii` sub-context; reads its
             // `parse_as_f32` flag.
@@ -762,25 +733,20 @@ pub(crate) unsafe fn ascii_next_token(uc: &Context, token: *mut AsciiToken) -> R
                 flags = PARSE_DOUBLE_AS_BINARY32;
             }
             // SAFETY: `token->str_data`/`str_len` describe its NUL-terminated
-            // number buffer; `parse_double` scans it and stores its end in `end`,
-            // and the write targets `token`'s own `value.f64_` union member.
-            unsafe {
-                (*token).value.f64_ =
-                    parse_double((*token).str_data, (*token).str_len, &raw mut end, flags);
-            }
+            // number buffer; `parse_double` scans it and stores its end in `end`.
+            token.set_value_f64(unsafe {
+                parse_double(token.str_data(), token.str_len(), &raw mut end, flags)
+            });
             ufbxi_check!(
                 uc,
                 // SAFETY: as in the int branch — `str_data + str_len - 1` is the
                 // trailing-NUL slot within `token`'s buffer.
-                end == unsafe { (*token).str_data.add((*token).str_len - 1) },
+                end == unsafe { token.str_data().add(token.str_len() - 1) },
                 "end == token->str_data + token->str_len - 1"
             );
         }
     } else if c == b'"' {
-        // SAFETY: `token` is the caller's valid, live `AsciiToken`.
-        unsafe {
-            (*token).type_ = ASCII_STRING;
-        }
+        token.set_type_(ASCII_STRING);
         c = ascii_next(uc);
         while c != b'"' {
             // Optimized string parsing for non-special characters
@@ -816,7 +782,7 @@ pub(crate) unsafe fn ascii_next_token(uc: &Context, token: *mut AsciiToken) -> R
                     unsafe {
                         ascii_push_token_string(
                             uc,
-                            token_view,
+                            token,
                             begin,
                             to_size(end as isize - begin as isize),
                         )
@@ -885,14 +851,14 @@ pub(crate) unsafe fn ascii_next_token(uc: &Context, token: *mut AsciiToken) -> R
                 // so `entity + step` is readable.
                 if unsafe { *entity.add(step) } == b'\0' {
                     // Full match: Push the replacement character
-                    ascii_push_token_char(uc, token_view, replacement)?;
+                    ascii_push_token_char(uc, token, replacement)?;
                 } else {
                     // Partial match: Push the prefix we have skipped already
                     let mut i: usize = 0;
                     while i < step {
                         // SAFETY: `i < step` indexes a matched prefix byte of
                         // the entity literal, before its terminating NUL.
-                        ascii_push_token_char(uc, token_view, unsafe { *entity.add(i) })?;
+                        ascii_push_token_char(uc, token, unsafe { *entity.add(i) })?;
                         i += 1;
                     }
                 }
@@ -900,7 +866,7 @@ pub(crate) unsafe fn ascii_next_token(uc: &Context, token: *mut AsciiToken) -> R
             }
 
             ufbxi_check!(uc, c != b'\0', "c != '\\0'");
-            ascii_push_token_char(uc, token_view, c)?;
+            ascii_push_token_char(uc, token, c)?;
             c = ascii_next(uc);
         }
         // Skip closing quote
@@ -909,20 +875,13 @@ pub(crate) unsafe fn ascii_next_token(uc: &Context, token: *mut AsciiToken) -> R
         // Check if the next character is ':', in some legacy FBX files we have names with
         // spaces, like `"Transport Tool Settings": { ... }`
         if next == b':' {
-            // SAFETY: `token` is the caller's valid, live `AsciiToken`; writes its
-            // own `value.name_len` (union) and `type_` fields from its `str_len`.
-            unsafe {
-                (*token).value.name_len = (*token).str_len;
-                (*token).type_ = ASCII_NAME;
-            }
+            token.set_value_name_len(token.str_len());
+            token.set_type_(ASCII_NAME);
             ascii_next(uc);
         }
     } else {
         // Single character token
-        // SAFETY: `token` is the caller's valid, live `AsciiToken`.
-        unsafe {
-            (*token).type_ = c;
-        }
+        token.set_type_(c);
         ascii_next(uc);
     }
 
@@ -942,9 +901,7 @@ pub(crate) fn ascii_accept(uc: &Context, type_: u8) -> bool {
     if ua.token_view().type_() == type_ {
         ufbxi_check_return!(
             uc,
-            // SAFETY: the token out-param is `uc`'s own `ascii.token` field,
-            // addressed through its view.
-            unsafe { ascii_next_token(uc, ua.token_mut_ptr()) }.is_ok(),
+            ascii_next_token(uc, ua.token_view()).is_ok(),
             false,
             "ufbxi_ascii_next_token(uc, &ua->token)"
         );
@@ -1042,12 +999,12 @@ pub(crate) fn ascii_read_int_array(
     // SAFETY: `ua` is `uc`'s own live `ascii` sub-context; reads its `src` cursor.
     if src != unsafe { (*ua).src } {
         // SAFETY: `ua` is `uc`'s own live `ascii` sub-context; `src` was derived
-        // from its window and stays inside it, a valid cursor to store back. The
-        // `&raw mut` projects its own `token` field, retokenized in place.
+        // from its window and stays inside it, a valid cursor to store back.
         unsafe {
             (*ua).src = src;
-            ascii_next_token(uc, &raw mut (*ua).token)?;
         }
+        // `uc`'s own `ascii.token` is retokenized in place.
+        ascii_next_token(uc, uc.ascii_view().token_view())?;
     }
 
     *p_num_read = uc.tmp_stack_view().num_items() - initial_items;
@@ -1605,12 +1562,12 @@ pub(crate) fn ascii_read_float_array(
     // SAFETY: `ua` is `uc`'s own live `ascii` sub-context; reads its `src` cursor.
     if src != unsafe { (*ua).src } {
         // SAFETY: `ua` is `uc`'s own live `ascii` sub-context; `src` stays inside
-        // its window, a valid cursor to store back. The `&raw mut` projects its
-        // own `token` field, retokenized in place.
+        // its window, a valid cursor to store back.
         unsafe {
             (*ua).src = src;
-            ascii_next_token(uc, &raw mut (*ua).token)?;
         }
+        // `uc`'s own `ascii.token` is retokenized in place.
+        ascii_next_token(uc, uc.ascii_view().token_view())?;
     }
 
     *p_num_read = uc.tmp_stack_view().num_items() - initial_items;
@@ -1806,11 +1763,8 @@ unsafe fn ascii_parse_node_rec(
     // SAFETY: `ua` is `uc`'s own live `ascii` sub-context (via `ascii_mut_ptr`);
     // reads its current token's `type_`.
     if unsafe { (*ua).token.type_ } == b'}' {
-        // SAFETY: `ua` is `uc`'s own live `ascii` sub-context; the `&raw mut`
-        // projects its own `token` field, retokenized in place.
-        unsafe {
-            ascii_next_token(uc, &raw mut (*ua).token)?;
-        }
+        // `uc`'s own `ascii.token` is retokenized in place.
+        ascii_next_token(uc, uc.ascii_view().token_view())?;
         // SAFETY: `p_end` is the caller's valid out-param.
         unsafe {
             *p_end = true;
@@ -1951,17 +1905,10 @@ unsafe fn ascii_parse_node_rec(
         // `opts.ignore_embedded == true` try to skip the next token string if possible.
         if arr_type == b'-' {
             if !ascii_try_ignore_string(uc, uc.ascii_view().token_view()) {
-                // SAFETY: as above — retokenizes `ua`'s own `token` in place.
-                unsafe {
-                    ascii_next_token(uc, &raw mut (*ua).token)?;
-                }
+                ascii_next_token(uc, uc.ascii_view().token_view())?;
             }
         } else {
-            // SAFETY: `ua` is `uc`'s own live `ascii` sub-context; retokenizes its
-            // own `token` in place.
-            unsafe {
-                ascii_next_token(uc, &raw mut (*ua).token)?;
-            }
+            ascii_next_token(uc, uc.ascii_view().token_view())?;
         }
     }
 

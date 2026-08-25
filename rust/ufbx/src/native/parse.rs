@@ -660,6 +660,39 @@ impl AsciiTokenView {
     pub(crate) fn set_type_(&self, type_: u8) {
         view_write!(self, type_, type_);
     }
+    #[inline(always)]
+    pub(crate) fn set_negative(&self, negative: bool) {
+        view_write!(self, negative, negative);
+    }
+    // `value.name_len` / `value.i64_` / `value.f64_` — writes of ONE member of
+    // the `value` overlay. Two-level paths, so they carry their own safety
+    // argument instead of the single-leaf macros.
+    #[inline(always)]
+    pub(crate) fn set_value_name_len(&self, name_len: usize) {
+        // SAFETY: `get()` yields a pointer to this view's live, unmoved
+        // `AsciiToken` (mint invariant; write-capable in `Mut` mode); the
+        // projection writes its own `value.name_len` member as a raw place,
+        // forming no reference to the containing struct.
+        unsafe {
+            (*self.get()).value.name_len = name_len;
+        }
+    }
+    #[inline(always)]
+    pub(crate) fn set_value_i64(&self, i64_: i64) {
+        // SAFETY: as `set_value_name_len` — a raw-place write of this view's
+        // own `value.i64_` member.
+        unsafe {
+            (*self.get()).value.i64_ = i64_;
+        }
+    }
+    #[inline(always)]
+    pub(crate) fn set_value_f64(&self, f64_: f64) {
+        // SAFETY: as `set_value_name_len` — a raw-place write of this view's
+        // own `value.f64_` member.
+        unsafe {
+            (*self.get()).value.f64_ = f64_;
+        }
+    }
 }
 
 // ufbx.c:6267-6271 (anonymous `value` union inside `ufbxi_ascii_token`) —
@@ -695,8 +728,7 @@ pub(crate) struct Ascii {
 }
 
 // Typed interior-mutable VIEW over the owned `ascii` field (Ascii), reinterpreted in
-// place. `token`/`prev_token` recurse into `AsciiTokenView`; scalars are getters/setters;
-// `token` is also whole-addr'd (`_mut_ptr`).
+// place. `token`/`prev_token` recurse into `AsciiTokenView`; scalars are getters/setters.
 pub(crate) type AsciiView = crate::native::view::View<Ascii>;
 
 impl AsciiView {
@@ -707,10 +739,6 @@ impl AsciiView {
     #[inline(always)]
     pub(crate) fn prev_token_view(&self) -> &AsciiTokenView {
         unsafe { &*(&raw mut (*self.get()).prev_token as *mut AsciiTokenView) }
-    }
-    #[inline(always)]
-    pub(crate) fn token_mut_ptr(&self) -> *mut AsciiToken {
-        view_raw_mut!(self, token)
     }
     #[inline(always)]
     pub(crate) fn src_buf(&self) -> *mut Buf {
@@ -6969,11 +6997,7 @@ pub(crate) fn begin_parse(uc: &Context) -> Result<(), Fail> {
         }
 
         // Initialize the first token
-        // SAFETY: the token out-param is `uc`'s own `ascii.token` field,
-        // addressed through its view.
-        unsafe {
-            crate::native::parse_ascii::ascii_next_token(uc, uc.ascii_view().token_mut_ptr())?;
-        }
+        crate::native::parse_ascii::ascii_next_token(uc, uc.ascii_view().token_view())?;
 
         // Default to version 7400 if not found in header
         if uc.version() > 0 {
