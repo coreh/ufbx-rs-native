@@ -8362,19 +8362,23 @@ pub(crate) fn double_to_char(value: f64) -> u8 {
 }
 
 // ufbx.c:15323-15583 `ufbxi_read_take_anim_channel`
+///
+/// # Safety
+/// `name` stays a raw pointer for the reason `push_synthetic_element`
+/// documents: it is null or NUL-terminated, the pointer ITSELF is stored in
+/// the pushed curve's `element.name.data`, and its bytes must stay live and
+/// unmoved for as long as the scene — an obligation no borrow in this port
+/// expresses.
 #[inline(never)]
 pub(crate) unsafe fn read_take_anim_channel(
     uc: &Context,
     node: &NodeView,
     value_fbx_id: u64,
     name: *const u8,
-    p_default: *mut Real,
+    p_default: &ScalarView<Real>,
 ) -> Result<(), Fail> {
     if let Some(got) = find_val1::<AsReal>(node, sp::Default.as_ptr()) {
-        // SAFETY: `p_default` is the caller's live, writable default slot (fn contract).
-        unsafe {
-            *p_default = got.0;
-        }
+        p_default.set(got.0);
     }
 
     // Find the key array, early return with success if not found as we may have only a default
@@ -8913,17 +8917,23 @@ unsafe fn read_take_prop_channel_rec(
             // C-parity: `&value->default_value.v[i]` — `ufbx_vec3` is a union
             // of `{ x, y, z }` and `ufbx_real v[3]`; the generator emits only
             // the named-struct member, so the array view is reached by cast.
-            // SAFETY: `value` is the live `ufbx_anim_value` null-checked above.
+            // SAFETY: `value` is the live `ufbx_anim_value` null-checked above,
             // `default_value` is a three-`ufbx_real` union and
-            // `i < num_channel_nodes <= 3` bounds the step; `channel_names[i]` is
-            // the NUL-terminated `'C'` value fetched for that channel.
+            // `i < num_channel_nodes <= 3` bounds the step, so the slot is that
+            // element's own `ufbx_real`; `ScalarView<Real>` is `repr(transparent)`
+            // over `Real` and the arena element is written only through it here.
+            let p_default: &ScalarView<Real> = unsafe {
+                &*((&raw mut (*value).default_value as *mut Real).add(i) as *const ScalarView<Real>)
+            };
+            // SAFETY: `channel_names[i]` is the NUL-terminated `'C'` value fetched
+            // for that channel — an interned pool string live for the scene.
             unsafe {
                 read_take_anim_channel(
                     uc,
                     channel_nodes[i].unwrap(),
                     value_fbx_id,
                     channel_names[i],
-                    (&raw mut (*value).default_value as *mut Real).add(i),
+                    p_default,
                 )
             }?;
         }
