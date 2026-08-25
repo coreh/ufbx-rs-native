@@ -2260,39 +2260,48 @@ pub(crate) fn linearize_nodes(uc: &Context) -> Result<(), Fail> {
     Ok(())
 }
 
+// `ufbxi_find_dst_connections` / `ufbxi_find_src_connections` read the
+// `element` header of a typed element; these project it in place, so a caller
+// holding the typed view passes the header without re-minting a pointer.
+impl<M: Mode> View<Node, M> {
+    #[inline(always)]
+    pub(crate) fn element_view(&self) -> &View<Element, M> {
+        view_project!(self, element)
+    }
+}
+impl<M: Mode> View<SkinDeformer, M> {
+    #[inline(always)]
+    pub(crate) fn element_view(&self) -> &View<Element, M> {
+        view_project!(self, element)
+    }
+}
+
 // ufbx.c:18997-19014 `ufbxi_find_dst_connections`
+// `prop: Option<&[u8]>` carries C's nullable `const char *prop`: `None` is C's
+// `NULL`, `Some` the NUL-terminated interned name minted once by the caller.
 #[inline(never)]
 #[must_use]
-pub(crate) unsafe fn find_dst_connections(
-    element: *mut Element,
-    prop: *const u8,
-) -> List<Connection> {
-    let mut prop: *const u8 = prop;
-    if prop.is_null() {
-        prop = EMPTY_CHAR.as_ptr();
-    }
-    // SAFETY: `prop` is a NUL-terminated interned name (defaulted above) — the
-    // `strlen` measure and the measured run are this fn's own contract; the
-    // ordering probes below then compare it as a safe slice (`c_strcmp` treats
+pub(crate) fn find_dst_connections(element: &ElementView, prop: Option<&[u8]>) -> List<Connection> {
+    // C: `if (!prop) prop = ufbxi_empty_char;` — the empty span's base address
+    // is `ufbxi_empty_char` itself, which the identity probes below compare.
+    let prop: &[u8] = prop.unwrap_or(&EMPTY_CHAR[..0]);
+    // C compares `a->dst_prop.data == prop` by interned-pointer identity; the
+    // ordering probe compares the same span as bytes (`c_strcmp` treats
     // end-of-slice as NUL, byte-exact strcmp for NUL-terminated-at-length data).
-    let prop_bytes: &[u8] = unsafe { crate::prelude::slice_from_ptr(prop, strlen(prop)) };
+    let prop_data: *const u8 = prop.as_ptr();
 
-    // SAFETY: `element` points to a live scene element in the arena, so its
-    // write-capable pointer anchors an `ElementView` for the reads below.
-    let element_view: &ElementView = unsafe { ElementView::from_ptr(element) };
-
-    let conns = element_view.connections_dst_view();
+    let conns = element.connections_dst_view();
     // C pre-initializes `begin = count` because the lower bound does not write
     // on a miss; `unwrap_or` reproduces that.
     let begin: usize = conns
         .lower_bound_eq(
             32,
-            |a| c_strcmp(a.dst_prop_view().bytes(), prop_bytes) < 0,
-            |a| a.dst_prop().data == prop && a.src_prop().length == 0,
+            |a| c_strcmp(a.dst_prop_view().bytes(), prop) < 0,
+            |a| a.dst_prop().data == prop_data && a.src_prop().length == 0,
         )
         .unwrap_or(conns.count());
     let end: usize = conns.upper_bound_eq(32, begin, |a| {
-        a.dst_prop().data == prop && a.src_prop().length == 0
+        a.dst_prop().data == prop_data && a.src_prop().length == 0
     });
 
     // C: `ufbx_connection_list result = { element->connections_dst.data + begin, end - begin };`
@@ -2310,38 +2319,31 @@ pub(crate) unsafe fn find_dst_connections(
 }
 
 // ufbx.c:19016-19033 `ufbxi_find_src_connections`
+// `prop: Option<&[u8]>` carries C's nullable `const char *prop` (see
+// `find_dst_connections`).
 #[inline(never)]
 #[must_use]
-pub(crate) unsafe fn find_src_connections(
-    element: *mut Element,
-    prop: *const u8,
-) -> List<Connection> {
-    let mut prop: *const u8 = prop;
-    if prop.is_null() {
-        prop = EMPTY_CHAR.as_ptr();
-    }
-    // SAFETY: `prop` is a NUL-terminated interned name (defaulted above) — the
-    // `strlen` measure and the measured run are this fn's own contract; the
-    // ordering probes below then compare it as a safe slice (`c_strcmp` treats
+pub(crate) fn find_src_connections(element: &ElementView, prop: Option<&[u8]>) -> List<Connection> {
+    // C: `if (!prop) prop = ufbxi_empty_char;` — the empty span's base address
+    // is `ufbxi_empty_char` itself, which the identity probes below compare.
+    let prop: &[u8] = prop.unwrap_or(&EMPTY_CHAR[..0]);
+    // C compares `a->src_prop.data == prop` by interned-pointer identity; the
+    // ordering probe compares the same span as bytes (`c_strcmp` treats
     // end-of-slice as NUL, byte-exact strcmp for NUL-terminated-at-length data).
-    let prop_bytes: &[u8] = unsafe { crate::prelude::slice_from_ptr(prop, strlen(prop)) };
+    let prop_data: *const u8 = prop.as_ptr();
 
-    // SAFETY: `element` points to a live scene element in the arena, so its
-    // write-capable pointer anchors an `ElementView` for the reads below.
-    let element_view: &ElementView = unsafe { ElementView::from_ptr(element) };
-
-    let conns = element_view.connections_src_view();
+    let conns = element.connections_src_view();
     // C pre-initializes `begin = count` because the lower bound does not write
     // on a miss; `unwrap_or` reproduces that.
     let begin: usize = conns
         .lower_bound_eq(
             32,
-            |a| c_strcmp(a.src_prop_view().bytes(), prop_bytes) < 0,
-            |a| a.src_prop().data == prop && a.dst_prop().length == 0,
+            |a| c_strcmp(a.src_prop_view().bytes(), prop) < 0,
+            |a| a.src_prop().data == prop_data && a.dst_prop().length == 0,
         )
         .unwrap_or(conns.count());
     let end: usize = conns.upper_bound_eq(32, begin, |a| {
-        a.src_prop().data == prop && a.dst_prop().length == 0
+        a.src_prop().data == prop_data && a.dst_prop().length == 0
     });
 
     // C: `ufbx_connection_list result = { element->connections_src.data + begin, end - begin };`
@@ -2357,6 +2359,14 @@ pub(crate) unsafe fn find_src_connections(
 }
 
 // ufbx.c:19035-19045 `ufbxi_get_element_node`
+//
+// # Safety
+// `element` is null or heads a live, arena-owned `ufbx_element`, and when its
+// `type_` is `UFBX_ELEMENT_NODE` the same address heads the enclosing
+// `ufbx_node`. The param stays a raw pointer because the `UFBX_ELEMENT_NODE`
+// branch reads `is_geometry_transform_helper` / `parent`, which lie past
+// `size_of::<Element>()`: a `&View<Element>` tags the header only, so a
+// pointer derived from it may not address the node body.
 #[must_use]
 pub(crate) unsafe fn get_element_node(element: *mut Element) -> *mut Element {
     if element.is_null() {
@@ -2402,10 +2412,22 @@ pub(crate) unsafe fn fetch_dst_elements(
     let mut element: *mut Element = element;
     let mut num_elements: usize = 0;
 
+    // SAFETY: `prop` is null or a NUL-terminated interned property name (fn
+    // contract) — the measure and the measured run are that contract; minted
+    // once here as `find_dst_connections`' query span.
+    let prop: Option<&[u8]> = if prop.is_null() {
+        None
+    } else {
+        Some(unsafe { slice_from_ptr(prop, strlen(prop)) })
+    };
+
     loop {
-        // SAFETY: `element` is a live scene element — the caller's on the first
-        // pass, `get_element_node`'s non-null result after that.
-        let conns: List<Connection> = unsafe { find_dst_connections(element, prop) };
+        let conns: List<Connection> = find_dst_connections(
+            // SAFETY: `element` is a live scene element — the caller's on the
+            // first pass, `get_element_node`'s non-null result after that.
+            unsafe { ElementView::from_ptr(element) },
+            prop,
+        );
         // C: `ufbxi_for_list(ufbx_connection, conn, conns)` — indexed here
         // because the body `continue`s (the C `for` advances the iterator in
         // its increment clause).
@@ -2513,10 +2535,22 @@ pub(crate) unsafe fn fetch_src_elements(
     let mut element: *mut Element = element;
     let mut num_elements: usize = 0;
 
+    // SAFETY: `prop` is null or a NUL-terminated interned property name (fn
+    // contract) — the measure and the measured run are that contract; minted
+    // once here as `find_src_connections`' query span.
+    let prop: Option<&[u8]> = if prop.is_null() {
+        None
+    } else {
+        Some(unsafe { slice_from_ptr(prop, strlen(prop)) })
+    };
+
     loop {
-        // SAFETY: `element` is a live scene element — the caller's on the first
-        // pass, `get_element_node`'s non-null result after that.
-        let conns: List<Connection> = unsafe { find_src_connections(element, prop) };
+        let conns: List<Connection> = find_src_connections(
+            // SAFETY: `element` is a live scene element — the caller's on the
+            // first pass, `get_element_node`'s non-null result after that.
+            unsafe { ElementView::from_ptr(element) },
+            prop,
+        );
         // C: `ufbxi_for_list(ufbx_connection, conn, conns)` — indexed here
         // because the body `continue`s.
         for conn_ix in 0..conns.count {
@@ -2620,10 +2654,22 @@ pub(crate) unsafe fn fetch_dst_element(
 ) -> *mut Element {
     let mut element: *mut Element = element;
 
+    // SAFETY: `prop` is null or a NUL-terminated interned property name (fn
+    // contract) — the measure and the measured run are that contract; minted
+    // once here as `find_dst_connections`' query span.
+    let prop: Option<&[u8]> = if prop.is_null() {
+        None
+    } else {
+        Some(unsafe { slice_from_ptr(prop, strlen(prop)) })
+    };
+
     loop {
-        // SAFETY: `element` is a live scene element — the caller's on the first
-        // pass, `get_element_node`'s non-null result after that.
-        let conns: List<Connection> = unsafe { find_dst_connections(element, prop) };
+        let conns: List<Connection> = find_dst_connections(
+            // SAFETY: `element` is a live scene element — the caller's on the
+            // first pass, `get_element_node`'s non-null result after that.
+            unsafe { ElementView::from_ptr(element) },
+            prop,
+        );
         // C: `ufbxi_for_list(ufbx_connection, conn, conns)`
         let mut conn: *mut Connection = conns.data as *mut Connection;
         let conn_end: *mut Connection = add_ptr(conn, conns.count);
@@ -2663,10 +2709,22 @@ pub(crate) unsafe fn fetch_src_element(
 ) -> *mut Element {
     let mut element: *mut Element = element;
 
+    // SAFETY: `prop` is null or a NUL-terminated interned property name (fn
+    // contract) — the measure and the measured run are that contract; minted
+    // once here as `find_src_connections`' query span.
+    let prop: Option<&[u8]> = if prop.is_null() {
+        None
+    } else {
+        Some(unsafe { slice_from_ptr(prop, strlen(prop)) })
+    };
+
     loop {
-        // SAFETY: `element` is a live scene element — the caller's on the first
-        // pass, `get_element_node`'s non-null result after that.
-        let conns: List<Connection> = unsafe { find_src_connections(element, prop) };
+        let conns: List<Connection> = find_src_connections(
+            // SAFETY: `element` is a live scene element — the caller's on the
+            // first pass, `get_element_node`'s non-null result after that.
+            unsafe { ElementView::from_ptr(element) },
+            prop,
+        );
         // C: `ufbxi_for_list(ufbx_connection, conn, conns)`
         let mut conn: *mut Connection = conns.data as *mut Connection;
         let conn_end: *mut Connection = add_ptr(conn, conns.count);
@@ -2775,9 +2833,12 @@ pub(crate) unsafe fn fetch_mesh_materials(
     let mut num_materials: usize = 0;
 
     loop {
-        // SAFETY: `element` is a live scene element — the caller's on the first
-        // pass, `get_element_node`'s non-null result after that.
-        let conns: List<Connection> = unsafe { find_dst_connections(element, ptr::null()) };
+        let conns: List<Connection> = find_dst_connections(
+            // SAFETY: `element` is a live scene element — the caller's on the
+            // first pass, `get_element_node`'s non-null result after that.
+            unsafe { ElementView::from_ptr(element) },
+            None,
+        );
         // C: `ufbxi_for_list(ufbx_connection, conn, conns)`
         let mut conn: *mut Connection = conns.data as *mut Connection;
         let conn_end: *mut Connection = add_ptr(conn, conns.count);
@@ -2908,8 +2969,11 @@ pub(crate) unsafe fn fetch_blend_keyframes(
 ) -> Result<(), Fail> {
     let mut num_keyframes: usize = 0;
 
-    // SAFETY: `element` points to a live scene element (fn contract).
-    let conns: List<Connection> = unsafe { find_dst_connections(element, ptr::null()) };
+    let conns: List<Connection> = find_dst_connections(
+        // SAFETY: `element` points to a live scene element (fn contract).
+        unsafe { ElementView::from_ptr(element) },
+        None,
+    );
     // C: `ufbxi_for_list(ufbx_connection, conn, conns)`
     let mut conn: *mut Connection = conns.data as *mut Connection;
     let conn_end: *mut Connection = add_ptr(conn, conns.count);
@@ -2959,10 +3023,8 @@ pub(crate) fn fetch_texture_layers(
 ) -> Result<(), Fail> {
     let mut num_layers: usize = 0;
 
-    // SAFETY: `element` views a live scene element, so its pointer satisfies
-    // `find_dst_connections`' contract; the null `prop` is its "no prop filter"
-    // argument.
-    let conns: List<Connection> = unsafe { find_dst_connections(element.get(), ptr::null()) };
+    // `None` is C's null `prop` — the "no prop filter" argument.
+    let conns: List<Connection> = find_dst_connections(element, None);
     // C: `ufbxi_for_list(ufbx_connection, conn, conns)`
     let mut conn: *mut Connection = conns.data as *mut Connection;
     let conn_end: *mut Connection = add_ptr(conn, conns.count);
@@ -8432,10 +8494,7 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
             }
         }
 
-        // SAFETY: `element_raw` addresses the node's own element header, which is
-        // what `ufbxi_find_dst_connections` reads (fn contract).
-        let conns: List<Connection> =
-            unsafe { find_dst_connections(node.element_raw(), ptr::null()) };
+        let conns: List<Connection> = find_dst_connections(node.element_view(), None);
 
         // C: `ufbxi_for_list(ufbx_connection, conn, conns)`
         // SAFETY: `conns` is the contiguous subrange of this element's
@@ -8609,10 +8668,7 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
                     node.set_bind_pose(Some(pose_ref));
                 }
 
-                // SAFETY: `elem` names a live element of the scene, which is what
-                // `ufbxi_find_src_connections` reads (fn contract).
-                let node_conns: List<Connection> =
-                    unsafe { find_src_connections(elem, ptr::null()) };
+                let node_conns: List<Connection> = find_src_connections(elem_view, None);
                 // C: `ufbxi_for_list(ufbx_connection, conn, node_conns)`
                 // SAFETY: `node_conns` is the contiguous subrange of this element's
                 // `push_pop`-materialized connection run that
@@ -8752,10 +8808,7 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
 
         // Iterate through meshes so we can pad the vertices to the largest one
         {
-            // SAFETY: `element_raw` addresses the deformer's own element header,
-            // which is what `ufbxi_find_src_connections` reads (fn contract).
-            let conns: List<Connection> =
-                unsafe { find_src_connections(skin_view.element_raw(), ptr::null()) };
+            let conns: List<Connection> = find_src_connections(skin_view.element_view(), None);
             // C: `ufbxi_for_list(ufbx_connection, conn, conns)`
             // SAFETY: `conns` is the contiguous subrange of this element's
             // `push_pop`-materialized connection run that `find_src_connections`
