@@ -5713,12 +5713,6 @@ impl BakeContext {
         unsafe { &*(&raw mut (*self.get()).opts as *mut BakeOptsView) }
     }
 
-    // `tmp_prop` — raw-ptr getter (address of field for out-param/mutation sites).
-    #[inline(always)]
-    pub(crate) fn tmp_prop_mut_ptr(&self) -> *mut Buf {
-        view_raw_mut!(self, tmp_prop)
-    }
-
     // `tmp_bake_stack` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn tmp_bake_stack_mut_ptr(&self) -> *mut Buf {
@@ -7496,8 +7490,9 @@ pub(crate) unsafe fn bake_node_imp(
     // `bc.baked_nodes()`, which `bake_anim` sizes with one slot per scene node.
     unsafe { *bc.baked_nodes().add(node.element().typed_id() as usize) = baked_node };
 
-    // SAFETY: `bc.tmp_prop` is `bc`'s own scratch buffer, live for the borrow.
-    unsafe { buf_clear(bc.tmp_prop_mut_ptr()) };
+    // SAFETY: `bc.tmp_prop` is `bc`'s own initialized scratch buffer —
+    // `buf_clear`'s contract.
+    unsafe { buf_clear(bc.tmp_prop_view()) };
 
     // If this node is a scale helper, make sure to bake its siblings and
     // potentially their scale helpers if they are not a part of the animation.
@@ -7740,8 +7735,9 @@ pub(crate) unsafe fn bake_anim_prop(
     // `bake_postprocess_vec3`'s run contract.
     unsafe { bake_postprocess_vec3(bc, baked_prop_view.keys_view(), constant_value, keys) }?;
 
-    // SAFETY: `bc.tmp_prop` is `bc`'s own scratch buffer, live for the borrow.
-    unsafe { buf_clear(bc.tmp_prop_mut_ptr()) };
+    // SAFETY: `bc.tmp_prop` is `bc`'s own initialized scratch buffer —
+    // `buf_clear`'s contract.
+    unsafe { buf_clear(bc.tmp_prop_view()) };
 
     Ok(())
 }
@@ -8016,8 +8012,9 @@ pub(crate) fn bake_anim(bc: &BakeContext) -> Result<(), Fail> {
                 "bc->layer_weight_times.data"
             );
 
-            // SAFETY: clearing bc's own per-prop tmp buf.
-            unsafe { buf_clear(bc.tmp_prop_mut_ptr()) };
+            // SAFETY: clearing bc's own initialized per-prop tmp buf —
+            // `buf_clear`'s contract.
+            unsafe { buf_clear(bc.tmp_prop_view()) };
         }
     }
 

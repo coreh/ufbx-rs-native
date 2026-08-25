@@ -8030,8 +8030,9 @@ pub(crate) unsafe fn read_objects_threaded(uc: &Context) -> Result<(), Fail> {
                 )
             };
             for p_node in p_nodes {
-                // SAFETY: `uc.tmp_parse_mut_ptr()` is uc's own live `tmp_parse` buf.
-                unsafe { buf_clear(uc.tmp_parse_mut_ptr()) };
+                // SAFETY: uc's own `tmp_parse` buf is initialized by
+                // `ufbxi_init_context` — `buf_clear`'s contract.
+                unsafe { buf_clear(uc.tmp_parse_view()) };
 
                 // Push a deferred element ID for tagging warnings
                 uc.set_p_element_id(uc.tmp_element_id_view().push::<u32>(1));
@@ -8105,8 +8106,9 @@ pub(crate) unsafe fn read_objects_threaded(uc: &Context) -> Result<(), Fail> {
             uc.set_data(ua.src());
         }
 
-        // SAFETY: `tmp_buf` is one of uc's own live `tmp_thread_parse` bufs.
-        unsafe { buf_clear(tmp_buf.get()) };
+        // SAFETY: `tmp_buf` is one of uc's own initialized `tmp_thread_parse`
+        // bufs — `buf_clear`'s contract.
+        unsafe { buf_clear(tmp_buf) };
 
         if !parsed_to_end {
             let mut num_nodes: usize = 0;

@@ -3194,12 +3194,6 @@ impl Context {
         view_raw_mut!(self, tmp_arr)
     }
 
-    // `tmp_parse` — raw-ptr getter (address of field for out-param/mutation sites).
-    #[inline(always)]
-    pub(crate) fn tmp_parse_mut_ptr(&self) -> *mut Buf {
-        view_raw_mut!(self, tmp_parse)
-    }
-
     // `error` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn error_mut_ptr(&self) -> *mut Error {
@@ -7095,9 +7089,9 @@ pub(crate) fn parse_toplevel_child<'a>(
     if uc.top_child_index() == usize::MAX {
         // Parse children on demand
         if tmp_buf.is_none() {
-            // SAFETY: `tmp_parse_mut_ptr` is `uc`'s own `tmp_parse` buffer —
-            // `buf_clear`'s contract.
-            unsafe { buf_clear(uc.tmp_parse_mut_ptr()) };
+            // SAFETY: `tmp_parse_view` is `uc`'s own initialized `tmp_parse`
+            // buffer — `buf_clear`'s contract.
+            unsafe { buf_clear(uc.tmp_parse_view()) };
         }
         // SAFETY: `top_node`'s `name` is its pooled NUL-terminated interned name
         // — `update_parse_state`'s contract.

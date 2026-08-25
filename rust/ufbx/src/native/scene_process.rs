@@ -6549,7 +6549,7 @@ pub(crate) fn fetch_file_textures(uc: &Context) -> Result<(), Fail> {
                     FILE_TEXTURE_FETCH_FINISHED as u8;
 
                 // HACK: Reuse `tmp_parse` for storing intermediate information as we can clear it.
-                buf_clear(uc.tmp_parse_mut_ptr());
+                buf_clear(uc.tmp_parse_view());
 
                 // Now all non-cyclical dependents should be processed.
                 let mut num_deps: usize = 0;

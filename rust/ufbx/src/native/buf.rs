@@ -1167,19 +1167,34 @@ pub(crate) unsafe fn buf_free(buf: &BufView) {
 }
 
 // ufbx.c:4299-4344 `ufbxi_buf_clear`
+//
+// # Safety
+// The same obligation `buf_free` carries, and for the same reason: the viewed
+// `Buf` must be INITIALIZED, not merely live. The fields read here
+// (`chunks[0..2]`, `ator`) must have been written; a `BufView` mint
+// (`View::from_ptr`) asserts liveness and write-capable provenance only — the
+// storage is `MaybeUninit` and the mint claims no whole-value validity, so the
+// initialization is the caller's to vouch for.
+//
+// `buf_free`'s second, last-use obligation needs no caller vouch on this path:
+// clearing a buffer already discards every pointer the push family handed out
+// of it, which is exactly what the ASAN branch below relies on.
 #[inline(never)]
-pub(crate) unsafe fn buf_clear(buf: *mut Buf) {
+pub(crate) unsafe fn buf_clear(buf: &BufView) {
+    let buf: *mut Buf = buf.get();
     // Only unordered or clearable buffers can be cleared
-    // SAFETY: `buf` addresses a live `Buf` (this fn's raw-pointer contract);
-    // reading its `unordered`/`clearable` flags.
+    // SAFETY: `buf` is the view's write-provenance pointer to a `Buf` that is
+    // live (the mint) and initialized (this fn's contract); reading its
+    // `unordered`/`clearable` flags.
     ufbx_assert!(!unsafe { (*buf).unordered } || unsafe { (*buf).clearable });
 
     // Free the memory if using ASAN
     // SAFETY: `buf` is the live, initialized `Buf` and `(*buf).ator` its live
-    // allocator; reading `huge_size`, then minting the `BufView` `buf_free`
-    // takes off that same context-owned `Buf` (this fn's raw-pointer
-    // contract). `buf_free`'s last-use obligation is C's own clear-with-ASAN
-    // path: clearing already discards every pointer into the buffer.
+    // allocator; reading `huge_size`, then re-minting the `BufView` `buf_free`
+    // takes off that same `Buf`. `buf_free`'s initialization obligation is
+    // this fn's own contract; its last-use obligation is C's own
+    // clear-with-ASAN path: clearing already discards every pointer into the
+    // buffer.
     if unsafe { (*(*buf).ator).huge_size } <= 1 {
         unsafe { buf_free(BufView::from_ptr(buf)) };
         return;
@@ -1681,8 +1696,10 @@ mod tests {
         }
         assert!(!buf.chunks[1].is_null());
 
+        // SAFETY: a live, initialized stack-local `Buf` owned by this test;
+        // minting the `BufView` `buf_clear` takes.
         unsafe {
-            buf_clear(&mut buf);
+            buf_clear(BufView::from_ptr(&raw mut buf));
         }
         assert_eq!(buf.pos, 0);
         assert_eq!(buf.num_items, 0);
