@@ -968,9 +968,7 @@ pub(crate) unsafe fn load_imp(uc: &Context) -> Result<(), Fail> {
     );
 
     // We can free `tmp_parse` already here as all parsing is done by now.
-    // SAFETY: `tmp_parse` is `uc`'s own live, initialized buffer, and C frees
-    // it at this same point — parsing is done, so nothing reads the run.
-    unsafe { buf_free(uc.tmp_parse_view()) };
+    buf_free(uc.tmp_parse_view());
 
     // SAFETY: `finalize_scene` takes the same `&Context` this fn was handed.
     ufbxi_check!(
@@ -1280,13 +1278,10 @@ pub(crate) fn free_temp(uc: &Context) {
 // ufbx.c:25464-25470 `ufbxi_free_result`
 #[inline(never)]
 pub(crate) fn free_result(uc: &Context) {
-    // SAFETY: both buffers come from `uc` accessors and are live and
-    // initialized; `free_result` is the context's single result teardown, so
-    // each is a last use (mirrors C `ufbxi_free_result`).
-    unsafe {
-        buf_free(uc.result_view());
-        buf_free(uc.string_pool_view().buf_view());
-    }
+    // The buffers come from `uc` accessors; mirrors C `ufbxi_free_result`'s
+    // teardown.
+    buf_free(uc.result_view());
+    buf_free(uc.string_pool_view().buf_view());
 
     // SAFETY: `uc.ator_result_view()` is the context's own result allocator,
     // live for the borrow, torn down exactly once here.
@@ -4506,12 +4501,10 @@ pub(crate) unsafe fn evaluate_scene(
     // SAFETY: `evaluate_imp` takes the same `&EvalContext` this fn was handed,
     // now fully initialized by the setup above.
     if unsafe { evaluate_imp(ec) }.is_ok() {
-        // SAFETY: `ec`'s temp buffer and temp allocator are its own fields, live
-        // for the borrow, and this is the last use of each.
-        unsafe {
-            buf_free(ec.tmp_view());
-            free_ator(ec.ator_tmp_view());
-        }
+        buf_free(ec.tmp_view());
+        // SAFETY: `ec`'s temp allocator is its own field, live for the borrow,
+        // and this is the last use of it.
+        unsafe { free_ator(ec.ator_tmp_view()) };
         // SAFETY: `evaluate_imp` succeeded, and its last act is storing the
         // retained `ufbxi_scene_imp` into `ec`, so `scene_imp()` is the live
         // result-buffer header whose own `scene` field is projected here.
@@ -4526,12 +4519,12 @@ pub(crate) unsafe fn evaluate_scene(
         // is NUL-terminated, and `&raw mut fixed` is this frame's live `Error`
         // slot, which `fix_error_type` accepts.
         unsafe { fix_error_type(ec.error_mut_ptr(), b"Failed to evaluate\0", &raw mut fixed) };
-        // SAFETY: `ec`'s temp and result buffers and their allocators are its own
-        // fields, live for the borrow; the failure path discards the result, so
-        // this is the last use of each.
+        buf_free(ec.tmp_view());
+        buf_free(ec.result_view());
+        // SAFETY: `ec`'s temp and result allocators are its own fields, live
+        // for the borrow; the failure path discards the result, so this is the
+        // last use of each.
         unsafe {
-            buf_free(ec.tmp_view());
-            buf_free(ec.result_view());
             free_ator(ec.ator_tmp_view());
             free_ator(ec.ator_result_view());
         }
@@ -7490,9 +7483,7 @@ pub(crate) unsafe fn bake_node_imp(
     // `bc.baked_nodes()`, which `bake_anim` sizes with one slot per scene node.
     unsafe { *bc.baked_nodes().add(node.element().typed_id() as usize) = baked_node };
 
-    // SAFETY: `bc.tmp_prop` is `bc`'s own initialized scratch buffer —
-    // `buf_clear`'s contract.
-    unsafe { buf_clear(bc.tmp_prop_view()) };
+    buf_clear(bc.tmp_prop_view());
 
     // If this node is a scale helper, make sure to bake its siblings and
     // potentially their scale helpers if they are not a part of the animation.
@@ -7735,9 +7726,7 @@ pub(crate) unsafe fn bake_anim_prop(
     // `bake_postprocess_vec3`'s run contract.
     unsafe { bake_postprocess_vec3(bc, baked_prop_view.keys_view(), constant_value, keys) }?;
 
-    // SAFETY: `bc.tmp_prop` is `bc`'s own initialized scratch buffer —
-    // `buf_clear`'s contract.
-    unsafe { buf_clear(bc.tmp_prop_view()) };
+    buf_clear(bc.tmp_prop_view());
 
     Ok(())
 }
@@ -8012,9 +8001,7 @@ pub(crate) fn bake_anim(bc: &BakeContext) -> Result<(), Fail> {
                 "bc->layer_weight_times.data"
             );
 
-            // SAFETY: clearing bc's own initialized per-prop tmp buf —
-            // `buf_clear`'s contract.
-            unsafe { buf_clear(bc.tmp_prop_view()) };
+            buf_clear(bc.tmp_prop_view());
         }
     }
 

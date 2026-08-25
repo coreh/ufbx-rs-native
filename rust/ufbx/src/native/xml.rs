@@ -1085,21 +1085,15 @@ pub(crate) unsafe fn load_xml(opts: *mut XmlLoadOpts, error: *mut Error) -> *mut
 
     let ok = xml_parse_root(&xc).is_ok();
 
-    // SAFETY: both are xc's own state — the tmp stack buf it owns, and the
-    // token run either grown from `xc.ator()` to exactly `tok_cap` bytes or
-    // still `(null, 0)`, which `free` ignores.
-    unsafe {
-        buf_free(xc.tmp_stack_view());
-        free::<u8>(xc.ator(), xc.tok(), xc.tok_cap());
-    }
+    buf_free(xc.tmp_stack_view());
+    // SAFETY: the token run is xc's own state, either grown from `xc.ator()` to
+    // exactly `tok_cap` bytes or still `(null, 0)`, which `free` ignores.
+    unsafe { free::<u8>(xc.ator(), xc.tok(), xc.tok_cap()) };
 
     if ok {
         xc.doc()
     } else {
-        // SAFETY: `result` is xc's own live, initialized buffer; the parse
-        // failed, so the document built in it is discarded and nothing reads
-        // the run afterwards — `buf_free`'s last-use obligation.
-        unsafe { buf_free(xc.result_view()) };
+        buf_free(xc.result_view());
         if !error.is_null() {
             // SAFETY: `error` is the caller's live, writable `Error` slot
             // (checked non-null); the source is xc's own error field, copied
@@ -1120,11 +1114,9 @@ pub(crate) unsafe fn free_xml(doc: *mut XmlDocument) {
     // contract); the bitwise read moves the owning `Buf` to the stack, and the
     // stale field dies with the storage this call frees.
     let mut buf: Buf = unsafe { core::ptr::read(&raw const (*doc).buf) };
-    // SAFETY: `buf` is that live, initialized stack copy, the sole owner of
-    // the chunk list; minting the `BufView` `buf_free` takes over that stack
-    // local. `free_xml` releases the document, which lives in this very
-    // buffer, so this is the last use of its memory.
-    unsafe { buf_free(BufView::from_ptr(&raw mut buf)) };
+    // SAFETY: `buf` is that live stack copy, the sole owner of the chunk list;
+    // minting the `BufView` `buf_free` takes over that stack local.
+    buf_free(unsafe { BufView::from_ptr(&raw mut buf) });
 }
 
 // ufbx.c:7662-7670 `ufbxi_xml_find_child`

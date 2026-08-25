@@ -6985,10 +6985,7 @@ pub(crate) unsafe fn parse_toplevel(uc: &Context, name: *const u8) -> Result<(),
             }
 
             // Not needed anymore
-            // SAFETY: `tmp_parse` is `uc`'s own live, initialized buffer;
-            // C frees it at this same point, parsing having reached the end,
-            // so nothing reads the parse run afterwards.
-            unsafe { buf_free(uc.tmp_parse_view()) };
+            buf_free(uc.tmp_parse_view());
 
             return Ok(());
         }
@@ -7089,9 +7086,7 @@ pub(crate) fn parse_toplevel_child<'a>(
     if uc.top_child_index() == usize::MAX {
         // Parse children on demand
         if tmp_buf.is_none() {
-            // SAFETY: `tmp_parse_view` is `uc`'s own initialized `tmp_parse`
-            // buffer — `buf_clear`'s contract.
-            unsafe { buf_clear(uc.tmp_parse_view()) };
+            buf_clear(uc.tmp_parse_view());
         }
         // SAFETY: `top_node`'s `name` is its pooled NUL-terminated interned name
         // — `update_parse_state`'s contract.
@@ -8157,8 +8152,8 @@ mod tests {
             assert_eq!((*b).bone_fbx_id, 0);
             assert_eq!(get_element_extra(uc_ptr, 6), b as *mut c_void);
 
-            // SAFETY: `uc.tmp` is a live, initialized `Buf` this test owns;
-            // minting the `BufView` `buf_free` takes.
+            // SAFETY: `uc.tmp` is a live `Buf` this test owns; minting the
+            // `BufView` `buf_free` takes over that field.
             buf_free(BufView::from_ptr(&raw mut uc.tmp));
             crate::native::allocator::free_size(
                 &mut uc.ator_tmp,
@@ -8301,8 +8296,8 @@ mod tests {
             );
             assert!(get_dom_node(uc_ptr, None).is_null());
 
-            // SAFETY: each is a live, initialized `Buf` this test owns;
-            // minting the `BufView`s `buf_free` takes.
+            // SAFETY: each is a live `Buf` this test owns; minting the
+            // `BufView`s `buf_free` takes over those fields.
             buf_free(BufView::from_ptr(&raw mut uc.result));
             buf_free(BufView::from_ptr(&raw mut uc.tmp_stack));
             buf_free(BufView::from_ptr(&raw mut uc.tmp_dom_nodes));

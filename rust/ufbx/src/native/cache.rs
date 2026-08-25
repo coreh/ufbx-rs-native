@@ -534,12 +534,6 @@ impl CacheContext {
         unsafe { &*(&raw mut (*self.get()).opts as *mut GeometryCacheOptsView) }
     }
 
-    // `tmp_stack` — raw-ptr getter (address of field for out-param/mutation sites).
-    #[inline(always)]
-    pub(crate) fn tmp_stack_mut_ptr(&self) -> *mut Buf {
-        view_raw_mut!(self, tmp_stack)
-    }
-
     // `tmp_arr_size` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn tmp_arr_size_mut_ptr(&self) -> *mut usize {
@@ -550,12 +544,6 @@ impl CacheContext {
     #[inline(always)]
     pub(crate) fn tmp_arr_mut_ptr(&self) -> *mut *mut u8 {
         view_raw_mut!(self, tmp_arr)
-    }
-
-    // `tmp` — raw-ptr getter (address of field for out-param/mutation sites).
-    #[inline(always)]
-    pub(crate) fn tmp_mut_ptr(&self) -> *mut Buf {
-        view_raw_mut!(self, tmp)
     }
 
     // `string_pool` — raw-ptr getter (address of field for out-param/mutation sites).
@@ -2154,13 +2142,12 @@ pub(crate) unsafe fn cache_load(cc: &CacheContext, filename: String) -> *mut Geo
     // teardown to the return below.
     let result = unsafe { cache_load_imp(cc, filename) };
 
-    // SAFETY: every pointer addresses one of `cc`'s own fields, each paired
-    // with the allocator that produced it — the temp bufs and the
-    // `name_buf`/`tmp_arr` runs with `cc.ator_tmp`. Each is freed once, and the
-    // context is not used for allocation afterwards.
+    buf_free(cc.tmp_view());
+    buf_free(cc.tmp_stack_view());
+    // SAFETY: the `name_buf`/`tmp_arr` runs are `cc`'s own, each paired with
+    // the `cc.ator_tmp` that produced it and freed once; the context is not
+    // used for allocation afterwards.
     unsafe {
-        buf_free(cc.tmp_view());
-        buf_free(cc.tmp_stack_view());
         free::<u8>(cc.ator_tmp(), cc.name_buf(), cc.name_cap());
         free::<u8>(cc.ator_tmp(), cc.tmp_arr(), cc.tmp_arr_size());
     }
@@ -2193,9 +2180,7 @@ pub(crate) unsafe fn cache_load(cc: &CacheContext, filename: String) -> *mut Geo
         if !cc.owned_by_scene() {
             // On the failure path the result buf never reached an `imp`, so
             // `cc` still owns the string-pool buf and the result allocator.
-            // SAFETY: that buf is `cc`'s own live, initialized field, and the
-            // discarded result means nothing reads the interned strings.
-            unsafe { buf_free(cc.string_pool_view().buf_view()) };
+            buf_free(cc.string_pool_view().buf_view());
             // SAFETY: `cc.ator_result_view()` is `cc`'s own result allocator,
             // freed exactly once here.
             unsafe { free_ator(cc.ator_result_view()) };
@@ -2300,11 +2285,10 @@ pub(crate) unsafe fn load_geometry_cache(
 pub(crate) unsafe fn free_geometry_cache_imp(imp: *mut GeometryCacheImp) {
     // SAFETY: the caller's contract is that `imp` points at a live
     // `GeometryCacheImp` — the magic read then confirms it is one of ours, and
-    // `string_buf` is that header's own buf, freed once as the cache dies.
-    unsafe {
-        ufbx_assert!((*imp).magic == CACHE_IMP_MAGIC);
-        buf_free(BufView::from_ptr(&raw mut (*imp).string_buf));
-    }
+    // `string_buf` is that header's own field, over which the `BufView` is
+    // minted in place.
+    ufbx_assert!(unsafe { (*imp).magic } == CACHE_IMP_MAGIC);
+    buf_free(unsafe { BufView::from_ptr(&raw mut (*imp).string_buf) });
 }
 
 // ufbx.c:24765-24769 `ufbxi_geometry_cache_imp` (`#else` branch — feature disabled)

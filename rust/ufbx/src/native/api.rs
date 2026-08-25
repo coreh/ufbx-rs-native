@@ -160,10 +160,9 @@ pub(crate) unsafe fn free_scene_imp(imp: *mut SceneImp) {
     // SAFETY: `imp` points at a live `SceneImp` — the raw-pointer contract of
     // this `unsafe fn`.
     ufbx_assert!(unsafe { (*imp).magic } == SCENE_IMP_MAGIC);
-    // SAFETY: same live `SceneImp`, whose `string_buf` field is initialized by
-    // construction — minting the `BufView` `buf_free` takes over that field in
-    // place. The imp is being torn down, so the interned strings are dead.
-    unsafe { buf_free(BufView::from_ptr(&raw mut (*imp).string_buf)) };
+    // SAFETY: same live `SceneImp`; `string_buf` is its own field — minting the
+    // `BufView` `buf_free` takes over that field in place.
+    buf_free(unsafe { BufView::from_ptr(&raw mut (*imp).string_buf) });
 }
 
 // ufbx.c:30249-30259 `ufbxi_init_ref`
@@ -251,11 +250,9 @@ pub(crate) unsafe fn release_ref(mut refcount: *mut Refcount) {
         // the same `Refcount`; `ptr::read` moves it out by value once.
         let mut buf: Buf = unsafe { core::ptr::read(&raw const (*refcount).buf) };
         buf.ator = &raw mut ator;
-        // SAFETY: `buf` is the just-moved, initialized `Buf`, now owning its
-        // stack `ator`; minting the `BufView` `buf_free` takes over that stack
-        // local. The refcount reached zero and lives in this very buffer, so
-        // this is the last use of its memory.
-        unsafe { buf_free(BufView::from_ptr(&raw mut buf)) };
+        // SAFETY: `buf` is the just-moved `Buf`, now owning its stack `ator`;
+        // minting the `BufView` `buf_free` takes over that stack local.
+        buf_free(unsafe { BufView::from_ptr(&raw mut buf) });
         // SAFETY: `ator` is this frame's live, unmoved stack copy of the
         // refcount's allocator, torn down exactly once here.
         unsafe { free_ator(AllocatorView::from_ptr(&raw mut ator)) };
@@ -2247,9 +2244,7 @@ pub(crate) unsafe fn create_anim(
                 &raw mut fixed,
             );
         }
-        // SAFETY: `result` is `ac`'s own live, initialized buffer; the anim
-        // creation failed, so the partial result is discarded unread.
-        unsafe { buf_free(ac.result_view()) };
+        buf_free(ac.result_view());
         // SAFETY: `ac.ator_result_view()` is the context's own result
         // allocator, torn down exactly once here.
         unsafe { free_ator(ac.ator_result_view()) };
@@ -2345,19 +2340,14 @@ pub(crate) unsafe fn bake_anim(
     // scene default when the param was null).
     let ok = unsafe { evaluate::bake_anim_imp(&bc, anim) };
 
-    // SAFETY: each is one of `bc`'s own live, initialized temp buffers; baking
-    // has finished, so whatever survives lives in `bc.result` and nothing reads
-    // the temp runs afterwards — C frees them all at this same point.
-    unsafe {
-        buf_free(bc.tmp_view());
-        buf_free(bc.tmp_prop_view());
-        buf_free(bc.tmp_times_view());
-        buf_free(bc.tmp_bake_props_view());
-        buf_free(bc.tmp_nodes_view());
-        buf_free(bc.tmp_elements_view());
-        buf_free(bc.tmp_props_view());
-        buf_free(bc.tmp_bake_stack_view());
-    }
+    buf_free(bc.tmp_view());
+    buf_free(bc.tmp_prop_view());
+    buf_free(bc.tmp_times_view());
+    buf_free(bc.tmp_bake_props_view());
+    buf_free(bc.tmp_nodes_view());
+    buf_free(bc.tmp_elements_view());
+    buf_free(bc.tmp_props_view());
+    buf_free(bc.tmp_bake_stack_view());
     // C: `ufbxi_free(&bc->ator_tmp, char, bc->tmp_arr, bc->tmp_arr_size);`
     // SAFETY: `bc.ator_tmp_mut_ptr()` is the context's own temp allocator and
     // `bc.tmp_arr()`/`bc.tmp_arr_size()` the block it allocated from it.
@@ -2382,9 +2372,7 @@ pub(crate) unsafe fn bake_anim(
         unsafe {
             fix_error_type(bc.error_mut_ptr(), b"Failed to bake anim\0", &raw mut fixed);
         }
-        // SAFETY: `result` is `bc`'s own live, initialized buffer; baking
-        // failed, so the partial bake is discarded unread.
-        unsafe { buf_free(bc.result_view()) };
+        buf_free(bc.result_view());
         // SAFETY: `bc.ator_result_view()` is the context's own result
         // allocator, torn down exactly once here.
         unsafe { free_ator(bc.ator_result_view()) };
@@ -4510,13 +4498,10 @@ pub(crate) unsafe fn tessellate_nurbs_curve(
                 &raw mut fixed,
             );
         }
-        // SAFETY: `result_view()`/`ator_result_view()` address `tc`'s own
-        // live, initialized result buffer and result allocator; tessellation
-        // failed, so the partial result is discarded unread.
-        unsafe {
-            buf_free(tc.result_view());
-            free_ator(tc.ator_result_view());
-        }
+        buf_free(tc.result_view());
+        // SAFETY: `ator_result_view()` addresses `tc`'s own result allocator,
+        // torn down exactly once here.
+        unsafe { free_ator(tc.ator_result_view()) };
         Err(fixed)
     }
 }
@@ -4583,9 +4568,8 @@ pub(crate) unsafe fn tessellate_nurbs_surface(
     // `FinishedImp` carries the finished imp through the teardown to the return.
     let result = tessellate_nurbs_surface_imp(&tc);
 
-    // SAFETY: `tmp_view()` addresses `tc`'s own live, initialized temp buffer,
-    // dead once tessellation has produced its result — a last use.
-    unsafe { buf_free(tc.tmp_view()) };
+    // These accessors address `tc`'s own temp buffer and position map.
+    buf_free(tc.tmp_view());
     map_free(tc.position_map_view());
     // SAFETY: `ator_tmp_view()` addresses `tc`'s own temp allocator, torn down
     // exactly once here.
@@ -4608,13 +4592,10 @@ pub(crate) unsafe fn tessellate_nurbs_surface(
                 &raw mut fixed,
             );
         }
-        // SAFETY: `result_view()`/`ator_result_view()` address `tc`'s own
-        // live, initialized result buffer and result allocator; tessellation
-        // failed, so the partial result is discarded unread.
-        unsafe {
-            buf_free(tc.result_view());
-            free_ator(tc.ator_result_view());
-        }
+        buf_free(tc.result_view());
+        // SAFETY: `ator_result_view()` addresses `tc`'s own result allocator,
+        // torn down exactly once here.
+        unsafe { free_ator(tc.ator_result_view()) };
         Err(fixed)
     }
 }

@@ -65,10 +65,6 @@ impl WarningsView {
         unsafe { &*(&raw mut (*self.get()).tmp_stack as *mut crate::native::buf::BufView) }
     }
     #[inline(always)]
-    pub(crate) fn tmp_stack_mut_ptr(&self) -> *mut Buf {
-        view_raw_mut!(self, tmp_stack)
-    }
-    #[inline(always)]
     pub(crate) fn set_error(&self, error: *mut Error) {
         view_write!(self, error, error)
     }

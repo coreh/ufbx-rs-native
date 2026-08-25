@@ -1873,11 +1873,9 @@ mod tests {
 
     fn free_fixture(fx: &mut Fixture) {
         // SAFETY: `fx` is a fixture the caller owns exclusively; its buf was
-        // built by `make_fixture` over that same fixture's allocator, and this
-        // teardown is its last use.
-        unsafe {
-            buf_free(BufView::from_ptr(&raw mut fx.pool.buf));
-        }
+        // built by `make_fixture` over that same fixture's allocator, and the
+        // `BufView` is minted over that field in place.
+        buf_free(unsafe { BufView::from_ptr(&raw mut fx.pool.buf) });
         // SAFETY: single teardown — each test builds its own fixture and calls
         // `free_fixture` once at its end, so this is the only release of that
         // pool's `temp_str`.

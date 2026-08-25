@@ -3086,8 +3086,8 @@ pub(crate) fn subdivide_mesh_imp(
 
         // SAFETY: `sc` is a valid subdivide context (construction invariant);
         // its `src_mesh`/`dst_mesh` slots are two distinct fields of that
-        // context, so the copy is non-overlapping, and the bufs freed and
-        // rotated here are sc's own. `Buf` is a plain pointer/integer/bool
+        // context, so the copy is non-overlapping, and the bufs rotated here
+        // are sc's own. `Buf` is a plain pointer/integer/bool
         // aggregate, so zeroing `result` leaves a valid empty buffer.
         unsafe {
             subdivide_mesh_level(sc)?;
@@ -3104,12 +3104,9 @@ pub(crate) fn subdivide_mesh_imp(
     }
 
     sc.result_view().set_ator(sc.ator_result_mut_ptr());
-    // SAFETY: the final level and the tmp-buf teardown both act on sc's own
-    // state (construction invariant).
-    unsafe {
-        subdivide_mesh_level(sc)?;
-        buf_free(sc.tmp_view());
-    }
+    // SAFETY: the final level acts on sc's own state (construction invariant).
+    unsafe { subdivide_mesh_level(sc)? };
+    buf_free(sc.tmp_view());
 
     let mesh: &MeshView = sc.dst_mesh_view();
 
@@ -3301,13 +3298,8 @@ pub(crate) unsafe fn subdivide_mesh(
     // allocator and the `inputs` array (with its capacity) it allocated, the
     // free contract.
     unsafe { free::<SubdivideInput>(sc.ator_tmp_mut_ptr(), sc.inputs(), sc.inputs_cap()) };
-    // SAFETY: `tmp`/`source` are `sc`'s own live, initialized buffers, and the
-    // subdivision above is done with both — the finished mesh lives in `result`
-    // — so nothing reads either run afterwards (C frees them at this point).
-    unsafe {
-        buf_free(sc.tmp_view());
-        buf_free(sc.source_view());
-    }
+    buf_free(sc.tmp_view());
+    buf_free(sc.source_view());
 
     if let Ok(finished_imp) = result {
         // SAFETY: `ator_tmp_view()` is `sc`'s own live temp allocator, torn
@@ -3328,9 +3320,7 @@ pub(crate) unsafe fn subdivide_mesh(
         unsafe {
             fix_error_type(sc.error_mut_ptr(), b"Failed to subdivide\0", &raw mut fixed);
         }
-        // SAFETY: `result` is `sc`'s own live, initialized buffer; subdivision
-        // failed, so the partially built mesh is discarded unread.
-        unsafe { buf_free(sc.result_view()) };
+        buf_free(sc.result_view());
         // SAFETY: both allocators are `sc`'s own live temp/result allocators,
         // torn down exactly once here.
         unsafe {
