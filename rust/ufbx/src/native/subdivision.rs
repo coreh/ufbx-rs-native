@@ -2642,14 +2642,14 @@ pub(crate) unsafe fn subdivide_mesh_level(
 
             // SAFETY: `weights` is the per-vertex weight array built just above
             // — a live run covering every source vertex, each element's own
-            // weight run live — `subdivide_weights`' contract; the out-param
-            // views address `result_sub`'s own live source-vertex list fields,
-            // carrying the context's write-capable provenance.
+            // weight run live — `subdivide_weights`' contract. The out-param
+            // views are safe projections of `result_sub_view`, so their liveness
+            // and write provenance need no further argument here.
             unsafe {
                 subdivide_weights(
                     sc,
-                    ListView::from_ptr(result_sub_view.source_vertex_ranges_raw()),
-                    ListView::from_ptr(result_sub_view.source_vertex_weights_raw()),
+                    result_sub_view.source_vertex_ranges_view(),
+                    result_sub_view.source_vertex_weights_view(),
                     weights,
                 )
             }?;
@@ -2692,14 +2692,14 @@ pub(crate) unsafe fn subdivide_mesh_level(
 
             // SAFETY: `weights` is the per-vertex weight array built just above
             // — a live run covering every source vertex, each element's own
-            // weight run live — `subdivide_weights`' contract; the out-param
-            // views address `result_sub`'s own live skin-cluster list fields,
-            // carrying the context's write-capable provenance.
+            // weight run live — `subdivide_weights`' contract. The out-param
+            // views are safe projections of `result_sub_view`, so their liveness
+            // and write provenance need no further argument here.
             unsafe {
                 subdivide_weights(
                     sc,
-                    ListView::from_ptr(result_sub_view.skin_cluster_ranges_raw()),
-                    ListView::from_ptr(result_sub_view.skin_cluster_weights_raw()),
+                    result_sub_view.skin_cluster_ranges_view(),
+                    result_sub_view.skin_cluster_weights_view(),
                     weights,
                 )
             }?;
