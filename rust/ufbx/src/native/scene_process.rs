@@ -5174,14 +5174,12 @@ pub(crate) fn add_constraint_prop(
             cprop = unsafe { cprop.add(1) };
             continue;
         }
-        // SAFETY (this group): `cprop` addresses a live table entry (see above),
-        // and `node.get()` hands back the viewed, live `ufbx_node` — the
-        // liveness `opt_ref` requires of the reference it stores.
+        // SAFETY: `cprop` addresses a live table entry (see above).
         match unsafe { (*cprop).type_ } {
             ConstraintPropType::Node => constraint.set_node(Some(node.to_ref())),
             ConstraintPropType::IkEffector => constraint.set_ik_effector(Some(node.to_ref())),
             ConstraintPropType::IkEndNode => constraint.set_ik_end_node(Some(node.to_ref())),
-            ConstraintPropType::AimUp => constraint.set_aim_up_node(unsafe { opt_ref(node.get()) }),
+            ConstraintPropType::AimUp => constraint.set_aim_up_node(Some(node.to_ref())),
             ConstraintPropType::Target => {
                 let target: *mut ConstraintTarget = uc.tmp_stack_view().push_zero(1);
                 ufbxi_check!(uc, !target.is_null(), "target");
@@ -5290,15 +5288,18 @@ pub(crate) fn finalize_lod_group(uc: &Context, lod_view: &LodGroupView) -> Resul
     let lod: *mut LodGroup = lod_view.get();
     let mut num_levels: usize = 0;
     // SAFETY: reads the LOD group's own instance run; C subscripts entry `0`
-    // (never `i`), which the loop guard proves present, and `ref_ptr` resolves
-    // the always-set node reference.
+    // (never `i`), which the loop guard proves present, so the always-set node
+    // reference there is read in place and followed as a view.
     unsafe {
         for _i in 0..(*lod).element.instances.count {
             // C-parity: the subscript really is `instances.data[0]` (not `[i]`) —
             // ufbx.c:20318.
             num_levels = max_sz(
                 num_levels,
-                (*ref_ptr((*lod).element.instances.data)).children.count,
+                ptr::read((*lod).element.instances.data)
+                    .view::<Mut>()
+                    .children()
+                    .count,
             );
         }
     }
@@ -5710,9 +5711,7 @@ pub(crate) fn update_shader_texture(texture_view: &TextureView, shader_view: &Sh
             let prop: &PropView = unsafe { PropView::from_ptr(prop.ptr()) };
             let found: Option<&PropView> =
                 find_prop_len(texture_view.props_view(), prop.name_view().bytes());
-            // SAFETY: `PropView::get` yields the matched prop's own arena
-            // address, or null on a miss, which is what `opt_ref` wraps.
-            input.set_prop(unsafe { opt_ref(found.map_or(ptr::null_mut(), PropView::get)) });
+            input.set_prop(found.map(PropView::to_ref));
             // C-parity: the re-lookup keys on the name of a prop that came from
             // this same prop list, so it always resolves (ufbx.c:20502-20506
             // dereferences it unconditionally).
@@ -5746,9 +5745,7 @@ pub(crate) fn update_shader_texture(texture_view: &TextureView, shader_view: &Sh
             let found: Option<&PropView> =
                 find_prop_len(texture_view.props_view(), prop.name_view().bytes());
             let prop: *mut Prop = found.map_or(ptr::null_mut(), PropView::get);
-            // SAFETY: `prop` is null or the matched prop's own arena address,
-            // which is what `opt_ref` wraps.
-            input.set_texture_prop(unsafe { opt_ref(prop) });
+            input.set_texture_prop(found.map(PropView::to_ref));
             // SAFETY: `element_ptr()` addresses the texture's own live element
             // header; `prop` is null or a live prop of that element's list.
             let tex: *mut Texture = unsafe {
@@ -5769,11 +5766,7 @@ pub(crate) fn update_shader_texture(texture_view: &TextureView, shader_view: &Sh
             let prop: &PropView = unsafe { PropView::from_ptr(prop.ptr()) };
             let found: Option<&PropView> =
                 find_prop_len(texture_view.props_view(), prop.name_view().bytes());
-            // SAFETY: `PropView::get` yields the matched prop's own arena
-            // address, or null on a miss, which is what `opt_ref` wraps.
-            input.set_texture_enabled_prop(unsafe {
-                opt_ref(found.map_or(ptr::null_mut(), PropView::get))
-            });
+            input.set_texture_enabled_prop(found.map(PropView::to_ref));
             // C-parity: the re-lookup keys on the name of a prop from this same
             // list, so it always resolves (ufbx.c:20519-20520 dereferences it
             // unconditionally).
@@ -5842,7 +5835,7 @@ pub(crate) fn finalize_shader_texture<'a>(
         } else if (*texture).type_ == TextureType::File
             && (*texture).relative_filename.length == 0
             && (*texture).absolute_filename.length == 0
-            && opt_ptr(&raw const (*texture).video).is_null()
+            && texture_view.video().is_none()
         {
             type_ = ShaderTextureType::Unknown as u32;
         }
@@ -5960,7 +5953,7 @@ pub(crate) fn finalize_shader_texture<'a>(
                     base_name.as_bytes(),
                 );
                 if let Some(base) = base {
-                    base.set_texture_prop(opt_ref(prop.get()));
+                    base.set_texture_prop(Some(prop.to_ref()));
                     continue;
                 }
             } else if sp::remove_suffix_c(&mut base_name, b".connected\0".as_ptr())
@@ -5971,7 +5964,7 @@ pub(crate) fn finalize_shader_texture<'a>(
                     base_name.as_bytes(),
                 );
                 if let Some(base) = base {
-                    base.set_texture_enabled_prop(opt_ref(prop.get()));
+                    base.set_texture_enabled_prop(Some(prop.to_ref()));
                     continue;
                 }
             }
@@ -6005,7 +5998,7 @@ pub(crate) fn finalize_shader_texture<'a>(
             (*input).name = name;
 
             // Connect the property only, values and textures etc are fetched in `ufbxi_update_shader_texture()`.
-            (*input).prop = opt_ref(prop.get());
+            (*input).prop = Some(prop.to_ref());
         }
     }
 
@@ -6028,8 +6021,9 @@ pub(crate) fn finalize_shader_texture<'a>(
 
     if !uc.opts_view().disable_quirks() {
         // SAFETY: `shader`/`texture` as above; `fs` indexes the static `FILE_SHADERS`
-        // table whose name fields are NUL-terminated literals, and `input`/`prop` are
-        // null-checked before their derefs.
+        // table whose name fields are NUL-terminated literals, `input` is
+        // null-checked before its deref, and its `prop` link is set by the input
+        // loop above, so the unchecked unwrap of that field holds.
         unsafe {
             // C: `ufbxi_nounroll for (size_t i = 0; i < ufbxi_arraycount(ufbxi_file_shaders); i++)`
             for i in 0..FILE_SHADERS.len() {
@@ -6042,9 +6036,14 @@ pub(crate) fn finalize_shader_texture<'a>(
                         find_shader_texture_input(shader, (*fs).input_name);
                     if !input.is_null() {
                         // TODO: Support for specifying relative filename here if ever needed
-                        let prop: *mut Prop = opt_ptr(&raw const (*input).prop);
-                        (*texture).absolute_filename = (*prop).value_str;
-                        (*texture).raw_absolute_filename = (*prop).value_blob;
+                        // C-parity: `prop` is dereferenced unconditionally
+                        // (ufbx.c:20677-20679) — every input the loop above
+                        // creates carries the prop it was made from.
+                        let prop: &PropView = ptr::read(&raw const (*input).prop)
+                            .unwrap_unchecked()
+                            .view();
+                        (*texture).absolute_filename = prop.value_str();
+                        (*texture).raw_absolute_filename = prop.value_blob();
                         (*texture).type_ = TextureType::File;
                         break;
                     }
@@ -6522,7 +6521,8 @@ pub(crate) fn fetch_file_textures(uc: &Context) -> Result<(), Fail> {
         }
         // SAFETY: reads the texture's own optional shader reference; the result
         // is null-checked before every use.
-        let shader: *mut ShaderTexture = unsafe { opt_ptr(&raw const (*texture).shader) };
+        let shader: *mut ShaderTexture =
+            unsafe { ptr::read(&raw const (*texture).shader) }.map_or(ptr::null_mut(), |r| r.ptr());
 
         // SAFETY: `texture`/`shader` as above; `states` is indexed by the texture's own
         // `typed_id`; each `dst` is the fresh non-null result of a push onto uc's own
@@ -6552,11 +6552,11 @@ pub(crate) fn fetch_file_textures(uc: &Context) -> Result<(), Fail> {
                 let mut layer: *mut TextureLayer = (*texture).layers.data as *mut TextureLayer;
                 let layer_end: *mut TextureLayer = add_ptr(layer, (*texture).layers.count);
                 while layer != layer_end {
-                    let dep_tex: *mut Texture = ref_ptr(&raw const (*layer).texture);
-                    if (*dep_tex).file_textures.count > 0 {
+                    let dep_tex: Ref<Texture> = ptr::read(&raw const (*layer).texture);
+                    if dep_tex.view::<Mut>().file_textures().count > 0 {
                         let dst: *mut OrderedTexture = uc.tmp_stack_view().push(1);
                         ufbxi_check!(uc, !dst.is_null(), "dst");
-                        (*dst).texture = dep_tex;
+                        (*dst).texture = dep_tex.ptr();
                         (*dst).order = num_deps;
                         num_deps += 1;
                     }
@@ -6569,13 +6569,14 @@ pub(crate) fn fetch_file_textures(uc: &Context) -> Result<(), Fail> {
                         (*shader).inputs.data as *mut ShaderTextureInput;
                     let input_end: *mut ShaderTextureInput = add_ptr(input, (*shader).inputs.count);
                     while input != input_end {
-                        let dep_tex: *mut Texture = opt_ptr(&raw const (*input).texture);
-                        if !dep_tex.is_null() && (*dep_tex).file_textures.count > 0 {
-                            let dst: *mut OrderedTexture = uc.tmp_stack_view().push(1);
-                            ufbxi_check!(uc, !dst.is_null(), "dst");
-                            (*dst).texture = dep_tex;
-                            (*dst).order = num_deps;
-                            num_deps += 1;
+                        if let Some(dep_tex) = ptr::read(&raw const (*input).texture) {
+                            if dep_tex.view::<Mut>().file_textures().count > 0 {
+                                let dst: *mut OrderedTexture = uc.tmp_stack_view().push(1);
+                                ufbxi_check!(uc, !dst.is_null(), "dst");
+                                (*dst).texture = dep_tex.ptr();
+                                (*dst).order = num_deps;
+                                num_deps += 1;
+                            }
                         }
                         input = input.add(1);
                     }
@@ -6674,7 +6675,7 @@ pub(crate) fn fetch_file_textures(uc: &Context) -> Result<(), Fail> {
 
                     // In simple cases we can quit here, for more complex file textures queue
                     // the texture in case there are other file textures as inputs.
-                    if opt_ptr(&raw const (*texture).shader).is_null() {
+                    if ptr::read(&raw const (*texture).shader).is_none() {
                         *states.add((*texture).element.typed_id as usize) =
                             FILE_TEXTURE_FETCH_FINISHED as u8;
                         continue;
@@ -6715,7 +6716,7 @@ pub(crate) fn fetch_file_textures(uc: &Context) -> Result<(), Fail> {
                         (*shader).inputs.data as *mut ShaderTextureInput;
                     let input_end: *mut ShaderTextureInput = add_ptr(input, (*shader).inputs.count);
                     while input != input_end {
-                        if !opt_ptr(&raw const (*input).texture).is_null() {
+                        if ptr::read(&raw const (*input).texture).is_some() {
                             ufbxi_check!(
                                 uc,
                                 !uc.tmp_stack_view().push_copy_raw::<*mut Texture>(1,
@@ -6742,12 +6743,10 @@ pub(crate) fn fetch_file_textures(uc: &Context) -> Result<(), Fail> {
 pub(crate) fn get_geometry_transform_node(element: &ElementView) -> *mut Node {
     if element.instances().count == 1 {
         // SAFETY: `count == 1`, so index `0` is in bounds of the element's own
-        // instance run; its entries are non-nullable node references, which
-        // `ref_ptr` resolves to a live scene `Node`.
-        let node: *mut Node = unsafe { ref_ptr(element.instances().data.add(0)) };
-        // SAFETY: `node` is that live scene node.
-        if unsafe { (*node).has_geometry_transform } {
-            return node;
+        // instance run, whose entries are non-nullable node references.
+        let node: Ref<Node> = unsafe { ptr::read(element.instances().data.add(0)) };
+        if node.view::<Mut>().has_geometry_transform() {
+            return node.ptr();
         }
     }
     ptr::null_mut()
@@ -7458,19 +7457,18 @@ pub(crate) fn modify_geometry<'a>(uc: &'a Context) -> Result<(), Fail> {
 
     if uc.opts_view().geometry_transform_handling() != GeometryTransformHandling::Preserve {
         // Reset all geometry transforms if we're not preserving them
-        let mut defaults: *mut Props = ptr::null_mut();
+        let mut defaults: Option<&PropsView> = None;
         // SAFETY: walks the stored `nodes` element-pointer run of the uc-owned scene
-        // (`count` entries); each `PropsView` is minted over that node's own props
-        // (or the null-checked shared `defaults` table), arena memory with
-        // write-capable provenance, live for the mint's use.
+        // (`count` entries); each `PropsView` is minted over that node's own props,
+        // arena memory with write-capable provenance, live for the mint's use.
         unsafe {
             // C: `ufbxi_for_ptr_list(ufbx_node, p_node, uc->scene.nodes)`
             let mut p_node: *mut *mut Node = uc.scene_view().nodes_view().data() as *mut *mut Node;
             let p_node_end: *mut *mut Node = add_ptr(p_node, uc.scene_view().nodes_view().count());
             while p_node != p_node_end {
                 let node: *mut Node = *p_node;
-                if defaults.is_null() {
-                    defaults = opt_ptr(&raw const (*node).element.props.defaults);
+                if defaults.is_none() {
+                    defaults = ptr::read(&raw const (*node).element.props.defaults).map(Ref::view);
                 }
 
                 if (*node).has_geometry_transform {
@@ -7483,8 +7481,7 @@ pub(crate) fn modify_geometry<'a>(uc: &'a Context) -> Result<(), Fail> {
                 p_node = p_node.add(1);
             }
 
-            if !defaults.is_null() {
-                let defaults: &PropsView = PropsView::from_ptr(defaults);
+            if let Some(defaults) = defaults {
                 set_own_prop_vec3_uniform(defaults, &sp::GeometricTranslation, 0.0);
                 set_own_prop_vec3_uniform(defaults, &sp::GeometricRotation, 0.0);
                 set_own_prop_vec3_uniform(defaults, &sp::GeometricScaling, 1.0);
@@ -11936,24 +11933,22 @@ pub(crate) fn update_pose(pose_view: &PoseView) {
     while bone != bone_end {
         // SAFETY: `bone != bone_end`, so it addresses a live, initialized entry
         // of the pose's bone-pose run, whose `bone_node` link is non-optional.
-        let node: *mut Node = unsafe { ref_ptr(&raw const (*bone).bone_node) };
+        let node: &NodeView = unsafe { ptr::read(&raw const (*bone).bone_node) }.view();
 
         let mut parent_to_world: *const Matrix = &raw const IDENTITY_MATRIX;
-        // SAFETY: `node` is a resolved element link, so it points to a live,
-        // initialized `ufbx_node` of the same scene, and `pose` is live.
+        // SAFETY: `pose` is live, and the parent link is null or a live,
+        // initialized `ufbx_node` of the same scene — `get_bone_pose`'s
+        // raw-pointer contract.
         let bone_pose: *mut BonePose =
-            unsafe { get_bone_pose(pose, opt_ptr(&raw const (*node).parent)) };
+            unsafe { get_bone_pose(pose, node.parent().map_or(ptr::null_mut(), |r| r.ptr())) };
         if !bone_pose.is_null() {
             // SAFETY: `bone_pose` is non-null here, so it addresses a live entry
             // of the pose's own bone-pose run, which outlives this loop.
             parent_to_world = unsafe { &raw const (*bone_pose).bone_to_world };
-        // SAFETY: `node` is live (see above).
-        } else if !unsafe { opt_ptr(&raw const (*node).parent) }.is_null() {
-            // SAFETY: the branch condition established that the parent link is
-            // non-null, so it points to a live, initialized `ufbx_node` of the
-            // same scene, which outlives this loop.
-            parent_to_world =
-                unsafe { &raw const (*opt_ptr(&raw const (*node).parent)).node_to_world };
+        } else if let Some(parent) = node.parent_view() {
+            // The parent view projects a live scene node's own matrix, which
+            // outlives this loop.
+            parent_to_world = parent.node_to_world_ptr();
         }
 
         // SAFETY: `parent_to_world` is either the static identity matrix or a
@@ -11977,17 +11972,13 @@ pub(crate) fn update_pose(pose_view: &PoseView) {
 pub(crate) fn update_skin_cluster(cluster_view: &SkinClusterView) {
     let cluster: *mut SkinCluster = cluster_view.get();
     // C: `if (cluster->bone_node)` — pointer truthiness.
-    // SAFETY: `cluster` is the cluster view's own live, initialized
-    // `ufbx_skin_cluster` storage, so `&raw const (*cluster).bone_node` addresses its own
-    // nullable bone link.
-    let bone_node: *mut Node = unsafe { opt_ptr(&raw const (*cluster).bone_node) };
-    if !bone_node.is_null() {
-        // SAFETY: `bone_node` is non-null here, so it points to a live,
-        // initialized `ufbx_node` of the same scene; `cluster` is live and
-        // writable (see above).
+    if let Some(bone_node) = cluster_view.bone_node_view() {
+        // SAFETY: `bone_node` projects the linked live scene node's own matrix;
+        // `cluster` is the cluster view's own live, initialized
+        // `ufbx_skin_cluster` storage, so it is live and writable.
         unsafe {
             (*cluster).geometry_to_world = matrix_mul(
-                &raw const (*bone_node).node_to_world,
+                bone_node.node_to_world_ptr(),
                 &raw const (*cluster).geometry_to_bone,
             )
         };
@@ -12133,15 +12124,9 @@ pub(crate) fn update_texture(texture_view: &TextureView) {
         ) as u32);
     }
 
-    // SAFETY: `texture` as above; `opt_ptr` result is null-checked before use,
-    // and a non-null shader link points to a live `ufbx_shader_texture` of the
-    // same scene, which its view reinterprets in place.
-    unsafe {
-        // C: `if (texture->shader)` — pointer truthiness.
-        let shader: *mut ShaderTexture = opt_ptr(&raw const (*texture).shader);
-        if !shader.is_null() {
-            update_shader_texture(texture_view, ShaderTextureView::from_ptr(shader));
-        }
+    // C: `if (texture->shader)` — pointer truthiness.
+    if let Some(shader) = texture_view.shader_view() {
+        update_shader_texture(texture_view, shader);
     }
 }
 
@@ -12163,19 +12148,18 @@ pub(crate) fn update_anim_stack<'a>(scene: &'a SceneView, stack_view: &'a AnimSt
             .map_or(ptr::null_mut(), PropView::get);
     }
 
-    // SAFETY: `begin`/`end` are null-checked before the derefs; `scene`, `stack`
-    // and the stack's always-resolved `anim` reference are storage of the views
-    // passed in.
+    // SAFETY: `begin`/`end` are null-checked before the derefs; `scene` and
+    // `stack` are storage of the views passed in.
     unsafe {
         if !begin.is_null() && !end.is_null() {
             (*stack).time_begin = (*begin).value_int as f64 / (*scene).metadata.ktime_second as f64;
             (*stack).time_end = (*end).value_int as f64 / (*scene).metadata.ktime_second as f64;
         }
-
-        let anim: *mut Anim = ref_ptr(&raw const (*stack).anim);
-        (*anim).time_begin = (*stack).time_begin;
-        (*anim).time_end = (*stack).time_end;
     }
+
+    let anim: &View<Anim> = stack_view.anim_view();
+    anim.set_time_begin(stack_view.time_begin());
+    anim.set_time_end(stack_view.time_end());
 }
 
 // ufbx.c:23390-23395 `ufbxi_update_display_layer`
@@ -12300,7 +12284,7 @@ pub(crate) fn update_constraint(constraint_view: &ConstraintView) {
         let mut target: *mut ConstraintTarget = (*constraint).targets.data as *mut ConstraintTarget;
         let target_end: *mut ConstraintTarget = add_ptr(target, (*constraint).targets.count);
         while target != target_end {
-            let node: *mut Node = ref_ptr(&raw const (*target).node);
+            let node: &NodeView = ptr::read(&raw const (*target).node).view();
 
             let mut weight_scale: Real = 100.0 as Real;
             if constraint_type == ConstraintType::SingleChainIk {
@@ -12311,7 +12295,7 @@ pub(crate) fn update_constraint(constraint_view: &ConstraintView) {
             let mut prop: Option<&PropView>; // ufbxi_uninit
                                              // C: `ufbx_string parts[2];` (ufbxi_uninit) — both entries are
                                              // written before every lookup.
-            let mut parts: [String; 2] = [(*node).element.name, sp::str_c(b".Weight\0".as_ptr())];
+            let mut parts: [String; 2] = [node.element().name(), sp::str_c(b".Weight\0".as_ptr())];
             prop = find_prop_concat(props, &parts);
             // C: `prop->value_real` — the `ufbx_prop` value union's first real.
             (*target).weight = prop.map_or(weight_scale, |p| p.value_vec4().x) / weight_scale;
@@ -12707,9 +12691,8 @@ pub(crate) fn update_initial_clusters(scene_view: &SceneView) {
         if node_view.is_geometry_transform_helper() {
             // C: `node = node->parent;`
             // SAFETY: a geometry transform helper is always created as a child of
-            // the node it serves, so its parent link resolves to a live,
-            // initialized `ufbx_node` of this scene.
-            node_view = unsafe { View::<Node>::from_ptr(opt_ptr(node_view.parent_ptr())) };
+            // the node it serves, so its parent link is set.
+            node_view = unsafe { node_view.parent_view().unwrap_unchecked() };
         }
 
         if matrix_all_zero(cluster.mesh_node_to_bone_view()) {
@@ -12744,13 +12727,8 @@ pub(crate) fn update_initial_clusters(scene_view: &SceneView) {
         // matrices are formed.
         // TODO: Add a test with moving the skinned mesh root around.
         // C: `if (node->geometry_transform_helper)` — pointer truthiness.
-        if node_view.geometry_transform_helper().is_some() {
-            // C: `ufbx_node *geo_node = node->geometry_transform_helper;`
-            // SAFETY: the branch condition established that the link is non-null,
-            // so it points to a live, initialized `ufbx_node` of this scene.
-            let geo_node: &View<Node> = unsafe {
-                View::<Node>::from_ptr(opt_ptr(node_view.geometry_transform_helper_ptr()))
-            };
+        // C: `ufbx_node *geo_node = node->geometry_transform_helper;`
+        if let Some(geo_node) = node_view.geometry_transform_helper_view() {
             // SAFETY: both projections address their owners' own live,
             // initialized matrices.
             cluster.set_geometry_to_bone(unsafe {
@@ -13068,24 +13046,23 @@ pub(crate) fn update_adjust_transforms<'a>(uc: &'a Context, scene: &'a SceneView
             }
 
             // C: `if (node->parent)` — pointer truthiness.
-            if !opt_ptr(&raw const (*node).parent).is_null() {
+            if let Some(parent) = ptr::read(&raw const (*node).parent) {
                 // We are not inheriting local scale, so propagate root scale manually and
                 // apply scale compensation if necessary.
-                let parent: *mut Node = opt_ptr(&raw const (*node).parent);
-                if (*parent).has_root_adjust_transform
+                // Anchor the traversed parent node to `'a` (= uc) via an explicit
+                // annotation: `parent` lives in the same uc arena, so its props
+                // table is provably `<= uc` with no free-lifetime bridge.
+                let parent_view: &'a NodeView = parent.view();
+                if parent_view.has_root_adjust_transform()
                     && (*node).inherit_mode == InheritMode::IgnoreParentScale
                 {
                     (*node).adjust_post_scale *= root_scale;
                     (*node).has_adjust_transform = true;
                     (*node).has_root_adjust_transform = true;
                 }
-                if (*parent).is_scale_compensate_parent
+                if parent_view.is_scale_compensate_parent()
                     && (*node).original_inherit_mode == InheritMode::IgnoreParentScale
                 {
-                    // Anchor the traversed parent node to `'a` (= uc) via an explicit
-                    // annotation: `parent` lives in the same uc arena, so its props
-                    // table is provably `<= uc` with no free-lifetime bridge.
-                    let parent_view: &'a NodeView = NodeView::from_ptr(parent);
                     let scale: Vec3 =
                         find_vec3(parent_view.props_view(), &sp::Lcl_Scaling, 1.0, 1.0, 1.0);
                     let mut size: Real = scale.x;
@@ -13105,16 +13082,21 @@ pub(crate) fn update_adjust_transforms<'a>(uc: &'a Context, scene: &'a SceneView
 
             if (*node).all_attribs.count == 1 {
                 // C: `if (has_light_transform && node->light)` — pointer truthiness.
-                if has_light_transform && !opt_ptr(&raw const (*node).light).is_null() {
-                    (*node).adjust_post_rotation = light_post_rotation;
-                    (*opt_ptr(&raw const (*node).light)).local_direction = light_direction;
-                    (*node).has_adjust_transform = true;
+                if has_light_transform {
+                    if let Some(light) = ptr::read(&raw const (*node).light) {
+                        (*node).adjust_post_rotation = light_post_rotation;
+                        light.view::<Mut>().set_local_direction(light_direction);
+                        (*node).has_adjust_transform = true;
+                    }
                 }
-                if has_camera_transform && !opt_ptr(&raw const (*node).camera).is_null() {
-                    (*node).adjust_post_rotation = camera_post_rotation;
-                    (*opt_ptr(&raw const (*node).camera)).projection_axes =
-                        uc.opts_view().target_camera_axes();
-                    (*node).has_adjust_transform = true;
+                if has_camera_transform {
+                    if let Some(camera) = ptr::read(&raw const (*node).camera) {
+                        (*node).adjust_post_rotation = camera_post_rotation;
+                        camera
+                            .view::<Mut>()
+                            .set_projection_axes(uc.opts_view().target_camera_axes());
+                        (*node).has_adjust_transform = true;
+                    }
                 }
             }
 
