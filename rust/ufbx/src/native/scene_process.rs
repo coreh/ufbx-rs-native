@@ -2746,10 +2746,18 @@ pub(crate) unsafe fn fetch_src_element(
 }
 
 // ufbx.c:19151-19173 `ufbxi_fetch_textures`
+//
+// # Safety
+// `element` heads a live, arena-owned `ufbx_element`. With `search_node` set,
+// its provenance must additionally span the ENCLOSING element struct: the walk
+// then reaches `ufbxi_get_element_node`, which reads `ufbx_node` fields past
+// `size_of::<Element>()`, so a pointer derived from a header-only
+// `&View<Element>` may not address them. With `search_node` clear the walk
+// stays within the `ufbx_element` header, where header-only provenance suffices.
 #[inline(never)]
 pub(crate) unsafe fn fetch_textures(
     uc: &Context,
-    list: *mut List<MaterialTexture>,
+    list: &ListView<MaterialTexture>,
     element: *mut Element,
     search_node: bool,
 ) -> Result<(), Fail> {
@@ -2801,14 +2809,12 @@ pub(crate) unsafe fn fetch_textures(
         }
     }
 
-    // SAFETY: `list` is the caller's out-list (fn contract).
-    unsafe {
-        (*list).data = uc
-            .result_view()
-            .push_pop::<MaterialTexture>(uc.tmp_stack_view(), num_textures);
-        (*list).count = num_textures;
-        ufbxi_check!(uc, !(*list).data.is_null(), "list->data");
-    }
+    list.set_data(
+        uc.result_view()
+            .push_pop::<MaterialTexture>(uc.tmp_stack_view(), num_textures),
+    );
+    list.set_count(num_textures);
+    ufbxi_check!(uc, !list.data().is_null(), "list->data");
 
     Ok(())
 }
@@ -9960,9 +9966,9 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
             }
         }
 
-        // SAFETY: the projections address the viewed material's own `textures`
-        // list header and element header.
-        unsafe { fetch_textures(uc, material.textures_raw(), material.element_raw(), false) }?;
+        // SAFETY: the projection addresses the viewed material's own element
+        // header, and `search_node` is clear, so header provenance suffices.
+        unsafe { fetch_textures(uc, material.textures_view(), material.element_raw(), false) }?;
     }
 
     // Ugh.. Patch the textures from meshes for legacy LayerElement-style textures
