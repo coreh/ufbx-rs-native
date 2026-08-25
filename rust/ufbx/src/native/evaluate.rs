@@ -1199,7 +1199,7 @@ pub(crate) fn free_temp(uc: &Context) {
     unsafe {
         thread_pool_free(uc.thread_pool_mut_ptr());
 
-        string_pool_temp_free(uc.string_pool_mut_ptr());
+        string_pool_temp_free(uc.string_pool_view());
         buf_free(uc.warnings_view().tmp_stack_mut_ptr());
 
         map_free(uc.prop_type_map_view());

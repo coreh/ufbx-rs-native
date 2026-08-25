@@ -28,9 +28,9 @@ use crate::native::error::{
     memcmp, strlen, ufbxi_check_err, ufbxi_check_err_msg, ufbxi_check_return_err,
     utf8_valid_length, Fail, EMPTY_CHAR,
 };
-use crate::native::hash::{hash_string, hash_string_check_ascii, map_free, Map, MapView};
+use crate::native::hash::{hash_string, hash_string_check_ascii, map_free, Map};
 use crate::native::platform::{math, min_real, min_sz, ufbx_assert, ufbxi_regression_assert};
-use crate::native::view::{view_raw_mut, view_write};
+use crate::native::view::{view_raw_mut, view_read, view_write};
 use crate::native::warnings::{ufbxi_warnf_imp, Warnings};
 use crate::prelude::as_f64;
 use crate::prelude::{Blob, Real, String};
@@ -103,6 +103,14 @@ impl StringPoolView {
     #[inline(always)]
     pub(crate) fn set_warnings(&self, warnings: *mut Warnings) {
         view_write!(self, warnings, warnings)
+    }
+    #[inline(always)]
+    pub(crate) fn temp_str(&self) -> *mut u8 {
+        view_read!(self, temp_str)
+    }
+    #[inline(always)]
+    pub(crate) fn temp_cap(&self) -> usize {
+        view_read!(self, temp_cap)
     }
 }
 
@@ -352,15 +360,15 @@ pub(crate) fn safe_string(data: *const u8, length: usize) -> String {
 }
 
 // ufbx.c:5028-5032 `ufbxi_string_pool_temp_free`
-pub(crate) unsafe fn string_pool_temp_free(pool: *mut StringPool) {
-    // SAFETY: the caller vouches `pool` addresses a live `StringPool`;
-    // `temp_str`/`temp_cap` are either the null/0 never-allocated pair (`free`
-    // no-ops on count 0) or the buffer/capacity pair grown through the pool's own
-    // `map.ator`, the pairing `free` requires.
-    unsafe { free::<u8>((*pool).map.ator, (*pool).temp_str, (*pool).temp_cap) };
-    // SAFETY: `pool` is live and `map` is its own map, used here for the last
-    // time before the pool is discarded. `&raw mut` preserves provenance.
-    map_free(unsafe { MapView::from_ptr(&raw mut (*pool).map) });
+pub(crate) fn string_pool_temp_free(pool: &StringPoolView) {
+    // SAFETY: the view's mint invariant vouches `pool` addresses a live,
+    // write-capable `StringPool`; `temp_str`/`temp_cap` are either the null/0
+    // never-allocated pair (`free` no-ops on count 0) or the buffer/capacity
+    // pair grown through the pool's own `map.ator`, the pairing `free` requires.
+    unsafe { free::<u8>(pool.map_view().ator(), pool.temp_str(), pool.temp_cap()) };
+    // `map` is the pool's own map, used here for the last time before the pool
+    // is discarded; the view's field projection preserves provenance.
+    map_free(pool.map_view());
 }
 
 // ufbx.c:5034-5063 `ufbxi_add_replacement_char`
@@ -1860,7 +1868,7 @@ mod tests {
         // and this teardown is their last use.
         unsafe {
             buf_free(&mut fx.pool.buf);
-            string_pool_temp_free(&mut fx.pool);
+            string_pool_temp_free(StringPoolView::from_ptr(&raw mut fx.pool));
         }
         assert_eq!(fx.ator.current_size, 0);
     }

@@ -281,6 +281,10 @@ impl MapView {
     pub(crate) fn items(&self) -> *mut core::ffi::c_void {
         view_read!(self, items)
     }
+    #[inline(always)]
+    pub(crate) fn ator(&self) -> *mut Allocator {
+        view_read!(self, ator)
+    }
 
     // Safe typed map operations over the view (ufbx.c:4657-4659 macros).
     //

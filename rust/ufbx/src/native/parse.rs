@@ -8299,7 +8299,7 @@ mod tests {
         use crate::native::allocator::init_ator;
         use crate::native::buf::buf_free;
         use crate::native::hash::{map_cmp_uintptr, map_free, map_init, MapView};
-        use crate::native::string_pool::{map_cmp_string, string_pool_temp_free};
+        use crate::native::string_pool::{map_cmp_string, string_pool_temp_free, StringPoolView};
 
         let mut uc: std::boxed::Box<InnerContext> =
             unsafe { std::boxed::Box::new_zeroed().assume_init() };
@@ -8406,7 +8406,9 @@ mod tests {
             buf_free(&mut uc.tmp_stack);
             buf_free(&mut uc.tmp_dom_nodes);
             buf_free(&mut uc.string_pool.buf);
-            string_pool_temp_free(&mut uc.string_pool);
+            // SAFETY: `uc` is this test's exclusively owned context, so its
+            // `string_pool` is live and write-capable; this is its last use.
+            string_pool_temp_free(StringPoolView::from_ptr(&raw mut uc.string_pool));
             // SAFETY: `dom_node_map` is `uc`'s own live map.
             map_free(MapView::from_ptr(&raw mut uc.dom_node_map));
             assert_eq!(uc.ator_tmp.current_size, 0);

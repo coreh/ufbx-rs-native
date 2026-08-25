@@ -2165,12 +2165,7 @@ pub(crate) unsafe fn cache_load(cc: &CacheContext, filename: String) -> *mut Geo
         free::<u8>(cc.ator_tmp(), cc.tmp_arr(), cc.tmp_arr_size());
     }
     if !cc.owned_by_scene() {
-        // SAFETY: the temp allocator and its string pool belong to `cc` alone
-        // when the cache is not owned by a scene, so freeing them here is the
-        // single release of that state.
-        unsafe {
-            string_pool_temp_free(cc.string_pool_mut_ptr());
-        }
+        string_pool_temp_free(cc.string_pool_view());
         // SAFETY: `cc.ator_tmp()` is that same live temp allocator, owned by
         // `cc` alone here and unmoved for the duration of the call; this is its
         // single, final teardown.
