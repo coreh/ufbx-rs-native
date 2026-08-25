@@ -51,7 +51,7 @@ use crate::native::string_pool::{
 };
 use crate::native::view::SliceViewIter;
 #[cfg(feature = "geometry-cache")]
-use crate::native::view::{view_raw_const, view_raw_mut, view_read, view_write};
+use crate::native::view::{view_raw_const, view_raw_mut, view_read, view_write, Const, View};
 use crate::native::warnings::ufbxi_warnf;
 #[cfg(feature = "geometry-cache")]
 use crate::native::xml::{
@@ -1613,13 +1613,19 @@ pub(crate) unsafe fn cache_load_file(cc: &CacheContext, filename: String) -> Res
 }
 
 // ufbx.c:24439-24455 `ufbxi_cache_try_open_file`
+///
+/// # Safety
+/// `filename` must be a live run of `filename.length` readable bytes that is
+/// also NUL-terminated at index `filename.length` — the `strlen` regression
+/// assert and the `open_file` callback both read it as a C string, an
+/// obligation `String`'s `{ data, length }` pair cannot express.
 #[cfg(feature = "geometry-cache")]
 #[inline(never)]
 pub(crate) unsafe fn cache_try_open_file(
     cc: &CacheContext,
     filename: String,
-    original_filename: *const crate::prelude::Blob,
-    p_found: *mut bool,
+    original_filename: Option<&View<crate::prelude::Blob, Const>>,
+    p_found: &mut bool,
 ) -> Result<(), Fail> {
     // SAFETY: `stream_mut_ptr` addresses `cc`'s own `RawStream` field, so one
     // `RawStream` worth of bytes is writable there.
@@ -1631,15 +1637,16 @@ pub(crate) unsafe fn cache_try_open_file(
     ufbxi_regression_assert!(unsafe { strlen(filename.data) } == filename.length);
     // SAFETY: the callback and stream pointers address `cc`'s own fields;
     // `filename.data`/`.length` is a live, NUL-terminated caller buffer (the
-    // formatted `name_buf` or the arena copy), `original_filename` is the
-    // caller's `Blob` pointer, and the allocator is `cc`'s own temp one.
+    // formatted `name_buf` or the arena copy), `original_filename` is either
+    // null or the caller's live `Blob` view, and the allocator is `cc`'s own
+    // temp one.
     if !unsafe {
         open_file(
             cc.open_file_cb_ptr(),
             cc.stream_mut_ptr(),
             filename.data,
             filename.length,
-            original_filename,
+            original_filename.map_or(core::ptr::null(), |blob| blob.as_ptr()),
             cc.ator_tmp(),
             OpenFileType::GeometryCache,
         )
@@ -1650,9 +1657,7 @@ pub(crate) unsafe fn cache_try_open_file(
     // SAFETY: `open_file` returned true, so `cc.stream` is an opened stream —
     // what `cache_load_file` requires to read its header.
     let ok = unsafe { cache_load_file(cc, filename) };
-    // SAFETY: the caller's contract is that `p_found` points at a writable
-    // `bool` out-param.
-    unsafe { *p_found = true };
+    *p_found = true;
 
     if let Some(close_fn) = cc.stream_view().close_fn() {
         // SAFETY: the C-callback contract — `close_fn` came from the stream
@@ -1723,7 +1728,7 @@ pub(crate) fn cache_load_frame_files(cc: &CacheContext) -> Result<(), Fail> {
                     ufbxi_snprintf!(suffix_data, suffix_len, ".%s", extension) as usize
                 );
             let mut found: bool = false;
-            cache_try_open_file(cc, *filename, core::ptr::null(), &raw mut found)?;
+            cache_try_open_file(cc, *filename, None, &mut found)?;
         }
     } else if cc.xml_type() == CacheXmlType::FilePerFrame {
         let mut lowest_time: u32 = 0;
@@ -1790,7 +1795,7 @@ pub(crate) fn cache_load_frame_files(cc: &CacheContext) -> Result<(), Fail> {
                         extension
                     ) as usize);
                 }
-                cache_try_open_file(cc, *filename, core::ptr::null(), &raw mut found)?;
+                cache_try_open_file(cc, *filename, None, &mut found)?;
             }
 
             // Update channel status
@@ -2057,8 +2062,8 @@ pub(crate) unsafe fn cache_load_imp(
     // TODO: NULL termination!
     let mut found: bool = false;
     // SAFETY: `filename_copy` is the NUL-terminated arena copy built just
-    // above, and `&mut found` is a live local out-param.
-    unsafe { cache_try_open_file(cc, filename_copy, core::ptr::null(), &raw mut found)? };
+    // above.
+    unsafe { cache_try_open_file(cc, filename_copy, None, &mut found)? };
     if !found {
         // SAFETY: `error_mut_ptr` addresses `cc`'s own `Error` field, and
         // `filename.data`/`.length` is the caller's live string run.
