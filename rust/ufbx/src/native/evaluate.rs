@@ -129,6 +129,8 @@ use crate::native::view::{
 use crate::native::view::{Const, Mode, Mut, View};
 use crate::native::warnings::{pop_warnings, ufbxi_warnf};
 use crate::prelude::as_f64;
+#[cfg(feature = "scene-eval")]
+use crate::prelude::ScalarView;
 use crate::prelude::{List, OpenFileContext, RawStringView, Real, Ref, String};
 
 // -- Curve evaluation (ufbx.c:25012)
@@ -3114,20 +3116,29 @@ pub(crate) unsafe fn translate_maps(ec: &EvalContext, maps: *mut MaterialMap, co
 }
 
 // ufbx.c:26096-26103 `ufbxi_translate_anim`
+// Stays `unsafe fn`: the slot type carries the slot's own liveness and write
+// capability, but not the one obligation the body leans on — that the
+// `ufbx_anim*` the slot HOLDS addresses a live source-scene `ufbx_anim`, which
+// `push_copy_raw` reads a whole struct through and which no pointer type
+// expresses.
 #[cfg(feature = "scene-eval")]
 #[inline(never)]
-pub(crate) unsafe fn translate_anim(ec: &EvalContext, p_anim: *mut *mut Anim) -> Result<(), Fail> {
-    // SAFETY: `ec.result_mut_ptr()` is the eval context's own result buffer and
-    // `p_anim` addresses the caller's live `ufbx_anim*` slot, whose pointee is
-    // the source-scene anim `push_copy` copies one of.
-    let anim: *mut Anim = unsafe { ec.result_view().push_copy_raw::<Anim>(1, *p_anim) };
+pub(crate) unsafe fn translate_anim(
+    ec: &EvalContext,
+    p_anim: &ScalarView<*mut Anim>,
+) -> Result<(), Fail> {
+    // SAFETY: the buf side is the eval context's own result buffer (the view
+    // invariant); the source run is the anim the slot holds, which this
+    // `unsafe fn` requires to be a live source-scene `ufbx_anim` — source-scene
+    // memory, disjoint from the result chunks the push writes.
+    let anim: *mut Anim = unsafe { ec.result_view().push_copy_raw::<Anim>(1, p_anim.get()) };
     ufbxi_check_err!(ec.error_view(), !anim.is_null(), "anim");
     // SAFETY: `anim` is the non-null (checked just above) freshly pushed copy, so
     // its `layers` field is a live `ufbx_element_list` of source-scene layers —
     // `translate_element_list`'s contract.
     unsafe { translate_element_list(ec, &raw mut (*anim).layers as *mut c_void) }?;
-    // SAFETY: `p_anim` addresses the caller's live `ufbx_anim*` slot.
-    unsafe { *p_anim = anim };
+    // C: `*p_anim = anim;`
+    p_anim.set(anim);
     Ok(())
 }
 
@@ -3291,9 +3302,15 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
                 as *mut UfbxNode;
     }
     // SAFETY: `anim` is a field of the destination scene struct inside `ec`, so
-    // the pointer addresses a live `ufbx_anim*` slot — `translate_anim`'s
-    // contract.
-    unsafe { translate_anim(ec, ec.scene_view().anim_mut_ptr() as *mut *mut Anim) }?;
+    // the pointer addresses a live, write-capable `ufbx_anim*` slot; per the
+    // source-scene premise its byte copy names the source scene's anim —
+    // `translate_anim`'s contract.
+    unsafe {
+        translate_anim(
+            ec,
+            &*(ec.scene_view().anim_mut_ptr() as *const ScalarView<*mut Anim>),
+        )
+    }?;
 
     for i in 0..num_elements {
         // SAFETY: per the source-scene premise the source element list holds
@@ -3963,8 +3980,9 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
         // contract.
         unsafe { translate_element_list(ec, stack.layers_raw() as *mut c_void) }?;
         // SAFETY: `anim` is that stack's own `ufbx_anim*` field, so the pointer
-        // addresses a live slot — `translate_anim`'s contract.
-        unsafe { translate_anim(ec, stack.anim_raw() as *mut *mut Anim) }?;
+        // addresses a live, write-capable slot, whose byte copy still names the
+        // source scene's anim — `translate_anim`'s contract.
+        unsafe { translate_anim(ec, &*(stack.anim_raw() as *const ScalarView<*mut Anim>)) }?;
     }
 
     // C: `ufbxi_for_ptr_list(ufbx_anim_layer, p_layer, ec->scene.anim_layers)`
@@ -4075,8 +4093,10 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
     }
 
     // SAFETY: `anim` is a field of `ec`'s own live context struct, so the pointer
-    // addresses a live `ufbx_anim*` slot — `translate_anim`'s contract.
-    unsafe { translate_anim(ec, ec.anim_mut_ptr()) }?;
+    // addresses a live, write-capable `ufbx_anim*` slot holding the anim
+    // `evaluate_scene` resolved out of the source scene — `translate_anim`'s
+    // contract.
+    unsafe { translate_anim(ec, &*(ec.anim_mut_ptr() as *const ScalarView<*mut Anim>)) }?;
 
     // C: `ufbxi_for_ptr_list(ufbx_anim_value, p_value, ec->scene.anim_values)`
     let anim_values = ec.scene_view().anim_values_view();
