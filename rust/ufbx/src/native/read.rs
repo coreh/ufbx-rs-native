@@ -1056,15 +1056,12 @@ pub(crate) fn synthetic_id_from_string(uc: &Context, str_: *const u8) -> u64 {
 
 // ufbx.c:12260-12269 `ufbxi_validate_fbx_id`
 #[inline(always)]
-pub(crate) unsafe fn validate_fbx_id(uc: &Context, p_fbx_id: *mut u64) -> Result<(), Fail> {
-    // SAFETY: `p_fbx_id` is the caller's live, initialized `uint64_t` slot (fn
-    // contract).
-    let mut fbx_id: u64 = unsafe { *p_fbx_id };
+pub(crate) fn validate_fbx_id(uc: &Context, p_fbx_id: &mut u64) -> Result<(), Fail> {
+    let mut fbx_id: u64 = *p_fbx_id;
     if fbx_id >= POINTER_ID_START {
         fbx_id = synthetic_id_from_ptr_id(uc, 0, fbx_id);
         ufbxi_check!(uc, fbx_id != 0, "fbx_id");
-        // SAFETY: as above — `p_fbx_id` is the caller's writable slot.
-        unsafe { *p_fbx_id = fbx_id };
+        *p_fbx_id = fbx_id;
     }
     Ok(())
 }
@@ -6531,9 +6528,7 @@ pub(crate) unsafe fn read_pose(
                 continue;
             };
             fbx_id = got as u64;
-            // SAFETY: `&raw mut fbx_id` is a live `u64` local, the in/out slot
-            // `validate_fbx_id` reads and rewrites.
-            unsafe { validate_fbx_id(uc, &raw mut fbx_id) }?;
+            validate_fbx_id(uc, &mut fbx_id)?;
         }
 
         let matrix: *mut ValueArray = find_array(n, sp::Matrix.as_ptr(), b'r');
@@ -7229,31 +7224,26 @@ pub(crate) fn read_object(uc: &Context, node: &NodeView) -> Result<(), Fail> {
     // FBX version 7000 and up uses 64-bit unique IDs per object,
     // older FBX versions just use name/type pairs, which we can
     // use as IDs since all strings are interned into a string pool.
-    // SAFETY: `node` is a parse-tree NodeView; on success `type_and_name.data`
-    // is a pooled, NUL-terminated string, which is what the synthetic-id hash
-    // below reads, and the id validator takes `info`'s own `fbx_id` slot.
-    unsafe {
-        if uc.version() >= 7000 {
-            let Some((fbx_id, Unchecked(tn), Unchecked(st))) =
-                get_val3::<i64, Unchecked<String>, Unchecked<String>>(node)
-            else {
-                return Ok(());
-            };
-            info.fbx_id = fbx_id as u64;
-            type_and_name = tn;
-            sub_type_str = st;
-            validate_fbx_id(uc, &raw mut info.fbx_id)?;
-        } else {
-            let Some((Unchecked(tn), Unchecked(st))) =
-                get_val2::<Unchecked<String>, Unchecked<String>>(node)
-            else {
-                return Ok(());
-            };
-            type_and_name = tn;
-            sub_type_str = st;
-            info.fbx_id = synthetic_id_from_string(uc, type_and_name.data);
-            ufbxi_check!(uc, info.fbx_id != 0, "info.fbx_id");
-        }
+    if uc.version() >= 7000 {
+        let Some((fbx_id, Unchecked(tn), Unchecked(st))) =
+            get_val3::<i64, Unchecked<String>, Unchecked<String>>(node)
+        else {
+            return Ok(());
+        };
+        info.fbx_id = fbx_id as u64;
+        type_and_name = tn;
+        sub_type_str = st;
+        validate_fbx_id(uc, &mut info.fbx_id)?;
+    } else {
+        let Some((Unchecked(tn), Unchecked(st))) =
+            get_val2::<Unchecked<String>, Unchecked<String>>(node)
+        else {
+            return Ok(());
+        };
+        type_and_name = tn;
+        sub_type_str = st;
+        info.fbx_id = synthetic_id_from_string(uc, type_and_name.data);
+        ufbxi_check!(uc, info.fbx_id != 0, "info.fbx_id");
     }
 
     // Remove the "Fbx" prefix from sub-types, remember to re-intern!
@@ -7869,56 +7859,51 @@ pub(crate) fn read_connections(uc: &Context) -> Result<(), Fail> {
         } else {
             // Post-7000 versions use proper unique 64-bit IDs
 
-            // SAFETY (this branch): `node` is a parse-tree NodeView; the strings
-            // the fetches yield are pooled and NUL-terminated, and the id
-            // validators take the locals the fetches filled.
-            unsafe {
-                let Some(Checked(type_)) = get_val1::<Checked<*const u8>>(node) else {
+            let Some(Checked(type_)) = get_val1::<Checked<*const u8>>(node) else {
+                continue;
+            };
+
+            if type_ == sp::OO.as_ptr() {
+                let Some((Ignore, v1, v2)) = get_val3::<Ignore, i64, i64>(node) else {
                     continue;
                 };
-
-                if type_ == sp::OO.as_ptr() {
-                    let Some((Ignore, v1, v2)) = get_val3::<Ignore, i64, i64>(node) else {
-                        continue;
-                    };
-                    src_id = v1 as u64;
-                    dst_id = v2 as u64;
-                } else if type_ == sp::OP.as_ptr() {
-                    let Some((Ignore, v1, v2, Checked(v3))) =
-                        get_val4::<Ignore, i64, i64, Checked<String>>(node)
-                    else {
-                        continue;
-                    };
-                    src_id = v1 as u64;
-                    dst_id = v2 as u64;
-                    dst_prop = v3;
-                } else if type_ == sp::PO.as_ptr() {
-                    let Some((Ignore, v1, Checked(v2), v3)) =
-                        get_val4::<Ignore, i64, Checked<String>, i64>(node)
-                    else {
-                        continue;
-                    };
-                    src_id = v1 as u64;
-                    src_prop = v2;
-                    dst_id = v3 as u64;
-                } else if type_ == sp::PP.as_ptr() {
-                    let Some((Ignore, v1, Checked(v2), v3, Checked(v4))) =
-                        get_val5::<Ignore, i64, Checked<String>, i64, Checked<String>>(node)
-                    else {
-                        continue;
-                    };
-                    src_id = v1 as u64;
-                    src_prop = v2;
-                    dst_id = v3 as u64;
-                    dst_prop = v4;
-                } else {
-                    // TODO: Strict mode?
+                src_id = v1 as u64;
+                dst_id = v2 as u64;
+            } else if type_ == sp::OP.as_ptr() {
+                let Some((Ignore, v1, v2, Checked(v3))) =
+                    get_val4::<Ignore, i64, i64, Checked<String>>(node)
+                else {
                     continue;
-                }
-
-                validate_fbx_id(uc, &raw mut src_id)?;
-                validate_fbx_id(uc, &raw mut dst_id)?;
+                };
+                src_id = v1 as u64;
+                dst_id = v2 as u64;
+                dst_prop = v3;
+            } else if type_ == sp::PO.as_ptr() {
+                let Some((Ignore, v1, Checked(v2), v3)) =
+                    get_val4::<Ignore, i64, Checked<String>, i64>(node)
+                else {
+                    continue;
+                };
+                src_id = v1 as u64;
+                src_prop = v2;
+                dst_id = v3 as u64;
+            } else if type_ == sp::PP.as_ptr() {
+                let Some((Ignore, v1, Checked(v2), v3, Checked(v4))) =
+                    get_val5::<Ignore, i64, Checked<String>, i64, Checked<String>>(node)
+                else {
+                    continue;
+                };
+                src_id = v1 as u64;
+                src_prop = v2;
+                dst_id = v3 as u64;
+                dst_prop = v4;
+            } else {
+                // TODO: Strict mode?
+                continue;
             }
+
+            validate_fbx_id(uc, &mut src_id)?;
+            validate_fbx_id(uc, &mut dst_id)?;
         }
 
         let conn: *mut TmpConnection = uc.tmp_connections_view().push::<TmpConnection>(1);
