@@ -785,8 +785,16 @@ pub(crate) fn push_size(view: &BufView, size: usize, n: usize) -> *mut c_void {
 }
 
 // ufbx.c:4074-4105 `ufbxi_push_size_fast`
+//
+// Safe fn: the buf handle carries its own liveness and write-provenance in the
+// type (the `BufView` mint invariant), and the allocator this reaches is the
+// buf's stored back-pointer — the same standing `push_size` and the `BufView`
+// push family rely on. The returned block is uninitialized memory handed back
+// as a raw pointer; DEREFERENCING it is the caller's obligation, under its own
+// narrow `unsafe`. The raw field ops below carry their own per-leaf vouches.
 #[inline(always)]
-pub(crate) unsafe fn push_size_fast(b: *mut Buf, size: usize, n: usize) -> *mut c_void {
+pub(crate) fn push_size_fast(view: &BufView, size: usize, n: usize) -> *mut c_void {
+    let b: *mut Buf = view.get();
     // Always succeed with an empty non-NULL buffer for empty allocations
     ufbxi_regression_assert!(size > 0);
     ufbxi_regression_assert!(n > 0);
@@ -796,8 +804,8 @@ pub(crate) unsafe fn push_size_fast(b: *mut Buf, size: usize, n: usize) -> *mut 
 
     #[cfg(feature = "regression")]
     {
-        // SAFETY: `b` addresses a live `Buf` (this fn's raw-pointer contract);
-        // reading its live stored allocator back-pointer.
+        // SAFETY: `b` is the view's write-provenance pointer to a live `Buf`
+        // (the mint); reading its live stored allocator back-pointer.
         let ator = unsafe { (*b).ator };
         ufbxi_check_return_err_msg!(
             unsafe { crate::native::error::ErrorView::from_ptr((*ator).error) },
@@ -836,10 +844,7 @@ pub(crate) unsafe fn push_size_fast(b: *mut Buf, size: usize, n: usize) -> *mut 
         unsafe { (*b).pos = pos + total };
         (unsafe { chunk_data((*b).chunks[0]).add(pos) }) as *mut c_void
     } else {
-        // SAFETY: `b` addresses a live, initialized `Buf` in context/arena-owned
-        // memory with write-capable provenance (this fn's raw-pointer contract)
-        // — the `BufView::from_ptr` mint invariant.
-        push_size_new_block(unsafe { BufView::from_ptr(b) }, total)
+        push_size_new_block(view, total)
     }
 }
 
@@ -906,8 +911,10 @@ pub(crate) unsafe fn push_size_copy_fast(
     }
 
     ufbx_assert!(!data.is_null());
-    // SAFETY: forwarding this fn's live-`Buf` contract to `push_size_fast`.
-    let ptr = unsafe { push_size_fast(b, size, n) };
+    // SAFETY: `b` addresses a live, initialized `Buf` in context/arena-owned
+    // memory with write-capable provenance (this fn's raw-pointer contract) —
+    // the `BufView::from_ptr` mint invariant.
+    let ptr = push_size_fast(unsafe { BufView::from_ptr(b) }, size, n);
     if !ptr.is_null() {
         // SAFETY: on a non-null return `push_size_fast` handed back a fresh
         // region of `size * n` writable bytes, and `data` is the caller's
@@ -1343,8 +1350,10 @@ pub(crate) unsafe fn push_copy_fast<T>(b: *mut Buf, n: usize, data: *const T) ->
 // ufbx.c:4350 `#define ufbxi_push_fast(b, type, n)`
 #[inline(always)]
 pub(crate) unsafe fn push_fast<T>(b: *mut Buf, n: usize) -> *mut T {
-    // SAFETY: forwarding this fn's live-`Buf` contract to `push_size_fast`.
-    (unsafe { push_size_fast(b, size_of::<T>(), n) }) as *mut T
+    // SAFETY: `b` addresses a live, initialized `Buf` in context/arena-owned
+    // memory with write-capable provenance (this fn's raw-pointer contract) —
+    // the `BufView::from_ptr` mint invariant.
+    push_size_fast(unsafe { BufView::from_ptr(b) }, size_of::<T>(), n) as *mut T
 }
 
 // ufbx.c:4351 `#define ufbxi_pop(b, type, n, dst)`
