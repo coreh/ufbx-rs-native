@@ -215,28 +215,21 @@ pub(crate) fn orient2d(a: Vec2, b: Vec2, c: Vec2) -> Real {
 }
 
 // ufbx.c:28289-28301 `ufbxi_kd_check_point`
+// Stays `unsafe fn`: `index` is an unchecked index contract carried through to
+// `ngon_project` — only the caller knows it is in range for `nc`'s face.
 #[cfg(feature = "triangulation")]
 #[inline(never)]
-pub(crate) unsafe fn kd_check_point(nc: &NgonContext, tri: *const KdTriangle, index: u32) -> bool {
-    // SAFETY: `tri` points to a valid, live `KdTriangle` (caller contract).
-    if unsafe {
-        index == (*tri).indices[0] || index == (*tri).indices[1] || index == (*tri).indices[2]
-    } {
+pub(crate) unsafe fn kd_check_point(nc: &NgonContext, tri: &KdTriangle, index: u32) -> bool {
+    if index == tri.indices[0] || index == tri.indices[1] || index == tri.indices[2] {
         return false;
     }
     // SAFETY: `index` is a corner index the caller vouches is in range for
     // `nc`'s face, which is `ngon_project`'s contract.
     let p: Vec2 = unsafe { ngon_project(nc, index) };
 
-    // SAFETY: `tri` points to a valid, live `KdTriangle` (caller contract);
-    // `orient2d` reads only the passed `Vec2`s.
-    let (u, v, w) = unsafe {
-        (
-            orient2d(p, (*tri).points[0], (*tri).points[1]),
-            orient2d(p, (*tri).points[1], (*tri).points[2]),
-            orient2d(p, (*tri).points[2], (*tri).points[0]),
-        )
-    };
+    let u: Real = orient2d(p, tri.points[0], tri.points[1]);
+    let v: Real = orient2d(p, tri.points[1], tri.points[2]);
+    let w: Real = orient2d(p, tri.points[2], tri.points[0]);
 
     if u <= 0.0 && v <= 0.0 && w <= 0.0 {
         return true;
@@ -258,7 +251,7 @@ pub(crate) unsafe fn kd_check_point(nc: &NgonContext, tri: *const KdTriangle, in
 #[inline(never)]
 pub(crate) unsafe fn kd_check_slow(
     nc: &NgonContext,
-    tri: *const KdTriangle,
+    tri: &KdTriangle,
     begin: u32,
     count: u32,
     axis: u32,
@@ -272,16 +265,16 @@ pub(crate) unsafe fn kd_check_slow(
             ufbx_assert!(depth.get() < (32 - KD_FAST_DEPTH) as u32);
             depth.set(depth.get() + 1);
         });
-        // SAFETY: forwards the caller's `nc`/`tri` validity contract to the
-        // recursive body unchanged.
+        // SAFETY: forwards the caller's `begin`/`count` KD-index range vouch to
+        // the recursive body unchanged.
         let ret = unsafe { kd_check_slow_rec(nc, tri, begin, count, axis) };
         UFBXI_RECURSION_DEPTH.with(|depth| depth.set(depth.get() - 1));
         ret
     }
     #[cfg(not(feature = "regression"))]
     {
-        // SAFETY: forwards the caller's `nc`/`tri` validity contract to the
-        // recursive body unchanged.
+        // SAFETY: forwards the caller's `begin`/`count` KD-index range vouch to
+        // the recursive body unchanged.
         unsafe { kd_check_slow_rec(nc, tri, begin, count, axis) }
     }
 }
@@ -291,7 +284,7 @@ pub(crate) unsafe fn kd_check_slow(
 #[cfg(feature = "triangulation")]
 unsafe fn kd_check_slow_rec(
     nc: &NgonContext,
-    tri: *const KdTriangle,
+    tri: &KdTriangle,
     begin: u32,
     count: u32,
     axis: u32,
@@ -327,22 +320,19 @@ unsafe fn kd_check_slow_rec(
             )
         };
         let split: Real = dot3(point, nc.axes_at(axis as usize).get());
-        // SAFETY: `tri` points to a valid, live `KdTriangle` (caller contract);
         // `axis` is 0 or 1, in bounds for the length-2 `min_t`/`max_t` arrays.
-        let (hit_left, hit_right) = unsafe {
-            (
-                (*tri).min_t[axis as usize] <= split,
-                (*tri).max_t[axis as usize] >= split,
-            )
-        };
+        let hit_left: bool = tri.min_t[axis as usize] <= split;
+        let hit_right: bool = tri.max_t[axis as usize] >= split;
 
         if hit_left && hit_right {
-            // SAFETY: forwards the caller's `nc`/`tri` validity to `kd_check_point`.
+            // SAFETY: `index` comes from `nc`'s KD index buffer, so it is a corner
+            // index in range for `nc`'s face — `kd_check_point`'s contract.
             if unsafe { kd_check_point(nc, tri, index) } {
                 return true;
             }
 
-            // SAFETY: forwards the caller's `nc`/`tri` validity to `kd_check_slow`.
+            // SAFETY: `[begin_right, begin_right + num_right)` is the right half of
+            // the caller-vouched `[begin, begin + count)` KD-index span.
             if unsafe { kd_check_slow(nc, tri, begin_right, num_right, axis ^ 1) } {
                 return true;
             }
@@ -410,34 +400,35 @@ unsafe fn kd_check_fast_rec(
     let mut axis = axis;
     let mut depth = depth;
 
+    // SAFETY: `tri` points to a valid, live `KdTriangle` (caller contract); the
+    // borrow is read-only and nothing writes through `tri` while it is held.
+    let tri: &KdTriangle = unsafe { &*tri };
+
     loop {
         let node: KdNode = nc.kd_nodes_at(kd_index as usize).get();
         if node.index_plus_one == 0 {
             return false;
         }
 
-        // SAFETY: `tri` points to a valid, live `KdTriangle` (caller contract);
         // `axis` is 0 or 1, in bounds for the length-2 `min_t`/`max_t` arrays.
-        let (hit_left, hit_right) = unsafe {
-            (
-                (*tri).min_t[axis as usize] <= node.split,
-                (*tri).max_t[axis as usize] >= node.split,
-            )
-        };
+        let hit_left: bool = tri.min_t[axis as usize] <= node.split;
+        let hit_right: bool = tri.max_t[axis as usize] >= node.split;
 
         let side: u32 = if hit_left { 0 } else { 1 };
         let child_kd_index: u32 = kd_index.wrapping_mul(2).wrapping_add(1).wrapping_add(side);
         if hit_left && hit_right {
             // Check for the point on the split plane
             let index: u32 = node.index_plus_one.wrapping_sub(1);
-            // SAFETY: forwards the caller's `nc`/`tri` validity to `kd_check_point`.
+            // SAFETY: `index` is `node.index_plus_one - 1`, a corner index stored
+            // in `nc`'s KD tree — `kd_check_point`'s in-range contract.
             if unsafe { kd_check_point(nc, tri, index) } {
                 return true;
             }
 
             // Recurse always to the right if we hit both sides
             if depth.wrapping_add(1) == KD_FAST_DEPTH as u32 {
-                // SAFETY: forwards the caller's `nc`/`tri` validity to `kd_check_slow`.
+                // SAFETY: `[slow_right, slow_end)` is a live span of `nc`'s KD index
+                // buffer recorded in the node.
                 if unsafe {
                     kd_check_slow(
                         nc,
@@ -450,7 +441,7 @@ unsafe fn kd_check_fast_rec(
                     return true;
                 }
             } else {
-                // SAFETY: forwards the caller's `nc`/`tri` validity to `kd_check_fast`.
+                // SAFETY: forwards the caller's `tri` validity to `kd_check_fast`.
                 if unsafe {
                     kd_check_fast(
                         nc,
@@ -471,7 +462,8 @@ unsafe fn kd_check_fast_rec(
 
         if depth == KD_FAST_DEPTH as u32 {
             if hit_left {
-                // SAFETY: forwards the caller's `nc`/`tri` validity to `kd_check_slow`.
+                // SAFETY: `[slow_left, slow_right)` is a live span of `nc`'s KD index
+                // buffer recorded in the node.
                 return unsafe {
                     kd_check_slow(
                         nc,
@@ -482,7 +474,8 @@ unsafe fn kd_check_fast_rec(
                     )
                 };
             } else {
-                // SAFETY: forwards the caller's `nc`/`tri` validity to `kd_check_slow`.
+                // SAFETY: `[slow_right, slow_end)` is a live span of `nc`'s KD index
+                // buffer recorded in the node.
                 return unsafe {
                     kd_check_slow(
                         nc,
