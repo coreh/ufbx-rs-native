@@ -254,7 +254,7 @@ use crate::native::string_pool::{
     self as sp, add3, concat_str_cmp, min3, neg3, normalize3, str_cmp, str_less, sub3, ONE_VEC3,
 };
 use crate::native::view::{
-    view_project, view_read, view_read_shared, view_write, Const, Mode, SliceViewIter, View,
+    view_project, view_read, view_read_shared, view_write, Const, Mode, Mut, SliceViewIter, View,
 };
 use crate::native::warnings::ufbxi_warnf_tag;
 use crate::prelude::as_f64;
@@ -8005,9 +8005,11 @@ pub(crate) fn validate_indices(
         let ix: u32 = unsafe { *p_ix };
         // C: `ix >= max_index` — `ix` is promoted to `size_t` for the compare.
         if ix as usize >= max_index {
-            // SAFETY: `p_ix` addresses a live, writable entry of the index run
-            // (see above), and `ix` is the value just read from it.
-            unsafe { fix_index(uc, p_ix, ix, max_index) }?;
+            // SAFETY: `p_ix` addresses a live, write-capable entry of the index
+            // run (see above) — an adequate mint for the `Mut` index-slot view;
+            // `ix` is the value just read from it.
+            let p_dst: &View<u32> = unsafe { View::<u32, Mut>::from_ptr(p_ix) };
+            fix_index(uc, p_dst, ix, max_index)?;
         }
         // SAFETY: `p_ix != p_ix_end`, so the advance lands at or before the run's
         // one-past-the-end pointer.

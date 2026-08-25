@@ -80,7 +80,7 @@ use crate::native::string_pool::{push_string_place_blob, push_string_place_str, 
 #[cfg(feature = "obj")]
 use crate::native::view::{view_read, view_write};
 #[cfg(feature = "obj")]
-use crate::native::view::{SliceViewIter, View};
+use crate::native::view::{Mut, SliceViewIter, View};
 #[cfg(feature = "obj")]
 use crate::native::warnings::ufbxi_warnf;
 #[cfg(feature = "obj")]
@@ -1509,8 +1509,11 @@ pub(crate) unsafe fn obj_setup_attrib(
             unsafe { *dst_indices.add(i) = ix as u32 };
         } else {
             // SAFETY: as above — the slot handed to the fixer is `dst_indices`
-            // element `i`.
-            unsafe { fix_index(uc, dst_indices.add(i), ix as u32, num_values)? };
+            // element `i`: live and write-capable, an adequate mint for the
+            // `Mut` index-slot view (the slot is still uninitialized, which
+            // `Mut` storage tolerates).
+            let p_dst: &View<u32> = unsafe { View::<u32, Mut>::from_ptr(dst_indices.add(i)) };
+            fix_index(uc, p_dst, ix as u32, num_values)?;
         }
     }
 
@@ -1859,7 +1862,12 @@ pub(crate) fn obj_pop_meshes(uc: &Context) -> Result<(), Fail> {
                             while p_ix != p_ix_end {
                                 if *p_ix as usize >= num_values || !*color_valid.add(*p_ix as usize)
                                 {
-                                    fix_index(uc, p_ix, *p_ix, num_values)?;
+                                    // SAFETY: `p_ix` addresses a live,
+                                    // write-capable entry of the copied index
+                                    // run — an adequate mint for the `Mut`
+                                    // index-slot view.
+                                    let p_dst: &View<u32> = View::<u32, Mut>::from_ptr(p_ix);
+                                    fix_index(uc, p_dst, *p_ix, num_values)?;
                                 }
                                 p_ix = p_ix.add(1);
                             }

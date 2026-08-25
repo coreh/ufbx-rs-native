@@ -2169,9 +2169,9 @@ pub(crate) static SENTINEL_INDEX_CONSECUTIVE: [u32; 1] = [123456789];
 
 // ufbx.c:12666-12690 `ufbxi_fix_index`
 #[inline(never)]
-pub(crate) unsafe fn fix_index(
+pub(crate) fn fix_index(
     uc: &Context,
-    p_dst: *mut u32,
+    p_dst: &View<u32>,
     index: u32,
     one_past_max_val: usize,
 ) -> Result<(), Fail> {
@@ -2183,9 +2183,10 @@ pub(crate) unsafe fn fix_index(
                 one_past_max_val <= u32::MAX as usize,
                 "one_past_max_val <= UINT32_MAX"
             );
-            // SAFETY: `p_dst` is the caller's writable `uint32_t` index slot
-            // (fn contract).
-            unsafe { *p_dst = (one_past_max_val as u32).wrapping_sub(1) };
+            // SAFETY: `p_dst` is a `Mut` view over a live, unmoved,
+            // write-capable `uint32_t` index slot (its mint contract); the slot
+            // need not hold an initialized value, and the write initializes it.
+            unsafe { p_dst.get().write((one_past_max_val as u32).wrapping_sub(1)) };
             ufbxi_check!(
                 uc,
                 ufbxi_warnf!(uc, WarningType::IndexClamped, "Clamped index").is_ok(),
@@ -2193,8 +2194,9 @@ pub(crate) unsafe fn fix_index(
             );
         }
         IndexErrorHandling::NoIndex => {
-            // SAFETY: `p_dst` is the caller's writable `uint32_t` index slot.
-            unsafe { *p_dst = NO_INDEX };
+            // SAFETY: `p_dst` is a `Mut` view over a live, unmoved,
+            // write-capable `uint32_t` index slot (its mint contract).
+            unsafe { p_dst.get().write(NO_INDEX) };
         }
         IndexErrorHandling::AbortLoading => {
             // C-parity: `one_past_max_val` is a `size_t` passed through `%u`,
@@ -2220,8 +2222,9 @@ pub(crate) unsafe fn fix_index(
             // fallthrough into `UNSAFE_IGNORE` below is unreachable.
         }
         IndexErrorHandling::UnsafeIgnore => {
-            // SAFETY: `p_dst` is the caller's writable `uint32_t` index slot.
-            unsafe { *p_dst = index };
+            // SAFETY: `p_dst` is a `Mut` view over a live, unmoved,
+            // write-capable `uint32_t` index slot (its mint contract).
+            unsafe { p_dst.get().write(index) };
         }
         // C `default:` — unreachable in Rust because the match above is
         // exhaustive over the enum, but kept for diff parity.
@@ -2287,9 +2290,11 @@ pub(crate) unsafe fn check_indices(
                 ufbxi_check!(uc, !indices.is_null(), "indices");
                 owns_indices = true;
             }
-            // SAFETY: `i < num_indices`, so `indices.add(i)` is a writable slot
-            // of the owned index run — `fix_index`'s out-pointer contract.
-            unsafe { fix_index(uc, indices.add(i), ix, num_elems) }?;
+            // SAFETY: `i < num_indices`, so `indices.add(i)` is a live,
+            // write-capable slot of the owned index run — an adequate mint for
+            // the `Mut` index-slot view `fix_index` writes through.
+            let p_dst: &View<u32> = unsafe { View::<u32, Mut>::from_ptr(indices.add(i)) };
+            fix_index(uc, p_dst, ix, num_elems)?;
         }
     }
 
@@ -2526,8 +2531,12 @@ pub(crate) unsafe fn read_vertex_element(
                     unsafe { *new_index_data.add(i) = index_run[ix as usize] };
                 } else {
                     // SAFETY: `i < mesh.num_indices`, so `new_index_data.add(i)`
-                    // is a writable slot of the fresh run.
-                    unsafe { fix_index(uc, new_index_data.add(i), ix, num_elems) }?;
+                    // is a live, write-capable slot of the fresh run — an
+                    // adequate mint for the `Mut` index-slot view (the slot is
+                    // still uninitialized, which `Mut` storage tolerates).
+                    let p_dst: &View<u32> =
+                        unsafe { View::<u32, Mut>::from_ptr(new_index_data.add(i)) };
+                    fix_index(uc, p_dst, ix, num_elems)?;
                 }
             }
 
@@ -2567,9 +2576,12 @@ pub(crate) unsafe fn read_vertex_element(
                     index = index_run[face_ix];
                 }
                 if index as usize >= num_elems {
-                    // SAFETY: `&raw mut index` is an unaliased local — a writable
-                    // `uint32_t` slot for `fix_index`.
-                    unsafe { fix_index(uc, &raw mut index, index, num_elems) }?;
+                    // SAFETY: `&raw mut index` addresses an unaliased local,
+                    // live and unmoved across the call — a write-capable
+                    // `uint32_t` slot, an adequate mint for the `Mut`
+                    // index-slot view.
+                    let p_dst: &View<u32> = unsafe { View::<u32, Mut>::from_ptr(&raw mut index) };
+                    fix_index(uc, p_dst, index, num_elems)?;
                 }
                 for i in 0..face.num_indices as usize {
                     // SAFETY: every face's `index_begin + num_indices` stays
@@ -3472,8 +3484,12 @@ pub(crate) unsafe fn process_indices(
                 }
             } else {
                 // SAFETY: `ix < num_indices` bounds the slot handed to
-                // `fix_index`.
-                unsafe { fix_index(uc, vertex_indices.add(ix), vx, mesh.num_vertices()) }?;
+                // `fix_index`: it is a live, write-capable entry of the mesh's
+                // own index run — an adequate mint for the `Mut` index-slot
+                // view.
+                let p_dst: &View<u32> =
+                    unsafe { View::<u32, Mut>::from_ptr(vertex_indices.add(ix)) };
+                fix_index(uc, p_dst, vx, mesh.num_vertices())?;
             }
             ix += 1;
         }
@@ -5269,15 +5285,19 @@ pub(crate) fn read_line(uc: &Context, node: &NodeView, info: &ElementInfoView) -
                     unsafe { *((*line).point_indices.data as *mut u32).add(i) = ix };
                 } else {
                     // SAFETY: as above — the `i`-th index slot of the
-                    // `point_indices` payload is a live, writable `u32`.
-                    unsafe {
-                        fix_index(
-                            uc,
-                            ((*line).point_indices.data as *mut u32).add(i),
-                            ix,
+                    // `point_indices` payload is a live, write-capable `u32`,
+                    // an adequate mint for the `Mut` index-slot view; `line` is
+                    // the fresh non-null element, so its `control_points`
+                    // header is readable.
+                    let (p_dst, count): (&View<u32>, usize) = unsafe {
+                        (
+                            View::<u32, Mut>::from_ptr(
+                                ((*line).point_indices.data as *mut u32).add(i),
+                            ),
                             (*line).control_points.count,
                         )
-                    }?;
+                    };
+                    fix_index(uc, p_dst, ix, count)?;
                 }
             }
 
