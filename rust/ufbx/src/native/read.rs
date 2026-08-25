@@ -10128,10 +10128,10 @@ pub(crate) fn read_legacy_limb_node(
 
 // ufbx.c:16173-16331 `ufbxi_read_legacy_mesh`
 #[inline(never)]
-pub(crate) unsafe fn read_legacy_mesh(
+pub(crate) fn read_legacy_mesh(
     uc: &Context,
     node: &NodeView,
-    info: *mut ElementInfo,
+    info: &View<ElementInfo, Mut>,
 ) -> Result<(), Fail> {
     // Only read polygon meshes, ignore eg. NURBS without error
     let node_vertices = find_child(node, sp::Vertices.as_ptr());
@@ -10142,13 +10142,11 @@ pub(crate) unsafe fn read_legacy_mesh(
     let node_vertices: &NodeView = node_vertices.unwrap();
     let node_indices: &NodeView = node_indices.unwrap();
 
-    // SAFETY: `info` is the caller's live `ufbxi_element_info` — write-capable
-    // provenance, live and unmoved across the call — whose `name` is a pooled
-    // NUL-terminated string and whose `props`/`dom_node` point into uc's own
-    // buffers, so all three survive being stored into the element by pointer;
-    // `Mesh` is the element struct for `ElementType::Mesh`.
-    let mesh: *mut Mesh =
-        unsafe { push_element::<Mesh>(uc, View::<ElementInfo>::from_ptr(info), ElementType::Mesh) };
+    // SAFETY: `info` views the caller's live `ufbxi_element_info`, whose `name`
+    // is a pooled NUL-terminated string and whose `props`/`dom_node` point into
+    // uc's own buffers, so all three survive being stored into the element by
+    // pointer; `Mesh` is the element struct for `ElementType::Mesh`.
+    let mesh: *mut Mesh = unsafe { push_element::<Mesh>(uc, info, ElementType::Mesh) };
     ufbxi_check!(uc, !mesh.is_null(), "mesh");
     // SAFETY: `mesh` is the fresh non-null element just pushed into uc's
     // `tmp_elements` arena (elements live there until finalize copies them into
@@ -10157,11 +10155,7 @@ pub(crate) unsafe fn read_legacy_mesh(
     // at each use site, as this function fills them in.
     let mesh = unsafe { View::<Mesh>::from_ptr(mesh) };
 
-    // SAFETY: `info` is the caller's live `ufbxi_element_info` — write-capable
-    // provenance, live and unmoved across the call.
-    read_synthetic_blend_shapes(uc, node, unsafe {
-        View::<ElementInfo, Mut>::from_ptr(info)
-    })?;
+    read_synthetic_blend_shapes(uc, node, info)?;
 
     patch_mesh_reals(mesh);
 
@@ -10448,8 +10442,7 @@ pub(crate) unsafe fn read_legacy_mesh(
             unsafe {
                 read_legacy_material(uc, child, ScalarView::from_mut(&mut fbx_id), name.data)
             }?;
-            // SAFETY: `info` is the caller's live `ufbxi_element_info`.
-            connect_oo(uc, fbx_id, unsafe { (*info).fbx_id })?;
+            connect_oo(uc, fbx_id, info.fbx_id())?;
         } else if child.name() == sp::Link.as_ptr() {
             let mut fbx_id: u64 = 0;
             // C: `ufbx_string type_and_name, type, name;` — `type`/`name` are
@@ -10475,8 +10468,7 @@ pub(crate) unsafe fn read_legacy_mesh(
             connect_oo(uc, node_fbx_id, fbx_id)?;
             if skin.is_null() {
                 // SAFETY: `&raw mut skin_fbx_id` is a live local `uint64_t` slot,
-                // `info` is the caller's live `ufbxi_element_info` whose
-                // `name.data` is a NUL-terminated interned name, and
+                // `info`'s `name.data` is a NUL-terminated interned name, and
                 // `SkinDeformer` is the element struct for
                 // `ElementType::SkinDeformer`.
                 skin = unsafe {
@@ -10484,13 +10476,12 @@ pub(crate) unsafe fn read_legacy_mesh(
                         uc,
                         ScalarView::from_mut(&mut skin_fbx_id),
                         None,
-                        (*info).name.data,
+                        info.name_view().data(),
                         ElementType::SkinDeformer,
                     )
                 };
                 ufbxi_check!(uc, !skin.is_null(), "skin");
-                // SAFETY: `info` is the caller's live `ufbxi_element_info`.
-                connect_oo(uc, skin_fbx_id, unsafe { (*info).fbx_id })?;
+                connect_oo(uc, skin_fbx_id, info.fbx_id())?;
             }
             connect_oo(uc, fbx_id, skin_fbx_id)?;
         }
@@ -10643,7 +10634,13 @@ pub(crate) fn read_legacy_model(uc: &Context, node: &NodeView) -> Result<(), Fai
                 View::<ElementInfo, Mut>::from_ptr(&raw mut attrib_info),
             )?;
         } else if find_child(node, sp::Vertices.as_ptr()).is_some() {
-            read_legacy_mesh(uc, node, &raw mut attrib_info)?;
+            // SAFETY: `attrib_info` is this frame's own `ufbxi_element_info`
+            // local — write-capable provenance, live and unmoved across the call.
+            read_legacy_mesh(
+                uc,
+                node,
+                View::<ElementInfo, Mut>::from_ptr(&raw mut attrib_info),
+            )?;
         } else {
             has_attrib = false;
         }
