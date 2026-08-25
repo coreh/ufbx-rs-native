@@ -2383,27 +2383,30 @@ pub(crate) unsafe fn get_element_node(element: *mut Element) -> *mut Element {
 }
 
 // ufbx.c:19047-19083 `ufbxi_fetch_dst_elements`
+//
+// C's `void *p_dst_list` is typed here as the element-ref list header every
+// call site passes (C: `ufbx_element_list *list = (ufbx_element_list*)p_dst_list;`),
+// and the nullable `const char *prop` as `Option<&[u8]>` (see
+// `find_dst_connections`).
+//
+// # Safety
+// `element` heads a live, arena-owned `ufbx_element` whose provenance spans the
+// ENCLOSING element struct: with `search_node` the walk reaches
+// `ufbxi_get_element_node`, which reads `ufbx_node` fields past
+// `size_of::<Element>()`, so a pointer derived from a header-only
+// `&View<Element>` may not address them.
 #[inline(never)]
 pub(crate) unsafe fn fetch_dst_elements(
     uc: &Context,
-    p_dst_list: *mut c_void,
+    p_dst_list: &RefListView<Element>,
     element: *mut Element,
     search_node: bool,
     ignore_duplicates: bool,
-    prop: *const u8,
+    prop: Option<&[u8]>,
     src_type: ElementType,
 ) -> Result<(), Fail> {
     let mut element: *mut Element = element;
     let mut num_elements: usize = 0;
-
-    // SAFETY: `prop` is null or a NUL-terminated interned property name (fn
-    // contract) — the measure and the measured run are that contract; minted
-    // once here as `find_dst_connections`' query span.
-    let prop: Option<&[u8]> = if prop.is_null() {
-        None
-    } else {
-        Some(unsafe { slice_from_ptr(prop, strlen(prop)) })
-    };
 
     loop {
         let conns: List<Connection> = find_dst_connections(
@@ -2472,33 +2475,24 @@ pub(crate) unsafe fn fetch_dst_elements(
         }
     }
 
-    let list: *mut RefList<Element> = p_dst_list as *mut RefList<Element>;
-    // SAFETY: `p_dst_list` is the caller's out-list, which every call site passes
-    // as a `ufbx_*_list` of element refs (C: the `void*` out-parameter of
-    // `ufbxi_fetch_dst_elements`).
-    unsafe {
-        (*list).data = uc
-            .result_view()
+    // C: `ufbx_element_list *list = (ufbx_element_list*)p_dst_list;` — the
+    // cast is the parameter type here.
+    p_dst_list.set_data(
+        uc.result_view()
             .push_pop::<*mut Element>(uc.tmp_stack_view(), num_elements)
-            as *const Ref<Element>;
-        (*list).count = num_elements;
-        ufbxi_check!(uc, !(*list).data.is_null(), "list->data");
-    }
+            as *const Ref<Element>,
+    );
+    p_dst_list.set_count(num_elements);
+    ufbxi_check!(uc, !p_dst_list.data().is_null(), "list->data");
 
     if ignore_duplicates {
-        // C: `ufbxi_for_ptr_list(ufbx_element, p_elem, *list)`
-        // SAFETY: as above.
-        let mut p_elem: *mut *mut Element = unsafe { (*list).data } as *mut *mut Element;
-        // SAFETY: `list` holds the `count`-element run just popped into `result`,
-        // so the one-past-the-end pointer is in range.
-        let p_elem_end: *mut *mut Element = unsafe { add_ptr(p_elem, (*list).count) };
-        while p_elem != p_elem_end {
-            // SAFETY: `p_elem` is inside that run and holds a live element
-            // pointer, whose `element_id` indexes the per-element flag bytes.
-            unsafe { *uc.tmp_element_flag().add((**p_elem).element_id as usize) = 0 };
-            // SAFETY: `p_elem != p_elem_end`, so the advance lands at or before
-            // the one-past-the-end pointer.
-            p_elem = unsafe { p_elem.add(1) };
+        // C: `ufbxi_for_ptr_list(ufbx_element, p_elem, *list)` — indexed here
+        // over the same run of element refs the fetch just wrote.
+        for elem_ix in 0..p_dst_list.count() {
+            let p_elem: &ElementView = p_dst_list.at(elem_ix);
+            // SAFETY: `tmp_element_flag` is a byte per scene element and the
+            // listed element's `element_id` indexes the scene's element array.
+            unsafe { *uc.tmp_element_flag().add(p_elem.element_id() as usize) = 0 };
         }
     }
 
@@ -8571,17 +8565,18 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
                 .set_data(node.attrib_ptr() as *const Ref<Element>);
         }
 
-        // SAFETY: `ufbxi_fetch_dst_elements` fills the list header it is handed
-        // from the destination connections of the element it is handed (fn
-        // contract); both are projections of this node's own view.
+        // SAFETY: `node.materials_raw()` addresses the viewed element's own list header,
+        // which shares the `ufbx_element_list` layout the fetch writes
+        // through (C: its `void *` out-parameter); `node.element_raw()` addresses
+        // that element's header with whole-struct provenance.
         unsafe {
             fetch_dst_elements(
                 uc,
-                node.materials_raw() as *mut c_void,
+                RefListView::<Element>::from_ptr(node.materials_raw() as *mut RefList<Element>),
                 node.element_raw(),
                 false,
                 false,
-                ptr::null(),
+                None,
                 ElementType::Material,
             )
         }?;
@@ -8739,17 +8734,18 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
     let scene_skin_deformers: &RefListView<SkinDeformer> = uc.scene_view().skin_deformers_view();
     for skin_ix in 0..scene_skin_deformers.count() {
         let skin_view: &View<SkinDeformer> = scene_skin_deformers.at(skin_ix);
-        // SAFETY: `ufbxi_fetch_dst_elements` fills the list header it is handed
-        // from the destination connections of the element it is handed (fn
-        // contract); both are projections of this deformer's own view.
+        // SAFETY: `skin_view.clusters_raw()` addresses the viewed element's own list header,
+        // which shares the `ufbx_element_list` layout the fetch writes
+        // through (C: its `void *` out-parameter); `skin_view.element_raw()` addresses
+        // that element's header with whole-struct provenance.
         unsafe {
             fetch_dst_elements(
                 uc,
-                skin_view.clusters_raw() as *mut c_void,
+                RefListView::<Element>::from_ptr(skin_view.clusters_raw() as *mut RefList<Element>),
                 skin_view.element_raw(),
                 false,
                 true,
-                ptr::null(),
+                None,
                 ElementType::SkinCluster,
             )
         }?;
@@ -8964,17 +8960,18 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
     let scene_blend_deformers: &RefListView<BlendDeformer> = uc.scene_view().blend_deformers_view();
     for blend_ix in 0..scene_blend_deformers.count() {
         let blend: &View<BlendDeformer> = scene_blend_deformers.at(blend_ix);
-        // SAFETY: `ufbxi_fetch_dst_elements` fills the list header it is handed
-        // from the destination connections of the element it is handed (fn
-        // contract); both are projections of this deformer's own view.
+        // SAFETY: `blend.channels_raw()` addresses the viewed element's own list header,
+        // which shares the `ufbx_element_list` layout the fetch writes
+        // through (C: its `void *` out-parameter); `blend.element_raw()` addresses
+        // that element's header with whole-struct provenance.
         unsafe {
             fetch_dst_elements(
                 uc,
-                blend.channels_raw() as *mut c_void,
+                RefListView::<Element>::from_ptr(blend.channels_raw() as *mut RefList<Element>),
                 blend.element_raw(),
                 false,
                 true,
-                ptr::null(),
+                None,
                 ElementType::BlendChannel,
             )
         }?;
@@ -9474,40 +9471,54 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
             }
 
             // Fetch deformers
-            // SAFETY: the projections address the viewed mesh's own
-            // `skin_deformers` list header and element header.
+            // SAFETY: `mesh.skin_deformers_raw()` addresses the viewed element's own list header,
+            // which shares the `ufbx_element_list` layout the fetch writes
+            // through (C: its `void *` out-parameter); `mesh.element_raw()` addresses
+            // that element's header with whole-struct provenance.
             unsafe {
                 fetch_dst_elements(
                     uc,
-                    mesh.skin_deformers_raw() as *mut c_void,
+                    RefListView::<Element>::from_ptr(
+                        mesh.skin_deformers_raw() as *mut RefList<Element>
+                    ),
                     mesh.element_raw(),
                     search_node,
                     true,
-                    ptr::null(),
+                    None,
                     ElementType::SkinDeformer,
                 )
             }?;
-            // SAFETY: as above, for its own `blend_deformers` list.
+            // SAFETY: `mesh.blend_deformers_raw()` addresses the viewed element's own list header,
+            // which shares the `ufbx_element_list` layout the fetch writes
+            // through (C: its `void *` out-parameter); `mesh.element_raw()` addresses
+            // that element's header with whole-struct provenance.
             unsafe {
                 fetch_dst_elements(
                     uc,
-                    mesh.blend_deformers_raw() as *mut c_void,
+                    RefListView::<Element>::from_ptr(
+                        mesh.blend_deformers_raw() as *mut RefList<Element>
+                    ),
                     mesh.element_raw(),
                     search_node,
                     true,
-                    ptr::null(),
+                    None,
                     ElementType::BlendDeformer,
                 )
             }?;
-            // SAFETY: as above, for its own `cache_deformers` list.
+            // SAFETY: `mesh.cache_deformers_raw()` addresses the viewed element's own list header,
+            // which shares the `ufbx_element_list` layout the fetch writes
+            // through (C: its `void *` out-parameter); `mesh.element_raw()` addresses
+            // that element's header with whole-struct provenance.
             unsafe {
                 fetch_dst_elements(
                     uc,
-                    mesh.cache_deformers_raw() as *mut c_void,
+                    RefListView::<Element>::from_ptr(
+                        mesh.cache_deformers_raw() as *mut RefList<Element>
+                    ),
                     mesh.element_raw(),
                     search_node,
                     true,
-                    ptr::null(),
+                    None,
                     ElementType::CacheDeformer,
                 )
             }?;
@@ -9599,16 +9610,18 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
     let anim_stacks: &RefListView<AnimStack> = uc.scene_view().anim_stacks_view();
     for stack_ix in 0..anim_stacks.count() {
         let stack: &AnimStackView = anim_stacks.at(stack_ix);
-        // SAFETY: the projections address the viewed anim stack's own `layers`
-        // list header and element header.
+        // SAFETY: `stack.layers_raw()` addresses the viewed element's own list header,
+        // which shares the `ufbx_element_list` layout the fetch writes
+        // through (C: its `void *` out-parameter); `stack.element_raw()` addresses
+        // that element's header with whole-struct provenance.
         unsafe {
             fetch_dst_elements(
                 uc,
-                stack.layers_raw() as *mut c_void,
+                RefListView::<Element>::from_ptr(stack.layers_raw() as *mut RefList<Element>),
                 stack.element_raw(),
                 false,
                 true,
-                ptr::null(),
+                None,
                 ElementType::AnimLayer,
             )
         }?;
@@ -9636,16 +9649,18 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
         // `ufbxi_push_anim` copies from), never from the element view.
         let p_layer: *mut *mut AnimLayer =
             (anim_layers.data() as *mut *mut AnimLayer).wrapping_add(layer_ix);
-        // SAFETY: the projections address the viewed layer's own `anim_values`
-        // list header and element header.
+        // SAFETY: `layer.anim_values_raw()` addresses the viewed element's own list header,
+        // which shares the `ufbx_element_list` layout the fetch writes
+        // through (C: its `void *` out-parameter); `layer.element_raw()` addresses
+        // that element's header with whole-struct provenance.
         unsafe {
             fetch_dst_elements(
                 uc,
-                layer.anim_values_raw() as *mut c_void,
+                RefListView::<Element>::from_ptr(layer.anim_values_raw() as *mut RefList<Element>),
                 layer.element_raw(),
                 false,
                 true,
-                ptr::null(),
+                None,
                 ElementType::AnimValue,
             )
         }?;
@@ -9860,16 +9875,18 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
     let shaders: &RefListView<Shader> = uc.scene_view().shaders_view();
     for shader_ix in 0..shaders.count() {
         let shader: &ShaderView = shaders.at(shader_ix);
-        // SAFETY: the projections address the viewed shader's own `bindings`
-        // list header and element header.
+        // SAFETY: `shader.bindings_raw()` addresses the viewed element's own list header,
+        // which shares the `ufbx_element_list` layout the fetch writes
+        // through (C: its `void *` out-parameter); `shader.element_raw()` addresses
+        // that element's header with whole-struct provenance.
         unsafe {
             fetch_dst_elements(
                 uc,
-                shader.bindings_raw() as *mut c_void,
+                RefListView::<Element>::from_ptr(shader.bindings_raw() as *mut RefList<Element>),
                 shader.element_raw(),
                 false,
                 false,
-                ptr::null(),
+                None,
                 ElementType::ShaderBinding,
             )
         }?;
@@ -9993,18 +10010,18 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
             // writes both fields before the first read.
             let mut textures_storage = MaybeUninit::<RefList<Texture>>::uninit();
             let textures: *mut RefList<Texture> = textures_storage.as_mut_ptr();
-            // SAFETY: `textures_storage` is a live local, so `textures` addresses
-            // writable storage for one `ufbx_texture_list`, which
-            // `fetch_dst_elements` writes in full; `element_raw()` addresses the
-            // viewed mesh's own element header.
+            // SAFETY: `textures` addresses a live local `ufbx_texture_list`, which
+            // shares the `ufbx_element_list` layout the fetch writes in full (C:
+            // its `void *` out-parameter); `mesh.element_raw()` addresses the viewed mesh's
+            // element header with whole-mesh provenance.
             unsafe {
                 fetch_dst_elements(
                     uc,
-                    textures as *mut c_void,
+                    RefListView::<Element>::from_ptr(textures as *mut RefList<Element>),
                     mesh.element_raw(),
                     true,
                     false,
-                    ptr::null(),
+                    None,
                     ElementType::Texture,
                 )
             }?;
@@ -10406,16 +10423,18 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
     let scene_display_layers: &RefListView<DisplayLayer> = uc.scene_view().display_layers_view();
     for layer_ix in 0..scene_display_layers.count() {
         let layer: &DisplayLayerView = scene_display_layers.at(layer_ix);
-        // SAFETY: the projections address the viewed display layer's own `nodes`
-        // list header and element header.
+        // SAFETY: `layer.nodes_raw()` addresses the viewed element's own list header,
+        // which shares the `ufbx_element_list` layout the fetch writes
+        // through (C: its `void *` out-parameter); `layer.element_raw()` addresses
+        // that element's header with whole-struct provenance.
         unsafe {
             fetch_dst_elements(
                 uc,
-                layer.nodes_raw() as *mut c_void,
+                RefListView::<Element>::from_ptr(layer.nodes_raw() as *mut RefList<Element>),
                 layer.element_raw(),
                 false,
                 true,
-                ptr::null(),
+                None,
                 ElementType::Node,
             )
         }?;
@@ -10425,16 +10444,18 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
     let scene_selection_sets: &RefListView<SelectionSet> = uc.scene_view().selection_sets_view();
     for set_ix in 0..scene_selection_sets.count() {
         let set: &View<SelectionSet> = scene_selection_sets.at(set_ix);
-        // SAFETY: the projections address the viewed selection set's own `nodes`
-        // list header and element header.
+        // SAFETY: `set.nodes_raw()` addresses the viewed element's own list header,
+        // which shares the `ufbx_element_list` layout the fetch writes
+        // through (C: its `void *` out-parameter); `set.element_raw()` addresses
+        // that element's header with whole-struct provenance.
         unsafe {
             fetch_dst_elements(
                 uc,
-                set.nodes_raw() as *mut c_void,
+                RefListView::<Element>::from_ptr(set.nodes_raw() as *mut RefList<Element>),
                 set.element_raw(),
                 false,
                 true,
-                ptr::null(),
+                None,
                 ElementType::SelectionNode,
             )
         }?;
@@ -10586,16 +10607,18 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
     let scene_audio_layers: &RefListView<AudioLayer> = uc.scene_view().audio_layers_view();
     for layer_ix in 0..scene_audio_layers.count() {
         let layer: &View<AudioLayer> = scene_audio_layers.at(layer_ix);
-        // SAFETY: the projections address the viewed audio layer's own `clips` list
-        // header and element header.
+        // SAFETY: `layer.clips_raw()` addresses the viewed element's own list header,
+        // which shares the `ufbx_element_list` layout the fetch writes
+        // through (C: its `void *` out-parameter); `layer.element_raw()` addresses
+        // that element's header with whole-struct provenance.
         unsafe {
             fetch_dst_elements(
                 uc,
-                layer.clips_raw() as *mut c_void,
+                RefListView::<Element>::from_ptr(layer.clips_raw() as *mut RefList<Element>),
                 layer.element_raw(),
                 false,
                 true,
-                ptr::null(),
+                None,
                 ElementType::AudioClip,
             )
         }?;
