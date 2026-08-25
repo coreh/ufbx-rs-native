@@ -2524,11 +2524,12 @@ pub(crate) unsafe fn fetch_dst_elements(
 // `find_src_connections`).
 //
 // # Safety
-// `element` heads a live, arena-owned `ufbx_element` whose provenance spans the
-// ENCLOSING element struct: with `search_node` the walk reaches
-// `ufbxi_get_element_node`, which reads `ufbx_node` fields past
+// `element` heads a live, arena-owned `ufbx_element`. With `search_node` set,
+// its provenance must additionally span the ENCLOSING element struct: the walk
+// then reaches `ufbxi_get_element_node`, which reads `ufbx_node` fields past
 // `size_of::<Element>()`, so a pointer derived from a header-only
-// `&View<Element>` may not address them.
+// `&View<Element>` may not address them. With `search_node` clear the walk
+// stays within the `ufbx_element` header, where header-only provenance suffices.
 #[inline(never)]
 pub(crate) unsafe fn fetch_src_elements(
     uc: &Context,
@@ -8703,8 +8704,10 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
         // C: `ufbxi_for_ptr_list(ufbx_element, p_elem, uc->scene.elements_by_type[type])`
         for elem_ix in 0..typed_elems.count() {
             let elem: &ElementView = typed_elems.at(elem_ix);
-            // SAFETY: `elem.get()` addresses that element's header with
-            // whole-struct provenance.
+            // SAFETY: `elem.get()` addresses that element's live header, minted
+            // from the scene's element-ref list; `search_node` is `false` here
+            // (C: ufbx.c:21832), so the walk never leaves the `ufbx_element`
+            // header and the view's header-only provenance suffices.
             unsafe {
                 fetch_src_elements(
                     uc,
