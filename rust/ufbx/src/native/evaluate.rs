@@ -129,7 +129,7 @@ use crate::native::view::{
 use crate::native::view::{Const, Mode, Mut, View};
 use crate::native::warnings::{pop_warnings, ufbxi_warnf};
 use crate::prelude::as_f64;
-use crate::prelude::{List, OpenFileContext, Real, Ref, String};
+use crate::prelude::{List, OpenFileContext, RawStringView, Real, Ref, String};
 
 // -- Curve evaluation (ufbx.c:25012)
 
@@ -516,34 +516,30 @@ pub(crate) fn evaluate_skinning(
 
 // ufbx.c:25171-25185 `ufbxi_fixup_opts_string`
 #[inline(never)]
-pub(crate) unsafe fn fixup_opts_string(
-    uc: &Context,
-    str: *mut String,
-    push: bool,
-) -> Result<(), Fail> {
-    // SAFETY (every access to `*str` in this fn): `str` is the caller's live
-    // `ufbx_string` slot — the raw-pointer contract of this `unsafe fn`.
-    if unsafe { (*str).length } > 0 {
-        if unsafe { (*str).length } == usize::MAX {
+pub(crate) fn fixup_opts_string(uc: &Context, str: &RawStringView, push: bool) -> Result<(), Fail> {
+    if str.length() > 0 {
+        if str.length() == usize::MAX {
             // C: `str->length = str->data ? strlen(str->data) : 0;`
-            unsafe {
-                (*str).length = if !(*str).data.is_null() {
-                    // SAFETY: `str->data` is non-null (checked) and, with
-                    // `length == SIZE_MAX`, the caller declares it a
-                    // NUL-terminated C string.
-                    strlen((*str).data)
-                } else {
-                    0
-                }
-            };
+            str.set_length(if !str.data().is_null() {
+                // SAFETY: `str->data` is non-null (checked) and, with
+                // `length == SIZE_MAX`, the options author declares it a
+                // NUL-terminated C string.
+                unsafe { strlen(str.data()) }
+            } else {
+                0
+            });
         }
         if push {
-            // SAFETY: `uc`'s string pool is live for the borrow and `str` is the
-            // caller's live string slot, which the pool rewrites in place.
-            unsafe { push_string_place_str(uc.string_pool_mut_ptr(), str, false)? };
+            // SAFETY: `uc`'s string pool is live for the borrow, and
+            // `str.get()` addresses the live `ufbx_string` this view borrows
+            // (`RawString` and `String` are the same `#[repr(C)]` pair of
+            // `data`/`length` fields), which the pool rewrites in place.
+            unsafe {
+                push_string_place_str(uc.string_pool_mut_ptr(), str.get() as *mut String, false)?
+            };
         }
     } else {
-        unsafe { (*str).data = EMPTY_CHAR.as_ptr() };
+        str.set_data(EMPTY_CHAR.as_ptr());
     }
 
     Ok(())
@@ -811,52 +807,27 @@ pub(crate) unsafe fn load_imp(uc: &Context) -> Result<(), Fail> {
     // (checklist #13; test `error_format_long` asserts `stack_size >= 2`).
     ufbxi_check!(
         uc,
-        // SAFETY: the string is `uc`'s own `opts.filename` field, live for the
-        // `&Context` borrow — `fixup_opts_string`'s raw-pointer contract.
-        unsafe { fixup_opts_string(uc, uc.opts_view().filename_mut_ptr() as *mut String, false) }
-            .is_ok(),
+        fixup_opts_string(uc, uc.opts_view().filename_view(), false).is_ok(),
         "ufbxi_fixup_opts_string(uc, &uc->opts.filename, false)"
     );
     ufbxi_check!(
         uc,
-        // SAFETY: the string is `uc`'s own `opts.obj_mtl_path` field, live for
-        // the `&Context` borrow.
-        unsafe {
-            fixup_opts_string(
-                uc,
-                uc.opts_view().obj_mtl_path_mut_ptr() as *mut String,
-                true,
-            )
-        }
-        .is_ok(),
+        fixup_opts_string(uc, uc.opts_view().obj_mtl_path_view(), true).is_ok(),
         "ufbxi_fixup_opts_string(uc, &uc->opts.obj_mtl_path, true)"
     );
     ufbxi_check!(
         uc,
-        // SAFETY: the string is `uc`'s own `opts.geometry_transform_helper_name`
-        // field, live for the `&Context` borrow.
-        unsafe {
-            fixup_opts_string(
-                uc,
-                uc.opts_view().geometry_transform_helper_name_mut_ptr() as *mut String,
-                true,
-            )
-        }
+        fixup_opts_string(
+            uc,
+            uc.opts_view().geometry_transform_helper_name_view(),
+            true
+        )
         .is_ok(),
         "ufbxi_fixup_opts_string(uc, &uc->opts.geometry_transform_helper_name, true)"
     );
     ufbxi_check!(
         uc,
-        // SAFETY: the string is `uc`'s own `opts.scale_helper_name` field, live
-        // for the `&Context` borrow.
-        unsafe {
-            fixup_opts_string(
-                uc,
-                uc.opts_view().scale_helper_name_mut_ptr() as *mut String,
-                true,
-            )
-        }
-        .is_ok(),
+        fixup_opts_string(uc, uc.opts_view().scale_helper_name_view(), true).is_ok(),
         "ufbxi_fixup_opts_string(uc, &uc->opts.scale_helper_name, true)"
     );
 

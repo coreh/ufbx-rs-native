@@ -1652,26 +1652,6 @@ impl LoadOptsView {
     }
 
     #[inline(always)]
-    pub(crate) fn filename_mut_ptr(&self) -> *mut crate::prelude::RawString {
-        view_raw_mut!(self, filename)
-    }
-
-    #[inline(always)]
-    pub(crate) fn obj_mtl_path_mut_ptr(&self) -> *mut crate::prelude::RawString {
-        view_raw_mut!(self, obj_mtl_path)
-    }
-
-    #[inline(always)]
-    pub(crate) fn geometry_transform_helper_name_mut_ptr(&self) -> *mut crate::prelude::RawString {
-        view_raw_mut!(self, geometry_transform_helper_name)
-    }
-
-    #[inline(always)]
-    pub(crate) fn scale_helper_name_mut_ptr(&self) -> *mut crate::prelude::RawString {
-        view_raw_mut!(self, scale_helper_name)
-    }
-
-    #[inline(always)]
     pub(crate) fn allow_empty_faces(&self) -> bool {
         view_read!(self, allow_empty_faces)
     }
