@@ -6688,16 +6688,12 @@ pub(crate) fn fetch_file_textures(uc: &Context) -> Result<(), Fail> {
 // ufbx.c:21009-21016 `ufbxi_get_geometry_transform_node`
 #[inline(never)]
 #[must_use]
-pub(crate) unsafe fn get_geometry_transform_node(element: *mut Element) -> *mut Node {
-    // SAFETY: `element` points to a live, initialized `ufbx_element` in the arena
-    // — the attribute whose instances are being inspected (fn contract) — so its
-    // pointer anchors an `ElementView`.
-    let element_view: &ElementView = unsafe { ElementView::from_ptr(element) };
-    if element_view.instances().count == 1 {
+pub(crate) fn get_geometry_transform_node(element: &ElementView) -> *mut Node {
+    if element.instances().count == 1 {
         // SAFETY: `count == 1`, so index `0` is in bounds of the element's own
         // instance run; its entries are non-nullable node references, which
         // `ref_ptr` resolves to a live scene `Node`.
-        let node: *mut Node = unsafe { ref_ptr(element_view.instances().data.add(0)) };
+        let node: *mut Node = unsafe { ref_ptr(element.instances().data.add(0)) };
         // SAFETY: `node` is that live scene node.
         if unsafe { (*node).has_geometry_transform } {
             return node;
@@ -7217,7 +7213,11 @@ pub(crate) fn modify_geometry<'a>(uc: &'a Context) -> Result<(), Fail> {
                 flip_winding(uc, mesh)?;
             }
 
-            let geo_node: *mut Node = get_geometry_transform_node(mesh.element_raw());
+            // SAFETY: `mesh.element_raw()` addresses that live arena mesh's own
+            // element header with whole-struct provenance, which anchors an
+            // `ElementView`.
+            let geo_node: *mut Node =
+                get_geometry_transform_node(ElementView::from_ptr(mesh.element_raw()));
             if do_geometry_transforms && !geo_node.is_null() {
                 let mut tangent_matrix: Matrix = (*geo_node).geometry_to_node;
                 tangent_matrix.m03 = 0.0;
@@ -7290,7 +7290,10 @@ pub(crate) fn modify_geometry<'a>(uc: &'a Context) -> Result<(), Fail> {
                 );
             }
 
-            let geo_node: *mut Node = get_geometry_transform_node(&raw mut (*curve).element);
+            // SAFETY: `curve` is that live arena curve, so `&raw mut (*curve).element`
+            // addresses its own element header, which anchors an `ElementView`.
+            let geo_node: *mut Node =
+                get_geometry_transform_node(ElementView::from_ptr(&raw mut (*curve).element));
             if do_geometry_transforms && !geo_node.is_null() {
                 transform_vec3_list(
                     &raw const (*curve).control_points as *const c_void,
@@ -7330,7 +7333,10 @@ pub(crate) fn modify_geometry<'a>(uc: &'a Context) -> Result<(), Fail> {
                 );
             }
 
-            let geo_node: *mut Node = get_geometry_transform_node(&raw mut (*curve).element);
+            // SAFETY: `curve` is that live arena curve, so `&raw mut (*curve).element`
+            // addresses its own element header, which anchors an `ElementView`.
+            let geo_node: *mut Node =
+                get_geometry_transform_node(ElementView::from_ptr(&raw mut (*curve).element));
             if do_geometry_transforms && !geo_node.is_null() {
                 transform_vec3_list(
                     &raw const (*curve).control_points as *const c_void,
@@ -7371,7 +7377,11 @@ pub(crate) fn modify_geometry<'a>(uc: &'a Context) -> Result<(), Fail> {
                 );
             }
 
-            let geo_node: *mut Node = get_geometry_transform_node(&raw mut (*surface).element);
+            // SAFETY: `surface` is that live arena surface, so
+            // `&raw mut (*surface).element` addresses its own element header, which
+            // anchors an `ElementView`.
+            let geo_node: *mut Node =
+                get_geometry_transform_node(ElementView::from_ptr(&raw mut (*surface).element));
             if do_geometry_transforms && !geo_node.is_null() {
                 transform_vec3_list(
                     &raw const (*surface).control_points as *const c_void,
