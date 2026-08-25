@@ -10849,31 +10849,38 @@ pub(crate) fn mul_inv_rotate(t: &mut Transform, v: Vec3, order: RotationOrder) {
 // C indexes the `ufbx_vec3` value union's `ufbx_real v[3]` view; the generated
 // struct keeps only `x`/`y`/`z`, so the index is pointer arithmetic from the
 // struct base (same device as `ufbxi_mirror_vec3_list` above).
+//
+// # Safety
+//
+// `axis` must be one of `X`/`Y`/`Z`: the C indexes `v[axis - 1]`, which reads
+// out of bounds for `UFBX_MIRROR_AXIS_NONE`. The parameter type admits `None`,
+// so the obligation stays with the caller (C states it as `ufbxi_dev_assert`).
 #[inline(always)]
-pub(crate) unsafe fn mirror_translation(p_vec: *mut Vec3, axis: MirrorAxis) {
+pub(crate) unsafe fn mirror_translation(p_vec: &mut Vec3, axis: MirrorAxis) {
     // C: `ufbxi_dev_assert(axis);` — enum truthiness.
     ufbxi_dev_assert!(axis != MirrorAxis::None);
-    let v: *mut Real = p_vec as *mut Real;
+    let v: *mut Real = ptr::from_mut(p_vec).cast::<Real>();
     // C: `axis - 1` — the enum is promoted to `int` before the subtraction.
     let i: usize = (axis as i32 - 1) as usize;
-    // SAFETY: `p_vec` points to a live, initialized, writable `ufbx_vec3` (fn
-    // contract), which is three consecutive `ufbx_real`s, and `axis` is one of
-    // `X`/`Y`/`Z` (fn contract, asserted above) so `i = axis - 1` is in `0..3`.
+    // SAFETY: `p_vec` borrows a live, initialized, writable `ufbx_vec3`, which
+    // is three consecutive `ufbx_real`s, and `axis` is one of `X`/`Y`/`Z` (fn
+    // contract, asserted above) so `i = axis - 1` is in `0..3`.
     unsafe { *v.add(i) = -*v.add(i) };
 }
 
 // ufbx.c:22751-22756 `ufbxi_mirror_rotation`
-// Same `ufbx_quat.v[4]` union view as `ufbxi_mirror_translation` above.
+// Same `ufbx_quat.v[4]` union view as `ufbxi_mirror_translation` above. Every
+// `ufbx_mirror_axis` value keeps `axis % 3` and `(axis + 1) % 3` inside the
+// quaternion's four reals, so the axis carries no safety obligation here.
 #[inline(always)]
-pub(crate) unsafe fn mirror_rotation(p_quat: *mut Quat, axis: MirrorAxis) {
+pub(crate) fn mirror_rotation(p_quat: &mut Quat, axis: MirrorAxis) {
     // C: `ufbxi_dev_assert(axis);` — enum truthiness.
     ufbxi_dev_assert!(axis != MirrorAxis::None);
-    let v: *mut Real = p_quat as *mut Real;
+    let v: *mut Real = ptr::from_mut(p_quat).cast::<Real>();
     // C: `axis % 3` / `(axis + 1) % 3` — the enum is promoted to `int` first.
     let i0: usize = (axis as i32 % 3) as usize;
-    // SAFETY: `p_quat` points to a live, initialized, writable `ufbx_quat` (fn
-    // contract), which is four consecutive `ufbx_real`s, and `i0 = axis % 3` is
-    // in `0..3`.
+    // SAFETY: `p_quat` borrows a live, initialized, writable `ufbx_quat`, which
+    // is four consecutive `ufbx_real`s, and `i0 = axis % 3` is in `0..3`.
     unsafe { *v.add(i0) = -*v.add(i0) };
     let i1: usize = ((axis as i32 + 1) % 3) as usize;
     // SAFETY: as above; `i1 = (axis + 1) % 3` is in `0..3`.
@@ -10924,13 +10931,12 @@ pub(crate) unsafe fn get_geometry_transform(props: &PropsView, node: *mut Node) 
         }
     }
 
-    // SAFETY: `node` is live (see above); `&mut t.translation` / `&mut t.rotation`
-    // address live locals, and the branch condition established that the axis is
-    // not `None`.
+    // SAFETY: `node` is live (see above); the branch condition established that
+    // the axis is not `None`, which is `ufbxi_mirror_translation`'s contract.
     unsafe {
         if (*node).adjust_mirror_axis != MirrorAxis::None {
-            mirror_translation(&raw mut t.translation, (*node).adjust_mirror_axis);
-            mirror_rotation(&raw mut t.rotation, (*node).adjust_mirror_axis);
+            mirror_translation(&mut t.translation, (*node).adjust_mirror_axis);
+            mirror_rotation(&mut t.rotation, (*node).adjust_mirror_axis);
         }
     }
 
@@ -10996,12 +11002,10 @@ pub(crate) unsafe fn get_rotation<M: Mode>(
     }
 
     // C: `if (node->adjust_mirror_axis)` — enum truthiness.
-    // SAFETY: `node` is live (see above); `&mut t.rotation` addresses a live
-    // local `ufbx_quat`, and the branch condition established that the axis is
-    // not `None`.
+    // SAFETY: `node` is live (see above).
     unsafe {
         if (*node).adjust_mirror_axis != MirrorAxis::None {
-            mirror_rotation(&raw mut t.rotation, (*node).adjust_mirror_axis);
+            mirror_rotation(&mut t.rotation, (*node).adjust_mirror_axis);
         }
     }
 
@@ -11151,13 +11155,12 @@ pub(crate) unsafe fn get_transform<M: Mode>(
     }
 
     // C: `if (node->adjust_mirror_axis)` — enum truthiness.
-    // SAFETY: `node` is live (see above); `&mut t.translation` / `&mut t.rotation`
-    // address live locals, and the branch condition established that the axis is
-    // not `None`.
+    // SAFETY: `node` is live (see above); the branch condition established that
+    // the axis is not `None`, which is `ufbxi_mirror_translation`'s contract.
     unsafe {
         if (*node).adjust_mirror_axis != MirrorAxis::None {
-            mirror_translation(&raw mut t.translation, (*node).adjust_mirror_axis);
-            mirror_rotation(&raw mut t.rotation, (*node).adjust_mirror_axis);
+            mirror_translation(&mut t.translation, (*node).adjust_mirror_axis);
+            mirror_rotation(&mut t.rotation, (*node).adjust_mirror_axis);
         }
     }
 
