@@ -392,7 +392,10 @@ pub(crate) unsafe fn realloc_size(
     if n == 0 {
         // SAFETY: `get()` is the view's own live, unmoved `Allocator` (its
         // `from_ptr` mint invariant); `old_ptr`/`old_n` describe a live block
-        // from this same allocator (this fn's `old_ptr` contract).
+        // from this same allocator (this fn's `old_ptr` contract). `ator` stays
+        // live across this call, which is why `free_size` does its
+        // `current_size` bookkeeping through a raw field place: a
+        // `&mut Allocator` there would pop this view's tag.
         unsafe { free_size(ator.get(), size, old_ptr, old_n) };
         return core::ptr::null_mut();
     }
@@ -509,10 +512,15 @@ pub(crate) unsafe fn free_size(ator: *mut Allocator, size: usize, ptr: *mut c_vo
     // The old values have been checked by a previous allocate call
     ufbx_assert!(!does_overflow(total, size, n));
     // SAFETY: `ator` points at a live `Allocator` — the raw-pointer contract of
-    // this `unsafe fn`; the reborrow is the only reference to it here.
-    let a = unsafe { &mut *ator };
-    ufbx_assert!(total <= a.current_size);
-    a.current_size -= total;
+    // this `unsafe fn`. The size bookkeeping goes through a raw field place
+    // rather than a `&mut Allocator`: `realloc_size` calls this fn while its
+    // caller's `AllocatorView` over the same allocator is live, and a `&mut`
+    // retag here would pop that view's tag for the rest of the call.
+    let p_current_size = unsafe { core::ptr::addr_of_mut!((*ator).current_size) };
+    // SAFETY: `p_current_size` is that live field place.
+    ufbx_assert!(total <= unsafe { *p_current_size });
+    // SAFETY: as above; mirrors C `ator->current_size -= total`.
+    unsafe { *p_current_size -= total };
 
     // SAFETY: live `Allocator` per the fn contract; every callback-slot and
     // `user` read in this dispatch chain goes through it, and each callback is
