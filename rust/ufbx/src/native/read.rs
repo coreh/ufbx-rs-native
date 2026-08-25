@@ -4940,15 +4940,15 @@ pub(crate) fn read_nurbs_topology(form: &[u8]) -> NurbsTopology {
 
 // ufbx.c:13825-13853 `ufbxi_read_nurbs_curve`
 #[inline(never)]
-pub(crate) unsafe fn read_nurbs_curve(
+pub(crate) fn read_nurbs_curve(
     uc: &Context,
     node: &NodeView,
-    info: *mut ElementInfo,
+    info: &ElementInfoView,
 ) -> Result<(), Fail> {
-    // SAFETY: `info` is the caller's live `ufbxi_element_info` and `NurbsCurve`
-    // is the element struct for `ElementType::NurbsCurve`.
+    // SAFETY: `info` views the caller's live `ufbxi_element_info` and
+    // `NurbsCurve` is the element struct for `ElementType::NurbsCurve`.
     let nurbs: *mut NurbsCurve =
-        unsafe { push_element::<NurbsCurve>(uc, info, ElementType::NurbsCurve) };
+        unsafe { push_element::<NurbsCurve>(uc, info.get(), ElementType::NurbsCurve) };
     ufbxi_check!(uc, !nurbs.is_null(), "nurbs");
 
     let mut dimension: i32 = 3;
@@ -7187,7 +7187,14 @@ pub(crate) unsafe fn read_synthetic_attribute(
             if find_child(node, sp::KnotVector.as_ptr()).is_none() {
                 return Ok(());
             }
-            read_nurbs_curve(uc, node, &raw mut attrib_info)?;
+            // SAFETY: `attrib_info` is this frame's own `ufbxi_element_info`
+            // local — write-capable provenance, live and unmoved across the
+            // call.
+            read_nurbs_curve(
+                uc,
+                node,
+                View::<ElementInfo, Mut>::from_ptr(&raw mut attrib_info),
+            )?;
         } else if sub_type == sp::NurbsSurface.as_ptr() {
             if find_child(node, sp::KnotVectorU.as_ptr()).is_none() {
                 return Ok(());
@@ -7483,7 +7490,9 @@ pub(crate) fn read_object(uc: &Context, node: &NodeView) -> Result<(), Fail> {
                 // write-capable provenance, live and unmoved across the call.
                 read_shape(uc, node, View::<ElementInfo, Mut>::from_ptr(&raw mut info))?;
             } else if sub_type == sp::NurbsCurve.as_ptr() {
-                read_nurbs_curve(uc, node, &raw mut info)?;
+                // SAFETY: `info` is this frame's own `ufbxi_element_info` local —
+                // write-capable provenance, live and unmoved across the call.
+                read_nurbs_curve(uc, node, View::<ElementInfo, Mut>::from_ptr(&raw mut info))?;
             } else if sub_type == sp::NurbsSurface.as_ptr() {
                 read_nurbs_surface(uc, node, &raw mut info)?;
             } else if sub_type == sp::Line.as_ptr() {
