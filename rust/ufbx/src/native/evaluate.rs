@@ -3121,6 +3121,16 @@ pub(crate) unsafe fn translate_maps(ec: &EvalContext, maps: *mut MaterialMap, co
 // `ufbx_anim*` the slot HOLDS addresses a live source-scene `ufbx_anim`, which
 // `push_copy_raw` reads a whole struct through and which no pointer type
 // expresses.
+//
+// The slot type is C's `ufbx_anim **p_anim` verbatim, so callers whose field is
+// the niche-restricted `Ref<Anim>` (`#[repr(transparent)]` `NonNull<Anim>`) pun
+// its slot as `ScalarView<*mut Anim>`. Two obligations that pun creates, both
+// discharged here for every caller: the only value this fn ever stores is the
+// pushed copy, checked non-null before the store, so a punned `Ref` slot never
+// receives an invalid (null) value; and the shared `&ScalarView` (a `Cell`)
+// writes through the slot, so callers must hand over a slot in
+// context/arena-owned interior-mutable storage — i.e. one reached through a
+// `Mut` view, never a place whose declared type has no `UnsafeCell`.
 #[cfg(feature = "scene-eval")]
 #[inline(never)]
 pub(crate) unsafe fn translate_anim(
@@ -3301,8 +3311,13 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
             translate_element(ec, ref_ptr(ec.scene_view().root_node_ptr()) as *mut c_void)
                 as *mut UfbxNode;
     }
-    // SAFETY: `anim` is a field of the destination scene struct inside `ec`, so
-    // the pointer addresses a live, write-capable `ufbx_anim*` slot; per the
+    // SAFETY: `anim` is a field of the destination scene struct inside `ec`,
+    // reached through a `Mut` view, so the pointer addresses a live,
+    // write-capable `ufbx_anim*` slot in context-owned interior-mutable storage
+    // — the storage the shared `&ScalarView` (`Cell`) writes through. The
+    // field's declared type is `Ref<Anim>`, so the pun widens a non-null slot
+    // into a nullable one; `translate_anim` only ever stores its non-null-
+    // checked push result, so the slot keeps a valid `Ref`. Per the
     // source-scene premise its byte copy names the source scene's anim —
     // `translate_anim`'s contract.
     unsafe {
@@ -3979,9 +3994,14 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
         // copy still lists source-scene elements — `translate_element_list`'s
         // contract.
         unsafe { translate_element_list(ec, stack.layers_raw() as *mut c_void) }?;
-        // SAFETY: `anim` is that stack's own `ufbx_anim*` field, so the pointer
-        // addresses a live, write-capable slot, whose byte copy still names the
-        // source scene's anim — `translate_anim`'s contract.
+        // SAFETY: `anim` is that stack's own `ufbx_anim*` field, reached through
+        // a `Mut` view, so the pointer addresses a live, write-capable slot in
+        // arena-owned interior-mutable storage — the storage the shared
+        // `&ScalarView` (`Cell`) writes through. The field's declared type is
+        // `Ref<Anim>`, so the pun widens a non-null slot into a nullable one;
+        // `translate_anim` only ever stores its non-null-checked push result, so
+        // the slot keeps a valid `Ref`. Its byte copy still names the source
+        // scene's anim — `translate_anim`'s contract.
         unsafe { translate_anim(ec, &*(stack.anim_raw() as *const ScalarView<*mut Anim>)) }?;
     }
 
@@ -4092,10 +4112,13 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
         pose.bone_poses_view().set_data(bones);
     }
 
-    // SAFETY: `anim` is a field of `ec`'s own live context struct, so the pointer
-    // addresses a live, write-capable `ufbx_anim*` slot holding the anim
-    // `evaluate_scene` resolved out of the source scene — `translate_anim`'s
-    // contract.
+    // SAFETY: `anim` is a field of `ec`'s own live context struct, declared
+    // `*mut Anim` and reached through a `Mut` view, so the pointer addresses a
+    // live, write-capable `ufbx_anim*` slot in context-owned interior-mutable
+    // storage — the storage the shared `&ScalarView` (`Cell`) writes through,
+    // and a nullable slot already, so the reinterpret asserts no validity the
+    // field does not have. It holds the anim `evaluate_scene` resolved out of
+    // the source scene — `translate_anim`'s contract.
     unsafe { translate_anim(ec, &*(ec.anim_mut_ptr() as *const ScalarView<*mut Anim>)) }?;
 
     // C: `ufbxi_for_ptr_list(ufbx_anim_value, p_value, ec->scene.anim_values)`
