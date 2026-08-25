@@ -1180,8 +1180,8 @@ pub(crate) unsafe fn buf_free(buf: &BufView) {
 // clearing a buffer already discards every pointer the push family handed out
 // of it, which is exactly what the ASAN branch below relies on.
 #[inline(never)]
-pub(crate) unsafe fn buf_clear(buf: &BufView) {
-    let buf: *mut Buf = buf.get();
+pub(crate) unsafe fn buf_clear(view: &BufView) {
+    let buf: *mut Buf = view.get();
     // Only unordered or clearable buffers can be cleared
     // SAFETY: `buf` is the view's write-provenance pointer to a `Buf` that is
     // live (the mint) and initialized (this fn's contract); reading its
@@ -1190,13 +1190,13 @@ pub(crate) unsafe fn buf_clear(buf: &BufView) {
 
     // Free the memory if using ASAN
     // SAFETY: `buf` is the live, initialized `Buf` and `(*buf).ator` its live
-    // allocator; reading `huge_size`, then re-minting the `BufView` `buf_free`
-    // takes off that same `Buf`. `buf_free`'s initialization obligation is
-    // this fn's own contract; its last-use obligation is C's own
+    // allocator; reading `huge_size`, then handing `buf_free` this fn's own
+    // parameter view of that same `Buf`. `buf_free`'s initialization
+    // obligation is this fn's own contract; its last-use obligation is C's own
     // clear-with-ASAN path: clearing already discards every pointer into the
     // buffer.
     if unsafe { (*(*buf).ator).huge_size } <= 1 {
-        unsafe { buf_free(BufView::from_ptr(buf)) };
+        unsafe { buf_free(view) };
         return;
     }
 
