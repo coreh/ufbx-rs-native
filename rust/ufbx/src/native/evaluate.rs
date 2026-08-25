@@ -131,7 +131,7 @@ use crate::native::warnings::{pop_warnings, ufbxi_warnf};
 use crate::prelude::as_f64;
 #[cfg(feature = "scene-eval")]
 use crate::prelude::ScalarView;
-use crate::prelude::{List, OpenFileContext, RawStringView, Real, Ref, String};
+use crate::prelude::{List, OpenFileContext, RawStringView, Real, Ref, String, StringView};
 
 // -- Curve evaluation (ufbx.c:25012)
 
@@ -4717,31 +4717,23 @@ pub(crate) unsafe fn check_string(
 
 // ufbx.c:26512-26526 `ufbxi_push_anim_string`
 #[inline(never)]
-pub(crate) unsafe fn push_anim_string(
-    ac: &CreateAnimContext,
-    str_: *mut String,
-) -> Result<(), Fail> {
-    // SAFETY: `str_` points to a live `ufbx_string` slot — this `unsafe fn`'s
-    // contract.
-    let length: usize = unsafe { (*str_).length };
+pub(crate) fn push_anim_string(ac: &CreateAnimContext, str_: &StringView) -> Result<(), Fail> {
+    let length: usize = str_.length();
     if length > 0 {
         let copy: *mut u8 = ac.result_view().push::<u8>(length + 1);
         ufbxi_check_err!(ac.error_view(), !copy.is_null(), "copy");
         // C: `memcpy(copy, str->data, length);`
-        // SAFETY: `str_.data` covers `length` readable bytes and `copy` is the
-        // freshly pushed `length + 1` byte run, a distinct non-overlapping
-        // result-buffer allocation.
-        unsafe { ptr::copy_nonoverlapping((*str_).data, copy, length) };
+        // SAFETY: `str_.data()` covers `length` readable bytes (the view's leaf
+        // discipline) and `copy` is the freshly pushed `length + 1` byte run, a
+        // distinct non-overlapping result-buffer allocation.
+        unsafe { ptr::copy_nonoverlapping(str_.data(), copy, length) };
         // C: `copy[str->length] = '\0';`
-        // SAFETY: `(*str_).length` is `length`, the last slot of the
+        // SAFETY: `str_.length()` is `length`, the last slot of the
         // `length + 1` byte run just pushed.
-        unsafe { *copy.add((*str_).length) = b'\0' };
-        // SAFETY: `str_` is the live string slot, retargeted at the copy.
-        unsafe { (*str_).data = copy };
+        unsafe { *copy.add(str_.length()) = b'\0' };
+        str_.set_data(copy);
     } else {
-        // SAFETY: `str_` is the live string slot; the assert only reads its
-        // `data` pointer.
-        ufbx_assert!(unsafe { (*str_).data } == EMPTY_CHAR.as_ptr());
+        ufbx_assert!(str_.data() == EMPTY_CHAR.as_ptr());
     }
 
     Ok(())
@@ -5006,9 +4998,7 @@ pub(crate) fn create_anim_imp(ac: &CreateAnimContext) -> Result<FinishedImp<Anim
         for over in overs {
             if over.value_str_view().length() > 0 {
                 // C: `ufbxi_check_err(&ac->error, ufbxi_push_anim_string(ac, &over->value_str));`
-                // SAFETY: `push_anim_string`'s contract is a live `ufbx_string`
-                // slot; this is the element view's own `value_str` field.
-                unsafe { push_anim_string(ac, over.value_str_raw())? };
+                push_anim_string(ac, over.value_str_view())?;
             }
 
             // SAFETY: `prev_name` is the empty-string literal or a `prop_name`
@@ -5031,8 +5021,7 @@ pub(crate) fn create_anim_imp(ac: &CreateAnimContext) -> Result<FinishedImp<Anim
             {
                 over.set_prop_name(STRINGS.0[global_str]);
             } else {
-                // SAFETY: as above — the element view's own `prop_name` field.
-                unsafe { push_anim_string(ac, over.prop_name_raw())? };
+                push_anim_string(ac, over.prop_name_view())?;
             }
 
             prev_name = over.prop_name();
