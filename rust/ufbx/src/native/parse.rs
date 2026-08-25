@@ -7027,7 +7027,8 @@ pub(crate) fn parse_toplevel_child_imp(
     if uc.from_ascii() {
         crate::native::parse_ascii::ascii_parse_node(uc, 0, state, &mut end, buf, true)?;
     } else {
-        // SAFETY: as above.
+        // SAFETY: `&raw mut end` is an unaliased local `bool` slot — a valid
+        // `*mut bool` out-flag, the node parser's contract.
         unsafe {
             crate::native::parse_binary::binary_parse_node(uc, 0, state, &raw mut end, buf, true)?
         };
@@ -7073,7 +7074,9 @@ pub(crate) unsafe fn parse_toplevel(uc: &Context, name: *const u8) -> Result<(),
                 false,
             )?;
         } else {
-            // SAFETY: as above.
+            // SAFETY: `&raw mut end` is an unaliased local `bool` slot — a valid
+            // `*mut bool` out-flag, the node parser's contract; the destination
+            // buf is `uc`'s own `tmp`, reached through its view accessor.
             unsafe {
                 crate::native::parse_binary::binary_parse_node(
                     uc,
