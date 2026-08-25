@@ -5167,44 +5167,29 @@ pub(crate) fn add_constraint_prop(
 
 // ufbx.c:20268-20312 `ufbxi_finalize_nurbs_basis`
 #[inline(never)]
-pub(crate) unsafe fn finalize_nurbs_basis(
-    uc: &Context,
-    basis: *mut NurbsBasis,
-) -> Result<(), Fail> {
-    // SAFETY: `basis` points to a live, initialized `ufbx_nurbs_basis` — the
-    // curve/surface basis being finalized (fn contract).
-    unsafe {
-        if (*basis).topology == NurbsTopology::Closed {
-            (*basis).num_wrap_control_points = 1;
-        } else if (*basis).topology == NurbsTopology::Periodic {
-            (*basis).num_wrap_control_points = (*basis).order.wrapping_sub(1) as usize;
-        } else {
-            (*basis).num_wrap_control_points = 0;
-        }
+pub(crate) fn finalize_nurbs_basis(uc: &Context, basis: &View<NurbsBasis>) -> Result<(), Fail> {
+    if basis.topology() == NurbsTopology::Closed {
+        basis.set_num_wrap_control_points(1);
+    } else if basis.topology() == NurbsTopology::Periodic {
+        basis.set_num_wrap_control_points(basis.order().wrapping_sub(1) as usize);
+    } else {
+        basis.set_num_wrap_control_points(0);
     }
 
-    // SAFETY: as above.
-    if unsafe { (*basis).order } > 1 {
-        // SAFETY: as above; `order > 1`, so the subtraction does not underflow.
-        let degree: usize = unsafe { ((*basis).order - 1) as usize };
-        // C: `ufbx_real_list knots = basis->knot_vector;` — `List<T>` is not
-        // `Copy` in the bindings, so the value copy is spelled out.
-        // SAFETY: `List<Real>` is a `data`/`count` pair of plain pointer and
-        // integer fields, for which the all-zero bit pattern is valid.
-        let mut knots: List<Real> = unsafe { MaybeUninit::zeroed().assume_init() };
-        // SAFETY: `basis` is live (see above).
-        unsafe {
-            knots.data = (*basis).knot_vector.data;
-            knots.count = (*basis).knot_vector.count;
-        }
+    if basis.order() > 1 {
+        // `order > 1`, so the subtraction does not underflow.
+        let degree: usize = (basis.order() - 1) as usize;
+        // C: `ufbx_real_list knots = basis->knot_vector;` — the by-value copy
+        // of the viewed basis' own knot-vector header.
+        let knots: List<Real> = basis.knot_vector();
         if knots.count > 2 * degree {
             // SAFETY: `knots` is the basis' own knot-vector span of `count`
-            // initialized reals and `degree < count`, so the first read is in
-            // bounds; `count > 2 * degree` makes `count - degree - 1 < count`;
-            // `basis` is live.
+            // initialized reals (the viewed list invariant) and
+            // `degree < count`, so the first read is in bounds;
+            // `count > 2 * degree` makes `count - degree - 1 < count`.
             unsafe {
-                (*basis).t_min = *knots.data.add(degree);
-                (*basis).t_max = *knots.data.add(knots.count - degree - 1);
+                basis.set_t_min(*knots.data.add(degree));
+                basis.set_t_max(*knots.data.add(knots.count - degree - 1));
             }
 
             let max_spans: usize = knots.count - 2 * degree;
@@ -5226,19 +5211,15 @@ pub(crate) unsafe fn finalize_nurbs_basis(
                 }
             }
 
-            // SAFETY: `basis` is live; `spans` is the push above, holding
-            // `num_spans` initialized reals.
-            unsafe {
-                (*basis).spans.data = spans;
-                (*basis).spans.count = num_spans;
-                (*basis).valid = true;
-            }
+            // `spans` is the push above, holding `num_spans` initialized reals.
+            basis.spans_view().set_data(spans);
+            basis.spans_view().set_count(num_spans);
+            basis.set_valid(true);
             for i in 1..knots.count {
                 // SAFETY: `1 <= i < count` bounds both reads inside the knot
                 // span of `count` initialized reals.
                 if unsafe { *knots.data.add(i - 1) > *knots.data.add(i) } {
-                    // SAFETY: `basis` is live (see above).
-                    unsafe { (*basis).valid = false };
+                    basis.set_valid(false);
                     break;
                 }
             }
@@ -9601,19 +9582,15 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
     let nurbs_curves: &RefListView<NurbsCurve> = uc.scene_view().nurbs_curves_view();
     for curve_ix in 0..nurbs_curves.count() {
         let curve: &View<NurbsCurve> = nurbs_curves.at(curve_ix);
-        // SAFETY: `basis_raw()` addresses the viewed NURBS curve's own basis.
-        unsafe { finalize_nurbs_basis(uc, curve.basis_raw()) }?;
+        finalize_nurbs_basis(uc, curve.basis())?;
     }
 
     // C: `ufbxi_for_ptr_list(ufbx_nurbs_surface, p_surface, uc->scene.nurbs_surfaces)`
     let nurbs_surfaces: &RefListView<NurbsSurface> = uc.scene_view().nurbs_surfaces_view();
     for surface_ix in 0..nurbs_surfaces.count() {
         let surface: &View<NurbsSurface> = nurbs_surfaces.at(surface_ix);
-        // SAFETY: `basis_u_raw()` addresses the viewed NURBS surface's own U
-        // basis.
-        unsafe { finalize_nurbs_basis(uc, surface.basis_u_raw()) }?;
-        // SAFETY: as above, for its own V basis.
-        unsafe { finalize_nurbs_basis(uc, surface.basis_v_raw()) }?;
+        finalize_nurbs_basis(uc, surface.basis_u())?;
+        finalize_nurbs_basis(uc, surface.basis_v())?;
 
         // SAFETY: `element_raw()` addresses the viewed surface's own element
         // header; the fetched destination is null or a live `ufbx_material`.
