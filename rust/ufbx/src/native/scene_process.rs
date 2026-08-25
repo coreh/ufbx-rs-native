@@ -4311,12 +4311,23 @@ pub(crate) const MAPPING_FETCH_TEXTURE_ENABLED: u32 = 0x4;
 pub(crate) const MAPPING_FETCH_FEATURE: u32 = 0x8;
 
 // ufbx.c:19969-20094 `ufbxi_fetch_mapping_maps`
+//
+// # Safety
+//
+// Three raw-pointer parameters carry contracts the types cannot express:
+// `mappings`/`count` must describe a run of `count` initialized
+// `ShaderMapping` entries; `maps` must address a run of `ufbx_material_map`
+// long enough for every `mapping->index` the table names when `flags` carries
+// `MAPPING_FETCH_VALUE`/`_TEXTURE`/`_TEXTURE_ENABLED`; `features` must
+// likewise address a run of `ufbx_material_feature_info` long enough for those
+// indices when `flags` carries `MAPPING_FETCH_FEATURE`. Both arrays are
+// written through, so they must carry write-capable provenance.
 #[inline(never)]
 pub(crate) unsafe fn fetch_mapping_maps(
-    material: *mut Material,
+    material: &MaterialView,
     maps: *mut MaterialMap,
     features: *mut MaterialFeatureInfo,
-    shader: *mut Shader,
+    shader: Option<&View<Shader, Const>>,
     mappings: *const ShaderMapping,
     count: usize,
     prefix: String,
@@ -4400,15 +4411,8 @@ pub(crate) unsafe fn fetch_mapping_maps(
         // prefix just written, neither of which is written again while the
         // slice is live.
         let prop_name_bytes: &[u8] = unsafe { prop_name.as_bytes() };
-        // SAFETY: the caller's nullable shader pointer is null or a live scene
-        // element, unwritten during the update pass, so it mints a `Const` view.
-        let shader_view: Option<&View<Shader, Const>> = if shader.is_null() {
-            None
-        } else {
-            Some(unsafe { View::<Shader, Const>::from_ptr(shader) })
-        };
         let mut bindings: List<ShaderPropBinding> =
-            find_shader_prop_bindings_len(shader_view, prop_name_bytes);
+            find_shader_prop_bindings_len(shader, prop_name_bytes);
         if bindings.count == 0 {
             // SAFETY: `identity_binding` addresses this function's own aligned
             // `ShaderPropBinding` storage; both members are written here before
@@ -4437,18 +4441,10 @@ pub(crate) unsafe fn fetch_mapping_maps(
             // `combined_name` storage, neither written while the slice is live.
             let name_bytes: &[u8] = unsafe { name.as_bytes() };
 
-            // Read-only `Const` view: `update_material` is reachable from the
-            // public anim-eval path where `material` can derive from a caller's
-            // read-only `&Material`; every access through `prop` below is a read.
-            // SAFETY: `material` points to a live `ufbx_material` (fn contract), so
-            // the address of its `element.props` is a readable `ufbx_props` — all a
-            // `Const` view requires.
-            let prop: Option<&View<Prop, Const>> = unsafe {
-                find_prop_len(
-                    View::<Props, Const>::from_ptr(&raw const (*material).element.props),
-                    name_bytes,
-                )
-            };
+            // C: `ufbx_find_prop_len(&material->props, ...)` — the material's
+            // own property table, projected in place out of the element view;
+            // every access through `prop` below is a read.
+            let prop: Option<&View<Prop>> = find_prop_len(material.props_view(), name_bytes);
             if (flags & MAPPING_FETCH_FEATURE) != 0 {
                 // SAFETY: with `MAPPING_FETCH_FEATURE` the caller's `features`
                 // array is indexed by `mapping->index`, which the mapping tables
@@ -4478,10 +4474,11 @@ pub(crate) unsafe fn fetch_mapping_maps(
                     }
                 }
                 if (mapping_flags & SHADER_FEATURE_IF_TEXTURE as u32) != 0 {
-                    // SAFETY: `material` points to a live `ufbx_material`, which
-                    // is all this raw-pointer entry point requires.
+                    // SAFETY: the material view's own pointer addresses a live
+                    // `ufbx_material`, which is all this raw-pointer entry point
+                    // requires.
                     let texture: *mut Texture =
-                        unsafe { find_prop_texture_len(material, name_bytes) };
+                        unsafe { find_prop_texture_len(material.get(), name_bytes) };
                     if !texture.is_null() {
                         feature.set_enabled(true);
                     }
@@ -4564,9 +4561,11 @@ pub(crate) unsafe fn fetch_mapping_maps(
             }
 
             if (flags & MAPPING_FETCH_TEXTURE) != 0 {
-                // SAFETY: `material` points to a live `ufbx_material`, which is
-                // all this raw-pointer entry point requires.
-                let texture: *mut Texture = unsafe { find_prop_texture_len(material, name_bytes) };
+                // SAFETY: the material view's own pointer addresses a live
+                // `ufbx_material`, which is all this raw-pointer entry point
+                // requires.
+                let texture: *mut Texture =
+                    unsafe { find_prop_texture_len(material.get(), name_bytes) };
                 if !texture.is_null() {
                     // SAFETY: `texture` is a non-null (checked) live
                     // `ufbx_texture`, so it is a valid element reference.
@@ -4833,10 +4832,12 @@ pub(crate) fn fetch_maps(scene_view: &SceneView, material_view: &MaterialView) {
     ufbxi_ignore!(scene_view);
 
     // C: `ufbx_shader *shader = material->shader;` — the nullable `Ref` field
-    // read back as the bare C pointer `ufbxi_fetch_mapping_maps` takes.
-    let shader: *mut Shader = material_view
+    // minted once as the view `ufbxi_fetch_mapping_maps` takes.
+    // SAFETY: the material's `shader` reference is a live scene element,
+    // unwritten during the map fetches below, so it mints a `Const` view.
+    let shader: Option<&View<Shader, Const>> = material_view
         .shader()
-        .map_or(ptr::null_mut(), |shader| shader.ptr());
+        .map(|shader| unsafe { View::<Shader, Const>::from_ptr(shader.ptr()) });
     ufbx_assert!((material_view.shader_type() as u32) < SHADER_TYPE_COUNT as u32);
 
     // SAFETY: each `*_raw()` accessor projects the material's own aggregate
@@ -4869,8 +4870,6 @@ pub(crate) fn fetch_maps(scene_view: &SceneView, material_view: &MaterialView) {
     let pbr_maps: *mut MaterialMap = material_view.pbr_raw() as *mut MaterialMap;
     let feature_infos: *mut MaterialFeatureInfo =
         material_view.features_raw() as *mut MaterialFeatureInfo;
-    // The same calls take the C `ufbx_material *` parameter itself.
-    let material: *mut Material = material_view.get();
 
     let mut base_mapping: *const ShaderMapping = BASE_FBX_MAPPING.as_ptr();
     let mut num_base_mapping: usize = BASE_FBX_MAPPING.len();
@@ -4882,16 +4881,15 @@ pub(crate) fn fetch_maps(scene_view: &SceneView, material_view: &MaterialView) {
         num_base_mapping = OBJ_FBX_MAPPING.len();
     }
 
-    // SAFETY: `material` is the material view's own pointer, `fbx_maps`
-    // addresses its `fbx` member viewed as `MATERIAL_FBX_MAP_COUNT` maps, and
-    // `base_mapping`/`num_base_mapping` describe one of the two static mapping
-    // tables.
+    // SAFETY: `fbx_maps` addresses the material's `fbx` member viewed as
+    // `MATERIAL_FBX_MAP_COUNT` maps, and `base_mapping`/`num_base_mapping`
+    // describe one of the two static mapping tables.
     unsafe {
         fetch_mapping_maps(
-            material,
+            material_view,
             fbx_maps,
             ptr::null_mut(),
-            ptr::null_mut(),
+            None,
             base_mapping,
             num_base_mapping,
             EMPTY_STRING.0,
@@ -4912,18 +4910,17 @@ pub(crate) fn fetch_maps(scene_view: &SceneView, material_view: &MaterialView) {
     }
 
     let mut prefix: String = EMPTY_STRING.0;
-    if shader.is_null() {
+    if shader.is_none() {
         prefix = material_view.shader_prop_prefix();
     }
 
     if list.texture_prefix.length > 0 || list.texture_suffix.length > 0 {
-        // SAFETY: `material` is the material view's own pointer, `pbr_maps`
-        // addresses its `pbr` member viewed as `MATERIAL_PBR_MAP_COUNT` maps,
-        // `shader` is null or a live `ufbx_shader`, and `list.data`/`list.count`
-        // describe the static PBR mapping table selected above.
+        // SAFETY: `pbr_maps` addresses the material's `pbr` member viewed as
+        // `MATERIAL_PBR_MAP_COUNT` maps, and `list.data`/`list.count` describe
+        // the static PBR mapping table selected above.
         unsafe {
             fetch_mapping_maps(
-                material,
+                material_view,
                 pbr_maps,
                 ptr::null_mut(),
                 shader,
@@ -4940,7 +4937,7 @@ pub(crate) fn fetch_maps(scene_view: &SceneView, material_view: &MaterialView) {
     // SAFETY: as the previous `fetch_mapping_maps` call.
     unsafe {
         fetch_mapping_maps(
-            material,
+            material_view,
             pbr_maps,
             ptr::null_mut(),
             shader,
@@ -4957,7 +4954,7 @@ pub(crate) fn fetch_maps(scene_view: &SceneView, material_view: &MaterialView) {
         // SAFETY: as the previous `fetch_mapping_maps` call.
         unsafe {
             fetch_mapping_maps(
-                material,
+                material_view,
                 pbr_maps,
                 ptr::null_mut(),
                 shader,
@@ -4971,13 +4968,12 @@ pub(crate) fn fetch_maps(scene_view: &SceneView, material_view: &MaterialView) {
         };
     }
 
-    // SAFETY: `material` is the material view's own pointer, `feature_infos`
-    // addresses its `features` member viewed as `MATERIAL_FEATURE_COUNT` infos,
-    // and `list.features` / `list.feature_count` describe the static
-    // feature-mapping table.
+    // SAFETY: `feature_infos` addresses the material's `features` member viewed
+    // as `MATERIAL_FEATURE_COUNT` infos, and `list.features` /
+    // `list.feature_count` describe the static feature-mapping table.
     unsafe {
         fetch_mapping_maps(
-            material,
+            material_view,
             ptr::null_mut(),
             feature_infos,
             shader,
