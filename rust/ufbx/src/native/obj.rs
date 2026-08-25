@@ -86,7 +86,7 @@ use crate::native::warnings::ufbxi_warnf;
 #[cfg(feature = "obj")]
 use crate::prelude::as_f64;
 #[cfg(feature = "obj")]
-use crate::prelude::{Blob, List, Real, ScalarView, String};
+use crate::prelude::{Blob, List, ListView, Real, ScalarView, String};
 #[cfg(feature = "obj")]
 use core::ffi::c_void;
 #[cfg(feature = "obj")]
@@ -244,8 +244,10 @@ pub(crate) unsafe fn obj_pop_props(
         // item count it was popped with.
         unsafe { sort_properties(uc, props.data as *mut Prop, props.count)? };
         // SAFETY: `props` is an unaliased local descriptor of the run just
-        // sorted, which the dedup compacts in place.
-        unsafe { deduplicate_properties(&raw mut props) };
+        // sorted, which the dedup compacts in place — a stack local, live and
+        // unmoved for the call, addressed by `&raw mut` so the view carries
+        // write-capable provenance.
+        deduplicate_properties(unsafe { ListView::<Prop>::from_ptr(&raw mut props) });
     }
 
     // C: `*dst = props;`

@@ -1139,7 +1139,13 @@ pub(crate) fn pre_finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
                             (*node).element.props.props.data as *mut Prop,
                             (*node).element.props.props.count,
                         )?;
-                        deduplicate_properties(&raw mut (*node).element.props.props);
+                        // SAFETY: `node` is the live scene node whose property
+                        // list was just published above; the projection
+                        // addresses its own `element.props.props`, arena memory
+                        // with write-capable provenance, stable for the call.
+                        deduplicate_properties(ListView::<Prop>::from_ptr(
+                            &raw mut (*node).element.props.props,
+                        ));
 
                         (*node).adjust_pre_translation =
                             add3((*node).adjust_pre_translation, rotation_pivot);

@@ -415,26 +415,27 @@ pub(crate) unsafe fn sort_properties(
 
 // ufbx.c:11885-11901 `ufbxi_deduplicate_properties`
 #[inline(never)]
-pub(crate) unsafe fn deduplicate_properties(list: *mut List<Prop>) {
-    // SAFETY: `list` is the caller's live `ufbx_prop_list` (fn contract).
-    if unsafe { (*list).count } >= 2 {
-        // SAFETY: as above; `data` spans `count` live `ufbx_prop` values.
-        let ps: *mut Prop = unsafe { (*list).data } as *mut Prop;
+pub(crate) fn deduplicate_properties(list: &ListView<Prop>) {
+    if list.count() >= 2 {
+        // C: `ufbx_prop *ps = list->data;` — the run is reached through the
+        // list view's own bounds-checked element accessor instead.
         let mut dst: usize = 0;
         let mut src: usize = 0;
-        // SAFETY: as above.
-        let end: usize = unsafe { (*list).count };
+        let end: usize = list.count();
         while src < end {
-            // SAFETY: `src < end` and the `src + 1 < end` guard short-circuits
-            // first, so both indices address live elements of the `end`-long
-            // property run at `ps`.
-            if unsafe { src + 1 < end && (*ps.add(src)).name.data == (*ps.add(src + 1)).name.data }
+            if src + 1 < end
+                && list.at(src).name_view().data() == list.at(src + 1).name_view().data()
             {
                 src += 1;
             } else if dst != src {
-                // SAFETY: `src < end` and `dst <= src`, so both index live
-                // elements of the `end`-long run at `ps`; `Prop` is `Copy`.
-                unsafe { *ps.add(dst) = *ps.add(src) };
+                // SAFETY: C `ps[dst] = ps[src]` — a whole-`Prop` copy between
+                // two live elements of this list's own run (`at` bounds-checks
+                // both against `count`), non-overlapping because `dst != src`;
+                // `Prop` is a `Copy` POD, and the destination pointer comes
+                // from a `Mut` element view, so it is write-capable.
+                unsafe {
+                    core::ptr::copy_nonoverlapping(list.at(src).as_ptr(), list.at(dst).get(), 1)
+                };
                 dst += 1;
                 src += 1;
             } else {
@@ -442,8 +443,7 @@ pub(crate) unsafe fn deduplicate_properties(list: *mut List<Prop>) {
                 src += 1;
             }
         }
-        // SAFETY: `list` is the caller's live `ufbx_prop_list`.
-        unsafe { (*list).count = dst };
+        list.set_count(dst);
     }
 }
 
@@ -504,8 +504,7 @@ pub(crate) fn read_properties(
     // SAFETY: `props.data` spans `props.count` live `ufbx_prop` values, just
     // filled in by the loop above — `sort_properties`' contract.
     unsafe { sort_properties(uc, props.props_data(), props.props_count()) }?;
-    // SAFETY: `props_raw()` is the viewed table's own live property list.
-    unsafe { deduplicate_properties(props.props_raw()) };
+    deduplicate_properties(props.props_view());
 
     Ok(())
 }
@@ -9246,7 +9245,7 @@ pub(crate) fn read_legacy_settings(uc: &Context, node: &NodeView) -> Result<(), 
             sort_properties(uc, new_props, new_count)?;
             (*props.props_raw()).data = new_props;
             (*props.props_raw()).count = new_count;
-            deduplicate_properties(props.props_raw());
+            deduplicate_properties(props.props_view());
         }
         ufbxi_check!(
             uc,
