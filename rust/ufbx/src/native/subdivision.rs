@@ -1989,10 +1989,16 @@ pub(crate) fn init_source_vertex_weights(
 // ufbx.c:29521-29546 `ufbxi_init_skin_weights`
 #[cfg(feature = "subdivision")]
 #[inline(never)]
+/// # Safety
+/// `skin.vertices` and `skin.weights` address live runs covering every element
+/// this call reaches — `vertices[0..num_vertices]`, and for each such vertex the
+/// `weights[weight_begin .. weight_begin + min(sc.max_vertex_weights,
+/// num_weights)]` run. Those lengths are a caller promise the parameter types
+/// cannot carry, so this stays an `unsafe fn`.
 pub(crate) unsafe fn init_skin_weights(
     sc: &SubdivideContext,
     num_vertices: usize,
-    skin: *const SkinDeformer,
+    skin: &View<SkinDeformer, Const>,
 ) -> *mut SubdivisionVertexWeights {
     let dst: *mut SubdivisionVertexWeights =
         sc.tmp_view().push::<SubdivisionVertexWeights>(num_vertices);
@@ -2005,17 +2011,13 @@ pub(crate) unsafe fn init_skin_weights(
 
     // C: `const ufbx_skin_deformer *skin` — read-only for the whole call, so a
     // `Const` view (mintable from any readable provenance) is the honest mode.
-    // SAFETY: `skin` points to a live `SkinDeformer` (fn contract) that nothing
-    // in this call writes, satisfying the frozen-tag requirement.
-    let skin: &View<SkinDeformer, Const> = unsafe { View::<SkinDeformer, Const>::from_ptr(skin) };
-
     let mut i: usize = 0;
     while i < num_vertices {
         ufbxi_dev_assert!(i < skin.vertices().count);
-        // SAFETY: `skin.vertices.count >= num_vertices` by loaded-scene
-        // consistency — a mesh's skin deformer carries an entry per vertex,
-        // the assumption ufbx.c makes too — so `.add(i)` is a live element,
-        // copied out by value; dev-asserted in dev/regression builds.
+        // SAFETY: `skin.vertices` covers `0..num_vertices` (fn contract) — a
+        // mesh's skin deformer carries an entry per vertex, the assumption
+        // ufbx.c makes too — so `.add(i)` is a live element, copied out by
+        // value; dev-asserted in dev/regression builds.
         let vertex: SkinVertex = unsafe { *skin.vertices().data.add(i) };
         let num_weights: usize = min_sz(sc.max_vertex_weights(), vertex.num_weights as usize);
 
@@ -2674,8 +2676,17 @@ pub(crate) unsafe fn subdivide_mesh_level(
                     )
                 };
             } else {
-                // SAFETY: `skin` is the non-null live deformer resolved above.
-                weights = unsafe { init_skin_weights(sc, mesh.num_vertices(), skin) };
+                // SAFETY: `skin` is the non-null live deformer resolved above,
+                // read only here — a `Const` view scoped to this call; its
+                // `vertices`/`weights` runs cover every element the call reaches
+                // by loaded-scene consistency — `init_skin_weights`' contract.
+                weights = unsafe {
+                    init_skin_weights(
+                        sc,
+                        mesh.num_vertices(),
+                        View::<SkinDeformer, Const>::from_ptr(skin),
+                    )
+                };
             }
 
             // SAFETY: `weights` is the per-vertex weight array built just above,
