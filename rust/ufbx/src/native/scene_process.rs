@@ -3327,19 +3327,20 @@ pub(crate) unsafe fn find_anim_prop_start(
 
 // ufbx.c:19337-19343 `ufbxi_sort_bone_poses`
 #[inline(never)]
-pub(crate) unsafe fn sort_bone_poses(uc: &Context, pose: *mut Pose) -> Result<(), Fail> {
-    // SAFETY: `pose` points to a live `ufbx_pose` (fn contract).
-    let count: usize = unsafe { (*pose).bone_poses.count };
+pub(crate) fn sort_bone_poses(uc: &Context, pose: &View<Pose>) -> Result<(), Fail> {
+    let count: usize = pose.bone_poses_view().count();
     ufbxi_check!(
         uc,
         // SAFETY: the three pointers are `uc`'s own live `ator_tmp` and the
-        // `tmp_arr`/`tmp_arr_size` slots that pair with it; `pose` is live.
+        // `tmp_arr`/`tmp_arr_size` slots that pair with it.
         unsafe {
             grow_array::<u8>(
                 uc.ator_tmp_mut_ptr(),
                 uc.tmp_arr_mut_ptr(),
                 uc.tmp_arr_size_mut_ptr(),
-                (*pose).bone_poses.count.wrapping_mul(size_of::<BonePose>()),
+                pose.bone_poses_view()
+                    .count()
+                    .wrapping_mul(size_of::<BonePose>()),
             )
         },
         "ufbxi_grow_array_size((&uc->ator_tmp), sizeof(**(&uc->tmp_arr)), (&uc->tmp_arr), (&uc->tmp_arr_size), (pose->bone_poses.count * sizeof(ufbx_bone_pose)))"
@@ -3352,7 +3353,7 @@ pub(crate) unsafe fn sort_bone_poses(uc: &Context, pose: *mut Pose) -> Result<()
         stable_sort(
             size_of::<BonePose>(),
             16,
-            (*pose).bone_poses.data as *mut c_void,
+            pose.bone_poses_view().data() as *mut c_void,
             uc.tmp_arr() as *mut c_void,
             count,
             bone_pose_less,
@@ -3364,30 +3365,26 @@ pub(crate) unsafe fn sort_bone_poses(uc: &Context, pose: *mut Pose) -> Result<()
 
 // ufbx.c:19345-19356 `ufbxi_sort_skin_weights`
 #[inline(never)]
-pub(crate) unsafe fn sort_skin_weights(uc: &Context, skin: *mut SkinDeformer) -> Result<(), Fail> {
+pub(crate) fn sort_skin_weights(uc: &Context, skin: &View<SkinDeformer>) -> Result<(), Fail> {
     ufbxi_check!(
         uc,
         // SAFETY: the three pointers are `uc`'s own live `ator_tmp` and the
-        // `tmp_arr`/`tmp_arr_size` slots that pair with it; `skin` points to a
-        // live `ufbx_skin_deformer` (fn contract).
+        // `tmp_arr`/`tmp_arr_size` slots that pair with it.
         unsafe {
             grow_array::<u8>(
                 uc.ator_tmp_mut_ptr(),
                 uc.tmp_arr_mut_ptr(),
                 uc.tmp_arr_size_mut_ptr(),
-                (*skin)
-                    .max_weights_per_vertex
+                skin.max_weights_per_vertex()
                     .wrapping_mul(size_of::<SkinWeight>()),
             )
         },
         "ufbxi_grow_array_size((&uc->ator_tmp), sizeof(**(&uc->tmp_arr)), (&uc->tmp_arr), (&uc->tmp_arr_size), (skin->max_weights_per_vertex * sizeof(ufbx_skin_weight)))"
     );
 
-    // SAFETY: `skin` points to a live `ufbx_skin_deformer` (fn contract).
-    for i in 0..(unsafe { (*skin).vertices.count }) {
-        // SAFETY: `i < vertices.count`, so the offset stays inside the deformer's
-        // own vertex array.
-        let v: SkinVertex = unsafe { *(*skin).vertices.data.add(i) };
+    for i in 0..skin.vertices_view().count() {
+        // C: `ufbx_skin_vertex v = skin->vertices.data[i];`
+        let v: &View<SkinVertex> = skin.vertices_view().at(i);
         // SAFETY: a `SkinVertex` describes the half-open range
         // `weight_begin .. weight_begin + num_weights` of the deformer's `weights`
         // array, so the run sorted here is in bounds; `num_weights` is at most
@@ -3396,9 +3393,9 @@ pub(crate) unsafe fn sort_skin_weights(uc: &Context, skin: *mut SkinDeformer) ->
         unsafe {
             macro_stable_sort::<SkinWeight>(
                 32,
-                ((*skin).weights.data as *mut SkinWeight).add(v.weight_begin as usize),
+                (skin.weights_view().data() as *mut SkinWeight).add(v.weight_begin() as usize),
                 uc.tmp_arr() as *mut SkinWeight,
-                v.num_weights as usize,
+                v.num_weights() as usize,
                 |a, b| (*a).weight > (*b).weight,
             )
         };
@@ -8703,9 +8700,7 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
                 }
             }
         }
-        // SAFETY: `pose` names a live `ufbx_pose` whose `bone_poses` run holds its
-        // `count` initialized entries (see above).
-        unsafe { sort_bone_poses(uc, pose.get()) }?;
+        sort_bone_poses(uc, pose)?;
     }
 
     // Fetch pointers that may break elements
@@ -8973,9 +8968,7 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
             }
 
             // Sort the vertex weights by descending weight value
-            // SAFETY: `get()` hands out the viewed live `ufbx_skin_deformer`,
-            // whose `vertices` and `weights` runs are filled in above.
-            unsafe { sort_skin_weights(uc, skin_view.get()) }?;
+            sort_skin_weights(uc, skin_view)?;
         }
     }
 
