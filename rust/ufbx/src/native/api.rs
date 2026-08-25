@@ -3718,25 +3718,19 @@ pub(crate) unsafe fn catch_get_skin_vertex_matrix<M: Mode>(
                 w: 0.0,
             };
             let vqe: Quat = mul_quat(vqt, vq0);
-            // SAFETY: `q0`/`qe`/`qs` are live stack locals accumulated in place;
-            // Raw addresses preserve C's address-of semantics for the stack locals.
-            unsafe {
-                add_weighted_quat(&raw mut q0, vq0, weight.weight);
-                add_weighted_quat(&raw mut qe, vqe, weight.weight);
-                add_weighted_vec3(&raw mut qs, t.scale, weight.weight);
-            }
+            add_weighted_quat(&mut q0, vq0, weight.weight);
+            add_weighted_quat(&mut qe, vqe, weight.weight);
+            add_weighted_vec3(&mut qs, t.scale, weight.weight);
         }
 
         if skin_vertex.dq_weight < 1.0 {
-            // SAFETY: `mat` is a live stack local and `cluster` is a live
-            // `SkinCluster`; both raw addresses mirror the C operands.
-            unsafe {
-                add_weighted_mat(
-                    &raw mut mat,
-                    &raw const (*cluster).geometry_to_world,
-                    (1.0 - skin_vertex.dq_weight) * weight.weight,
-                )
-            };
+            add_weighted_mat(
+                &mut mat,
+                // SAFETY: `cluster` is a live `SkinCluster`; the borrow projects its
+                // own `geometry_to_world` field, which nothing writes for the call.
+                unsafe { &(*cluster).geometry_to_world },
+                (1.0 - skin_vertex.dq_weight) * weight.weight,
+            );
         }
     }
 
@@ -3810,9 +3804,7 @@ pub(crate) unsafe fn catch_get_skin_vertex_matrix<M: Mode>(
         // address is passed to `transform_to_matrix`.
         let dqm: Matrix = unsafe { transform_to_matrix(&raw const dqt) };
         if skin_vertex.dq_weight < 1.0 {
-            // SAFETY: `mat` and `dqm` are live stack matrices; their raw
-            // addresses mirror C's address-of operands.
-            unsafe { add_weighted_mat(&raw mut mat, &raw const dqm, skin_vertex.dq_weight) };
+            add_weighted_mat(&mut mat, &dqm, skin_vertex.dq_weight);
         } else {
             mat = dqm;
         }
@@ -3932,9 +3924,9 @@ pub(crate) unsafe fn get_blend_vertex_offset(blend: *const BlendDeformer, vertex
             // own `shape` field and feeds `get_blend_shape_vertex_offset`.
             let key_offset: Vec3 =
                 unsafe { get_blend_shape_vertex_offset(ref_ptr(&raw const (*key).shape), vertex) };
-            // SAFETY: `offset` is a live stack local;
-            // reading the same keyframe's `effective_weight`.
-            unsafe { add_weighted_vec3(&raw mut offset, key_offset, (*key).effective_weight) };
+            // SAFETY: same live `BlendKeyframe`; reading its own
+            // `effective_weight` field.
+            add_weighted_vec3(&mut offset, key_offset, unsafe { (*key).effective_weight });
         }
         // SAFETY: `p_chan` is before `p_chan_end`, so stepping one element stays
         // within the channel pointer list (up to one-past-end).
@@ -3982,10 +3974,15 @@ pub(crate) unsafe fn add_blend_shape_vertex_offsets(
                 vertex_weight *= unsafe { *weights_data.add(i) };
             }
             // SAFETY: `index < num_vertices` bounds `vertices.add(index)` within
-            // the caller's `vertices` buffer; `i < num_offsets` bounds
+            // the caller's `vertices` buffer, which this fn's contract gives it
+            // exclusive write access to for the call; `i < num_offsets` bounds
             // `offsets.add(i)` within the shape's `position_offsets` list.
             unsafe {
-                add_weighted_vec3(vertices.add(index as usize), *offsets.add(i), vertex_weight)
+                add_weighted_vec3(
+                    &mut *vertices.add(index as usize),
+                    *offsets.add(i),
+                    vertex_weight,
+                )
             };
         }
     }

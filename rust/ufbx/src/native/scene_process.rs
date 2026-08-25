@@ -10637,28 +10637,19 @@ pub(crate) fn mul_quat(a: Quat, b: Quat) -> Quat {
 
 // ufbx.c:22672-22677 `ufbxi_add_weighted_vec3`
 #[inline(always)]
-pub(crate) unsafe fn add_weighted_vec3(r: *mut Vec3, b: Vec3, w: Real) {
-    // SAFETY: `r` points to a live, initialized, writable `ufbx_vec3`
-    // accumulator (fn contract).
-    unsafe { (*r).x += b.x * w };
-    // SAFETY: as above, for the accumulator's `y`.
-    unsafe { (*r).y += b.y * w };
-    // SAFETY: as above, for the accumulator's `z`.
-    unsafe { (*r).z += b.z * w };
+pub(crate) fn add_weighted_vec3(r: &mut Vec3, b: Vec3, w: Real) {
+    r.x += b.x * w;
+    r.y += b.y * w;
+    r.z += b.z * w;
 }
 
 // ufbx.c:22679-22685 `ufbxi_add_weighted_quat`
 #[inline(always)]
-pub(crate) unsafe fn add_weighted_quat(r: *mut Quat, b: Quat, w: Real) {
-    // SAFETY: `r` points to a live, initialized, writable `ufbx_quat`
-    // accumulator (fn contract).
-    unsafe { (*r).x += b.x * w };
-    // SAFETY: as above, for the accumulator's `y`.
-    unsafe { (*r).y += b.y * w };
-    // SAFETY: as above, for the accumulator's `z`.
-    unsafe { (*r).z += b.z * w };
-    // SAFETY: as above, for the accumulator's `w`.
-    unsafe { (*r).w += b.w * w };
+pub(crate) fn add_weighted_quat(r: &mut Quat, b: Quat, w: Real) {
+    r.x += b.x * w;
+    r.y += b.y * w;
+    r.z += b.z * w;
+    r.w += b.w * w;
 }
 
 // ufbx.c:22687-22693 `ufbxi_add_weighted_mat`
@@ -10666,19 +10657,20 @@ pub(crate) unsafe fn add_weighted_quat(r: *mut Quat, b: Quat, w: Real) {
 // generated struct keeps only the named `m00`..`m23` fields, which are laid out
 // exactly as four consecutive `ufbx_vec3` columns.
 #[inline(never)]
-pub(crate) unsafe fn add_weighted_mat(r: *mut Matrix, b: *const Matrix, w: Real) {
-    let r_cols: *mut Vec3 = r as *mut Vec3;
-    let b_cols: *const Vec3 = b as *const Vec3;
-    // SAFETY: `r` and `b` point to live, initialized `ufbx_matrix` values (fn
-    // contract, `r` writable), and each is laid out as exactly four consecutive
-    // `ufbx_vec3` columns, so column `0` of both is in bounds.
-    unsafe { add_weighted_vec3(r_cols.add(0), *b_cols.add(0), w) };
+pub(crate) fn add_weighted_mat(r: &mut Matrix, b: &Matrix, w: Real) {
+    let r_cols: *mut Vec3 = (&raw mut *r).cast::<Vec3>();
+    let b_cols: *const Vec3 = (&raw const *b).cast::<Vec3>();
+    // SAFETY: `r` and `b` borrow live `ufbx_matrix` values, each laid out as
+    // exactly four consecutive `ufbx_vec3` columns, so column `0` of both is in
+    // bounds; the column borrow carries `r`'s own exclusive provenance and ends
+    // with the call.
+    unsafe { add_weighted_vec3(&mut *r_cols.add(0), *b_cols.add(0), w) };
     // SAFETY: as above, for column `1` of both matrices.
-    unsafe { add_weighted_vec3(r_cols.add(1), *b_cols.add(1), w) };
+    unsafe { add_weighted_vec3(&mut *r_cols.add(1), *b_cols.add(1), w) };
     // SAFETY: as above, for column `2` of both matrices.
-    unsafe { add_weighted_vec3(r_cols.add(2), *b_cols.add(2), w) };
+    unsafe { add_weighted_vec3(&mut *r_cols.add(2), *b_cols.add(2), w) };
     // SAFETY: as above, for column `3` of both matrices.
-    unsafe { add_weighted_vec3(r_cols.add(3), *b_cols.add(3), w) };
+    unsafe { add_weighted_vec3(&mut *r_cols.add(3), *b_cols.add(3), w) };
 }
 
 // ufbx.c:22695-22709 `ufbxi_mul_rotate`
