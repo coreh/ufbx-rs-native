@@ -86,7 +86,7 @@ use crate::native::warnings::ufbxi_warnf;
 #[cfg(feature = "obj")]
 use crate::prelude::as_f64;
 #[cfg(feature = "obj")]
-use crate::prelude::{Blob, List, Real, String};
+use crate::prelude::{Blob, List, Real, ScalarView, String};
 #[cfg(feature = "obj")]
 use core::ffi::c_void;
 #[cfg(feature = "obj")]
@@ -282,18 +282,20 @@ pub(crate) fn obj_push_mesh(uc: &Context) -> Result<(), Fail> {
     }
 
     // SAFETY: `mesh` is the fresh push result, so its own `fbx_node_id` /
-    // `fbx_mesh_id` fields are unaliased out-params for the two element pushes.
+    // `fbx_mesh_id` fields are unaliased out-params for the two element pushes,
+    // each viewed for its call as an interior-mutable scalar cell —
+    // `ScalarView<u64>` is `repr(transparent)` over `u64`.
     unsafe {
         (*mesh).fbx_node = push_synthetic_element::<UfbxNode>(
             uc,
-            &raw mut (*mesh).fbx_node_id,
+            &*(&raw mut (*mesh).fbx_node_id as *const ScalarView<u64>),
             None,
             name,
             ElementType::Node,
         );
         (*mesh).fbx_mesh = push_synthetic_element::<Mesh>(
             uc,
-            &raw mut (*mesh).fbx_mesh_id,
+            &*(&raw mut (*mesh).fbx_mesh_id as *const ScalarView<u64>),
             None,
             name,
             ElementType::Mesh,
@@ -427,10 +429,16 @@ pub(crate) fn obj_init(uc: &Context) -> Result<(), Fail> {
         let mut root_info: ElementInfo = unsafe { core::mem::zeroed() };
         root_info.fbx_id = uc.root_id();
         root_info.name = EMPTY_STRING.0;
-        // SAFETY: `root_info` is an unaliased local passed as the element-push
+        // SAFETY: `root_info` is an unaliased local — write-capable provenance,
+        // live and unmoved across the call — passed as the element-push
         // out-param; the push targets uc's own element arenas.
-        let root: *mut UfbxNode =
-            unsafe { push_element::<UfbxNode>(uc, &raw mut root_info, ElementType::Node) };
+        let root: *mut UfbxNode = unsafe {
+            push_element::<UfbxNode>(
+                uc,
+                View::<ElementInfo>::from_ptr(&raw mut root_info),
+                ElementType::Node,
+            )
+        };
         ufbxi_check!(uc, !root.is_null(), "root");
         // SAFETY: `root` is the fresh non-null element push result.
         unsafe { setup_root_node(uc, root) };
@@ -1294,10 +1302,16 @@ pub(crate) fn obj_parse_material(uc: &Context) -> Result<(), Fail> {
         info.fbx_id = fbx_id;
         info.name = name;
 
-        // SAFETY: `info` is an unaliased local out-param for the element push
-        // onto uc's own element arenas.
-        let material: *mut Material =
-            unsafe { push_element::<Material>(uc, &raw mut info, ElementType::Material) };
+        // SAFETY: `info` is an unaliased local — write-capable provenance, live
+        // and unmoved across the call — out-param for the element push onto uc's
+        // own element arenas.
+        let material: *mut Material = unsafe {
+            push_element::<Material>(
+                uc,
+                View::<ElementInfo>::from_ptr(&raw mut info),
+                ElementType::Material,
+            )
+        };
         ufbxi_check!(uc, !material.is_null(), "material");
 
         // SAFETY: `material` is the fresh non-null element push result.
@@ -2292,7 +2306,7 @@ pub(crate) fn obj_parse_mtl_map(uc: &Context, prefix_len: usize) -> Result<(), F
     let texture: *mut Texture = unsafe {
         push_synthetic_element::<Texture>(
             uc,
-            &raw mut fbx_id,
+            ScalarView::from_mut(&mut fbx_id),
             None,
             b"\0".as_ptr(),
             ElementType::Texture,

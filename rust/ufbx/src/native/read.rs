@@ -1433,31 +1433,35 @@ pub(crate) unsafe fn push_synthetic_element_size(
 // ufbx.c:12416 `#define ufbxi_push_element(uc, info, type_name, type_enum)`
 #[inline(always)]
 #[must_use]
-pub(crate) unsafe fn push_element<T>(
+pub(crate) fn push_element<T>(
     uc: &Context,
-    info: *mut ElementInfo,
+    info: &View<ElementInfo, Mut>,
     type_enum: ElementType,
 ) -> *mut T {
-    // SAFETY: `info` is the caller's live `ufbxi_element_info` and `T` is the
-    // element struct whose `size_of` is passed as the element size — the size
-    // and type must agree, which is `push_element_size`'s contract.
-    ufbxi_maybe_null!(unsafe { push_element_size(uc, info, size_of::<T>(), type_enum) } as *mut T)
+    // SAFETY: `info` views a live `ufbxi_element_info` (its mint invariant) and
+    // `T` is the element struct whose `size_of` is passed as the element size —
+    // the size and type must agree, which is `push_element_size`'s contract.
+    ufbxi_maybe_null!(
+        unsafe { push_element_size(uc, info.get(), size_of::<T>(), type_enum) } as *mut T
+    )
 }
 
 // ufbx.c:12417 `#define ufbxi_push_synthetic_element(uc, p_fbx_id, node, name, type_name, type_enum)`
+///
+/// # Safety
+/// `name` stays a raw pointer for the reason `push_synthetic_element_size`
+/// documents: it is null or NUL-terminated, the pointer ITSELF is stored in
+/// `elem->name.data`, and its bytes must stay live and unmoved for as long as
+/// the scene.
 #[inline(always)]
 #[must_use]
 pub(crate) unsafe fn push_synthetic_element<T>(
     uc: &Context,
-    p_fbx_id: *mut u64,
+    p_fbx_id: &ScalarView<u64>,
     node: Option<&NodeView>,
     name: *const u8,
     type_enum: ElementType,
 ) -> *mut T {
-    // SAFETY: `p_fbx_id` is the caller's live, writable `uint64_t` slot (fn
-    // contract), viewed for the call as an interior-mutable scalar cell —
-    // `ScalarView<u64>` is `repr(transparent)` over `u64`.
-    let p_fbx_id: &ScalarView<u64> = unsafe { &*(p_fbx_id as *const ScalarView<u64>) };
     // SAFETY: `name` is null or NUL-terminated and its bytes are the caller's
     // interned/pooled string, live for the scene — the pointer is passed
     // through unnarrowed because the element stores it; `T` is the element
@@ -1707,7 +1711,7 @@ pub(crate) unsafe fn setup_geometry_transform_helper(
         let geo_node: *mut UfbxNode = unsafe {
             push_synthetic_element::<UfbxNode>(
                 uc,
-                &raw mut geo_fbx_id,
+                ScalarView::from_mut(&mut geo_fbx_id),
                 None,
                 uc.opts_view().geometry_transform_helper_name_view().data(),
                 ElementType::Node,
@@ -1846,7 +1850,7 @@ pub(crate) unsafe fn setup_scale_helper(
     let scale_node: *mut UfbxNode = unsafe {
         push_synthetic_element::<UfbxNode>(
             uc,
-            &raw mut scale_fbx_id,
+            ScalarView::from_mut(&mut scale_fbx_id),
             None,
             uc.opts_view().scale_helper_name_view().data(),
             ElementType::Node,
@@ -1954,10 +1958,7 @@ pub(crate) fn read_model(
     info: &View<ElementInfo, Mut>,
 ) -> Result<(), Fail> {
     ufbxi_ignore!(node);
-    // SAFETY: `info` views the caller's live `ufbxi_element_info` and `UfbxNode`
-    // is the element struct for `ElementType::Node`.
-    let elem_node: *mut UfbxNode =
-        unsafe { push_element::<UfbxNode>(uc, info.get(), ElementType::Node) };
+    let elem_node: *mut UfbxNode = push_element::<UfbxNode>(uc, info, ElementType::Node);
     ufbxi_check!(uc, !elem_node.is_null(), "elem_node");
     ufbxi_check!(
         uc,
@@ -2039,10 +2040,7 @@ pub(crate) unsafe fn read_unknown(
     node_name: &[u8],
 ) -> Result<(), Fail> {
     ufbxi_ignore!(node);
-    // SAFETY: `element` views the caller's live `ufbxi_element_info` and
-    // `Unknown` is the element struct for `ElementType::Unknown`.
-    let unknown: *mut Unknown =
-        unsafe { push_element::<Unknown>(uc, element.get(), ElementType::Unknown) };
+    let unknown: *mut Unknown = push_element::<Unknown>(uc, element, ElementType::Unknown);
     ufbxi_check!(uc, !unknown.is_null(), "unknown");
     // SAFETY: `unknown` is the fresh non-null element checked above; `node_name`
     // is NUL-terminated within its own run (fn contract) — `strlen`'s contract.
@@ -2982,10 +2980,7 @@ pub(crate) fn read_shape(
     let node_vertices: &NodeView = node_vertices.unwrap();
     let node_indices: &NodeView = node_indices.unwrap();
 
-    // SAFETY: `info` views the caller's live `ufbxi_element_info` and `BlendShape`
-    // is the element struct for `ElementType::BlendShape`.
-    let shape: *mut BlendShape =
-        unsafe { push_element::<BlendShape>(uc, info.get(), ElementType::BlendShape) };
+    let shape: *mut BlendShape = push_element::<BlendShape>(uc, info, ElementType::BlendShape);
     ufbxi_check!(uc, !shape.is_null(), "shape");
 
     if uc.opts_view().ignore_geometry() {
@@ -3168,7 +3163,7 @@ pub(crate) fn read_synthetic_blend_shapes(
             deformer = unsafe {
                 push_synthetic_element::<BlendDeformer>(
                     uc,
-                    &raw mut deformer_fbx_id,
+                    ScalarView::from_mut(&mut deformer_fbx_id),
                     Some(n),
                     name.data,
                     ElementType::BlendDeformer,
@@ -3185,7 +3180,7 @@ pub(crate) fn read_synthetic_blend_shapes(
         let channel: *mut BlendChannel = unsafe {
             push_synthetic_element::<BlendChannel>(
                 uc,
-                &raw mut channel_fbx_id,
+                ScalarView::from_mut(&mut channel_fbx_id),
                 Some(n),
                 name.data,
                 ElementType::BlendChannel,
@@ -3946,9 +3941,7 @@ fn subdivision_boundary_from_raw(raw: i32) -> SubdivisionBoundary {
 // Rust analogue and collapses away.
 #[inline(never)]
 pub(crate) fn read_mesh(uc: &Context, node: &NodeView, info: &ElementInfoView) -> Result<(), Fail> {
-    // SAFETY: `info` views the caller's live `ufbxi_element_info` and `Mesh` is
-    // the element struct for `ElementType::Mesh`.
-    let mesh: *mut Mesh = unsafe { push_element::<Mesh>(uc, info.get(), ElementType::Mesh) };
+    let mesh: *mut Mesh = push_element::<Mesh>(uc, info, ElementType::Mesh);
     ufbxi_check!(uc, !mesh.is_null(), "mesh");
     // SAFETY: `mesh` is the fresh non-null element just pushed into uc's
     // `tmp_elements` arena (elements live there until finalize copies them into
@@ -4945,10 +4938,7 @@ pub(crate) fn read_nurbs_curve(
     node: &NodeView,
     info: &ElementInfoView,
 ) -> Result<(), Fail> {
-    // SAFETY: `info` views the caller's live `ufbxi_element_info` and
-    // `NurbsCurve` is the element struct for `ElementType::NurbsCurve`.
-    let nurbs: *mut NurbsCurve =
-        unsafe { push_element::<NurbsCurve>(uc, info.get(), ElementType::NurbsCurve) };
+    let nurbs: *mut NurbsCurve = push_element::<NurbsCurve>(uc, info, ElementType::NurbsCurve);
     ufbxi_check!(uc, !nurbs.is_null(), "nurbs");
 
     let mut dimension: i32 = 3;
@@ -5018,10 +5008,8 @@ pub(crate) fn read_nurbs_surface(
     node: &NodeView,
     info: &ElementInfoView,
 ) -> Result<(), Fail> {
-    // SAFETY: `info` views the caller's live `ufbxi_element_info` and
-    // `NurbsSurface` is the element struct for `ElementType::NurbsSurface`.
     let nurbs: *mut NurbsSurface =
-        unsafe { push_element::<NurbsSurface>(uc, info.get(), ElementType::NurbsSurface) };
+        push_element::<NurbsSurface>(uc, info, ElementType::NurbsSurface);
     ufbxi_check!(uc, !nurbs.is_null(), "nurbs");
 
     let (order_u, order_v) = ufbxi_check_some!(
@@ -5111,10 +5099,7 @@ pub(crate) fn read_nurbs_surface(
 // ufbx.c:13896-13955 `ufbxi_read_line`
 #[inline(never)]
 pub(crate) fn read_line(uc: &Context, node: &NodeView, info: &ElementInfoView) -> Result<(), Fail> {
-    // SAFETY: `info` views the caller's live `ufbxi_element_info` and `LineCurve`
-    // is the element struct for `ElementType::LineCurve`.
-    let line: *mut LineCurve =
-        unsafe { push_element::<LineCurve>(uc, info.get(), ElementType::LineCurve) };
+    let line: *mut LineCurve = push_element::<LineCurve>(uc, info, ElementType::LineCurve);
     ufbxi_check!(uc, !line.is_null(), "line");
 
     if !uc.opts_view().ignore_geometry() {
@@ -5282,9 +5267,13 @@ pub(crate) unsafe fn read_bone(
 ) -> Result<(), Fail> {
     let _ = node; // C: `(void)node;`
 
-    // SAFETY: `info` is the caller's live `ufbxi_element_info` and `Bone` is the
-    // element struct for `ElementType::Bone`.
-    let bone: *mut Bone = unsafe { push_element::<Bone>(uc, info, ElementType::Bone) };
+    let bone: *mut Bone = push_element::<Bone>(
+        uc,
+        // SAFETY: `info` is the caller's live `ufbxi_element_info` — write-capable
+        // provenance, live and unmoved across the call.
+        unsafe { View::<ElementInfo>::from_ptr(info) },
+        ElementType::Bone,
+    );
     ufbxi_check!(uc, !bone.is_null(), "bone");
 
     if sub_type == sp::Root.as_ptr() {
@@ -5309,9 +5298,13 @@ pub(crate) unsafe fn read_marker(
     let _ = node; // C: `(void)node;`
     let _ = sub_type; // C: `(void)sub_type;`
 
-    // SAFETY: `info` is the caller's live `ufbxi_element_info` and `Marker` is the
-    // element struct for `ElementType::Marker`.
-    let marker: *mut Marker = unsafe { push_element::<Marker>(uc, info, ElementType::Marker) };
+    let marker: *mut Marker = push_element::<Marker>(
+        uc,
+        // SAFETY: `info` is the caller's live `ufbxi_element_info` — write-capable
+        // provenance, live and unmoved across the call.
+        unsafe { View::<ElementInfo>::from_ptr(info) },
+        ElementType::Marker,
+    );
     ufbxi_check!(uc, !marker.is_null(), "marker");
 
     // SAFETY: `marker` is the fresh non-null element pushed above.
@@ -5329,10 +5322,13 @@ pub(crate) unsafe fn read_skin(
     node: &NodeView,
     info: *mut ElementInfo,
 ) -> Result<(), Fail> {
-    // SAFETY: `info` is the caller's live `ufbxi_element_info` and `SkinDeformer`
-    // is the element struct for `ElementType::SkinDeformer`.
-    let skin: *mut SkinDeformer =
-        unsafe { push_element::<SkinDeformer>(uc, info, ElementType::SkinDeformer) };
+    let skin: *mut SkinDeformer = push_element::<SkinDeformer>(
+        uc,
+        // SAFETY: `info` is the caller's live `ufbxi_element_info` — write-capable
+        // provenance, live and unmoved across the call.
+        unsafe { View::<ElementInfo>::from_ptr(info) },
+        ElementType::SkinDeformer,
+    );
     ufbxi_check!(uc, !skin.is_null(), "skin");
     // SAFETY: `skin` is the fresh non-null element pushed above, owned by uc's
     // element buffer — write-capable provenance.
@@ -5384,10 +5380,13 @@ pub(crate) unsafe fn read_skin_cluster(
     node: &NodeView,
     info: *mut ElementInfo,
 ) -> Result<(), Fail> {
-    // SAFETY: `info` is the caller's live `ufbxi_element_info` and `SkinCluster`
-    // is the element struct for `ElementType::SkinCluster`.
-    let cluster: *mut SkinCluster =
-        unsafe { push_element::<SkinCluster>(uc, info, ElementType::SkinCluster) };
+    let cluster: *mut SkinCluster = push_element::<SkinCluster>(
+        uc,
+        // SAFETY: `info` is the caller's live `ufbxi_element_info` — write-capable
+        // provenance, live and unmoved across the call.
+        unsafe { View::<ElementInfo>::from_ptr(info) },
+        ElementType::SkinCluster,
+    );
     ufbxi_check!(uc, !cluster.is_null(), "cluster");
 
     let indices: *mut ValueArray = find_array(node, sp::Indexes.as_ptr(), b'i');
@@ -5457,10 +5456,13 @@ pub(crate) unsafe fn read_blend_channel(
     node: &NodeView,
     info: *mut ElementInfo,
 ) -> Result<(), Fail> {
-    // SAFETY: `info` is the caller's live `ufbxi_element_info` and `BlendChannel`
-    // is the element struct for `ElementType::BlendChannel`.
-    let channel: *mut BlendChannel =
-        unsafe { push_element::<BlendChannel>(uc, info, ElementType::BlendChannel) };
+    let channel: *mut BlendChannel = push_element::<BlendChannel>(
+        uc,
+        // SAFETY: `info` is the caller's live `ufbxi_element_info` — write-capable
+        // provenance, live and unmoved across the call.
+        unsafe { View::<ElementInfo>::from_ptr(info) },
+        ElementType::BlendChannel,
+    );
     ufbxi_check!(uc, !channel.is_null(), "channel");
 
     // C: `ufbx_real_list list = { NULL, 0 };`
@@ -5805,10 +5807,13 @@ pub(crate) unsafe fn read_animation_curve(
     node: &NodeView,
     info: *mut ElementInfo,
 ) -> Result<(), Fail> {
-    // SAFETY: `info` is the caller's live `ufbxi_element_info` and `AnimCurve` is
-    // the element struct for `ElementType::AnimCurve`.
-    let curve: *mut AnimCurve =
-        unsafe { push_element::<AnimCurve>(uc, info, ElementType::AnimCurve) };
+    let curve: *mut AnimCurve = push_element::<AnimCurve>(
+        uc,
+        // SAFETY: `info` is the caller's live `ufbxi_element_info` — write-capable
+        // provenance, live and unmoved across the call.
+        unsafe { View::<ElementInfo>::from_ptr(info) },
+        ElementType::AnimCurve,
+    );
     ufbxi_check!(uc, !curve.is_null(), "curve");
     // SAFETY: `curve` is the fresh non-null element pushed above, owned by uc's
     // element buffer — write-capable provenance, live and unmoved for the rest of
@@ -6311,10 +6316,13 @@ pub(crate) unsafe fn read_material(
     node: &NodeView,
     info: *mut ElementInfo,
 ) -> Result<(), Fail> {
-    // SAFETY: `info` is the caller's live `ufbxi_element_info` and `Material` is
-    // the element struct for `ElementType::Material`.
-    let material: *mut Material =
-        unsafe { push_element::<Material>(uc, info, ElementType::Material) };
+    let material: *mut Material = push_element::<Material>(
+        uc,
+        // SAFETY: `info` is the caller's live `ufbxi_element_info` — write-capable
+        // provenance, live and unmoved across the call.
+        unsafe { View::<ElementInfo>::from_ptr(info) },
+        ElementType::Material,
+    );
     ufbxi_check!(uc, !material.is_null(), "material");
 
     if let Some(got) = find_val1::<Checked<String>>(node, sp::ShadingModel.as_ptr()) {
@@ -6344,9 +6352,13 @@ pub(crate) unsafe fn read_texture(
     node: &NodeView,
     info: *mut ElementInfo,
 ) -> Result<(), Fail> {
-    // SAFETY: `info` is the caller's live `ufbxi_element_info` and `Texture` is
-    // the element struct for `ElementType::Texture`.
-    let texture: *mut Texture = unsafe { push_element::<Texture>(uc, info, ElementType::Texture) };
+    let texture: *mut Texture = push_element::<Texture>(
+        uc,
+        // SAFETY: `info` is the caller's live `ufbxi_element_info` — write-capable
+        // provenance, live and unmoved across the call.
+        unsafe { View::<ElementInfo>::from_ptr(info) },
+        ElementType::Texture,
+    );
     ufbxi_check!(uc, !texture.is_null(), "texture");
 
     // SAFETY: `texture` is the fresh non-null element pushed above.
@@ -6407,9 +6419,13 @@ pub(crate) unsafe fn read_layered_texture(
     node: &NodeView,
     info: *mut ElementInfo,
 ) -> Result<(), Fail> {
-    // SAFETY: `info` is the caller's live `ufbxi_element_info` and `Texture` is
-    // the element struct for `ElementType::Texture`.
-    let texture: *mut Texture = unsafe { push_element::<Texture>(uc, info, ElementType::Texture) };
+    let texture: *mut Texture = push_element::<Texture>(
+        uc,
+        // SAFETY: `info` is the caller's live `ufbxi_element_info` — write-capable
+        // provenance, live and unmoved across the call.
+        unsafe { View::<ElementInfo>::from_ptr(info) },
+        ElementType::Texture,
+    );
     ufbxi_check!(uc, !texture.is_null(), "texture");
 
     // SAFETY: `texture` is the fresh non-null element pushed above.
@@ -6459,9 +6475,13 @@ pub(crate) unsafe fn read_video(
     node: &NodeView,
     info: *mut ElementInfo,
 ) -> Result<(), Fail> {
-    // SAFETY: `info` is the caller's live `ufbxi_element_info` and `Video` is the
-    // element struct for `ElementType::Video`.
-    let video: *mut Video = unsafe { push_element::<Video>(uc, info, ElementType::Video) };
+    let video: *mut Video = push_element::<Video>(
+        uc,
+        // SAFETY: `info` is the caller's live `ufbxi_element_info` — write-capable
+        // provenance, live and unmoved across the call.
+        unsafe { View::<ElementInfo>::from_ptr(info) },
+        ElementType::Video,
+    );
     ufbxi_check!(uc, !video.is_null(), "video");
 
     // SAFETY: `video` is the fresh non-null element pushed above.
@@ -6529,10 +6549,13 @@ pub(crate) unsafe fn read_anim_stack(
 ) -> Result<(), Fail> {
     let _ = node; // C: `(void)node;`
 
-    // SAFETY: `info` is the caller's live `ufbxi_element_info` and `AnimStack` is
-    // the element struct for `ElementType::AnimStack`.
-    let stack: *mut AnimStack =
-        unsafe { push_element::<AnimStack>(uc, info, ElementType::AnimStack) };
+    let stack: *mut AnimStack = push_element::<AnimStack>(
+        uc,
+        // SAFETY: `info` is the caller's live `ufbxi_element_info` — write-capable
+        // provenance, live and unmoved across the call.
+        unsafe { View::<ElementInfo>::from_ptr(info) },
+        ElementType::AnimStack,
+    );
     ufbxi_check!(uc, !stack.is_null(), "stack");
 
     // SAFETY: `info` is the caller's live `ufbxi_element_info`, so
@@ -6571,9 +6594,13 @@ pub(crate) unsafe fn read_pose(
     info: *mut ElementInfo,
     sub_type: *const u8,
 ) -> Result<(), Fail> {
-    // SAFETY: `info` is the caller's live `ufbxi_element_info` and `Pose` is the
-    // element struct for `ElementType::Pose`.
-    let pose: *mut Pose = unsafe { push_element::<Pose>(uc, info, ElementType::Pose) };
+    let pose: *mut Pose = push_element::<Pose>(
+        uc,
+        // SAFETY: `info` is the caller's live `ufbxi_element_info` — write-capable
+        // provenance, live and unmoved across the call.
+        unsafe { View::<ElementInfo>::from_ptr(info) },
+        ElementType::Pose,
+    );
     ufbxi_check!(uc, !pose.is_null(), "pose");
 
     // TODO: What are the actual other types?
@@ -6708,10 +6735,13 @@ pub(crate) unsafe fn read_binding_table(
     node: &NodeView,
     info: *mut ElementInfo,
 ) -> Result<(), Fail> {
-    // SAFETY: `info` is the caller's live `ufbxi_element_info` and `ShaderBinding`
-    // is the element struct for `ElementType::ShaderBinding`.
-    let bindings: *mut ShaderBinding =
-        unsafe { push_element::<ShaderBinding>(uc, info, ElementType::ShaderBinding) };
+    let bindings: *mut ShaderBinding = push_element::<ShaderBinding>(
+        uc,
+        // SAFETY: `info` is the caller's live `ufbxi_element_info` — write-capable
+        // provenance, live and unmoved across the call.
+        unsafe { View::<ElementInfo>::from_ptr(info) },
+        ElementType::ShaderBinding,
+    );
     ufbxi_check!(uc, !bindings.is_null(), "bindings");
 
     let mut num_entries: usize = 0;
@@ -6794,10 +6824,13 @@ pub(crate) unsafe fn read_selection_set(
 ) -> Result<(), Fail> {
     let _ = node; // C: `(void)node;`
 
-    // SAFETY: `info` is the caller's live `ufbxi_element_info` and `SelectionSet`
-    // is the element struct for `ElementType::SelectionSet`.
-    let set: *mut SelectionSet =
-        unsafe { push_element::<SelectionSet>(uc, info, ElementType::SelectionSet) };
+    let set: *mut SelectionSet = push_element::<SelectionSet>(
+        uc,
+        // SAFETY: `info` is the caller's live `ufbxi_element_info` — write-capable
+        // provenance, live and unmoved across the call.
+        unsafe { View::<ElementInfo>::from_ptr(info) },
+        ElementType::SelectionSet,
+    );
     ufbxi_check!(uc, !set.is_null(), "set");
 
     Ok(())
@@ -6825,10 +6858,13 @@ pub(crate) unsafe fn read_selection_node(
     node: &NodeView,
     info: *mut ElementInfo,
 ) -> Result<(), Fail> {
-    // SAFETY: `info` is the caller's live `ufbxi_element_info` and `SelectionNode`
-    // is the element struct for `ElementType::SelectionNode`.
-    let sel: *mut SelectionNode =
-        unsafe { push_element::<SelectionNode>(uc, info, ElementType::SelectionNode) };
+    let sel: *mut SelectionNode = push_element::<SelectionNode>(
+        uc,
+        // SAFETY: `info` is the caller's live `ufbxi_element_info` — write-capable
+        // provenance, live and unmoved across the call.
+        unsafe { View::<ElementInfo>::from_ptr(info) },
+        ElementType::SelectionNode,
+    );
     ufbxi_check!(uc, !sel.is_null(), "sel");
 
     let mut in_set: i32 = 0;
@@ -6869,10 +6905,13 @@ pub(crate) unsafe fn read_character(
 ) -> Result<(), Fail> {
     let _ = node; // C: `(void)node;`
 
-    // SAFETY: `info` is the caller's live `ufbxi_element_info` and `Character` is
-    // the element struct for `ElementType::Character`.
-    let character: *mut Character =
-        unsafe { push_element::<Character>(uc, info, ElementType::Character) };
+    let character: *mut Character = push_element::<Character>(
+        uc,
+        // SAFETY: `info` is the caller's live `ufbxi_element_info` — write-capable
+        // provenance, live and unmoved across the call.
+        unsafe { View::<ElementInfo>::from_ptr(info) },
+        ElementType::Character,
+    );
     ufbxi_check!(uc, !character.is_null(), "character");
 
     // TODO: There's some extremely cursed all-caps data in characters
@@ -6887,10 +6926,13 @@ pub(crate) unsafe fn read_audio_clip(
     node: &NodeView,
     info: *mut ElementInfo,
 ) -> Result<(), Fail> {
-    // SAFETY: `info` is the caller's live `ufbxi_element_info` and `AudioClip` is
-    // the element struct for `ElementType::AudioClip`.
-    let audio: *mut AudioClip =
-        unsafe { push_element::<AudioClip>(uc, info, ElementType::AudioClip) };
+    let audio: *mut AudioClip = push_element::<AudioClip>(
+        uc,
+        // SAFETY: `info` is the caller's live `ufbxi_element_info` — write-capable
+        // provenance, live and unmoved across the call.
+        unsafe { View::<ElementInfo>::from_ptr(info) },
+        ElementType::AudioClip,
+    );
     ufbxi_check!(uc, !audio.is_null(), "audio");
 
     // SAFETY: `audio` is the fresh non-null element pushed above.
@@ -6960,10 +7002,13 @@ pub(crate) unsafe fn read_constraint(
 ) -> Result<(), Fail> {
     let _ = node; // C: `(void)node;`
 
-    // SAFETY: `info` is the caller's live `ufbxi_element_info` and `Constraint` is
-    // the element struct for `ElementType::Constraint`.
-    let constraint: *mut Constraint =
-        unsafe { push_element::<Constraint>(uc, info, ElementType::Constraint) };
+    let constraint: *mut Constraint = push_element::<Constraint>(
+        uc,
+        // SAFETY: `info` is the caller's live `ufbxi_element_info` — write-capable
+        // provenance, live and unmoved across the call.
+        unsafe { View::<ElementInfo>::from_ptr(info) },
+        ElementType::Constraint,
+    );
     ufbxi_check!(uc, !constraint.is_null(), "constraint");
 
     if let Some(got) = find_val1::<Checked<String>>(node, sp::Type.as_ptr()) {
@@ -8139,7 +8184,7 @@ pub(crate) unsafe fn read_take_anim_channel(
     let curve: *mut AnimCurve = unsafe {
         push_synthetic_element::<AnimCurve>(
             uc,
-            &raw mut curve_fbx_id,
+            ScalarView::from_mut(&mut curve_fbx_id),
             Some(node),
             name,
             ElementType::AnimCurve,
@@ -8643,7 +8688,7 @@ unsafe fn read_take_prop_channel_rec(
         let value: *mut AnimValue = unsafe {
             push_synthetic_element::<AnimValue>(
                 uc,
-                &raw mut value_fbx_id,
+                ScalarView::from_mut(&mut value_fbx_id),
                 Some(node),
                 name.data,
                 ElementType::AnimValue,
@@ -8826,7 +8871,7 @@ pub(crate) fn read_take(uc: &Context, node: &NodeView) -> Result<(), Fail> {
     let stack: *mut AnimStack = unsafe {
         push_synthetic_element::<AnimStack>(
             uc,
-            &raw mut stack_fbx_id,
+            ScalarView::from_mut(&mut stack_fbx_id),
             Some(node),
             name,
             ElementType::AnimStack,
@@ -8852,7 +8897,7 @@ pub(crate) fn read_take(uc: &Context, node: &NodeView) -> Result<(), Fail> {
     let layer: *mut AnimLayer = unsafe {
         push_synthetic_element::<AnimLayer>(
             uc,
-            &raw mut layer_fbx_id,
+            ScalarView::from_mut(&mut layer_fbx_id),
             Some(node),
             sp::BaseLayer.as_ptr(),
             ElementType::AnimLayer,
@@ -9120,8 +9165,11 @@ pub(crate) fn read_root(uc: &Context) -> Result<(), Fail> {
             let mut root_info: ElementInfo = core::mem::zeroed();
             root_info.fbx_id = uc.root_id();
             root_info.name = EMPTY_STRING.0;
-            let root: *mut UfbxNode =
-                push_element::<UfbxNode>(uc, &raw mut root_info, ElementType::Node);
+            let root: *mut UfbxNode = push_element::<UfbxNode>(
+                uc,
+                View::<ElementInfo>::from_ptr(&raw mut root_info),
+                ElementType::Node,
+            );
             ufbxi_check!(uc, !root.is_null(), "root");
             setup_root_node(uc, root);
             ufbxi_check!(
@@ -9583,11 +9631,19 @@ pub(crate) unsafe fn read_legacy_material(
     p_fbx_id: *mut u64,
     name: *const u8,
 ) -> Result<(), Fail> {
-    // SAFETY: `p_fbx_id` is the caller's writable `uint64_t` slot and `name` is
+    // SAFETY: `p_fbx_id` is the caller's live, writable `uint64_t` slot (fn
+    // contract), viewed for the call as an interior-mutable scalar cell —
+    // `ScalarView<u64>` is `repr(transparent)` over `u64`; `name` is
     // NUL-terminated (fn contract); `Material` is the element struct for
     // `ElementType::Material`.
     let material: *mut Material = unsafe {
-        push_synthetic_element::<Material>(uc, p_fbx_id, Some(node), name, ElementType::Material)
+        push_synthetic_element::<Material>(
+            uc,
+            &*(p_fbx_id as *const ScalarView<u64>),
+            Some(node),
+            name,
+            ElementType::Material,
+        )
     };
     ufbxi_check!(uc, !material.is_null(), "material");
 
@@ -9638,13 +9694,15 @@ pub(crate) unsafe fn read_legacy_link(
     p_fbx_id: *mut u64,
     name: *const u8,
 ) -> Result<(), Fail> {
-    // SAFETY: `p_fbx_id` is the caller's writable `uint64_t` slot and `name` is
+    // SAFETY: `p_fbx_id` is the caller's live, writable `uint64_t` slot (fn
+    // contract), viewed for the call as an interior-mutable scalar cell —
+    // `ScalarView<u64>` is `repr(transparent)` over `u64`; `name` is
     // NUL-terminated (fn contract); `SkinCluster` is the element struct for
     // `ElementType::SkinCluster`.
     let cluster: *mut SkinCluster = unsafe {
         push_synthetic_element::<SkinCluster>(
             uc,
-            p_fbx_id,
+            &*(p_fbx_id as *const ScalarView<u64>),
             Some(node),
             name,
             ElementType::SkinCluster,
@@ -9719,9 +9777,13 @@ pub(crate) unsafe fn read_legacy_light(
     node: &NodeView,
     info: *mut ElementInfo,
 ) -> Result<(), Fail> {
-    // SAFETY: `info` is the caller's live `ufbxi_element_info` and `Light` is the
-    // element struct for `ElementType::Light`.
-    let light: *mut Light = unsafe { push_element::<Light>(uc, info, ElementType::Light) };
+    let light: *mut Light = push_element::<Light>(
+        uc,
+        // SAFETY: `info` is the caller's live `ufbxi_element_info` — write-capable
+        // provenance, live and unmoved across the call.
+        unsafe { View::<ElementInfo>::from_ptr(info) },
+        ElementType::Light,
+    );
     ufbxi_check!(uc, !light.is_null(), "light");
 
     // C: `ufbx_prop tmp_props[ufbxi_arraycount(ufbxi_legacy_light_props)];`
@@ -9761,9 +9823,13 @@ pub(crate) unsafe fn read_legacy_camera(
     node: &NodeView,
     info: *mut ElementInfo,
 ) -> Result<(), Fail> {
-    // SAFETY: `info` is the caller's live `ufbxi_element_info` and `Camera` is the
-    // element struct for `ElementType::Camera`.
-    let camera: *mut Camera = unsafe { push_element::<Camera>(uc, info, ElementType::Camera) };
+    let camera: *mut Camera = push_element::<Camera>(
+        uc,
+        // SAFETY: `info` is the caller's live `ufbxi_element_info` — write-capable
+        // provenance, live and unmoved across the call.
+        unsafe { View::<ElementInfo>::from_ptr(info) },
+        ElementType::Camera,
+    );
     ufbxi_check!(uc, !camera.is_null(), "camera");
 
     // C: `ufbx_prop tmp_props[ufbxi_arraycount(ufbxi_legacy_camera_props)];`
@@ -9803,9 +9869,13 @@ pub(crate) unsafe fn read_legacy_limb_node(
     node: &NodeView,
     info: *mut ElementInfo,
 ) -> Result<(), Fail> {
-    // SAFETY: `info` is the caller's live `ufbxi_element_info` and `Bone` is the
-    // element struct for `ElementType::Bone`.
-    let bone: *mut Bone = unsafe { push_element::<Bone>(uc, info, ElementType::Bone) };
+    let bone: *mut Bone = push_element::<Bone>(
+        uc,
+        // SAFETY: `info` is the caller's live `ufbxi_element_info` — write-capable
+        // provenance, live and unmoved across the call.
+        unsafe { View::<ElementInfo>::from_ptr(info) },
+        ElementType::Bone,
+    );
     ufbxi_check!(uc, !bone.is_null(), "bone");
 
     // C: `ufbx_prop tmp_props[ufbxi_arraycount(ufbxi_legacy_bone_props)];`
@@ -9860,9 +9930,13 @@ pub(crate) unsafe fn read_legacy_mesh(
     let node_vertices: &NodeView = node_vertices.unwrap();
     let node_indices: &NodeView = node_indices.unwrap();
 
-    // SAFETY: `info` is the caller's live `ufbxi_element_info` and `Mesh` is the
-    // element struct for `ElementType::Mesh`.
-    let mesh: *mut Mesh = unsafe { push_element::<Mesh>(uc, info, ElementType::Mesh) };
+    let mesh: *mut Mesh = push_element::<Mesh>(
+        uc,
+        // SAFETY: `info` is the caller's live `ufbxi_element_info` — write-capable
+        // provenance, live and unmoved across the call.
+        unsafe { View::<ElementInfo>::from_ptr(info) },
+        ElementType::Mesh,
+    );
     ufbxi_check!(uc, !mesh.is_null(), "mesh");
     // SAFETY: `mesh` is the fresh non-null element just pushed into uc's
     // `tmp_elements` arena (elements live there until finalize copies them into
@@ -10194,7 +10268,7 @@ pub(crate) unsafe fn read_legacy_mesh(
                 skin = unsafe {
                     push_synthetic_element::<SkinDeformer>(
                         uc,
-                        &raw mut skin_fbx_id,
+                        ScalarView::from_mut(&mut skin_fbx_id),
                         None,
                         (*info).name.data,
                         ElementType::SkinDeformer,
@@ -10286,8 +10360,11 @@ pub(crate) fn read_legacy_model(uc: &Context, node: &NodeView) -> Result<(), Fai
         info.name = name;
         info.dom_node = get_dom_node(uc, Some(node));
 
-        let elem_node: *mut UfbxNode =
-            push_element::<UfbxNode>(uc, &raw mut info, ElementType::Node);
+        let elem_node: *mut UfbxNode = push_element::<UfbxNode>(
+            uc,
+            View::<ElementInfo>::from_ptr(&raw mut info),
+            ElementType::Node,
+        );
         ufbxi_check!(uc, !elem_node.is_null(), "elem_node");
         ufbxi_check!(
             uc,
@@ -10396,14 +10473,16 @@ pub(crate) fn read_legacy_root(uc: &Context) -> Result<(), Fail> {
     // root node. However no other formats have root node with transforms so it
     // might be better to leave it as-is and create an empty one.
     {
-        // SAFETY: the id out-param is uc's own `root_id` field, the name is the
+        // SAFETY: the id out-param is uc's own `root_id` field, viewed for the
+        // call as an interior-mutable scalar cell — `ScalarView<u64>` is
+        // `repr(transparent)` over `u64` — the name is the
         // static empty string, and `root` is the fresh element the push returns
         // — checked non-null before it is set up and before its `element_id` is
         // copied into uc's own `tmp_node_ids` buffer.
         unsafe {
             let root: *mut UfbxNode = push_synthetic_element::<UfbxNode>(
                 uc,
-                uc.root_id_mut_ptr(),
+                &*(uc.root_id_mut_ptr() as *const ScalarView<u64>),
                 None,
                 EMPTY_CHAR.as_ptr(),
                 ElementType::Node,
@@ -10466,15 +10545,21 @@ pub(crate) fn read_legacy_root(uc: &Context) -> Result<(), Fail> {
             layer_info.name.data = b"(internal)\0".as_ptr();
             layer_info.name.length = strlen(layer_info.name.data);
             push_string_place_str(uc.string_pool_mut_ptr(), &raw mut layer_info.name, true)?;
-            let layer: *mut AnimLayer =
-                push_element::<AnimLayer>(uc, &raw mut layer_info, ElementType::AnimLayer);
+            let layer: *mut AnimLayer = push_element::<AnimLayer>(
+                uc,
+                View::<ElementInfo>::from_ptr(&raw mut layer_info),
+                ElementType::AnimLayer,
+            );
             ufbxi_check!(uc, !layer.is_null(), "layer");
 
             // C: `ufbxi_element_info stack_info = layer_info;` (struct copy)
             let mut stack_info: ElementInfo = core::ptr::read(&layer_info);
             stack_info.fbx_id = push_synthetic_id(uc);
-            let stack: *mut AnimStack =
-                push_element::<AnimStack>(uc, &raw mut stack_info, ElementType::AnimStack);
+            let stack: *mut AnimStack = push_element::<AnimStack>(
+                uc,
+                View::<ElementInfo>::from_ptr(&raw mut stack_info),
+                ElementType::AnimStack,
+            );
             ufbxi_check!(uc, !stack.is_null(), "stack");
 
             connect_oo(uc, layer_info.fbx_id, stack_info.fbx_id)?;
