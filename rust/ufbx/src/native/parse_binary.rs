@@ -1020,7 +1020,7 @@ fn binary_parse_node_rec(
     // interns it into `uc`'s string pool and returns the pooled pointer.
     name = unsafe {
         push_string(
-            uc.string_pool_mut_ptr(),
+            uc.string_pool_view(),
             name,
             name_len as usize,
             core::ptr::null_mut(),

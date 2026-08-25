@@ -1792,7 +1792,7 @@ fn ascii_parse_node_rec(
     // holds `str_len` readable name bytes, interned via `uc`'s own string pool.
     let name: *const u8 = unsafe {
         push_string(
-            uc.string_pool_mut_ptr(),
+            uc.string_pool_view(),
             (*ua).prev_token.str_data,
             (*ua).prev_token.str_len,
             core::ptr::null_mut(),

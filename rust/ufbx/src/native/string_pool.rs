@@ -925,27 +925,23 @@ pub(crate) unsafe fn push_string_imp(
 }
 
 // ufbx.c:5255-5258 `ufbxi_push_string`
+//
+// # Safety
+//
+// `str_` must be readable for `length` bytes, and `p_out_length` must be null
+// or address a live `usize` slot — the `push_string_imp` contract, forwarded
+// unchanged.
 #[inline(always)]
 pub(crate) unsafe fn push_string(
-    pool: *mut StringPool,
+    pool: &StringPoolView,
     str_: *const u8,
     length: usize,
     p_out_length: *mut usize,
     raw: bool,
 ) -> *const u8 {
-    // SAFETY: the caller vouches `pool` addresses the live, context-owned
-    // `StringPool`, reinterpreted in place; the caller's `str_`/`length`/
-    // `p_out_length` contract is forwarded unchanged to `push_string_imp`.
-    unsafe {
-        push_string_imp(
-            StringPoolView::from_ptr(pool),
-            str_,
-            length,
-            p_out_length,
-            true,
-            raw,
-        )
-    }
+    // SAFETY: the caller's `str_`/`length`/`p_out_length` contract is forwarded
+    // unchanged to `push_string_imp`.
+    unsafe { push_string_imp(pool, str_, length, p_out_length, true, raw) }
 }
 
 // ufbx.c:5260-5269 `ufbxi_push_string_place`
@@ -965,11 +961,12 @@ pub(crate) unsafe fn push_string_place(
         !str_.is_null() || length == 0,
         "str || length == 0"
     );
-    // SAFETY: `pool` is live; the caller vouches `*p_str`/`*p_length` describe a
+    // SAFETY: `pool` addresses the live, context-owned `StringPool`,
+    // reinterpreted in place; the caller vouches `*p_str`/`*p_length` describe a
     // run readable for `length` bytes (the check above additionally rejects a null
     // `str_` with nonzero length), and `p_length` is the caller's live in-out
     // length slot.
-    str_ = unsafe { push_string(pool, str_, length, p_length, raw) };
+    str_ = unsafe { push_string(StringPoolView::from_ptr(pool), str_, length, p_length, raw) };
     ufbxi_check_err!(
         unsafe { crate::native::error::ErrorView::from_ptr((*pool).error) },
         !str_.is_null(),
@@ -1011,12 +1008,13 @@ pub(crate) unsafe fn push_string_place_blob(
         unsafe { (*p_blob).data = ptr::null() };
         return Ok(());
     }
-    // SAFETY: `pool` is live; `p_blob` is a live `Blob` whose `data`/`size`
+    // SAFETY: `pool` addresses the live, context-owned `StringPool`,
+    // reinterpreted in place; `p_blob` is a live `Blob` whose `data`/`size`
     // describe its run; `&raw mut` projects its size out-param without creating
     // a temporary reference from the raw pointer.
     unsafe {
         (*p_blob).data = push_string(
-            pool,
+            StringPoolView::from_ptr(pool),
             (*p_blob).data,
             (*p_blob).size,
             &raw mut (*p_blob).size,
@@ -1916,9 +1914,17 @@ mod tests {
     fn push(fx: &mut Fixture, s: &[u8]) -> (*const u8, usize) {
         let mut out_len = s.len();
         // SAFETY: `s.as_ptr()`/`s.len()` describe exactly one live run;
-        // `out_len` is an unaliased local out-param; `fx.pool` is the
-        // fixture's own initialized pool.
-        let ptr_ = unsafe { push_string(&mut fx.pool, s.as_ptr(), s.len(), &mut out_len, false) };
+        // `out_len` is an unaliased local out-param; the view is minted over
+        // `fx.pool`, the fixture's own initialized pool, in place.
+        let ptr_ = unsafe {
+            push_string(
+                StringPoolView::from_ptr(&raw mut fx.pool),
+                s.as_ptr(),
+                s.len(),
+                &mut out_len,
+                false,
+            )
+        };
         (ptr_, out_len)
     }
 
@@ -1957,7 +1963,13 @@ mod tests {
 
             // raw=true: bytes are interned untouched even when invalid UTF-8.
             let mut raw_len = 2usize;
-            let r = push_string(&mut fx.pool, b"\xff\xfe".as_ptr(), 2, &mut raw_len, true);
+            let r = push_string(
+                StringPoolView::from_ptr(&raw mut fx.pool),
+                b"\xff\xfe".as_ptr(),
+                2,
+                &mut raw_len,
+                true,
+            );
             assert!(!r.is_null());
             assert_eq!(raw_len, 2);
             assert_eq!(bytes(r, 2), b"\xff\xfe");
@@ -2025,7 +2037,13 @@ mod tests {
         unsafe {
             let mut fx = make_fixture(UnicodeErrorHandling::AbortLoading);
             let mut out_len = 3usize;
-            let p = push_string(&mut fx.pool, b"a\xffb".as_ptr(), 3, &mut out_len, false);
+            let p = push_string(
+                StringPoolView::from_ptr(&raw mut fx.pool),
+                b"a\xffb".as_ptr(),
+                3,
+                &mut out_len,
+                false,
+            );
             assert!(p.is_null());
             assert_eq!(
                 bytes(fx.err.description.data, fx.err.description.length),
@@ -2302,7 +2320,13 @@ mod tests {
             let mut fx = make_fixture(UnicodeErrorHandling::ReplacementCharacter);
             for str_ in STRINGS.0.iter() {
                 let mut out_len = str_.length;
-                let p = push_string(&mut fx.pool, str_.data, str_.length, &mut out_len, false);
+                let p = push_string(
+                    StringPoolView::from_ptr(&raw mut fx.pool),
+                    str_.data,
+                    str_.length,
+                    &mut out_len,
+                    false,
+                );
                 assert!(!p.is_null());
                 assert_eq!(out_len, str_.length);
                 assert_eq!(bytes(p, out_len), bytes(str_.data, str_.length));

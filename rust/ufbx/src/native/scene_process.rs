@@ -7709,11 +7709,11 @@ pub(crate) unsafe fn absolute_to_relative_path(
 
     // C-parity: `raw` is hardcoded `true` here, independent of the `raw`
     // parameter that selected the source/destination strblob members.
-    // SAFETY: `string_pool_mut_ptr` hands out `uc`'s own live string pool, and
-    // `tmp`/`tmp_length` describe the bytes just written into the tmp array.
+    // SAFETY: `tmp`/`tmp_length` describe the bytes just written into the tmp
+    // array.
     let dst: *const u8 = unsafe {
         sp::push_string(
-            uc.string_pool_mut_ptr(),
+            uc.string_pool_view(),
             tmp,
             tmp_length,
             ptr::null_mut(),
