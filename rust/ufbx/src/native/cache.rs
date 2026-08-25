@@ -2383,6 +2383,14 @@ pub(crate) struct ExternalFile {
 // Reinterpret-in-place VIEW over one `ufbxi_external_file` record inside the
 // deduplicated run `load_external_files` materializes in uc's tmp buffer;
 // `load_external_cache` takes it in place of C's `ufbxi_external_file *`.
+//
+// MINT INVARIANT (on top of `View::<_, Mut>::from_ptr`'s liveness and
+// write-capable provenance): the viewed record's `filename` and
+// `absolute_filename` must each be a run that is NUL-terminated at index
+// `length` — interned string-pool strings are. `load_external_cache` hands
+// both to `cache_load` and prints `filename.data` through a printf `%s`, and
+// `String`'s `{ data, length }` pair cannot express that obligation, so it
+// rides on this type's mint instead of on a raw-pointer parameter.
 pub(crate) type ExternalFileView = View<ExternalFile>;
 
 impl ExternalFileView {
@@ -2451,17 +2459,19 @@ pub(crate) fn load_external_cache(uc: &Context, file: &ExternalFileView) -> Resu
         .set_scale_factor(uc.scene_view().metadata_view().geometry_scale());
 
     // SAFETY: `cc` is initialized above with the borrowed allocators and string
-    // pool `cache_load` consumes; `file`'s `filename` is an interned pool
-    // string, the NUL-terminated run `cache_load` requires.
+    // pool `cache_load` consumes; `file`'s `filename` is NUL-terminated at
+    // `length` — the `ExternalFileView` mint invariant — which is the run
+    // `cache_load` requires.
     let mut cache: *mut GeometryCache = unsafe { cache_load(&cc, file.filename()) };
     if cache.is_null() {
         if cc.error_view().type_() == ErrorType::FileNotFound {
             // SAFETY: `error_mut_ptr` addresses `cc`'s own `Error` field, so
             // one `Error` worth of bytes is writable there.
             unsafe { core::ptr::write_bytes(cc.error_mut_ptr(), 0, 1) };
-            // SAFETY: same initialized `cc` as the first attempt and another
-            // interned pool string off `file`; the error was just cleared for
-            // the retry.
+            // SAFETY: same initialized `cc` as the first attempt, and
+            // `file`'s `absolute_filename` is NUL-terminated at `length` by
+            // the same `ExternalFileView` mint invariant; the error was just
+            // cleared for the retry.
             cache = unsafe { cache_load(&cc, file.absolute_filename()) };
         }
     }
@@ -2473,8 +2483,9 @@ pub(crate) fn load_external_cache(uc: &Context, file: &ExternalFileView) -> Resu
     if cache.is_null() {
         if cc.error_view().type_() == ErrorType::FileNotFound {
             if uc.opts_view().ignore_missing_external_files() {
-                // The `%s` conversion reads `file`'s `filename`, a
-                // NUL-terminated interned pool string. The verbatim C condition
+                // The `%s` conversion reads `file`'s `filename`, which the
+                // `ExternalFileView` mint invariant vouches is NUL-terminated
+                // at `length`. The verbatim C condition
                 // text is supplied, so wrapping the condition does not perturb
                 // the recorded error string.
                 ufbxi_check!(
@@ -2630,7 +2641,10 @@ pub(crate) fn load_external_files(uc: &Context) -> Result<(), Fail> {
             if (*file).type_ == ExternalFileType::GeometryCache {
                 // SAFETY: `file` is an in-bounds element of the fresh
                 // `num_files` run materialized above in uc's own tmp buffer —
-                // live, unmoved and write-capable arena memory.
+                // live, unmoved and write-capable arena memory. Its `filename`
+                // and `absolute_filename` are interned string-pool strings,
+                // NUL-terminated at `length`, which is the `ExternalFileView`
+                // mint invariant `load_external_cache` reads them under.
                 load_external_cache(uc, ExternalFileView::from_ptr(file))?;
             }
             prev_name = (*file).filename.data;
