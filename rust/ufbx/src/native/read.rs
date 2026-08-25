@@ -145,7 +145,7 @@ use crate::native::view::{Mode, SliceViewIter, View};
 use crate::native::warnings::ufbxi_warnf;
 use crate::prelude::as_f64;
 use crate::prelude::{
-    slice_from_ptr, Blob, List, ListView, OpenFileContext, Real, Ref, ScalarView, String,
+    slice_from_ptr, Blob, BlobView, List, ListView, OpenFileContext, Real, Ref, ScalarView, String,
 };
 
 // ufbx.h:3618 `UFBX_ENUM_TYPE(ufbx_thumbnail_format, UFBX_THUMBNAIL_FORMAT, UFBX_THUMBNAIL_FORMAT_RGBA_32);`
@@ -516,27 +516,53 @@ pub(crate) unsafe fn read_properties(
     Ok(())
 }
 
+// Rust-port infrastructure (not a ufbx.c section): the write surface
+// `ufbxi_read_thumbnail` needs over the scene metadata's `ufbx_thumbnail` slot
+// — the property table it fills (as a sub-view, and as an addr-of parity site
+// for `read_properties`), the scalar leaves and the `data` blob.
+pub(crate) type ThumbnailView = View<Thumbnail>;
+
+impl ThumbnailView {
+    #[inline(always)]
+    pub(crate) fn props_view(&self) -> &PropsView {
+        view_project!(self, props)
+    }
+    #[inline(always)]
+    pub(crate) fn props_mut_ptr(&self) -> *mut Props {
+        view_raw_mut!(self, props)
+    }
+    #[inline(always)]
+    pub(crate) fn set_width(&self, width: u32) {
+        view_write!(self, width, width)
+    }
+    #[inline(always)]
+    pub(crate) fn set_height(&self, height: u32) {
+        view_write!(self, height, height)
+    }
+    #[inline(always)]
+    pub(crate) fn set_format(&self, format: ThumbnailFormat) {
+        view_write!(self, format, format)
+    }
+    #[inline(always)]
+    pub(crate) fn data_view(&self) -> &BlobView {
+        view_project!(self, data)
+    }
+}
+
 // ufbx.c:11934-11967 `ufbxi_read_thumbnail`
 #[inline(never)]
-pub(crate) unsafe fn read_thumbnail(
+pub(crate) fn read_thumbnail(
     uc: &Context,
     node: &NodeView,
-    thumbnail: *mut Thumbnail,
+    thumbnail: &ThumbnailView,
 ) -> Result<(), Fail> {
-    // SAFETY: `thumbnail` is the caller's writable `ufbx_thumbnail` slot (fn
-    // contract), so `&raw mut (*thumbnail).props` is its live `props` field.
-    unsafe { read_properties(uc, node, &raw mut (*thumbnail).props) }?;
+    // SAFETY: `props_mut_ptr()` is the viewed thumbnail's own live `props`
+    // field, in uc's result arena — `read_properties`' writable-slot contract.
+    unsafe { read_properties(uc, node, thumbnail.props_mut_ptr()) }?;
 
-    // SAFETY: `&raw mut (*thumbnail).props` projects the live `props` field just
-    // filled in above, which `PropsView::from_ptr` mints a view over; both names
-    // are NUL-terminated literals — `find_int`'s contract.
-    let (custom_width, custom_height): (i64, i64) = unsafe {
-        let props: &PropsView = PropsView::from_ptr(&raw mut (*thumbnail).props);
-        (
-            api_find_int_len(props, b"CustomWidth", 0),
-            api_find_int_len(props, b"CustomHeight", 0),
-        )
-    };
+    let props: &PropsView = thumbnail.props_view();
+    let custom_width: i64 = api_find_int_len(props, b"CustomWidth", 0);
+    let custom_height: i64 = api_find_int_len(props, b"CustomHeight", 0);
 
     // SAFETY: the name is a NUL-terminated literal — `find_child_strcmp`'s
     // contract.
@@ -556,35 +582,29 @@ pub(crate) unsafe fn read_thumbnail(
         // oracle here (same accepted-divergence class as the f64->i64
         // boundary, PORTING.md "Integer semantics").
         if format >= 0 && format < THUMBNAIL_FORMAT_COUNT - 1 {
-            // SAFETY: `thumbnail` is the caller's writable slot.
-            unsafe { (*thumbnail).format = thumbnail_format_from_raw(format + 1) };
+            thumbnail.set_format(thumbnail_format_from_raw(format + 1));
         }
     }
 
     if let Some(size) = find_val1::<i32>(node, sp::Size.as_ptr()) {
         if size > 0 {
-            // SAFETY: `thumbnail` is the caller's writable slot.
-            unsafe {
-                (*thumbnail).width = size as u32;
-                (*thumbnail).height = size as u32;
-            }
+            thumbnail.set_width(size as u32);
+            thumbnail.set_height(size as u32);
         } else if size < 0 && custom_width > 0 && custom_height > 0 {
-            // SAFETY: as above.
-            unsafe {
-                (*thumbnail).width = custom_width as u32;
-                (*thumbnail).height = custom_height as u32;
-            }
+            thumbnail.set_width(custom_width as u32);
+            thumbnail.set_height(custom_height as u32);
         }
     }
 
     let data_arr: *mut ValueArray = find_array(node, sp::ImageData.as_ptr(), b'c');
     if !data_arr.is_null() {
         // SAFETY: `data_arr` is non-null (checked) and points at the node's own
-        // array descriptor; `thumbnail` is the caller's writable slot.
-        unsafe {
-            (*thumbnail).data.data = (*data_arr).data as *const u8;
-            (*thumbnail).data.size = (*data_arr).size;
-        }
+        // array descriptor.
+        thumbnail
+            .data_view()
+            .set_data(unsafe { (*data_arr).data } as *const u8);
+        // SAFETY: as above.
+        thumbnail.data_view().set_size(unsafe { (*data_arr).size });
     }
 
     Ok(())
@@ -616,15 +636,11 @@ pub(crate) fn read_scene_info(uc: &Context, node: &NodeView) -> Result<(), Fail>
 
     let thumbnail = find_child(node, sp::Thumbnail.as_ptr());
     if let Some(thumbnail) = thumbnail {
-        // SAFETY: `thumbnail` is a child NodeView of `node`; the destination is
-        // uc's own scene metadata `thumbnail` slot, reached through its views.
-        unsafe {
-            read_thumbnail(
-                uc,
-                thumbnail,
-                uc.scene_view().metadata_view().thumbnail_mut_ptr(),
-            )?;
-        }
+        read_thumbnail(
+            uc,
+            thumbnail,
+            uc.scene_view().metadata_view().thumbnail_view(),
+        )?;
     }
 
     Ok(())

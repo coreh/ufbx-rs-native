@@ -49,7 +49,9 @@ use crate::native::platform::{
 use crate::native::string_pool as sp;
 use crate::native::string_pool::{SanitizedString, StringPool};
 use crate::native::thread::{ThreadPool, THREAD_GROUP_COUNT};
-use crate::native::view::{view_raw_const, view_raw_mut, view_read, view_read_shared, view_write};
+use crate::native::view::{
+    view_project, view_raw_const, view_raw_mut, view_read, view_read_shared, view_write,
+};
 use crate::native::view::{Mode, SliceViewIter, View};
 use crate::native::warnings::Warnings;
 use crate::prelude::{Blob, Real, Ref, String};
@@ -2720,7 +2722,7 @@ impl SceneMetadataView {
         unsafe { (&raw mut (*self.get()).has_warning) as *mut bool }
     }
 
-    // --- scene_props (Props) / thumbnail (Thumbnail): addr-of only ---
+    // --- scene_props (Props): addr-of only / thumbnail (Thumbnail): sub-view ---
     #[inline(always)]
     pub(crate) fn scene_props_ptr(&self) -> *const crate::generated::Props {
         view_raw_const!(self, scene_props)
@@ -2730,8 +2732,8 @@ impl SceneMetadataView {
         view_raw_mut!(self, scene_props)
     }
     #[inline(always)]
-    pub(crate) fn thumbnail_mut_ptr(&self) -> *mut crate::generated::Thumbnail {
-        view_raw_mut!(self, thumbnail)
+    pub(crate) fn thumbnail_view(&self) -> &crate::native::read::ThumbnailView {
+        view_project!(self, thumbnail)
     }
 }
 
