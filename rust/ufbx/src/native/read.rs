@@ -7106,25 +7106,20 @@ static CONSTRAINT_TYPES: [ConstraintTypeEntry; 6] = [
 
 // ufbx.c:14814-14835 `ufbxi_read_constraint`
 #[inline(never)]
-pub(crate) unsafe fn read_constraint(
+pub(crate) fn read_constraint(
     uc: &Context,
     node: &NodeView,
-    info: *mut ElementInfo,
+    info: &View<ElementInfo, Mut>,
 ) -> Result<(), Fail> {
     let _ = node; // C: `(void)node;`
 
-    // SAFETY: `info` is the caller's live `ufbxi_element_info` — write-capable
-    // provenance, live and unmoved across the call — whose `name` is a pooled
-    // NUL-terminated string and whose `props`/`dom_node` point into uc's own
-    // buffers, so all three survive being stored into the element by pointer;
-    // `Constraint` is the element struct for `ElementType::Constraint`.
-    let constraint: *mut Constraint = unsafe {
-        push_element::<Constraint>(
-            uc,
-            View::<ElementInfo>::from_ptr(info),
-            ElementType::Constraint,
-        )
-    };
+    // SAFETY: `info` views the caller's live `ufbxi_element_info`, whose `name`
+    // is a pooled NUL-terminated string and whose `props`/`dom_node` point into
+    // uc's own buffers, so all three survive being stored into the element by
+    // pointer; `Constraint` is the element struct for
+    // `ElementType::Constraint`.
+    let constraint: *mut Constraint =
+        unsafe { push_element::<Constraint>(uc, info, ElementType::Constraint) };
     ufbxi_check!(uc, !constraint.is_null(), "constraint");
 
     if let Some(got) = find_val1::<Checked<String>>(node, sp::Type.as_ptr()) {
@@ -7873,7 +7868,9 @@ pub(crate) fn read_object(uc: &Context, node: &NodeView) -> Result<(), Fail> {
                 // write-capable provenance, live and unmoved across the call.
                 read_character(uc, node, View::<ElementInfo, Mut>::from_ptr(&raw mut info))?;
             } else {
-                read_constraint(uc, node, &raw mut info)?;
+                // SAFETY: `info` is this frame's own `ufbxi_element_info` local —
+                // write-capable provenance, live and unmoved across the call.
+                read_constraint(uc, node, View::<ElementInfo, Mut>::from_ptr(&raw mut info))?;
             }
         } else if name == sp::SceneInfo.as_ptr() {
             read_scene_info(uc, node)?;
