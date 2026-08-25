@@ -554,10 +554,24 @@ pub(crate) unsafe fn free_size(ator: &AllocatorView, size: usize, ptr: *mut c_vo
 // ufbx.c:3768-3787 `ufbxi_grow_array_size`
 // C: `ufbxi_noinline ufbxi_nodiscard static bool`; `p_ptr` is a `void *`
 // pointing at the caller's `T *` slot, read/written via `*(void**)p_ptr`.
+//
+// The `&AllocatorView` param carries the allocator's liveness and write-capable
+// provenance for the bookkeeping leaves and the `realloc_size` hand-off.
+//
+// The fn stays `unsafe` for `p_ptr`/`p_cap`: a pair of raw slots in caller
+// memory, read and written together, whose "these two describe one array" and
+// "the block they name belongs to `ator`" contracts no parameter type
+// expresses.
+//
+// # Safety
+//
+// `p_ptr` must point at a live, writable `T *` slot and `p_cap` at the live,
+// writable `usize` capacity beside it, together describing either a block of
+// `size * *p_cap` bytes allocated through `ator` or `(null, 0)`.
 #[inline(never)]
 #[must_use]
 pub(crate) unsafe fn grow_array_size(
-    ator: *mut Allocator,
+    ator: &AllocatorView,
     size: usize,
     p_ptr: *mut c_void,
     p_cap: *mut usize,
@@ -565,17 +579,16 @@ pub(crate) unsafe fn grow_array_size(
 ) -> bool {
     #[cfg(feature = "regression")]
     {
-        // SAFETY: `ator` points at a live `Allocator` — the raw-pointer contract
-        // of this `unsafe fn`; the reborrow is the only reference to it here.
-        let a = unsafe { &mut *ator };
         ufbxi_check_return_err_msg!(
-            unsafe { crate::native::error::ErrorView::from_ptr(a.error) },
-            a.num_allocs < a.max_allocs,
+            // SAFETY: the allocator's own error slot, read as a raw field place
+            // through the view's mint invariant (a live, unmoved `Allocator`).
+            unsafe { crate::native::error::ErrorView::from_ptr(ator.error()) },
+            ator.num_allocs() < ator.max_allocs(),
             false,
             "Allocation limit exceeded",
             "ator->num_allocs < ator->max_allocs"
         );
-        a.num_allocs += 1;
+        ator.set_num_allocs(ator.num_allocs() + 1);
     }
 
     // SAFETY: `p_cap` points at the caller's live `usize` capacity slot — the
@@ -592,12 +605,11 @@ pub(crate) unsafe fn grow_array_size(
         return true;
     }
     let new_n = max_sz(old_n.wrapping_mul(2), n);
-    // SAFETY: `ator` points at a live, unmoved `Allocator` — the raw-pointer
-    // contract of this `unsafe fn`; the mint hands that vouch to `realloc_size`.
-    // `ptr`/`old_n` are the caller's pointer/capacity pair — either a live block
-    // of this allocator or `(null, 0)` for a fresh array, which `realloc_size`
-    // routes to plain allocation without reading `ptr`.
-    let new_ptr = unsafe { realloc_size(AllocatorView::from_ptr(ator), size, ptr, old_n, new_n) };
+    // SAFETY: `ptr`/`old_n` are the caller's pointer/capacity pair — either a
+    // live block of this allocator or `(null, 0)` for a fresh array, which
+    // `realloc_size` routes to plain allocation without reading `ptr` — which
+    // is exactly the `old_ptr`/`old_n` contract of `realloc_size`.
+    let new_ptr = unsafe { realloc_size(ator, size, ptr, old_n, new_n) };
     if new_ptr.is_null() {
         return false;
     }
@@ -723,9 +735,18 @@ pub(crate) unsafe fn grow_array<T>(
     p_cap: *mut usize,
     n: usize,
 ) -> bool {
-    // SAFETY: forwarding this fn's `ator` contract plus the caller's live
-    // pointer/capacity slots to `grow_array_size`.
-    unsafe { grow_array_size(ator, size_of::<T>(), p_ptr as *mut c_void, p_cap, n) }
+    // SAFETY: `ator` points at a live, unmoved `Allocator` — the raw-pointer
+    // contract of this `unsafe fn`; the mint hands that vouch to
+    // `grow_array_size`, as do the caller's live pointer/capacity slots.
+    unsafe {
+        grow_array_size(
+            AllocatorView::from_ptr(ator),
+            size_of::<T>(),
+            p_ptr as *mut c_void,
+            p_cap,
+            n,
+        )
+    }
 }
 
 // ufbx.c:3808-3815 implementation-header magic values
