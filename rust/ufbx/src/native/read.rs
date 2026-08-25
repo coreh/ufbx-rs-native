@@ -3589,10 +3589,7 @@ const _: () = assert!(
 
 // ufbx.c:13255-13265 `ufbxi_mesh_part_add_face`
 #[inline(always)]
-pub(crate) unsafe fn mesh_part_add_face(part: *mut MeshPart, num_indices: u32) {
-    // SAFETY: `part` is the caller's live arena `ufbx_mesh_part` (fn contract),
-    // reached through the mesh's own part run — write-capable provenance.
-    let part: &View<MeshPart> = unsafe { View::<MeshPart>::from_ptr(part) };
+pub(crate) fn mesh_part_add_face(part: &View<MeshPart>, num_indices: u32) {
     part.set_num_faces(part.num_faces().wrapping_add(1));
     if num_indices >= 3 {
         part.set_num_triangles(
@@ -3833,9 +3830,7 @@ pub(crate) fn assign_face_groups(
 
         if !parts.is_null() {
             // C: `ufbxi_mesh_part_add_face(&parts[index], num_indices);`
-            // SAFETY: `at` yields the live `parts` element `index` addresses,
-            // and `mesh_part_add_face` touches only that one part's fields.
-            unsafe { mesh_part_add_face(part_list.at(index).get(), num_indices) };
+            mesh_part_add_face(part_list.at(index), num_indices);
         }
 
         p_id.set(index as u32);
@@ -3919,13 +3914,15 @@ pub(crate) unsafe fn update_face_groups(
         // (both runs are `num_faces` long), and every `face_group` entry is a
         // group index below `face_group_parts.count == num_groups`, which
         // bounds the part slot.
-        let part: *mut MeshPart = unsafe {
-            (mesh.face_group_parts().data as *mut MeshPart)
-                .add(*mesh.face_group().data.add(i) as usize)
+        let part: &View<MeshPart> = unsafe {
+            View::<MeshPart>::from_ptr(
+                (mesh.face_group_parts().data as *mut MeshPart)
+                    .add(*mesh.face_group().data.add(i) as usize),
+            )
         };
-        // SAFETY: `part` is that in-bounds `ufbx_mesh_part`, and `i < num_faces`
-        // bounds the `faces` read.
-        unsafe { mesh_part_add_face(part, (*mesh.faces().data.add(i)).num_indices) };
+        // SAFETY: `i < num_faces` bounds the `faces` read.
+        let num_indices: u32 = unsafe { (*mesh.faces().data.add(i)).num_indices };
+        mesh_part_add_face(part, num_indices);
     }
 
     let mut part_index: u32 = 0;

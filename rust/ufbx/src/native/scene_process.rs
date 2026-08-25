@@ -8097,7 +8097,9 @@ pub(crate) unsafe fn finalize_mesh_material(
             // allocated with `max(num_materials, 1)` entries, so the remaining
             // `count == num_materials == 0` shape the assert also admits does
             // not occur.
-            unsafe { mesh_part_add_face(parts.add(mat_ix as usize), face.num_indices) };
+            let part: &View<MeshPart> =
+                unsafe { View::<MeshPart>::from_ptr(parts.add(mat_ix as usize)) };
+            mesh_part_add_face(part, face.num_indices);
         }
     }
 
