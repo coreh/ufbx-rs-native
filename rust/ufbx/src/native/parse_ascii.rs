@@ -1511,10 +1511,10 @@ pub(crate) unsafe extern "C" fn ascii_array_task_fn(task: *mut Task) -> bool {
 
 // ufbx.c:10160-10222 `ufbxi_ascii_read_float_array`
 #[inline(never)]
-pub(crate) unsafe fn ascii_read_float_array(
+pub(crate) fn ascii_read_float_array(
     uc: &Context,
     type_: u8,
-    p_num_read: *mut usize,
+    p_num_read: &mut usize,
 ) -> Result<(), Fail> {
     let ua: *mut Ascii = uc.ascii_mut_ptr();
     // SAFETY: `ua` is `uc`'s own live `ascii` sub-context (via `ascii_mut_ptr`);
@@ -1613,10 +1613,7 @@ pub(crate) unsafe fn ascii_read_float_array(
         }
     }
 
-    // SAFETY: `p_num_read` is the caller's valid out-param.
-    unsafe {
-        *p_num_read = uc.tmp_stack_view().num_items() - initial_items;
-    }
+    *p_num_read = uc.tmp_stack_view().num_items() - initial_items;
     Ok(())
 }
 
@@ -1987,11 +1984,7 @@ unsafe fn ascii_parse_node_rec(
         if arr_type != 0 {
             let mut num_read: usize = 0;
             if arr_type == b'f' || arr_type == b'd' {
-                // SAFETY: `num_read` is a local out-param; the reader writes the
-                // count of pushed elements into it.
-                unsafe {
-                    ascii_read_float_array(uc, arr_type, &raw mut num_read)?;
-                }
+                ascii_read_float_array(uc, arr_type, &mut num_read)?;
             } else if arr_type == b'i' || arr_type == b'l' {
                 ascii_read_int_array(uc, arr_type, &mut num_read)?;
             }
