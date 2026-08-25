@@ -2689,24 +2689,26 @@ pub(crate) unsafe fn fetch_dst_element(
 }
 
 // ufbx.c:19137-19149 `ufbxi_fetch_src_element`
+//
+// C's nullable `const char *prop` is typed here as `Option<&[u8]>` (see
+// `find_src_connections`).
+//
+// # Safety
+// `element` heads a live, arena-owned `ufbx_element`. With `search_node` set,
+// its provenance must additionally span the ENCLOSING element struct: the walk
+// then reaches `ufbxi_get_element_node`, which reads `ufbx_node` fields past
+// `size_of::<Element>()`, so a pointer derived from a header-only
+// `&View<Element>` may not address them. With `search_node` clear the walk
+// stays within the `ufbx_element` header, where header-only provenance suffices.
 #[inline(never)]
 #[must_use]
 pub(crate) unsafe fn fetch_src_element(
     element: *mut Element,
     search_node: bool,
-    prop: *const u8,
+    prop: Option<&[u8]>,
     dst_type: ElementType,
 ) -> *mut Element {
     let mut element: *mut Element = element;
-
-    // SAFETY: `prop` is null or a NUL-terminated interned property name (fn
-    // contract) — the measure and the measured run are that contract; minted
-    // once here as `find_src_connections`' query span.
-    let prop: Option<&[u8]> = if prop.is_null() {
-        None
-    } else {
-        Some(unsafe { slice_from_ptr(prop, strlen(prop)) })
-    };
 
     loop {
         let conns: List<Connection> = find_src_connections(
@@ -9901,12 +9903,10 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
         // SAFETY: `element_raw()` addresses the viewed material's own element
         // header; the fetched source is null or a live `ufbx_shader`.
         material.set_shader(unsafe {
-            opt_ref(fetch_src_element(
-                material.element_raw(),
-                false,
-                ptr::null(),
-                ElementType::Shader,
-            ) as *mut Shader)
+            opt_ref(
+                fetch_src_element(material.element_raw(), false, None, ElementType::Shader)
+                    as *mut Shader,
+            )
         });
 
         // C `strcmp` over the material's interned `shading_model_name`, whose
@@ -12670,7 +12670,7 @@ pub(crate) fn update_initial_clusters(scene_view: &SceneView) {
             fetch_src_element(
                 cluster.element_raw(),
                 false,
-                ptr::null(),
+                None,
                 ElementType::SkinDeformer,
             )
         } as *mut SkinDeformer;
@@ -12684,23 +12684,13 @@ pub(crate) fn update_initial_clusters(scene_view: &SceneView) {
 
         // SAFETY: `element_raw()` projects the deformer's own live, initialized
         // element header, whose connection lists `ufbxi_fetch_src_element` walks.
-        let mut node: *mut Node = unsafe {
-            fetch_src_element(
-                skin_view.element_raw(),
-                false,
-                ptr::null(),
-                ElementType::Node,
-            )
-        } as *mut Node;
+        let mut node: *mut Node =
+            unsafe { fetch_src_element(skin_view.element_raw(), false, None, ElementType::Node) }
+                as *mut Node;
         if node.is_null() {
             // SAFETY: as above, for the mesh connection of the same deformer.
             let mesh: *mut Mesh = unsafe {
-                fetch_src_element(
-                    skin_view.element_raw(),
-                    false,
-                    ptr::null(),
-                    ElementType::Mesh,
-                )
+                fetch_src_element(skin_view.element_raw(), false, None, ElementType::Mesh)
             } as *mut Mesh;
             // C: `mesh->instances` — the `ufbx_mesh` element-header union view
             // (ufbx.h), which the generated struct keeps as `element.instances`.
