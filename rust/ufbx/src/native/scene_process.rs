@@ -6766,31 +6766,35 @@ pub(crate) unsafe fn scale_vec3_list(v_list: *const c_void, scale: Real, stride:
 }
 
 // ufbx.c:21049-21061 `ufbxi_transform_vec3_list`
+/// # Safety
+/// `stride` must be `0` or the size of the viewed list's own element type `T`,
+/// so that every strided slot the walk visits begins a live `ufbx_vec3`-shaped
+/// triple inside that list's run. That pairing is the C `void *` contract and
+/// is not expressible in the parameter types.
 #[inline(never)]
-pub(crate) unsafe fn transform_vec3_list(
-    v_list: *const c_void,
-    matrix: *const Matrix,
+pub(crate) unsafe fn transform_vec3_list<T>(
+    v_list: Option<&ListView<T>>,
+    matrix: &Matrix,
     stride: usize,
 ) {
     let mut stride: usize = stride;
-    let list: *const VoidList = v_list as *const VoidList;
-    // SAFETY: `v_list` is null or points to a live `ufbx_*_list` header — a
-    // `data`/`count` pair over `count` `ufbx_vec3`-shaped elements spaced by
-    // `stride` (fn contract); the null check short-circuits ahead of the read.
-    if list.is_null() || unsafe { (*list).count } == 0 {
+    let Some(list) = v_list else {
+        return;
+    };
+    if list.count() == 0 {
         return;
     }
     if stride == 0 {
         stride = size_of::<Vec3>();
     }
 
-    // SAFETY: `list` is non-null (checked) and its header is live (see above).
-    let (mut p, count) = unsafe { ((*list).data as *mut u8, (*list).count) };
+    let (mut p, count) = (list.data() as *mut u8, list.count());
     let end: *mut u8 = p.wrapping_add(count.wrapping_mul(stride));
     while p != end {
         let v: *mut Vec3 = p as *mut Vec3;
-        // SAFETY: `p` walks the `count` strided elements of the list, each a live
-        // `ufbx_vec3`; `matrix` points to a live `ufbx_matrix` (fn contract).
+        // SAFETY: `p` walks the `count` strided slots of the viewed list's own
+        // run, each a live `ufbx_vec3` per the `stride` contract above; `matrix`
+        // borrows a live `ufbx_matrix`.
         unsafe { *v = transform_position(matrix, *v) };
         p = p.wrapping_add(stride);
     }
@@ -6798,17 +6802,16 @@ pub(crate) unsafe fn transform_vec3_list(
 
 // ufbx.c:21063-21068 `ufbxi_normalize_vec3_list`
 #[inline(never)]
-pub(crate) unsafe fn normalize_vec3_list(list: *const List<Vec3>) {
+pub(crate) fn normalize_vec3_list(list: &ListView<Vec3>) {
     // C: `ufbxi_nounroll ufbxi_for_list(ufbx_vec3, normal, *list)` — the
     // no-unroll pragma is optimizer-only and has no Rust analogue.
-    // SAFETY: `list` points to a live `ufbx_vec3_list` header whose
-    // `data`/`count` describe one run of initialized vectors (fn contract).
-    let (mut normal, count) = unsafe { ((*list).data as *mut Vec3, (*list).count) };
+    let (mut normal, count) = (list.data() as *mut Vec3, list.count());
     let normal_end: *mut Vec3 = add_ptr(normal, count);
     while normal != normal_end {
-        // SAFETY: `normal != normal_end`, so it addresses a live element of that
-        // run and the advance lands at or before the run's one-past-the-end
-        // pointer.
+        // SAFETY: the viewed list's `data`/`count` describe one live run of
+        // initialized vectors (list invariant), and `normal != normal_end` keeps
+        // it inside that run, so the advance lands at or before the run's
+        // one-past-the-end pointer.
         unsafe {
             *normal = normalize3(*normal);
             normal = normal.add(1);
@@ -7223,16 +7226,12 @@ pub(crate) fn modify_geometry<'a>(uc: &'a Context) -> Result<(), Fail> {
                     matrix_for_normals(&raw const (*geo_node).geometry_to_node);
 
                 transform_vec3_list(
-                    mesh.vertex_position().values_ptr() as *const c_void,
-                    &raw const (*geo_node).geometry_to_node,
+                    Some(mesh.vertex_position().values_view()),
+                    &(*geo_node).geometry_to_node,
                     0,
                 );
-                transform_vec3_list(
-                    mesh.vertex_normal().values_ptr() as *const c_void,
-                    &normal_matrix,
-                    0,
-                );
-                normalize_vec3_list(mesh.vertex_normal().values_ptr());
+                transform_vec3_list(Some(mesh.vertex_normal().values_view()), &normal_matrix, 0);
+                normalize_vec3_list(mesh.vertex_normal().values_view());
 
                 // C: `ufbxi_for_list(ufbx_uv_set, set, mesh->uv_sets)`
                 let sets = SliceViewIter::<UvSet>::from_raw_parts(
@@ -7241,17 +7240,17 @@ pub(crate) fn modify_geometry<'a>(uc: &'a Context) -> Result<(), Fail> {
                 );
                 for set in sets {
                     transform_vec3_list(
-                        set.vertex_tangent().values_ptr() as *const c_void,
+                        Some(set.vertex_tangent().values_view()),
                         &tangent_matrix,
                         0,
                     );
                     transform_vec3_list(
-                        set.vertex_bitangent().values_ptr() as *const c_void,
+                        Some(set.vertex_bitangent().values_view()),
                         &tangent_matrix,
                         0,
                     );
-                    normalize_vec3_list(set.vertex_tangent().values_ptr());
-                    normalize_vec3_list(set.vertex_bitangent().values_ptr());
+                    normalize_vec3_list(set.vertex_tangent().values_view());
+                    normalize_vec3_list(set.vertex_bitangent().values_view());
                 }
             }
             p_mesh = p_mesh.add(1);
@@ -7291,9 +7290,12 @@ pub(crate) fn modify_geometry<'a>(uc: &'a Context) -> Result<(), Fail> {
             let geo_node: *mut Node =
                 get_geometry_transform_node(ElementView::from_ptr(&raw mut (*curve).element));
             if do_geometry_transforms && !geo_node.is_null() {
+                // SAFETY: `curve` is that live arena curve, so
+                // `&raw mut (*curve).control_points` addresses its own
+                // control-point list header, whose provenance is write-capable.
                 transform_vec3_list(
-                    &raw const (*curve).control_points as *const c_void,
-                    &raw const (*geo_node).geometry_to_node,
+                    Some(ListView::from_ptr(&raw mut (*curve).control_points)),
+                    &(*geo_node).geometry_to_node,
                     0,
                 );
             }
@@ -7334,9 +7336,12 @@ pub(crate) fn modify_geometry<'a>(uc: &'a Context) -> Result<(), Fail> {
             let geo_node: *mut Node =
                 get_geometry_transform_node(ElementView::from_ptr(&raw mut (*curve).element));
             if do_geometry_transforms && !geo_node.is_null() {
+                // SAFETY: `curve` is that live arena curve, so
+                // `&raw mut (*curve).control_points` addresses its own
+                // control-point list header, whose provenance is write-capable.
                 transform_vec3_list(
-                    &raw const (*curve).control_points as *const c_void,
-                    &raw const (*geo_node).geometry_to_node,
+                    Some(ListView::from_ptr(&raw mut (*curve).control_points)),
+                    &(*geo_node).geometry_to_node,
                     size_of::<Vec4>(),
                 );
             }
@@ -7379,9 +7384,12 @@ pub(crate) fn modify_geometry<'a>(uc: &'a Context) -> Result<(), Fail> {
             let geo_node: *mut Node =
                 get_geometry_transform_node(ElementView::from_ptr(&raw mut (*surface).element));
             if do_geometry_transforms && !geo_node.is_null() {
+                // SAFETY: `surface` is that live arena surface, so
+                // `&raw mut (*surface).control_points` addresses its own
+                // control-point list header, whose provenance is write-capable.
                 transform_vec3_list(
-                    &raw const (*surface).control_points as *const c_void,
-                    &raw const (*geo_node).geometry_to_node,
+                    Some(ListView::from_ptr(&raw mut (*surface).control_points)),
+                    &(*geo_node).geometry_to_node,
                     size_of::<Vec4>(),
                 );
             }
@@ -7453,7 +7461,7 @@ pub(crate) fn postprocess_scene(uc: &Context) {
                 // provenance is write-capable: `Mut` is the right mode.
                 let mesh = View::<Mesh>::from_ptr(*p_mesh);
                 if uc.opts_view().normalize_normals() {
-                    normalize_vec3_list(mesh.vertex_normal().values_ptr());
+                    normalize_vec3_list(mesh.vertex_normal().values_view());
                 }
                 if uc.opts_view().normalize_tangents() {
                     // C-parity: the loop body normalizes the MESH-level tangent and
@@ -7462,8 +7470,8 @@ pub(crate) fn postprocess_scene(uc: &Context) {
                     let mut set: *mut UvSet = mesh.uv_sets().data as *mut UvSet;
                     let set_end: *mut UvSet = add_ptr(set, mesh.uv_sets().count);
                     while set != set_end {
-                        normalize_vec3_list(mesh.vertex_tangent().values_ptr());
-                        normalize_vec3_list(mesh.vertex_bitangent().values_ptr());
+                        normalize_vec3_list(mesh.vertex_tangent().values_view());
+                        normalize_vec3_list(mesh.vertex_bitangent().values_view());
                         set = set.add(1);
                     }
                 }
