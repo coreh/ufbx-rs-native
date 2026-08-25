@@ -427,28 +427,24 @@ impl MapView {
     // ufbx.c:4657 `ufbxi_map_grow(map, type, min_size)`
     #[inline(always)]
     pub(crate) fn grow<T>(&self, min_size: usize) -> bool {
-        // SAFETY: the view is only minted over a live, `map_init`ed `Map`
-        // (write provenance); growth allocates through the map's own stored
-        // allocator, live for the map's lifetime.
-        unsafe { map_grow::<T>(self.get(), min_size) }
+        map_grow::<T>(self, min_size)
     }
 
     // ufbx.c:4658 `ufbxi_map_find(map, type, hash, key)`
     #[inline(always)]
     pub(crate) fn find<T, K>(&self, hash: u32, key: &K) -> *mut T {
-        // SAFETY: view invariant as in `grow`; `cmp_fn` is the C-callback
-        // contract the map was initialized with, comparing `key` against
-        // stored items of the same key discipline (see impl-level note).
-        unsafe { map_find::<T>(self.get(), hash, key as *const K as *const c_void) }
+        // SAFETY: `cmp_fn` is the C-callback contract the map was initialized
+        // with, comparing `key` against stored items of the same key discipline
+        // (see impl-level note).
+        unsafe { map_find::<T>(self, hash, key as *const K as *const c_void) }
     }
 
     // ufbx.c:4659 `ufbxi_map_insert(map, type, hash, key)`
     #[inline(always)]
     #[must_use]
     pub(crate) fn insert<T, K>(&self, hash: u32, key: &K) -> *mut T {
-        // SAFETY: same as `find`; insertion may grow through the map's own
-        // stored allocator.
-        unsafe { map_insert::<T>(self.get(), hash, key as *const K as *const c_void) }
+        // SAFETY: same as `find` — `key` meets the map's own key discipline.
+        unsafe { map_insert::<T>(self, hash, key as *const K as *const c_void) }
     }
 }
 
@@ -1080,37 +1076,40 @@ pub(crate) unsafe fn map_insert_size(
 
 // ufbx.c:4657 `ufbxi_map_grow(map, type, min_size)`
 #[inline(always)]
-pub(crate) unsafe fn map_grow<T>(map: *mut Map, min_size: usize) -> bool {
-    // SAFETY: the mint carries this fn's caller contract (live, writable `Map`)
-    // into the view; the call passes `T`'s size as the element stride.
-    unsafe { map_grow_size(MapView::from_ptr(map), size_of::<T>(), min_size) }
+pub(crate) fn map_grow<T>(map: &MapView, min_size: usize) -> bool {
+    // SAFETY: `T` is the C macro's `type` argument, so `size_of::<T>()` is the
+    // element stride `map_grow_size` requires for this map.
+    unsafe { map_grow_size(map, size_of::<T>(), min_size) }
 }
 
 // ufbx.c:4658 `ufbxi_map_find(map, type, hash, value)`
 // C-parity: the C macro passes `value` untyped into `const void*`; its pointee
 // type is usually unrelated to `type` (key pointer, e.g. `&fbx_id` as uint64_t*
 // with ufbxi_fbx_id_entry at ufbx.c:12310), so `value` is *const c_void here.
+//
+// # Safety
+// `value` is the untyped key the map's `cmp_fn` was initialized for: the
+// comparator may dereference pointers inside it (see `map_init`), a
+// pointee-and-liveness contract no Rust type carries.
 #[inline(always)]
-pub(crate) unsafe fn map_find<T>(map: *mut Map, hash: u32, value: *const c_void) -> *mut T {
-    // SAFETY: the mint carries this fn's caller contract (live, writable `Map`)
-    // into the view; the call forwards this fn's contract (`value` a key of the
-    // map's discipline) with `T`'s size as the stride.
-    ufbxi_maybe_null!(
-        unsafe { map_find_size(MapView::from_ptr(map), size_of::<T>(), hash, value) } as *mut T
-    )
+pub(crate) unsafe fn map_find<T>(map: &MapView, hash: u32, value: *const c_void) -> *mut T {
+    // SAFETY: forwards this fn's contract (`value` a key of the map's
+    // discipline) with `T`'s size — the C macro's `type` — as the stride.
+    ufbxi_maybe_null!(unsafe { map_find_size(map, size_of::<T>(), hash, value) } as *mut T)
 }
 
 // ufbx.c:4659 `ufbxi_map_insert(map, type, hash, value)`
 // C-parity: `value` is untyped in the C macro (see map_find above).
+//
+// # Safety
+// As `map_find`: `value` is the untyped key the map's `cmp_fn` was initialized
+// for, whose pointees the comparator may follow.
 #[inline(always)]
-pub(crate) unsafe fn map_insert<T>(map: *mut Map, hash: u32, value: *const c_void) -> *mut T {
-    // SAFETY: the mint carries this fn's caller contract (live, writable `Map`)
-    // into the view; the call forwards this fn's contract (`value` a key of the
-    // map's discipline) to the size-generic insert with `T`'s size as the
-    // stride.
-    ufbxi_maybe_null!(unsafe {
-        map_insert_size(MapView::from_ptr(map), size_of::<T>(), hash, value)
-    } as *mut T)
+pub(crate) unsafe fn map_insert<T>(map: &MapView, hash: u32, value: *const c_void) -> *mut T {
+    // SAFETY: forwards this fn's contract (`value` a key of the map's
+    // discipline) to the size-generic insert with `T`'s size — the C macro's
+    // `type` — as the stride.
+    ufbxi_maybe_null!(unsafe { map_insert_size(map, size_of::<T>(), hash, value) } as *mut T)
 }
 
 // ufbx.c:4661-4668 `ufbxi_map_cmp_uint64`
@@ -1350,33 +1349,33 @@ mod tests {
             let mut err = Error::default();
             let mut ator = make_test_ator(&mut err);
             let mut map = make_map(&mut ator, map_cmp_uint64);
+            // SAFETY: `map` is the live local initialized by `make_map`, owned
+            // exclusively by this test for the whole view lifetime.
+            let map = MapView::from_ptr(&raw mut map);
 
             for i in 0..1000u64 {
                 let v = i * 7919;
                 let h = hash64(v);
-                assert!(map_find::<u64>(&mut map, h, &v as *const u64 as *const c_void).is_null());
-                let p = map_insert::<u64>(&mut map, h, &v as *const u64 as *const c_void);
+                assert!(map_find::<u64>(map, h, &v as *const u64 as *const c_void).is_null());
+                let p = map_insert::<u64>(map, h, &v as *const u64 as *const c_void);
                 assert!(!p.is_null());
                 *p = v;
             }
-            assert_eq!(map.size, 1000);
+            assert_eq!(map.size(), 1000);
             for i in 0..1000u64 {
                 let v = i * 7919;
-                let p = map_find::<u64>(&mut map, hash64(v), &v as *const u64 as *const c_void);
+                let p = map_find::<u64>(map, hash64(v), &v as *const u64 as *const c_void);
                 assert!(!p.is_null(), "missing {}", v);
                 assert_eq!(*p, v);
             }
             // Missing keys stay missing.
             let v = 3u64;
-            assert!(
-                map_find::<u64>(&mut map, hash64(v), &v as *const u64 as *const c_void).is_null()
-            );
+            assert!(map_find::<u64>(map, hash64(v), &v as *const u64 as *const c_void).is_null());
 
-            // SAFETY: `map` is the live local initialized by `make_map`.
-            map_free(MapView::from_ptr(&raw mut map));
+            map_free(map);
             assert_eq!(ator.current_size, 0);
-            assert!(map.entries.is_null());
-            assert_eq!(map.size, 0);
+            assert!(map.entries().is_null());
+            assert_eq!(map.size(), 0);
         }
     }
 
@@ -1388,17 +1387,19 @@ mod tests {
             let mut err = Error::default();
             let mut ator = make_test_ator(&mut err);
             let mut map = make_map(&mut ator, map_cmp_uint64);
+            // SAFETY: `map` is the live local initialized by `make_map`, owned
+            // exclusively by this test for the whole view lifetime.
+            let map = MapView::from_ptr(&raw mut map);
 
             let v = 1u64;
-            let p = map_insert::<u64>(&mut map, hash64(v), &v as *const u64 as *const c_void);
+            let p = map_insert::<u64>(map, hash64(v), &v as *const u64 as *const c_void);
             assert!(!p.is_null());
             *p = v;
-            assert_eq!(map.mask, 127);
-            assert_eq!(map.capacity, 89);
-            assert_eq!(map.size, 1);
+            assert_eq!(map.mask(), 127);
+            assert_eq!(map.capacity(), 89);
+            assert_eq!(map.size(), 1);
 
-            // SAFETY: `map` is the live local initialized by `make_map`.
-            map_free(MapView::from_ptr(&raw mut map));
+            map_free(map);
             assert_eq!(ator.current_size, 0);
         }
     }
@@ -1411,26 +1412,26 @@ mod tests {
             let mut err = Error::default();
             let mut ator = make_test_ator(&mut err);
             let mut map = make_map(&mut ator, map_cmp_uint64);
+            // SAFETY: `map` is the live local initialized by `make_map`, owned
+            // exclusively by this test for the whole view lifetime.
+            let map = MapView::from_ptr(&raw mut map);
 
             let n = (MAP_MAX_SCAN + 20) as u64;
             for i in 0..n {
-                let p = map_insert::<u64>(&mut map, 0, &i as *const u64 as *const c_void);
+                let p = map_insert::<u64>(map, 0, &i as *const u64 as *const c_void);
                 assert!(!p.is_null());
                 *p = i;
             }
-            assert!(!map.aa_root.is_null());
+            assert!(map.aa_root_view().is_some());
             for i in 0..n {
-                let p = map_find::<u64>(&mut map, 0, &i as *const u64 as *const c_void);
+                let p = map_find::<u64>(map, 0, &i as *const u64 as *const c_void);
                 assert!(!p.is_null(), "missing {}", i);
                 assert_eq!(*p, i);
             }
             let missing = n + 1;
-            assert!(
-                map_find::<u64>(&mut map, 0, &missing as *const u64 as *const c_void).is_null()
-            );
+            assert!(map_find::<u64>(map, 0, &missing as *const u64 as *const c_void).is_null());
 
-            // SAFETY: `map` is the live local initialized by `make_map`.
-            map_free(MapView::from_ptr(&raw mut map));
+            map_free(map);
             assert_eq!(ator.current_size, 0);
         }
     }
@@ -1442,12 +1443,12 @@ mod tests {
             let mut err = Error::default();
             let mut ator = make_test_ator(&mut err);
             let mut map = make_map(&mut ator, map_cmp_uint64);
+            // SAFETY: `map` is the live local initialized by `make_map`, owned
+            // exclusively by this test for the whole view lifetime.
+            let map = MapView::from_ptr(&raw mut map);
             let v = 42u64;
-            assert!(
-                map_find::<u64>(&mut map, hash64(v), &v as *const u64 as *const c_void).is_null()
-            );
-            // SAFETY: `map` is the live local initialized by `make_map`.
-            map_free(MapView::from_ptr(&raw mut map));
+            assert!(map_find::<u64>(map, hash64(v), &v as *const u64 as *const c_void).is_null());
+            map_free(map);
         }
     }
 
@@ -1457,12 +1458,15 @@ mod tests {
             let mut err = Error::default();
             let mut ator = make_test_ator(&mut err);
             let mut map = make_map(&mut ator, map_cmp_uint64);
-            assert!(map_grow::<u64>(&mut map, 1000));
-            assert!(map.capacity as usize >= 1000);
+            // SAFETY: `map` is the live local initialized by `make_map`, owned
+            // exclusively by this test for the whole view lifetime.
+            let map = MapView::from_ptr(&raw mut map);
+            assert!(map_grow::<u64>(map, 1000));
+            assert!(map.capacity() as usize >= 1000);
             let allocs_after_grow = ator.num_allocs;
             // Inserting within capacity performs no further table allocations.
             for i in 0..1000u64 {
-                let p = map_insert::<u64>(&mut map, hash64(i), &i as *const u64 as *const c_void);
+                let p = map_insert::<u64>(map, hash64(i), &i as *const u64 as *const c_void);
                 assert!(!p.is_null());
                 *p = i;
             }
@@ -1472,8 +1476,7 @@ mod tests {
             // allocation (ufbx.c:4578-4584).
             #[cfg(feature = "regression")]
             assert_eq!(ator.num_allocs, allocs_after_grow + 1000);
-            // SAFETY: `map` is the live local initialized by `make_map`.
-            map_free(MapView::from_ptr(&raw mut map));
+            map_free(map);
             assert_eq!(ator.current_size, 0);
         }
     }
