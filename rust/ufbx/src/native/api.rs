@@ -574,8 +574,7 @@ pub(crate) unsafe fn open_memory_ctx(
     // Align the allocation size to 8 bytes to make sure the header is aligned.
     let self_size: usize = align_to_mask(size_of::<MemoryStream>().wrapping_add(copy_size), 7);
 
-    // SAFETY: `fc.ator_mut_ptr()` is the file context's own allocator.
-    let memory: *mut u8 = unsafe { alloc::<u8>(fc.ator_mut_ptr(), self_size) };
+    let memory: *mut u8 = alloc::<u8>(fc.ator_view(), self_size);
     if memory.is_null() {
         // SAFETY: `fc` is the live file context; `end_file_context(false)`
         // yields the fixed `Err` this path returns.

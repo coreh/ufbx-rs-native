@@ -668,36 +668,41 @@ pub(crate) unsafe fn free_ator(ator: &AllocatorView) {
 // ported; revisit if an upstream sync adds the backing functions.
 
 // ufbx.c:3800 `ufbxi_alloc(ator, type, n)`
+//
+// The `&AllocatorView` param carries the allocator's liveness and write-capable
+// provenance, which is the whole contract `alloc_size` needs, so the fn is safe.
 #[inline(always)]
-pub(crate) unsafe fn alloc<T>(ator: *mut Allocator, n: usize) -> *mut T {
-    // SAFETY: `ator` points at a live, unmoved `Allocator` — the raw-pointer
-    // contract of this `unsafe fn`; the mint hands that vouch to `alloc_size`.
-    let ator = unsafe { AllocatorView::from_ptr(ator) };
+pub(crate) fn alloc<T>(ator: &AllocatorView, n: usize) -> *mut T {
     ufbxi_maybe_null!(alloc_size(ator, size_of::<T>(), n) as *mut T)
 }
 
 // ufbx.c:3802 `ufbxi_realloc(ator, type, old_ptr, old_n, n)`
 // C-parity: the `ufbxi_realloc` macro has zero call sites in ufbx.c (C never
 // warns about an unexpanded macro); kept for 1:1 coverage of the alloc family.
+//
+// The `&AllocatorView` param carries the allocator's liveness and write-capable
+// provenance, but the fn stays `unsafe` for the `old_ptr`/`old_n` pair: a raw
+// block pointer plus a count, whose "live block of this allocator" contract no
+// parameter type expresses (runs are out of scope for the view layer) — the
+// same obligation `realloc_size` declares.
+//
+// # Safety
+//
+// When `old_n > 0`, `old_ptr` must point at a live block of `old_n` `T`s
+// obtained from `ator`, readable in full and releasable through the
+// allocator's callbacks.
 #[allow(dead_code)]
 #[inline(always)]
 pub(crate) unsafe fn realloc<T>(
-    ator: *mut Allocator,
+    ator: &AllocatorView,
     old_ptr: *mut T,
     old_n: usize,
     n: usize,
 ) -> *mut T {
-    // SAFETY: `ator` points at a live, unmoved `Allocator` — the raw-pointer
-    // contract of this `unsafe fn`; the mint hands that vouch to `realloc_size`,
-    // as does the caller's `old_ptr`/`old_n` live-block obligation.
+    // SAFETY: the caller's `old_ptr`/`old_n` live-block obligation on this
+    // `unsafe fn` is exactly the `old_ptr`/`old_n` contract of `realloc_size`.
     ufbxi_maybe_null!(unsafe {
-        realloc_size(
-            AllocatorView::from_ptr(ator),
-            size_of::<T>(),
-            old_ptr as *mut c_void,
-            old_n,
-            n,
-        )
+        realloc_size(ator, size_of::<T>(), old_ptr as *mut c_void, old_n, n)
     } as *mut T)
 }
 
@@ -881,12 +886,15 @@ mod tests {
             assert_eq!(ator.num_allocs, 0);
             assert_eq!(ator.current_size, 0);
 
-            let p = alloc::<u32>(&mut ator, 16);
+            // SAFETY: `ator` is this frame's live, unmoved `Allocator` local.
+            let p = alloc::<u32>(AllocatorView::from_ptr(&raw mut ator), 16);
             assert!(!p.is_null());
             assert_eq!(ator.num_allocs, 1);
             assert_eq!(ator.current_size, 64);
 
-            let p = realloc::<u32>(&mut ator, p, 16, 32);
+            // SAFETY: `ator` is this frame's live, unmoved `Allocator` local;
+            // `p` is the 16-`u32` block it just handed out.
+            let p = realloc::<u32>(AllocatorView::from_ptr(&raw mut ator), p, 16, 32);
             assert!(!p.is_null());
             assert_eq!(ator.num_allocs, 2);
             assert_eq!(ator.current_size, 128);
@@ -908,9 +916,11 @@ mod tests {
             };
             let mut ator = make_ator(&mut err, &opts);
 
-            let p = alloc::<u8>(&mut ator, 8);
+            // SAFETY: `ator` is this frame's live, unmoved `Allocator` local.
+            let p = alloc::<u8>(AllocatorView::from_ptr(&raw mut ator), 8);
             assert!(!p.is_null());
-            let q = alloc::<u8>(&mut ator, 8);
+            // SAFETY: `ator` is this frame's live, unmoved `Allocator` local.
+            let q = alloc::<u8>(AllocatorView::from_ptr(&raw mut ator), 8);
             assert!(q.is_null());
             // The description is recorded here; the type is resolved by the
             // `fix_error_type` strcmp ladder at top-level entry points.
@@ -1031,13 +1041,16 @@ mod tests {
             opts.allocator.free_fn = Some(my_free);
             let mut ator = make_ator(&mut err, &opts);
 
-            let p = alloc::<u64>(&mut ator, 4);
+            // SAFETY: `ator` is this frame's live, unmoved `Allocator` local.
+            let p = alloc::<u64>(AllocatorView::from_ptr(&raw mut ator), 4);
             assert!(!p.is_null());
             *p = 0x1122334455667788;
             assert_eq!(ALLOCS.load(Ordering::SeqCst), 1);
 
             // No realloc_fn: realloc dispatches to alloc_fn + memcpy + free_fn.
-            let q = realloc::<u64>(&mut ator, p, 4, 8);
+            // SAFETY: `ator` is this frame's live, unmoved `Allocator` local;
+            // `p` is the 4-`u64` block it just handed out.
+            let q = realloc::<u64>(AllocatorView::from_ptr(&raw mut ator), p, 4, 8);
             assert!(!q.is_null());
             assert_eq!(*q, 0x1122334455667788);
             assert_eq!(ALLOCS.load(Ordering::SeqCst), 2);

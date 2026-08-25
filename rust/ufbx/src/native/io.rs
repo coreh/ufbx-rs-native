@@ -71,9 +71,7 @@ pub(crate) fn refill(uc: &Context, size: usize, require_size: bool) -> *const u8
         new_size = max_sz(new_size, uc.read_buffer_size().wrapping_mul(2));
         size_to_free = uc.read_buffer_size();
         data_to_free = uc.read_buffer();
-        // SAFETY: allocating from `uc`'s own temp allocator through its
-        // raw-ptr getter (uc construction invariant).
-        let new_buffer: *mut u8 = unsafe { alloc::<u8>(uc.ator_tmp_mut_ptr(), new_size) };
+        let new_buffer: *mut u8 = alloc::<u8>(uc.ator_tmp_view(), new_size);
         ufbxi_check_return!(uc, !new_buffer.is_null(), core::ptr::null(), "new_buffer");
         uc.set_read_buffer(new_buffer);
         uc.set_read_buffer_size(new_size);
@@ -631,9 +629,7 @@ pub(crate) unsafe fn fopen(
     if path_len < 256 - 1 {
         wpath = wpath_buf.as_mut_ptr() as *mut u16;
     } else {
-        // SAFETY: allocating from `fc`'s own `ator` field, live for the duration
-        // of the `&FileContext` borrow.
-        wpath = unsafe { alloc::<u16>(fc.ator_mut_ptr(), path_len + 1) };
+        wpath = alloc::<u16>(fc.ator_view(), path_len + 1);
         if wpath.is_null() {
             return core::ptr::null_mut();
         }
@@ -737,9 +733,7 @@ pub(crate) unsafe fn fopen(
         if path_len < 256 - 1 {
             copy = copy_buf.as_mut_ptr() as *mut u8;
         } else {
-            // SAFETY: allocating from `fc`'s own `ator` field, live for the
-            // duration of the `&FileContext` borrow.
-            copy = unsafe { alloc::<u8>(fc.ator_mut_ptr(), path_len + 1) };
+            copy = alloc::<u8>(fc.ator_view(), path_len + 1);
             if copy.is_null() {
                 return core::ptr::null_mut();
             }

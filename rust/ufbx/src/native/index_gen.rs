@@ -126,8 +126,12 @@ pub(crate) unsafe fn generate_indices(
 
     let mut streams: *mut VertexStream = core::ptr::null_mut();
     if num_streams > LOCAL_STREAMS_COUNT {
-        // SAFETY: `ator` is the initialized allocator above.
-        streams = unsafe { alloc::<VertexStream>(&raw mut ator, num_streams) };
+        // SAFETY: `ator` is this frame's live, unmoved allocator, initialized
+        // above.
+        streams = alloc::<VertexStream>(
+            unsafe { AllocatorView::from_ptr(&raw mut ator) },
+            num_streams,
+        );
         if streams.is_null() {
             fail = true;
         }
@@ -199,8 +203,12 @@ pub(crate) unsafe fn generate_indices(
     if !fail {
         if packed_size > size_of::<[u64; LOCAL_PACKED_VERTEX_COUNT]>() {
             ufbx_assert!(packed_size % 8 == 0);
-            // SAFETY: `ator` is the initialized allocator above.
-            packed_vertex = unsafe { alloc::<u64>(&raw mut ator, packed_size / 8) } as *mut u8;
+            // SAFETY: `ator` is this frame's live, unmoved allocator,
+            // initialized above.
+            packed_vertex = alloc::<u64>(
+                unsafe { AllocatorView::from_ptr(&raw mut ator) },
+                packed_size / 8,
+            ) as *mut u8;
             if packed_vertex.is_null() {
                 fail = true;
             }

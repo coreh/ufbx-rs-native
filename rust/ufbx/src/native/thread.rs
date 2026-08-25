@@ -13,7 +13,7 @@ use core::ffi::c_void;
 use core::mem::{size_of, MaybeUninit};
 
 use crate::generated::{Error, RawThreadOpts, ThreadPoolInfo};
-use crate::native::allocator::{alloc, free, Allocator};
+use crate::native::allocator::{alloc, free, Allocator, AllocatorView};
 use crate::native::error::{strlen, ufbxi_check_err, ufbxi_fail_err, Fail, EMPTY_CHAR};
 use crate::native::platform::{min_sz, ufbx_assert, ufbxi_ignore};
 use crate::prelude::ThreadPoolContext;
@@ -269,9 +269,10 @@ pub(crate) unsafe fn thread_pool_init(
     unsafe { (*pool).error = error };
 
     unsafe { (*pool).num_tasks = num_tasks };
-    // SAFETY: `ator` is the caller's live allocator; `alloc` returns null on
-    // failure, which the check below handles.
-    unsafe { (*pool).tasks = alloc::<TaskImp>(ator, num_tasks as usize) };
+    // SAFETY: writing the pointer field of the live pool; `ator` is the
+    // caller's live, unmoved allocator (the raw-pointer contract of this
+    // `unsafe fn`), which the mint hands to `alloc`.
+    unsafe { (*pool).tasks = alloc::<TaskImp>(AllocatorView::from_ptr(ator), num_tasks as usize) };
     ufbxi_check_err!(
         // SAFETY: `error` is the caller's live error slot.
         unsafe { crate::native::error::ErrorView::from_ptr(error) },

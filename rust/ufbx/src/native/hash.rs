@@ -787,9 +787,10 @@ pub(crate) unsafe fn map_grow_size_imp(map: &MapView, item_size: usize, min_size
     );
     let data_size = alloc_size + new_size * item_size;
 
-    // SAFETY: `map.ator` is the map's own allocator (live `map` per the view's
-    // mint invariant), the pairing `alloc` requires for a `data_size`-byte block.
-    let data = unsafe { alloc::<u8>((*map).ator, data_size) };
+    // SAFETY: `map.ator` is the map's own allocator — live and unmoved for the
+    // map's lifetime (live `map` per the view's mint invariant) — as
+    // `View::from_ptr` requires.
+    let data = alloc::<u8>(unsafe { AllocatorView::from_ptr((*map).ator) }, data_size);
     ufbxi_check_return_err!(
         unsafe { crate::native::error::ErrorView::from_ptr((*(*map).ator).error) },
         !data.is_null(),
