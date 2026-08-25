@@ -5488,10 +5488,10 @@ pub(crate) unsafe fn push_prop_prefix(
 
 // ufbx.c:20429-20478 `ufbxi_shader_texture_find_prefix`
 #[inline(never)]
-pub(crate) unsafe fn shader_texture_find_prefix(
+pub(crate) fn shader_texture_find_prefix(
     uc: &Context,
-    texture: *mut Texture,
-    shader: *mut ShaderTexture,
+    texture: &TextureView,
+    shader: &ShaderTextureView,
 ) -> Result<(), Fail> {
     // C: `ufbx_string suffixes[3];` — uninitialized local (no upstream
     // `// ufbxi_uninit` marker at ufbx.c:20431); only the first
@@ -5504,12 +5504,10 @@ pub(crate) unsafe fn shader_texture_find_prefix(
     // the literal is NUL-terminated, which is what `str_c` measures.
     unsafe { *suffixes.add(num_suffixes) = sp::str_c(b" Parameters/Connections\0".as_ptr()) };
     num_suffixes += 1;
-    // SAFETY: `shader` points to a live, initialized `ufbx_shader_texture` — the
-    // texture's shader record being filled in (fn contract).
-    if unsafe { (*shader).shader_name.length } > 0 {
+    if shader.shader_name().length > 0 {
         // SAFETY: `num_suffixes` is `1` here, in bounds of the 3-entry local
-        // array; `shader` is live (see above).
-        unsafe { *suffixes.add(num_suffixes) = (*shader).shader_name };
+        // array.
+        unsafe { *suffixes.add(num_suffixes) = shader.shader_name() };
         num_suffixes += 1;
     }
     // SAFETY: `num_suffixes` is at most `2` here, in bounds of the 3-entry local
@@ -5529,13 +5527,14 @@ pub(crate) unsafe fn shader_texture_find_prefix(
         let suffix: String = unsafe { *p_suffix };
 
         // C: `ufbxi_for_list(ufbx_prop, prop, texture->props.props)`
-        // SAFETY: `texture` points to a live, initialized `ufbx_texture` (fn
-        // contract), so its `props.props` `data`/`count` pair describes one
-        // contiguous arena run of initialized, arena-owned `ufbx_prop`s.
+        let texture_props: &PropsView = texture.props_view();
+        // SAFETY: the viewed table's `props` `data`/`count` pair describes one
+        // contiguous arena run of initialized, arena-owned `ufbx_prop`s (the
+        // viewed-list invariant), live and unmoved for the borrow.
         let props = unsafe {
             SliceViewIter::<Prop>::from_raw_parts(
-                (*texture).element.props.props.data as *mut Prop,
-                (*texture).element.props.props.count,
+                texture_props.props_data(),
+                texture_props.props_count(),
             )
         };
         for prop in props {
@@ -5543,17 +5542,11 @@ pub(crate) unsafe fn shader_texture_find_prefix(
                 continue;
             }
             // SAFETY: the entry's `name` and `suffix` are both `ufbx_string`
-            // spans, which is what `ends_with` compares; `shader` points to a
-            // live, arena-owned `ufbx_shader_texture`, so the view mint's
-            // liveness and write-capable provenance hold, and its
-            // `prop_prefix` projection addresses the shader's own string slot.
+            // spans, which is what `ends_with` compares and what
+            // `push_prop_prefix` copies.
             unsafe {
                 if sp::ends_with(prop.name(), suffix) {
-                    push_prop_prefix(
-                        uc,
-                        ShaderTextureView::from_ptr(shader).prop_prefix_view(),
-                        prop.name(),
-                    )?;
+                    push_prop_prefix(uc, shader.prop_prefix_view(), prop.name())?;
                     return Ok(());
                 }
             }
@@ -5573,13 +5566,14 @@ pub(crate) unsafe fn shader_texture_find_prefix(
         let suffix: String = unsafe { *p_suffix };
 
         // C: `ufbxi_for_list(ufbx_prop, prop, texture->props.props)`
-        // SAFETY: `texture` points to a live, initialized `ufbx_texture` (fn
-        // contract), so its `props.props` `data`/`count` pair describes one
-        // contiguous arena run of initialized, arena-owned `ufbx_prop`s.
+        let texture_props: &PropsView = texture.props_view();
+        // SAFETY: the viewed table's `props` `data`/`count` pair describes one
+        // contiguous arena run of initialized, arena-owned `ufbx_prop`s (the
+        // viewed-list invariant), live and unmoved for the borrow.
         let props = unsafe {
             SliceViewIter::<Prop>::from_raw_parts(
-                (*texture).element.props.props.data as *mut Prop,
-                (*texture).element.props.props.count,
+                texture_props.props_data(),
+                texture_props.props_count(),
             )
         };
         for prop in props {
@@ -5599,17 +5593,11 @@ pub(crate) unsafe fn shader_texture_find_prefix(
             name.length -= 1;
 
             // SAFETY: `name` is a prefix of the prop's interned span and
-            // `suffix` a live `ufbx_string`, which is what `ends_with` compares;
-            // `shader` is live (see above), so the view mint's liveness and
-            // write-capable provenance hold, and its `prop_prefix` projection
-            // addresses the shader's own string slot.
+            // `suffix` a live `ufbx_string`, which is what `ends_with` compares
+            // and what `push_prop_prefix` copies.
             unsafe {
                 if sp::ends_with(name, suffix) {
-                    push_prop_prefix(
-                        uc,
-                        ShaderTextureView::from_ptr(shader).prop_prefix_view(),
-                        name,
-                    )?;
+                    push_prop_prefix(uc, shader.prop_prefix_view(), name)?;
                     return Ok(());
                 }
             }
@@ -5849,12 +5837,17 @@ pub(crate) fn finalize_shader_texture<'a>(
         }
     }
 
-    // SAFETY: `shader` is the fresh push above and `texture` the view's own
-    // storage; the suffix scan walks `name` backwards from its own length, so
-    // `begin` stays inside the interned string it slices.
-    unsafe {
-        shader_texture_find_prefix(uc, texture, shader)?;
+    // SAFETY: `shader` is the fresh non-null push above — a live, arena-owned
+    // `ufbx_shader_texture` — so the mint's liveness and write-capable
+    // provenance hold.
+    shader_texture_find_prefix(uc, texture_view, unsafe {
+        ShaderTextureView::from_ptr(shader)
+    })?;
 
+    // SAFETY: `shader` is the fresh push above; the suffix scan walks `name`
+    // backwards from its own length, so `begin` stays inside the interned
+    // string it slices.
+    unsafe {
         if (*shader).shader_name.length == 0 {
             let mut name: String = (*shader).prop_prefix;
             if sp::remove_suffix_c(&mut name, b" Parameters/Connections|\0".as_ptr()) {
