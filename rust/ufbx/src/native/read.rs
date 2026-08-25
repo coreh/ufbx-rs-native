@@ -9836,26 +9836,25 @@ pub(crate) unsafe fn read_legacy_props(
 }
 
 // ufbx.c:16074-16090 `ufbxi_read_legacy_material`
+///
+/// # Safety
+/// `name` stays a raw pointer for the reason `push_synthetic_element`
+/// documents: it is null or NUL-terminated, the pointer ITSELF is stored in
+/// the pushed material's `element.name.data`, and its bytes must stay live and
+/// unmoved for as long as the scene — an obligation no borrow in this port
+/// expresses.
 #[inline(never)]
 pub(crate) unsafe fn read_legacy_material(
     uc: &Context,
     node: &NodeView,
-    p_fbx_id: *mut u64,
+    p_fbx_id: &ScalarView<u64>,
     name: *const u8,
 ) -> Result<(), Fail> {
-    // SAFETY: `p_fbx_id` is the caller's live, writable `uint64_t` slot (fn
-    // contract), viewed for the call as an interior-mutable scalar cell —
-    // `ScalarView<u64>` is `repr(transparent)` over `u64`; `name` is
-    // NUL-terminated (fn contract); `Material` is the element struct for
+    // SAFETY: `name` is null or NUL-terminated and its bytes stay live for the
+    // scene (fn contract); `Material` is the element struct for
     // `ElementType::Material`.
     let material: *mut Material = unsafe {
-        push_synthetic_element::<Material>(
-            uc,
-            &*(p_fbx_id as *const ScalarView<u64>),
-            Some(node),
-            name,
-            ElementType::Material,
-        )
+        push_synthetic_element::<Material>(uc, p_fbx_id, Some(node), name, ElementType::Material)
     };
     ufbxi_check!(uc, !material.is_null(), "material");
 
@@ -10447,9 +10446,11 @@ pub(crate) unsafe fn read_legacy_mesh(
             // SAFETY: `type_and_name` was fully written by the `'s'` fetch above,
             // so it spans `length` readable bytes.
             unsafe { split_type_and_name(uc, type_and_name, &mut type_, &mut name) }?;
-            // SAFETY: `&raw mut fbx_id` is a live local `uint64_t` slot and `name.data`
-            // is the NUL-terminated interned name the split produced.
-            unsafe { read_legacy_material(uc, child, &raw mut fbx_id, name.data) }?;
+            // SAFETY: `name.data` is the NUL-terminated interned name the split
+            // produced, live for as long as the scene.
+            unsafe {
+                read_legacy_material(uc, child, ScalarView::from_mut(&mut fbx_id), name.data)
+            }?;
             // SAFETY: `info` is the caller's live `ufbxi_element_info`.
             connect_oo(uc, fbx_id, unsafe { (*info).fbx_id })?;
         } else if child.name() == sp::Link.as_ptr() {
