@@ -6634,12 +6634,18 @@ pub(crate) unsafe fn bake_postprocess_vec3(
 }
 
 // ufbx.c:27099-27199 `ufbxi_bake_postprocess_quat`
+//
+// Stays an `unsafe fn` for one untypeable obligation: `src` is a C run —
+// `src.data` must address `src.count` live, WRITABLE `ufbx_baked_quat`s, since
+// the postprocess passes compact the keys in place before `push_copy` reads
+// them. No pointer type carries that length-and-writability promise; the
+// destination slots are typed (`p_dst`, `p_constant`).
 #[cfg(feature = "baking")]
 #[inline(never)]
 pub(crate) unsafe fn bake_postprocess_quat(
     bc: &BakeContext,
-    p_dst: *mut List<BakedQuat>,
-    p_constant: *mut bool,
+    p_dst: &ListView<BakedQuat>,
+    p_constant: &ScalarView<bool>,
     mut src: List<BakedQuat>,
 ) -> Result<(), Fail> {
     if src.count == 0 {
@@ -6795,23 +6801,14 @@ pub(crate) unsafe fn bake_postprocess_quat(
             break;
         }
     }
-    // SAFETY: `p_constant` points to the caller's live `bool` slot — this
-    // `unsafe fn`'s contract.
-    unsafe { *p_constant = constant };
+    p_constant.set(constant);
 
-    // SAFETY: `p_dst` points to the caller's live `ufbx_baked_quat_list` slot —
-    // this `unsafe fn`'s contract; `data` addresses `src.count` live elements,
-    // which is the run `push_copy` reads, and `bc.result` is `bc`'s own buffer.
-    unsafe {
-        (*p_dst).count = src.count;
-        (*p_dst).data = bc.result_view().push_copy_raw::<BakedQuat>(src.count, data);
-    }
-    ufbxi_check_err!(
-        bc.error_view(),
-        // SAFETY: as above — `p_dst` is the caller's live list slot, just written.
-        !unsafe { (*p_dst).data }.is_null(),
-        "p_dst->data"
-    );
+    p_dst.set_count(src.count);
+    // SAFETY: `data` addresses `src.count` live elements, which is the run
+    // `push_copy` reads — this `unsafe fn`'s contract — and `bc.result` is
+    // `bc`'s own buffer.
+    p_dst.set_data(unsafe { bc.result_view().push_copy_raw::<BakedQuat>(src.count, data) });
+    ufbxi_check_err!(bc.error_view(), !p_dst.data().is_null(), "p_dst->data");
 
     Ok(())
 }
@@ -7426,14 +7423,19 @@ pub(crate) unsafe fn bake_node_imp(
             keys_t,
         )
     }?;
-    // SAFETY: the pair of projections addresses the pushed baked node's own key
-    // list and constant flag, and `keys_r` describes the live run of `ix_r`
-    // written keys pushed onto `bc.tmp_prop`.
+    // SAFETY: the projection addresses the pushed baked node's own
+    // `constant_rotation` field, reached through a `Mut` view, so it is a live
+    // write-capable `bool` slot in arena-owned interior-mutable storage — the
+    // storage the shared `&ScalarView` (`Cell`) writes through.
+    let constant_rotation: &ScalarView<bool> =
+        unsafe { &*(baked_node_view.constant_rotation_raw() as *const ScalarView<bool>) };
+    // SAFETY: `keys_r` describes the live run of `ix_r` written keys pushed onto
+    // `bc.tmp_prop` — `bake_postprocess_quat`'s run contract.
     unsafe {
         bake_postprocess_quat(
             bc,
-            baked_node_view.rotation_keys_raw(),
-            baked_node_view.constant_rotation_raw(),
+            baked_node_view.rotation_keys_view(),
+            constant_rotation,
             keys_r,
         )
     }?;
