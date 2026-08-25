@@ -54,7 +54,7 @@ use crate::native::view::{
 };
 use crate::native::view::{Mode, SliceViewIter, View};
 use crate::native::warnings::Warnings;
-use crate::prelude::{Blob, Real, Ref, String};
+use crate::prelude::{Blob, Real, Ref, ScalarView, String};
 
 // ufbx.h:744 `UFBX_ENUM_TYPE(ufbx_element_type, UFBX_ELEMENT_TYPE, UFBX_ELEMENT_METADATA_OBJECT);`
 // expanding via ufbx.h:235-236 to `enum { UFBX_ELEMENT_TYPE_COUNT = UFBX_ELEMENT_METADATA_OBJECT + 1 }`.
@@ -6031,10 +6031,10 @@ pub(crate) fn get_dom_node(uc: &Context, node: Option<&NodeView>) -> *mut DomNod
 // (ufbx.c:10720-10721): under regression a thread-local depth guard wraps the
 // recursive body; otherwise the macro is empty and the wrapper is a plain call.
 #[inline(never)]
-pub(crate) unsafe fn retain_dom_node(
+pub(crate) fn retain_dom_node(
     uc: &Context,
-    node: *mut Node,
-    p_dom_node: *mut *mut DomNode,
+    node: &NodeView,
+    p_dom_node: Option<&ScalarView<*mut DomNode>>,
 ) -> Result<(), Fail> {
     #[cfg(feature = "regression")]
     {
@@ -6045,32 +6045,22 @@ pub(crate) unsafe fn retain_dom_node(
             ufbx_assert!(d.get() < MAX_NODE_DEPTH + 1);
             d.set(d.get() + 1);
         });
-        // SAFETY: forwards the caller's `node`/`p_dom_node` validity contract to
-        // the recursive body unchanged.
-        let ret = unsafe { retain_dom_node_rec(uc, node, p_dom_node) };
+        let ret = retain_dom_node_rec(uc, node, p_dom_node);
         UFBXI_RECURSION_DEPTH.with(|d| d.set(d.get() - 1));
         ret
     }
     #[cfg(not(feature = "regression"))]
     {
-        // SAFETY: forwards the caller's `node`/`p_dom_node` validity contract to
-        // the recursive body unchanged.
-        unsafe { retain_dom_node_rec(uc, node, p_dom_node) }
+        retain_dom_node_rec(uc, node, p_dom_node)
     }
 }
 
 #[inline(never)]
-unsafe fn retain_dom_node_rec(
+fn retain_dom_node_rec(
     uc: &Context,
-    node: *mut Node,
-    p_dom_node: *mut *mut DomNode,
+    node_view: &NodeView,
+    p_dom_node: Option<&ScalarView<*mut DomNode>>,
 ) -> Result<(), Fail> {
-    // Bridge the raw parse-tree `node` to a view once; every read of it below
-    // runs through the view accessors, and nothing in this fn writes the node.
-    // SAFETY: `node` is a valid parse node living in `uc`'s arena (fn contract),
-    // which outlives this call and carries write-capable provenance.
-    let node_view: &NodeView = unsafe { NodeView::from_ptr(node) };
-
     let dst: *mut DomNode = uc.result_view().push_zero(1);
     ufbxi_check!(uc, !dst.is_null(), "dst");
     ufbxi_check!(
@@ -6079,10 +6069,8 @@ unsafe fn retain_dom_node_rec(
         "((ufbx_dom_node**)ufbxi_push_size_copy((&uc->tmp_dom_nodes), sizeof(ufbx_dom_node*), (1), (&dst)))"
     );
 
-    if !p_dom_node.is_null() {
-        // SAFETY: `p_dom_node` is non-null (just checked) and points at the
-        // caller's `*mut DomNode` out-slot (fn contract).
-        unsafe { *p_dom_node = dst };
+    if let Some(p_dom_node) = p_dom_node {
+        p_dom_node.set(dst);
     }
 
     // SAFETY: `dst` is the freshly pushed result `DomNode`; copy the node's name
@@ -6094,7 +6082,7 @@ unsafe fn retain_dom_node_rec(
 
     {
         let mapping = DomMapping {
-            node_ptr: node as usize,
+            node_ptr: node_view.as_ptr() as usize,
             dom_node: core::ptr::null_mut(),
         };
         let hash = hash_uptr(mapping.node_ptr);
@@ -6105,7 +6093,7 @@ unsafe fn retain_dom_node_rec(
         }
         // SAFETY: `result` is a non-null entry owned by `uc`'s `dom_node_map`.
         unsafe {
-            (*result).node_ptr = node as usize;
+            (*result).node_ptr = node_view.as_ptr() as usize;
             (*result).dom_node = dst;
         }
     }
@@ -6219,8 +6207,10 @@ unsafe fn retain_dom_node_rec(
         let mut child = node_view.children();
         let child_end = add_ptr(node_view.children(), node_view.num_children() as usize);
         while child != child_end {
-            // SAFETY: `child` walks the child run, each a valid parse node.
-            unsafe { retain_dom_node(uc, child, core::ptr::null_mut())? };
+            // SAFETY: `child` walks the child run, each a valid parse node
+            // living in `uc`'s arena, which outlives the call.
+            let child_view: &NodeView = unsafe { NodeView::from_ptr(child) };
+            retain_dom_node(uc, child_view, None)?;
             // SAFETY: `child` is before `child_end` within the run, so `add(1)`
             // stays in bounds (up to one-past-the-end).
             child = unsafe { child.add(1) };
@@ -6265,9 +6255,16 @@ pub(crate) unsafe fn retain_toplevel(uc: &Context, node: *mut Node) -> Result<()
     }
 
     if !node.is_null() {
-        // SAFETY: `node` is non-null (just checked); `dom_parse_toplevel_mut_ptr`
-        // is `uc`'s own out-slot — `retain_dom_node`'s contract.
-        unsafe { retain_dom_node(uc, node, uc.dom_parse_toplevel_mut_ptr())? };
+        // SAFETY: `node` is non-null (just checked) and a valid parse node living
+        // in `uc`'s arena (fn contract), which outlives the call.
+        let node_view: &NodeView = unsafe { NodeView::from_ptr(node) };
+        // SAFETY: `dom_parse_toplevel_mut_ptr` addresses `uc`'s own
+        // `dom_parse_toplevel` field — context-owned, write-capable memory live
+        // for the call; `ScalarView` is `repr(transparent)` over the slot, and
+        // nothing writes that field through `uc` while the slot reference lives.
+        let p_dom_node: &ScalarView<*mut DomNode> =
+            unsafe { &*(uc.dom_parse_toplevel_mut_ptr() as *const ScalarView<*mut DomNode>) };
+        retain_dom_node(uc, node_view, Some(p_dom_node))?;
     } else {
         uc.set_dom_parse_toplevel(core::ptr::null_mut());
 
@@ -6301,9 +6298,11 @@ pub(crate) unsafe fn retain_toplevel(uc: &Context, node: *mut Node) -> Result<()
 #[inline(never)]
 pub(crate) unsafe fn retain_toplevel_child(uc: &Context, child: *mut Node) -> Result<(), Fail> {
     ufbx_assert!(!uc.dom_parse_toplevel().is_null());
-    // SAFETY: `child` is a valid parse node (fn contract); a null out-pointer is
-    // accepted by `retain_dom_node`.
-    unsafe { retain_dom_node(uc, child, core::ptr::null_mut())? };
+    // SAFETY: `child` is a valid parse node living in `uc`'s arena (fn contract),
+    // which outlives the call.
+    let child_view: &NodeView = unsafe { NodeView::from_ptr(child) };
+    // C passes a NULL out-pointer here; `None` is that absent out-slot.
+    retain_dom_node(uc, child_view, None)?;
     uc.set_dom_parse_num_children(uc.dom_parse_num_children().wrapping_add(1));
 
     Ok(())
@@ -8353,7 +8352,14 @@ mod tests {
 
             let uc_ptr: &Context = Context::from_ptr(&raw mut *uc);
             let mut dom: *mut DomNode = core::ptr::null_mut();
-            assert_eq!(retain_dom_node(uc_ptr, &mut root, &mut dom), Ok(()));
+            assert_eq!(
+                retain_dom_node(
+                    uc_ptr,
+                    NodeView::from_ptr(&mut root),
+                    Some(ScalarView::from_mut(&mut dom)),
+                ),
+                Ok(())
+            );
             assert!(!dom.is_null());
 
             // The node name is interned; values and children are materialized.
