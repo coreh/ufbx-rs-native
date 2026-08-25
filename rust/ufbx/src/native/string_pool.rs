@@ -79,6 +79,25 @@ impl StringPoolView {
     pub(crate) fn set_error(&self, error: *mut Error) {
         view_write!(self, error, error)
     }
+    // `error` — STORED pointer to the owning context's `ufbx_error`; the
+    // anchored VIEW handle the error-form check macros take.
+    #[inline(always)]
+    pub(crate) fn error_view(&self) -> &crate::native::error::ErrorView {
+        let error = view_read!(self, error);
+        // SAFETY: `error` is initialized — `string_pool_init` stores the address
+        // of the owning context's `ufbx_error` field, which is live, unmoved and
+        // write-capable interior-mutable memory for as long as the pool is used.
+        unsafe { crate::native::error::ErrorView::from_ptr(error) }
+    }
+    // `warnings` — STORED, NULLABLE pointer to the context's warnings sink.
+    #[inline(always)]
+    pub(crate) fn warnings_view(&self) -> Option<&crate::native::warnings::WarningsView> {
+        let warnings = view_read!(self, warnings);
+        // SAFETY: `warnings` is initialized — null, or the context-owned
+        // `Warnings` sink the pool was initialized with (`set_warnings`), live
+        // with write provenance for the whole load.
+        unsafe { crate::native::warnings::opt_warnings_view(warnings) }
+    }
     #[inline(always)]
     pub(crate) fn map_mut_ptr(&self) -> *mut Map {
         view_raw_mut!(self, map)
@@ -112,6 +131,14 @@ impl StringPoolView {
     pub(crate) fn temp_cap(&self) -> usize {
         view_read!(self, temp_cap)
     }
+    #[inline(always)]
+    pub(crate) fn temp_str_mut_ptr(&self) -> *mut *mut u8 {
+        view_raw_mut!(self, temp_str)
+    }
+    #[inline(always)]
+    pub(crate) fn temp_cap_mut_ptr(&self) -> *mut usize {
+        view_raw_mut!(self, temp_cap)
+    }
 }
 
 // ufbx.c:4912-4916 `ufbxi_sanitized_string`
@@ -121,6 +148,27 @@ pub(crate) struct SanitizedString {
     pub raw_data: *const u8, // < UTF-8 data follows at `raw_length+1` if `utf8_length > 0`
     pub raw_length: u32,     // < Length of the non-sanitized original string
     pub utf8_length: u32,    // < Length of sanitized UTF-8 string (or zero)
+}
+
+// Typed interior-mutable VIEW over a `SanitizedString` out-slot, reinterpreted
+// in place. The slot lives either in arena memory (`ufbxi_value.s`, written
+// through `push_sanitized_string`) or on a caller's stack, so the out-param is
+// a view rather than an `&mut` — no `&mut` is ever formed over arena memory.
+pub(crate) type SanitizedStringView = crate::native::view::View<SanitizedString>;
+
+impl SanitizedStringView {
+    #[inline(always)]
+    pub(crate) fn set_raw_data(&self, raw_data: *const u8) {
+        view_write!(self, raw_data, raw_data)
+    }
+    #[inline(always)]
+    pub(crate) fn set_raw_length(&self, raw_length: u32) {
+        view_write!(self, raw_length, raw_length)
+    }
+    #[inline(always)]
+    pub(crate) fn set_utf8_length(&self, utf8_length: u32) {
+        view_write!(self, utf8_length, utf8_length)
+    }
 }
 
 // ufbx.c:4918-4921 `ufbxi_str_equal`
@@ -438,30 +486,28 @@ pub(crate) unsafe fn add_replacement_char(pool: &StringPoolView, dst: *mut u8, c
 
 // ufbx.c:5065-5166 `ufbxi_sanitize_string`
 #[inline(never)]
-pub(crate) unsafe fn sanitize_string(
-    pool: *mut StringPool,
-    sanitized: *mut SanitizedString,
-    str_: *const u8,
-    length: usize,
+pub(crate) fn sanitize_string(
+    pool: &StringPoolView,
+    sanitized: &SanitizedStringView,
+    str_: &[u8],
     valid_length: usize,
     push_both: bool,
 ) -> Result<(), Fail> {
+    // C's `length` parameter is the source slice's own length.
+    let length = str_.len();
+
     // Handle only invalid cases here
     ufbx_assert!(valid_length < length);
     ufbxi_check_err_msg!(
-        unsafe { crate::native::error::ErrorView::from_ptr((*pool).error) },
-        // SAFETY: the caller vouches `pool` addresses a live `StringPool`.
-        unsafe { (*pool).error_handling } != UnicodeErrorHandling::AbortLoading,
+        pool.error_view(),
+        pool.error_handling() != UnicodeErrorHandling::AbortLoading,
         "Invalid UTF-8",
         "pool->error_handling != UFBX_UNICODE_ERROR_HANDLING_ABORT_LOADING"
     );
     ufbxi_check_err!(
-        unsafe { crate::native::error::ErrorView::from_ptr((*pool).error) },
+        pool.error_view(),
         ufbxi_warnf_imp!(
-            // SAFETY: `pool->warnings`, when non-null, is the context-owned
-            // warnings sink the pool was initialized with (`set_warnings`),
-            // live with write provenance for the whole load.
-            unsafe { crate::native::warnings::opt_warnings_view((*pool).warnings) },
+            pool.warnings_view(),
             WarningType::BadUnicode,
             !0u32,
             "Bad UTF-8 string"
@@ -475,21 +521,21 @@ pub(crate) unsafe fn sanitize_string(
     if push_both {
         // Copy both the full raw string and the initial valid part
         ufbxi_check_err!(
-            unsafe { crate::native::error::ErrorView::from_ptr((*pool).error) },
+            pool.error_view(),
             length <= usize::MAX / 2 - 64,
             "length <= SIZE_MAX / 2 - 64"
         );
         ufbxi_check_err!(
-            unsafe { crate::native::error::ErrorView::from_ptr((*pool).error) },
+            pool.error_view(),
             // SAFETY: the growth targets are the pool's own `temp_str`/`temp_cap`
             // buffer pair, grown through the pool's own `map.ator` — the pairing
             // `grow_array` requires. The verbatim C condition text follows, so
             // wrapping does not perturb the recorded error string.
             unsafe {
                 grow_array::<u8>(
-                    (*pool).map.ator,
-                    &raw mut (*pool).temp_str,
-                    &raw mut (*pool).temp_cap,
+                    pool.map_view().ator(),
+                    pool.temp_str_mut_ptr(),
+                    pool.temp_cap_mut_ptr(),
                     length * 2 + 64
                 )
             },
@@ -498,33 +544,33 @@ pub(crate) unsafe fn sanitize_string(
         // SAFETY: `grow_array` just ensured `temp_cap >= length * 2 + 64`, so
         // `temp_str` is writable for the `length` copied bytes, the trailing NUL
         // at `[length]`, and the `index <= length` bytes copied at `[length + 1]`;
-        // `str_` is the caller's source, readable for `length` bytes and, per the
-        // caller contract, never points into the pool's temp buffer, so the copies
-        // do not overlap.
+        // `str_` is a shared slice, so nothing writes through it for the borrow —
+        // in particular it is a distinct allocation from the pool's temp buffer,
+        // and the copies do not overlap.
         unsafe {
-            ptr::copy_nonoverlapping(str_, (*pool).temp_str, length);
-            *(*pool).temp_str.add(length) = b'\0';
-            ptr::copy_nonoverlapping(str_, (*pool).temp_str.add(length + 1), index);
+            ptr::copy_nonoverlapping(str_.as_ptr(), pool.temp_str(), length);
+            *pool.temp_str().add(length) = b'\0';
+            ptr::copy_nonoverlapping(str_.as_ptr(), pool.temp_str().add(length + 1), index);
         }
         dst_len += length + 1;
     } else {
         // Copy the initial valid part
         ufbxi_check_err!(
-            unsafe { crate::native::error::ErrorView::from_ptr((*pool).error) },
+            pool.error_view(),
             length <= usize::MAX - 64,
             "length <= SIZE_MAX - 64"
         );
         ufbxi_check_err!(
-            unsafe { crate::native::error::ErrorView::from_ptr((*pool).error) },
+            pool.error_view(),
             // SAFETY: the growth targets are the pool's own `temp_str`/`temp_cap`
             // buffer pair, grown through the pool's own `map.ator` — the pairing
             // `grow_array` requires. The verbatim C condition text follows, so
             // wrapping does not perturb the recorded error string.
             unsafe {
                 grow_array::<u8>(
-                    (*pool).map.ator,
-                    &raw mut (*pool).temp_str,
-                    &raw mut (*pool).temp_cap,
+                    pool.map_view().ator(),
+                    pool.temp_str_mut_ptr(),
+                    pool.temp_cap_mut_ptr(),
                     length + 64
                 )
             },
@@ -532,24 +578,20 @@ pub(crate) unsafe fn sanitize_string(
         );
         // SAFETY: `grow_array` just ensured `temp_cap >= length + 64`, so
         // `temp_str` is writable for the `index <= length` copied bytes; `str_` is
-        // the caller's source, readable for `index` bytes and, per the caller
-        // contract, never points into the pool's temp buffer.
-        unsafe { ptr::copy_nonoverlapping(str_, (*pool).temp_str, index) };
+        // a shared slice readable for `index` bytes and a distinct allocation from
+        // the pool's temp buffer, so the copy does not overlap.
+        unsafe { ptr::copy_nonoverlapping(str_.as_ptr(), pool.temp_str(), index) };
     }
 
-    // SAFETY: `temp_str` was grown by the branch above, so it addresses the pool's
-    // live temp buffer.
-    let mut dst = unsafe { (*pool).temp_str };
+    let mut dst = pool.temp_str();
     while index < length {
-        // SAFETY: `index < length`, the caller's count of readable bytes at `str_`.
-        let c = unsafe { *str_.add(index) };
+        let c = str_[index];
         let left = length - index;
 
         // Not optimal but not the worst thing ever
-        // SAFETY: the caller vouches `pool` addresses a live `StringPool`.
-        if unsafe { (*pool).temp_cap } - dst_len < 16 {
+        if pool.temp_cap() - dst_len < 16 {
             ufbxi_check_err!(
-                unsafe { crate::native::error::ErrorView::from_ptr((*pool).error) },
+                pool.error_view(),
                 // SAFETY: the growth targets are the pool's own
                 // `temp_str`/`temp_cap` buffer pair, grown through the pool's own
                 // `map.ator` — the pairing `grow_array` requires. The verbatim C
@@ -557,17 +599,15 @@ pub(crate) unsafe fn sanitize_string(
                 // recorded error string.
                 unsafe {
                     grow_array::<u8>(
-                        (*pool).map.ator,
-                        &raw mut (*pool).temp_str,
-                        &raw mut (*pool).temp_cap,
+                        pool.map_view().ator(),
+                        pool.temp_str_mut_ptr(),
+                        pool.temp_cap_mut_ptr(),
                         dst_len + 16
                     )
                 },
                 "ufbxi_grow_array_size((pool->map.ator), sizeof(**(&pool->temp_str)), (&pool->temp_str), (&pool->temp_cap), (dst_len + 16))"
             );
-            // SAFETY: `temp_str` was just re-grown, so it addresses the pool's
-            // live temp buffer.
-            dst = unsafe { (*pool).temp_str };
+            dst = pool.temp_str();
         }
 
         if (c & 0x80) == 0 {
@@ -580,8 +620,8 @@ pub(crate) unsafe fn sanitize_string(
                 continue;
             }
         } else if (c & 0xe0) == 0xc0 && left >= 2 {
-            // SAFETY: `left >= 2` means `index + 1 < length`, in bounds of `str_`.
-            let t0 = unsafe { *str_.add(index + 1) };
+            // `left >= 2` means `index + 1 < length`, in bounds of `str_`.
+            let t0 = str_[index + 1];
             let code = (c as u32) << 8 | (t0 as u32) << 0;
             if (code & 0xc0) == 0x80 && code >= 0xc280 {
                 // SAFETY: >= 16 free bytes at `dst[dst_len]`, room for 2 bytes.
@@ -594,9 +634,9 @@ pub(crate) unsafe fn sanitize_string(
                 continue;
             }
         } else if (c & 0xf0) == 0xe0 && left >= 3 {
-            // SAFETY: `left >= 3` means `index + 2 < length`, in bounds of `str_`.
-            let t0 = unsafe { *str_.add(index + 1) };
-            let t1 = unsafe { *str_.add(index + 2) };
+            // `left >= 3` means `index + 2 < length`, in bounds of `str_`.
+            let t0 = str_[index + 1];
+            let t1 = str_[index + 2];
             let code = (c as u32) << 16 | (t0 as u32) << 8 | (t1 as u32);
             if (code & 0xc0c0) == 0x8080
                 && code >= 0xe0a080
@@ -613,10 +653,10 @@ pub(crate) unsafe fn sanitize_string(
                 continue;
             }
         } else if (c & 0xf8) == 0xf0 && left >= 4 {
-            // SAFETY: `left >= 4` means `index + 3 < length`, in bounds of `str_`.
-            let t0 = unsafe { *str_.add(index + 1) };
-            let t1 = unsafe { *str_.add(index + 2) };
-            let t2 = unsafe { *str_.add(index + 3) };
+            // `left >= 4` means `index + 3 < length`, in bounds of `str_`.
+            let t0 = str_[index + 1];
+            let t1 = str_[index + 2];
+            let t2 = str_[index + 3];
             let code = (c as u32) << 24 | (t0 as u32) << 16 | (t1 as u32) << 8 | (t2 as u32);
             if (code & 0xc0c0c0) == 0x808080 && code >= 0xf0908080u32 && code <= 0xf48fbfbfu32 {
                 // SAFETY: >= 16 free bytes at `dst[dst_len]`, room for 4 bytes.
@@ -632,11 +672,9 @@ pub(crate) unsafe fn sanitize_string(
             }
         }
 
-        // SAFETY: `pool` addresses the live, context-owned `StringPool` this call
-        // operates on, and `dst[dst_len]` has >= 16 free bytes, room for the
-        // up-to-3-byte replacement `add_replacement_char` writes.
-        dst_len +=
-            unsafe { add_replacement_char(StringPoolView::from_ptr(pool), dst.add(dst_len), c) };
+        // SAFETY: `dst[dst_len]` has >= 16 free bytes (the grow above), room for
+        // the up-to-3-byte replacement `add_replacement_char` writes.
+        dst_len += unsafe { add_replacement_char(pool, dst.add(dst_len), c) };
         index += 1;
     }
 
@@ -645,37 +683,29 @@ pub(crate) unsafe fn sanitize_string(
     // The only problem case is a massive string that is full of unicode errors, ie.
     // >1GB binary blob, but these should never be sanitized.
     ufbxi_check_err!(
-        unsafe { crate::native::error::ErrorView::from_ptr((*pool).error) },
+        pool.error_view(),
         length <= u32::MAX as usize,
         "length <= UINT32_MAX"
     );
-    // SAFETY: the caller vouches `sanitized` addresses a live `SanitizedString`
-    // and `pool` a live `StringPool`.
-    unsafe { (*sanitized).raw_data = (*pool).temp_str };
+    sanitized.set_raw_data(pool.temp_str());
     if push_both {
         // Reserve `UINT32_MAX` for invalid UTF-8 without sanitization
         let utf8_length = dst_len - (length + 1);
         ufbxi_check_err!(
-            unsafe { crate::native::error::ErrorView::from_ptr((*pool).error) },
+            pool.error_view(),
             utf8_length < u32::MAX as usize,
             "utf8_length < UINT32_MAX"
         );
-        // SAFETY: `sanitized` addresses a live `SanitizedString`.
-        unsafe {
-            (*sanitized).raw_length = length as u32;
-            (*sanitized).utf8_length = utf8_length as u32;
-        }
+        sanitized.set_raw_length(length as u32);
+        sanitized.set_utf8_length(utf8_length as u32);
     } else {
         ufbxi_check_err!(
-            unsafe { crate::native::error::ErrorView::from_ptr((*pool).error) },
+            pool.error_view(),
             dst_len <= u32::MAX as usize,
             "dst_len <= UINT32_MAX"
         );
-        // SAFETY: `sanitized` addresses a live `SanitizedString`.
-        unsafe {
-            (*sanitized).raw_length = dst_len as u32;
-            (*sanitized).utf8_length = 0;
-        }
+        sanitized.set_raw_length(dst_len as u32);
+        sanitized.set_utf8_length(0);
     }
 
     Ok(())
@@ -724,11 +754,23 @@ pub(crate) unsafe fn push_sanitized_string(
         let valid_length = unsafe { utf8_valid_length(str_, length) };
         if valid_length != length {
             // C: `ufbxi_check_err(pool->error, ufbxi_sanitize_string(...))` — `?`
-            // per PORTING.md error threading.
-            // SAFETY: `pool`/`sanitized` are live, `str_` is readable for
-            // `length` bytes, and `valid_length < length` (just checked), the
-            // precondition `sanitize_string` asserts.
-            unsafe { sanitize_string(pool, sanitized, str_, length, valid_length, true) }?;
+            // per PORTING.md error threading. `valid_length < length` (just
+            // checked) is the precondition `sanitize_string` asserts.
+            sanitize_string(
+                // SAFETY: the caller vouches `pool` addresses the live,
+                // context-owned `StringPool`, reinterpreted in place.
+                unsafe { StringPoolView::from_ptr(pool) },
+                // SAFETY: the caller vouches `sanitized` addresses a live
+                // `SanitizedString` out-slot with write provenance (an arena
+                // `ufbxi_value.s` member or a stack local).
+                unsafe { SanitizedStringView::from_ptr(sanitized) },
+                // SAFETY: the caller vouches `str_` is readable for `length`
+                // bytes and unwritten for the borrow — in particular it is not
+                // the pool's own temp buffer, which the callee writes.
+                unsafe { crate::prelude::slice_from_ptr(str_, length) },
+                valid_length,
+                true,
+            )?;
             // SAFETY: `sanitized` is live; `sanitize_string` wrote its fields.
             total_data = unsafe { (*sanitized).raw_data };
             // C-parity: `sanitized->raw_length + sanitized->utf8_length + 1` is
@@ -842,13 +884,22 @@ pub(crate) unsafe fn push_string_imp(
                     utf8_length: 0,
                 };
                 // C: `ufbxi_check_return_err(pool->error, ufbxi_sanitize_string(...), NULL);`
-                // SAFETY: `pool` is live, the raw address identifies the local
-                // `sanitized` out-param, `str_` is readable for `length` bytes, and `valid_length <
-                // length` (just checked), the precondition `sanitize_string`
-                // asserts.
-                if unsafe {
-                    sanitize_string(pool, &raw mut sanitized, str_, length, valid_length, false)
-                }
+                // `valid_length < length` (just checked) is the precondition
+                // `sanitize_string` asserts.
+                if sanitize_string(
+                    // SAFETY: the caller vouches `pool` addresses the live,
+                    // context-owned `StringPool`, reinterpreted in place.
+                    unsafe { StringPoolView::from_ptr(pool) },
+                    // SAFETY: the raw address of the local `sanitized` out-param
+                    // is write-capable and its slot outlives the call.
+                    unsafe { SanitizedStringView::from_ptr(&raw mut sanitized) },
+                    // SAFETY: the caller vouches `str_` is readable for `length`
+                    // bytes and unwritten for the borrow — in particular it is
+                    // not the pool's own temp buffer, which the callee writes.
+                    unsafe { crate::prelude::slice_from_ptr(str_, length) },
+                    valid_length,
+                    false,
+                )
                 .is_err()
                 {
                     return ptr::null();
