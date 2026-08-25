@@ -1284,52 +1284,29 @@ pub(crate) unsafe fn ascii_array_task_parse_ints(
 }
 
 // ufbx.c:10042-10050 `ufbxi_ascii_array_task_parse`
+///
+/// Dispatches to the float or int worker by the task's `arr_type`, returning
+/// the offset within `src` of the byte after the last committed comma, or
+/// `None` for C's `NULL`.
+///
+/// # Safety
+/// `t`'s `arr_data` / `arr_size` / `arr_type` fields must describe a live
+/// destination run, exactly as the workers this dispatches to document: that
+/// `(pointer, count)` run is a caller vouch the view type cannot carry.
 #[inline(never)]
 pub(crate) unsafe fn ascii_array_task_parse(
-    t: *mut AsciiArrayTask,
-    src: *const u8,
-    src_end: *const u8,
-) -> *const u8 {
-    // SAFETY: `t` points to a valid, live `AsciiArrayTask` (caller contract);
-    // reads its `arr_type` field.
-    if unsafe { (*t).arr_type } == b'f' || unsafe { (*t).arr_type } == b'd' {
+    t: &View<AsciiArrayTask, Mut>,
+    src: &[u8],
+) -> Option<usize> {
+    if t.arr_type() == b'f' || t.arr_type() == b'd' {
         let flags: u32 = parse_double_init_flags();
-        // SAFETY: `t` points to a valid, live, write-capable `AsciiArrayTask`
-        // (caller contract), so it mints the task view, and it carries the
-        // destination-run vouch the float worker documents; `[src, src_end)` is
-        // the caller's readable parse run, minted once as the worker's slice.
-        let src_begin: Option<usize> = unsafe {
-            ascii_array_task_parse_floats(
-                View::<AsciiArrayTask, Mut>::from_ptr(t),
-                core::slice::from_raw_parts(src, to_size(src_end as isize - src as isize)),
-                flags,
-            )
-        };
-        match src_begin {
-            // SAFETY: `src_begin` is an offset at or before `src_end - src`, so
-            // it lands inside the caller's own run, derived from `src` to keep
-            // that run's provenance.
-            Some(offset) => unsafe { src.add(offset) },
-            None => core::ptr::null(),
-        }
+        // SAFETY: `t` carries the destination-run vouch the float worker
+        // documents, forwarded from this function's own contract.
+        unsafe { ascii_array_task_parse_floats(t, src, flags) }
     } else {
-        // SAFETY: `t` points to a valid, live, write-capable `AsciiArrayTask`
-        // (caller contract), so it mints the task view, and it carries the
-        // destination-run vouch the int worker documents; `[src, src_end)` is
-        // the caller's readable parse run, minted once as the worker's slice.
-        let src_begin: Option<usize> = unsafe {
-            ascii_array_task_parse_ints(
-                View::<AsciiArrayTask, Mut>::from_ptr(t),
-                core::slice::from_raw_parts(src, to_size(src_end as isize - src as isize)),
-            )
-        };
-        match src_begin {
-            // SAFETY: `src_begin` is an offset at or before `src_end - src`, so
-            // it lands inside the caller's own run, derived from `src` to keep
-            // that run's provenance.
-            Some(offset) => unsafe { src.add(offset) },
-            None => core::ptr::null(),
-        }
+        // SAFETY: `t` carries the destination-run vouch the int worker
+        // documents, forwarded from this function's own contract.
+        unsafe { ascii_array_task_parse_ints(t, src) }
     }
 }
 
@@ -1426,13 +1403,19 @@ pub(crate) unsafe fn ascii_array_task_imp(t: *mut AsciiArrayTask) -> bool {
             if state == AsciiScanState::Comma {
                 // Parse a value from the buffer
                 if buffer_value {
-                    // SAFETY: forwards `t` validity; `buffer.as_ptr()` and
-                    // `+ buffer_len` bracket the local `buffer`'s written prefix
-                    // (`buffer_len <= 127`), a readable parse run.
-                    let buffer_end: *const u8 = unsafe {
-                        ascii_array_task_parse(t, buffer.as_ptr(), buffer.as_ptr().add(buffer_len))
+                    // SAFETY: `t` points to a valid, live, write-capable
+                    // `AsciiArrayTask` (caller contract), so it mints the task
+                    // view, and it carries the destination-run vouch the parse
+                    // helper documents; `buffer[..buffer_len]` is the local
+                    // `buffer`'s written prefix (`buffer_len <= 127`), a
+                    // readable parse run.
+                    let buffer_end: Option<usize> = unsafe {
+                        ascii_array_task_parse(
+                            View::<AsciiArrayTask, Mut>::from_ptr(t),
+                            &buffer[..buffer_len],
+                        )
                     };
-                    if buffer_end.is_null() || buffer_end == buffer.as_ptr() {
+                    if buffer_end.is_none() || buffer_end == Some(0) {
                         return false;
                     }
                 }
@@ -1452,11 +1435,27 @@ pub(crate) unsafe fn ascii_array_task_imp(t: *mut AsciiArrayTask) -> bool {
                         parse_end = unsafe { parse_end.sub(1) };
                     }
                     if src < parse_end {
-                        // SAFETY: forwards `t` validity; `[src, parse_end)` is a
-                        // sub-run of the span's readable bytes.
-                        src = unsafe { ascii_array_task_parse(t, src, parse_end) };
-                        if src.is_null() {
-                            return false;
+                        // SAFETY: `t` points to a valid, live, write-capable
+                        // `AsciiArrayTask` (caller contract), so it mints the
+                        // task view, and it carries the destination-run vouch
+                        // the parse helper documents; `[src, parse_end)` is a
+                        // sub-run of the span's readable bytes, minted once as
+                        // the helper's slice.
+                        let src_begin: Option<usize> = unsafe {
+                            ascii_array_task_parse(
+                                View::<AsciiArrayTask, Mut>::from_ptr(t),
+                                core::slice::from_raw_parts(
+                                    src,
+                                    to_size(parse_end as isize - src as isize),
+                                ),
+                            )
+                        };
+                        match src_begin {
+                            // SAFETY: `src_begin` is an offset at or before
+                            // `parse_end - src`, so it lands inside the span's
+                            // run, derived from `src` to keep its provenance.
+                            Some(offset) => src = unsafe { src.add(offset) },
+                            None => return false,
                         }
                     }
                 }
