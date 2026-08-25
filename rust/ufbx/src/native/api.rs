@@ -134,7 +134,6 @@ use crate::native::platform::{
     macro_lower_bound_eq, math, min_sz, ufbx_assert, ufbxi_ignore, ufbxi_unreachable, NO_INDEX,
     SOURCE_VERSION, THREAD_SAFE,
 };
-use crate::native::read::{opt_ptr, ref_ptr};
 use crate::native::scene_process::{
     add_weighted_mat, add_weighted_quat, add_weighted_vec3, cmp_name_element_less_ref,
     cmp_prop_less_concat, cmp_prop_less_ref, fetch_dst_element, get_rotation, get_scale,

@@ -49,7 +49,7 @@ use crate::native::parse::{ImpRecover, Refcount};
 #[cfg(feature = "tessellation")]
 use crate::native::platform::{add_ptr, ufbx_assert};
 #[cfg(feature = "tessellation")]
-use crate::native::read::{finalize_mesh, opt_ptr, ref_ptr};
+use crate::native::read::finalize_mesh;
 #[cfg(feature = "tessellation")]
 use crate::native::scene_process::finalize_mesh_material;
 #[cfg(feature = "tessellation")]

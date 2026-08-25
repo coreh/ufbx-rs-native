@@ -1208,17 +1208,11 @@ pub(crate) unsafe fn opt_ref<T>(ptr: *mut T) -> Option<Ref<T>> {
     }
 }
 
-// Inverse of `opt_ref`: reads an `Option<Ref<T>>` field back as the bare
-// (possibly NULL) C pointer the field is at the ABI level.
-#[inline(always)]
-pub(crate) unsafe fn opt_ptr<T>(p: *const Option<Ref<T>>) -> *mut T {
-    // SAFETY: `p` addresses a live `Option<Ref<T>>` field (fn contract), which
-    // is niche-packed to a bare pointer, so reading it as `*mut T` reinterprets
-    // the same bytes in place.
-    unsafe { *(p as *const *mut T) }
-}
-
-// Same for a non-optional `Ref<T>` field (C: a plain `ufbx_element*`).
+// Reads a non-optional `Ref<T>` field (C: a plain `ufbx_element*`) back as the
+// bare pointer it is at the ABI level, WITHOUT asserting the `NonNull`
+// invariant — for the slots ufbx leaves NULL despite the non-nullable public
+// type (the sentinel-terminated `anim_props` run's `element`, and `scene.anim`
+// on the forced-NULL test path). Following a valid `Ref<T>` is `Ref::view`.
 #[inline(always)]
 pub(crate) unsafe fn ref_ptr<T>(p: *const Ref<T>) -> *mut T {
     // SAFETY: `p` addresses a live `Ref<T>` field (fn contract), which is

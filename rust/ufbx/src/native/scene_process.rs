@@ -244,10 +244,10 @@ use crate::native::platform::{
 };
 use crate::native::read::{
     deduplicate_properties, find_fbx_id, fix_index, init_synthetic_vec3_prop, mesh_part_add_face,
-    opt_ptr, opt_ref, ref_ptr, resolve_relative_filename, set_own_prop_vec3_uniform,
-    setup_geometry_transform_helper, setup_scale_helper, sort_properties, strblob_data,
-    strblob_length, strblob_set, unscaled_transform_to_matrix, update_vertex_first_index,
-    NodeExtra, Strblob, SENTINEL_INDEX_CONSECUTIVE, SENTINEL_INDEX_ZERO,
+    opt_ref, resolve_relative_filename, set_own_prop_vec3_uniform, setup_geometry_transform_helper,
+    setup_scale_helper, sort_properties, strblob_data, strblob_length, strblob_set,
+    unscaled_transform_to_matrix, update_vertex_first_index, NodeExtra, Strblob,
+    SENTINEL_INDEX_CONSECUTIVE, SENTINEL_INDEX_ZERO,
 };
 use crate::native::string_pool::{
     self as sp, add3, concat_str_cmp, min3, neg3, normalize3, str_cmp, str_less, sub3, ONE_VEC3,
@@ -13012,8 +13012,8 @@ pub(crate) fn update_adjust_transforms<'a>(uc: &'a Context, scene: &'a SceneView
     }
 
     // SAFETY: walks the scene's stored `nodes` element-pointer run (uc-owned arena,
-    // `count` entries) and writes each node's own adjust fields; `opt_ptr`
-    // results are null-checked before every deref, and `parent` is another node
+    // `count` entries) and writes each node's own adjust fields; optional
+    // reference reads are null-checked before every deref, and `parent` is another node
     // of that same arena (hence the `&'a NodeView` anchor).
     unsafe {
         // C: `ufbxi_for_ptr_list(ufbx_node, p_node, scene->nodes)`

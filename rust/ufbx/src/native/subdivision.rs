@@ -38,9 +38,7 @@ use crate::native::platform::{
     max_sz, min_sz, ufbx_assert, ufbxi_dev_assert, ufbxi_unreachable, unstable_sort, NO_INDEX,
 };
 #[cfg(feature = "subdivision")]
-use crate::native::read::{
-    finalize_mesh, opt_ptr, opt_ref, patch_mesh_reals, ref_ptr, update_face_groups,
-};
+use crate::native::read::{finalize_mesh, patch_mesh_reals, update_face_groups};
 #[cfg(feature = "subdivision")]
 use crate::native::scene_process::finalize_mesh_material;
 #[cfg(feature = "subdivision")]

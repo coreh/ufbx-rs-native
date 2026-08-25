@@ -41,7 +41,7 @@ use crate::native::platform::{
     add_ptr, macro_lower_bound_eq, min32, min64, min_sz, read_f32, read_u32, stable_sort, to_size,
     ufbx_assert, ufbxi_dev_assert, ufbxi_regression_assert, unstable_sort, MAX_SKIP_SIZE,
 };
-use crate::native::read::{open_file, opt_ptr, ref_ptr};
+use crate::native::read::open_file;
 use crate::native::scene_process::{
     axis_matrix, mirror_matrix, mirror_matrix_dst, round_if_near, POW10_TARGETS,
 };
