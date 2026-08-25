@@ -120,7 +120,6 @@ pub(crate) struct ValueArray {
 // mode-generic because the descriptor is only ever read (the payload run it
 // names is addressed through the raw `data()` pointer, which carries its own
 // stored provenance).
-#[allow(dead_code)]
 impl<M: Mode> View<ValueArray, M> {
     #[inline(always)]
     pub(crate) fn data(&self) -> *mut c_void {
@@ -129,10 +128,6 @@ impl<M: Mode> View<ValueArray, M> {
     #[inline(always)]
     pub(crate) fn size(&self) -> usize {
         view_read_shared!(self, size)
-    }
-    #[inline(always)]
-    pub(crate) fn type_(&self) -> u8 {
-        view_read_shared!(self, type_)
     }
 }
 
@@ -822,7 +817,6 @@ pub(crate) struct TmpMeshTexture {
     pub all_same: bool,
 }
 
-#[allow(dead_code)]
 impl View<TmpMeshTexture> {
     #[inline(always)]
     pub(crate) fn set_prop_name(&self, value: String) {
@@ -850,19 +844,13 @@ pub(crate) struct MeshExtra {
     pub texture_count: usize,
 }
 
-#[allow(dead_code)]
 impl<M: Mode> View<MeshExtra, M> {
     #[inline(always)]
     pub(crate) fn texture_arr(&self) -> *mut TmpMeshTexture {
         view_read_shared!(self, texture_arr)
     }
-    #[inline(always)]
-    pub(crate) fn texture_count(&self) -> usize {
-        view_read_shared!(self, texture_count)
-    }
 }
 
-#[allow(dead_code)]
 impl View<MeshExtra> {
     #[inline(always)]
     pub(crate) fn set_texture_arr(&self, value: *mut TmpMeshTexture) {
