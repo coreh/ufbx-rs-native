@@ -14,7 +14,7 @@
 use core::ffi::{c_void, CStr};
 
 use crate::generated::Error;
-use crate::native::allocator::{free, grow_array, Allocator};
+use crate::native::allocator::{free, grow_array, Allocator, AllocatorView};
 use crate::native::buf::{buf_free, Buf, BufView};
 use crate::native::error::{
     c_strcmp, strcmp, ufbxi_check_err, ufbxi_check_err_msg, ufbxi_fail_err, Fail, EMPTY_CHAR,
@@ -1086,9 +1086,17 @@ pub(crate) unsafe fn load_xml(opts: *mut XmlLoadOpts, error: *mut Error) -> *mut
     let ok = xml_parse_root(&xc).is_ok();
 
     buf_free(xc.tmp_stack_view());
-    // SAFETY: the token run is xc's own state, either grown from `xc.ator()` to
-    // exactly `tok_cap` bytes or still `(null, 0)`, which `free` ignores.
-    unsafe { free::<u8>(xc.ator(), xc.tok(), xc.tok_cap()) };
+    // SAFETY: `xc.ator()` is the live allocator xc parses through, minted here
+    // as the handle `free` takes; the token run is xc's own state, either grown
+    // from that allocator to exactly `tok_cap` bytes or still `(null, 0)`, which
+    // `free` ignores.
+    unsafe {
+        free::<u8>(
+            AllocatorView::from_ptr_opt(xc.ator()),
+            xc.tok(),
+            xc.tok_cap(),
+        )
+    };
 
     if ok {
         xc.doc()

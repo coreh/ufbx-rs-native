@@ -2143,12 +2143,14 @@ pub(crate) unsafe fn cache_load(cc: &CacheContext, filename: String) -> *mut Geo
 
     buf_free(cc.tmp_view());
     buf_free(cc.tmp_stack_view());
-    // SAFETY: the `name_buf`/`tmp_arr` runs are `cc`'s own, each paired with
-    // the `cc.ator_tmp` that produced it and freed once; the context is not
-    // used for allocation afterwards.
+    // SAFETY: `cc.ator_tmp()` is the live temp allocator `cc` loads through,
+    // minted here as the handle `free` takes; the `name_buf`/`tmp_arr` runs are
+    // `cc`'s own, each paired with that allocator and freed once; the context is
+    // not used for allocation afterwards.
     unsafe {
-        free::<u8>(cc.ator_tmp(), cc.name_buf(), cc.name_cap());
-        free::<u8>(cc.ator_tmp(), cc.tmp_arr(), cc.tmp_arr_size());
+        let ator_tmp = AllocatorView::from_ptr_opt(cc.ator_tmp());
+        free::<u8>(ator_tmp, cc.name_buf(), cc.name_cap());
+        free::<u8>(ator_tmp, cc.tmp_arr(), cc.tmp_arr_size());
     }
     if !cc.owned_by_scene() {
         // SAFETY: single teardown — this free path runs once at the end of

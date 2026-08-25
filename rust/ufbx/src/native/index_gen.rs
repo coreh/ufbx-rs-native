@@ -373,16 +373,30 @@ pub(crate) unsafe fn generate_indices(
     }
 
     if !streams.is_null() && streams != local_streams_ptr {
-        // SAFETY: the guards single out the `alloc::<VertexStream>(&raw mut ator,
+        // SAFETY: `ator` is this frame's live, unmoved `Allocator` local, and
+        // the guards single out the `alloc::<VertexStream>(&raw mut ator,
         // num_streams)` result above, returned to the same allocator with the
         // count it was allocated with.
-        unsafe { free::<VertexStream>(&raw mut ator, streams, num_streams) };
+        unsafe {
+            free::<VertexStream>(
+                Some(AllocatorView::from_ptr(&raw mut ator)),
+                streams,
+                num_streams,
+            )
+        };
     }
     if !packed_vertex.is_null() && packed_vertex != local_packed_vertex_ptr {
-        // SAFETY: the guards single out the `alloc::<u64>(&raw mut ator,
+        // SAFETY: `ator` is this frame's live, unmoved `Allocator` local, and
+        // the guards single out the `alloc::<u64>(&raw mut ator,
         // packed_size / 8)` result above, returned to the same allocator with the
         // count it was allocated with (`packed_size` is unchanged since).
-        unsafe { free::<u64>(&raw mut ator, packed_vertex as *mut u64, packed_size / 8) };
+        unsafe {
+            free::<u64>(
+                Some(AllocatorView::from_ptr(&raw mut ator)),
+                packed_vertex as *mut u64,
+                packed_size / 8,
+            )
+        };
     }
 
     // SAFETY: `map` and `ator` are the live initialized locals above, and the map

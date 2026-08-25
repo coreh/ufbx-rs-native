@@ -493,12 +493,12 @@ pub(crate) fn obj_free(uc: &Context) {
     // the same temp allocator that allocated it.
     unsafe {
         free::<String>(
-            uc.ator_tmp_mut_ptr(),
+            Some(uc.ator_tmp_view()),
             uc.obj().tokens(),
             uc.obj().tokens_cap(),
         );
         free::<*mut Material>(
-            uc.ator_tmp_mut_ptr(),
+            Some(uc.ator_tmp_view()),
             uc.obj().tmp_materials(),
             uc.obj().tmp_materials_cap(),
         );

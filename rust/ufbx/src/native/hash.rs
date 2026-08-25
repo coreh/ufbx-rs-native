@@ -540,9 +540,16 @@ pub(crate) fn map_free(map: &MapView) {
     // field in place.
     buf_free(unsafe { BufView::from_ptr(&raw mut (*map).aa_buf) });
     // SAFETY: `entries` is the combined entry/item block `map_grow_size_imp`
-    // allocated from `map`'s own allocator with byte length `data_size` (0/null
-    // for a never-grown map, which `free` tolerates).
-    unsafe { free::<u8>((*map).ator, (*map).entries as *mut u8, (*map).data_size) };
+    // allocated from `map`'s own live allocator with byte length `data_size`
+    // (0/null for a never-grown map, whose null `ator` slot mints `None` and
+    // which `free` tolerates).
+    unsafe {
+        free::<u8>(
+            AllocatorView::from_ptr_opt((*map).ator),
+            (*map).entries as *mut u8,
+            (*map).data_size,
+        )
+    };
     // SAFETY: the view's mint invariant — `map` addresses a live, writable
     // `Map`; the field resets below match C's `map_free` teardown.
     unsafe {
@@ -882,10 +889,16 @@ pub(crate) unsafe fn map_grow_size_imp(map: &MapView, item_size: usize, min_size
 
     // And finally free the previous allocation
     // SAFETY: `old_entries` is the map's previous combined block of
-    // `(*map).data_size` bytes, allocated from `map`'s own allocator — the
-    // pairing `free` requires (0/null for a never-grown map, which `free`
-    // tolerates).
-    unsafe { free::<u8>((*map).ator, old_entries as *mut u8, (*map).data_size) };
+    // `(*map).data_size` bytes, allocated from `map`'s own live allocator — the
+    // pairing `free` requires (0/null for a never-grown map, whose null `ator`
+    // slot mints `None`, which `free` tolerates).
+    unsafe {
+        free::<u8>(
+            AllocatorView::from_ptr_opt((*map).ator),
+            old_entries as *mut u8,
+            (*map).data_size,
+        )
+    };
     // SAFETY: the view's mint invariant — `map` addresses a live, writable
     // `Map`; these installs publish the freshly built table.
     unsafe {

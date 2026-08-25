@@ -3286,10 +3286,10 @@ pub(crate) unsafe fn subdivide_mesh(
     // return below.
     let result = subdivide_mesh_imp(sc, level);
 
-    // SAFETY: `ator_tmp_mut_ptr()`/`inputs()`/`inputs_cap()` are `sc`'s own
+    // SAFETY: `ator_tmp_view()`/`inputs()`/`inputs_cap()` are `sc`'s own
     // allocator and the `inputs` array (with its capacity) it allocated, the
     // free contract.
-    unsafe { free::<SubdivideInput>(sc.ator_tmp_mut_ptr(), sc.inputs(), sc.inputs_cap()) };
+    unsafe { free::<SubdivideInput>(Some(sc.ator_tmp_view()), sc.inputs(), sc.inputs_cap()) };
     buf_free(sc.tmp_view());
     buf_free(sc.source_view());
 

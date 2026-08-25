@@ -22,7 +22,7 @@ use core::ffi::c_void;
 use core::ptr;
 
 use crate::generated::{Error, UnicodeErrorHandling, Vec2, Vec3, WarningType};
-use crate::native::allocator::{free, grow_array};
+use crate::native::allocator::{free, grow_array, AllocatorView};
 use crate::native::buf::Buf;
 use crate::native::error::{
     memcmp, strlen, ufbxi_check_err, ufbxi_check_err_msg, ufbxi_check_return_err,
@@ -430,8 +430,10 @@ pub(crate) fn safe_string(data: *const u8, length: usize) -> String {
 /// call double-frees.
 pub(crate) unsafe fn string_pool_temp_free(pool: &StringPoolView) {
     // SAFETY: `map` is an initialized embedded `Map`, and its own `ator` field
-    // is the initialized allocator the pool's temp buffer was grown through.
-    let ator = pool.map_view().ator();
+    // is the initialized allocator the pool's temp buffer was grown through —
+    // live and unmoved for this teardown, minted as the handle `free` takes
+    // (null only for a never-initialized pool, whose `temp_cap` is 0).
+    let ator = unsafe { AllocatorView::from_ptr_opt(pool.map_view().ator()) };
     // SAFETY: `temp_str` is initialized — the null of a never-grown pool or the
     // buffer `grow_array_size` allocated through `ator`.
     let temp_str = pool.temp_str();

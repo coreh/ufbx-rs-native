@@ -315,13 +315,21 @@ pub(crate) unsafe fn thread_pool_free(pool: *mut ThreadPool) {
         }
     }
 
-    // SAFETY: `pool` is live; on a completed init `tasks` is the `num_tasks`-entry
-    // run `thread_pool_init` allocated from `ator`, so this frees it with the
-    // matching allocator and count. If init failed earlier `tasks` is null: with
-    // `num_tasks == 0` (`init_fn` failure) `free_size` early-returns, and with
+    // SAFETY: `pool` is live and `(*pool).ator` is the live allocator it was
+    // initialized with, minted here as the handle `free` takes; on a completed
+    // init `tasks` is the `num_tasks`-entry run `thread_pool_init` allocated
+    // from `ator`, so this frees it with the matching allocator and count. If
+    // init failed earlier `tasks` is null: with `num_tasks == 0` (`init_fn`
+    // failure) `free_size` early-returns, and with
     // `num_tasks != 0` (task-run allocation failure) it stops at its non-null
     // assert — C-parity with ufbx.c:6121; no memory is accessed either way.
-    unsafe { free::<TaskImp>((*pool).ator, (*pool).tasks, (*pool).num_tasks as usize) };
+    unsafe {
+        free::<TaskImp>(
+            AllocatorView::from_ptr_opt((*pool).ator),
+            (*pool).tasks,
+            (*pool).num_tasks as usize,
+        )
+    };
 }
 
 // ufbx.c:6124-6127 `ufbxi_thread_pool_available_tasks`

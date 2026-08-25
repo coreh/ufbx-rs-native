@@ -94,7 +94,7 @@ pub(crate) fn refill(uc: &Context, size: usize, require_size: bool) -> *const u8
         // SAFETY: `data_to_free`/`size_to_free` are the previous
         // `read_buffer`/`read_buffer_size` pair, allocated from this same
         // allocator and already copied out of above.
-        unsafe { free::<u8>(uc.ator_tmp_mut_ptr(), data_to_free, size_to_free) };
+        unsafe { free::<u8>(Some(uc.ator_tmp_view()), data_to_free, size_to_free) };
     }
 
     // Fill the rest of the buffer with user data
@@ -705,7 +705,7 @@ pub(crate) unsafe fn fopen(
     if wpath != wpath_buf.as_mut_ptr() as *mut u16 {
         // SAFETY: reaching here `wpath` is the `path_len + 1`-unit block
         // allocated above from this same allocator.
-        unsafe { free::<u16>(fc.ator_mut_ptr(), wpath, path_len + 1) };
+        unsafe { free::<u16>(Some(fc.ator_view()), wpath, path_len + 1) };
     }
     if file.is_null() {
         // SAFETY: the caller's `path`/`path_len` readable range per the fn
@@ -752,7 +752,7 @@ pub(crate) unsafe fn fopen(
     if !null_terminated && copy != copy_buf.as_mut_ptr() as *mut u8 {
         // SAFETY: reaching here `copy` is the `path_len + 1` block allocated
         // above from this same allocator.
-        unsafe { free::<u8>(fc.ator_mut_ptr(), copy, path_len + 1) };
+        unsafe { free::<u8>(Some(fc.ator_view()), copy, path_len + 1) };
     }
     if file.is_null() {
         // SAFETY: the caller's `path`/`path_len` readable range per the fn
@@ -1008,10 +1008,11 @@ pub(crate) unsafe extern "C" fn memory_close(user: *mut c_void) {
 
     if !unsafe { (*stream).parent_ator }.is_null() {
         // SAFETY: a non-null `parent_ator` is the live allocator the
-        // `self_size`-byte stream block was allocated from.
+        // `self_size`-byte stream block was allocated from, minted here as the
+        // handle `free` takes.
         unsafe {
             free::<u8>(
-                (*stream).parent_ator,
+                AllocatorView::from_ptr_opt((*stream).parent_ator),
                 stream as *mut u8,
                 (*stream).self_size,
             )
@@ -1021,10 +1022,16 @@ pub(crate) unsafe extern "C" fn memory_close(user: *mut c_void) {
         // keeps the allocator usable while the block holding it is released
         // (C-parity, ufbx.c:7238-7242).
         let mut ator: Allocator = unsafe { (*stream).local_ator };
-        // SAFETY: `ator` is that same allocator (by value) and the stream block
-        // of `self_size` bytes came from it; `free_ator` then tears down an
-        // allocator with zero live bytes.
-        unsafe { free::<u8>(&raw mut ator, stream as *mut u8, (*stream).self_size) };
+        // SAFETY: `ator` is that same allocator (by value), live and unmoved in
+        // this frame, and the stream block of `self_size` bytes came from it;
+        // `free_ator` then tears down an allocator with zero live bytes.
+        unsafe {
+            free::<u8>(
+                Some(AllocatorView::from_ptr(&raw mut ator)),
+                stream as *mut u8,
+                (*stream).self_size,
+            )
+        };
         // SAFETY: `ator` is this frame's live, unmoved stack copy of the
         // stream's allocator, which holds zero live bytes at this point, and is
         // torn down exactly once here.
@@ -1128,7 +1135,14 @@ mod tests {
                 core::slice::from_raw_parts(uc.error.description.data, uc.error.description.length);
             assert_eq!(desc, b"Truncated file");
 
-            free(&mut uc.ator_tmp, uc.read_buffer, uc.read_buffer_size);
+            // SAFETY: `uc.ator_tmp` is the live, unmoved temp allocator field of
+            // the test's own context, and `read_buffer`/`read_buffer_size` are
+            // the block it handed out.
+            free(
+                Some(AllocatorView::from_ptr(&raw mut uc.ator_tmp)),
+                uc.read_buffer,
+                uc.read_buffer_size,
+            );
             // SAFETY: `uc.ator_tmp` is the live, unmoved temp allocator field of
             // the test's own context.
             free_ator(AllocatorView::from_ptr(&raw mut uc.ator_tmp));
@@ -1174,7 +1188,14 @@ mod tests {
             assert_eq!(&dst[..], &DATA[..24]);
             assert_eq!(uc.data_offset, 24);
 
-            free(&mut uc.ator_tmp, uc.read_buffer, uc.read_buffer_size);
+            // SAFETY: `uc.ator_tmp` is the live, unmoved temp allocator field of
+            // the test's own context, and `read_buffer`/`read_buffer_size` are
+            // the block it handed out.
+            free(
+                Some(AllocatorView::from_ptr(&raw mut uc.ator_tmp)),
+                uc.read_buffer,
+                uc.read_buffer_size,
+            );
             // SAFETY: `uc.ator_tmp` is the live, unmoved temp allocator field of
             // the test's own context.
             free_ator(AllocatorView::from_ptr(&raw mut uc.ator_tmp));

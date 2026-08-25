@@ -146,6 +146,24 @@ pub(crate) struct Allocator {
 pub(crate) type AllocatorView = crate::native::view::View<Allocator>;
 
 impl AllocatorView {
+    /// Mints a view over a NULLABLE allocator slot: `None` for the null C
+    /// stores in a never-initialized `ator` field, `Some` view otherwise.
+    ///
+    /// # Safety
+    /// A non-null `ptr` carries the `View::<Allocator>::from_ptr` obligations:
+    /// it must address a live, unmoved `Allocator` with write-capable
+    /// provenance for `'a`.
+    #[inline(always)]
+    pub(crate) unsafe fn from_ptr_opt<'a>(ptr: *mut Allocator) -> Option<&'a AllocatorView> {
+        if ptr.is_null() {
+            None
+        } else {
+            // SAFETY: non-null here, and the caller vouches for liveness and
+            // write-capable provenance (fn contract above).
+            Some(unsafe { AllocatorView::from_ptr(ptr) })
+        }
+    }
+
     #[inline(always)]
     pub(crate) fn error(&self) -> *mut Error {
         view_read!(self, error)
@@ -707,27 +725,38 @@ pub(crate) unsafe fn realloc<T>(
 }
 
 // ufbx.c:3804 `ufbxi_free(ator, type, ptr, n)`
+//
+// The `Option<&AllocatorView>` param carries the allocator's liveness and
+// write-capable provenance; `None` is C's NULL allocator slot, which the
+// `n == 0` return below tolerates exactly as C does.
+//
+// The fn stays `unsafe` for the `ptr`/`n` pair: a raw block pointer plus a
+// count, whose "live block of this allocator" contract no parameter type
+// expresses (runs are out of scope for the view layer) — the same obligation
+// `free_size` declares.
+//
+// # Safety
+//
+// When `n > 0`, `ptr` must point at a live block of `n` `T`s obtained from
+// `ator`, releasable through the allocator's callbacks, and this must be its
+// last use; `ator` must be `Some` (C dereferences it past the `n == 0` return).
 #[inline(always)]
-pub(crate) unsafe fn free<T>(ator: *mut Allocator, ptr: *mut T, n: usize) {
+pub(crate) unsafe fn free<T>(ator: Option<&AllocatorView>, ptr: *mut T, n: usize) {
     ufbx_assert!(size_of::<T>() > 0);
     // C-parity: `ufbxi_free_size` returns before it reads `ator` when `n == 0`,
     // and `ufbxi_map_free` (ufbx.c:4421) relies on that — a never-grown map
-    // releases its zero-length entry block through a NULL `ator` slot. Minting
-    // the view demands a live allocator, so the empty case short-circuits ahead
-    // of the mint; `free_size` takes the same `n == 0` return.
+    // releases its zero-length entry block through a NULL `ator` slot, which
+    // arrives here as `None`; `free_size` takes the same `n == 0` return.
     if n == 0 {
         return;
     }
-    // SAFETY: `ator` points at a live, unmoved `Allocator` — the raw-pointer
-    // contract of this `unsafe fn`; the mint hands that vouch to `free_size`,
-    // as does the caller's `ptr`/`n` live-block obligation.
-    unsafe {
-        free_size(
-            AllocatorView::from_ptr(ator),
-            size_of::<T>(),
-            ptr as *mut c_void,
-            n,
-        )
+    // Past that return C dereferences `ator`, so the handle is `Some` on every
+    // path reaching here — the `n > 0` half of this fn's safety contract.
+    ufbx_assert!(ator.is_some());
+    if let Some(ator) = ator {
+        // SAFETY: the caller's `ptr`/`n` live-block obligation on this
+        // `unsafe fn` is exactly the `ptr`/`n` contract of `free_size`.
+        unsafe { free_size(ator, size_of::<T>(), ptr as *mut c_void, n) }
     }
 }
 
@@ -899,7 +928,9 @@ mod tests {
             assert_eq!(ator.num_allocs, 2);
             assert_eq!(ator.current_size, 128);
 
-            free::<u32>(&mut ator, p, 32);
+            // SAFETY: `ator` is this frame's live, unmoved `Allocator` local;
+            // `p` is the 32-`u32` block it handed out.
+            free::<u32>(Some(AllocatorView::from_ptr(&raw mut ator)), p, 32);
             assert_eq!(ator.current_size, 0);
             // SAFETY: `ator` is this frame's live, unmoved `Allocator` local.
             free_ator(AllocatorView::from_ptr(&raw mut ator));
@@ -935,7 +966,9 @@ mod tests {
             // info carries the allocator name via `%s`
             assert_eq!(err.info(), "test");
 
-            free::<u8>(&mut ator, p, 8);
+            // SAFETY: `ator` is this frame's live, unmoved `Allocator` local;
+            // `p` is the 8-byte block it handed out.
+            free::<u8>(Some(AllocatorView::from_ptr(&raw mut ator)), p, 8);
             assert_eq!(ator.current_size, 0);
         }
     }
@@ -1011,7 +1044,9 @@ mod tests {
             assert_eq!(ptr, before);
             assert_eq!(cap, 8);
 
-            free::<u32>(&mut ator, ptr, cap);
+            // SAFETY: `ator` is this frame's live, unmoved `Allocator` local;
+            // `ptr`/`cap` are the block it grew.
+            free::<u32>(Some(AllocatorView::from_ptr(&raw mut ator)), ptr, cap);
             assert_eq!(ator.current_size, 0);
         }
     }
@@ -1056,7 +1091,9 @@ mod tests {
             assert_eq!(ALLOCS.load(Ordering::SeqCst), 2);
             assert_eq!(FREES.load(Ordering::SeqCst), 1);
 
-            free::<u64>(&mut ator, q, 8);
+            // SAFETY: `ator` is this frame's live, unmoved `Allocator` local;
+            // `q` is the 8-`u64` block it handed out.
+            free::<u64>(Some(AllocatorView::from_ptr(&raw mut ator)), q, 8);
             assert_eq!(FREES.load(Ordering::SeqCst), 2);
             assert_eq!(ator.current_size, 0);
         }

@@ -1240,31 +1240,31 @@ pub(crate) fn free_temp(uc: &Context) {
         buf_free(uc.tmp_element_id_view());
         buf_free(uc.tmp_ascii_spans_view());
 
-        free::<Node>(uc.ator_tmp_mut_ptr(), uc.top_nodes(), uc.top_nodes_cap());
+        free::<Node>(Some(uc.ator_tmp_view()), uc.top_nodes(), uc.top_nodes_cap());
         free::<*mut c_void>(
-            uc.ator_tmp_mut_ptr(),
+            Some(uc.ator_tmp_view()),
             uc.element_extra_arr(),
             uc.element_extra_cap(),
         );
 
         free::<u8>(
-            uc.ator_tmp_mut_ptr(),
+            Some(uc.ator_tmp_view()),
             uc.ascii_view().token_view().str_data(),
             uc.ascii_view().token_view().str_cap(),
         );
         free::<u8>(
-            uc.ator_tmp_mut_ptr(),
+            Some(uc.ator_tmp_view()),
             uc.ascii_view().prev_token_view().str_data(),
             uc.ascii_view().prev_token_view().str_cap(),
         );
 
         free::<u8>(
-            uc.ator_tmp_mut_ptr(),
+            Some(uc.ator_tmp_view()),
             uc.read_buffer(),
             uc.read_buffer_size(),
         );
-        free::<u8>(uc.ator_tmp_mut_ptr(), uc.tmp_arr(), uc.tmp_arr_size());
-        free::<u8>(uc.ator_tmp_mut_ptr(), uc.swap_arr(), uc.swap_arr_size());
+        free::<u8>(Some(uc.ator_tmp_view()), uc.tmp_arr(), uc.tmp_arr_size());
+        free::<u8>(Some(uc.ator_tmp_view()), uc.swap_arr(), uc.swap_arr_size());
 
         obj_free(uc);
     }

@@ -2351,9 +2351,9 @@ pub(crate) unsafe fn bake_anim(
     buf_free(bc.tmp_props_view());
     buf_free(bc.tmp_bake_stack_view());
     // C: `ufbxi_free(&bc->ator_tmp, char, bc->tmp_arr, bc->tmp_arr_size);`
-    // SAFETY: `bc.ator_tmp_mut_ptr()` is the context's own temp allocator and
+    // SAFETY: `bc.ator_tmp_view()` is the context's own temp allocator and
     // `bc.tmp_arr()`/`bc.tmp_arr_size()` the block it allocated from it.
-    unsafe { free::<u8>(bc.ator_tmp_mut_ptr(), bc.tmp_arr(), bc.tmp_arr_size()) };
+    unsafe { free::<u8>(Some(bc.ator_tmp_view()), bc.tmp_arr(), bc.tmp_arr_size()) };
     // SAFETY: `bc.ator_tmp_view()` is the context's own temp allocator, torn
     // down exactly once here.
     unsafe { free_ator(bc.ator_tmp_view()) };
