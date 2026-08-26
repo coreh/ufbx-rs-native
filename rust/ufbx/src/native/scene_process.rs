@@ -5901,7 +5901,10 @@ pub(crate) fn finalize_shader_texture<'a>(
     unsafe {
         if (*shader).shader_name.length == 0 {
             let mut name: String = (*shader).prop_prefix;
-            if sp::remove_suffix_c(&mut name, b" Parameters/Connections|\0".as_ptr()) {
+            if sp::remove_suffix_c(
+                StringView::from_mut(&mut name),
+                b" Parameters/Connections|\0",
+            ) {
                 let mut begin: usize = name.length;
                 while begin > 0 && *name.data.add(begin - 1) != b'|' {
                     begin -= 1;
@@ -5948,14 +5951,17 @@ pub(crate) fn finalize_shader_texture<'a>(
         );
         for prop in props {
             let mut name: String = prop.name();
-            if !sp::remove_prefix_str(&mut name, (*shader).prop_prefix) {
+            if !sp::remove_prefix_str(
+                StringView::from_mut(&mut name),
+                ShaderTextureView::from_ptr(shader).prop_prefix_view(),
+            ) {
                 continue;
             }
 
             // Check if this property is a modifier to an existing input.
             let mut base_name: String = name;
-            if sp::remove_suffix_c(&mut base_name, b"_map\0".as_ptr())
-                || sp::remove_suffix_c(&mut base_name, b".shader\0".as_ptr())
+            if sp::remove_suffix_c(StringView::from_mut(&mut base_name), b"_map\0")
+                || sp::remove_suffix_c(StringView::from_mut(&mut base_name), b".shader\0")
             {
                 let base = find_shader_texture_input_len(
                     ShaderTextureView::from_ptr(shader),
@@ -5965,8 +5971,8 @@ pub(crate) fn finalize_shader_texture<'a>(
                     base.set_texture_prop(Some(prop.to_ref()));
                     continue;
                 }
-            } else if sp::remove_suffix_c(&mut base_name, b".connected\0".as_ptr())
-                || sp::remove_suffix_c(&mut base_name, b"Enabled\0".as_ptr())
+            } else if sp::remove_suffix_c(StringView::from_mut(&mut base_name), b".connected\0")
+                || sp::remove_suffix_c(StringView::from_mut(&mut base_name), b"Enabled\0")
             {
                 let base = find_shader_texture_input_len(
                     ShaderTextureView::from_ptr(shader),

@@ -30,10 +30,10 @@ use crate::native::error::{
 };
 use crate::native::hash::{hash_string, hash_string_check_ascii, map_free, Map};
 use crate::native::platform::{math, min_real, min_sz, ufbx_assert, ufbxi_regression_assert};
-use crate::native::view::{view_raw_mut, view_read, view_write};
+use crate::native::view::{view_raw_mut, view_read, view_write, Mode, View};
 use crate::native::warnings::{ufbxi_warnf_imp, Warnings};
 use crate::prelude::as_f64;
-use crate::prelude::{Blob, Real, String};
+use crate::prelude::{Blob, Real, String, StringView};
 
 // -- String pool (ufbx.c:4895)
 //
@@ -326,25 +326,16 @@ pub(crate) fn ends_with(str_: &[u8], suffix: &[u8]) -> bool {
 
 // ufbx.c:4984-4993 `ufbxi_remove_prefix_len`
 #[inline(never)]
-pub(crate) unsafe fn remove_prefix_len(
-    str_: *mut String,
-    prefix: *const u8,
-    prefix_len: usize,
-) -> bool {
-    let prefix_str = String::new_c(prefix, prefix_len);
-    // SAFETY: the caller vouches `str_` addresses a valid `String` whose
-    // `data`/`length` describe one readable run, and that `prefix` is readable
-    // for `prefix_len` bytes; both byte borrows end with the call.
-    if starts_with(unsafe { (*str_).as_bytes() }, unsafe {
-        prefix_str.as_bytes()
-    }) {
+pub(crate) fn remove_prefix_len(str_: &StringView, prefix: &[u8]) -> bool {
+    // C: `ufbx_string prefix_str = { prefix, prefix_len };` — the (pointer,
+    // length) pair is the slice itself.
+    let prefix_str: &[u8] = prefix;
+    if starts_with(str_.bytes(), prefix_str) {
         // SAFETY: `starts_with` just confirmed `str_->length >= prefix_len`, so
-        // `str_->data + prefix_len` stays within the run and the shortened
-        // length is non-negative.
-        unsafe {
-            (*str_).data = (*str_).data.add(prefix_len);
-            (*str_).length -= prefix_len;
-        }
+        // `str_->data + prefix_len` stays within the run (at most one past its
+        // end) and the shortened length is non-negative.
+        str_.set_data(unsafe { str_.data().add(prefix.len()) });
+        str_.set_length(str_.length() - prefix.len());
         return true;
     }
     false
@@ -352,21 +343,14 @@ pub(crate) unsafe fn remove_prefix_len(
 
 // ufbx.c:4995-5003 `ufbxi_remove_suffix_len`
 #[inline(never)]
-pub(crate) unsafe fn remove_suffix_len(
-    str_: *mut String,
-    suffix: *const u8,
-    suffix_len: usize,
-) -> bool {
-    let suffix_str = String::new_c(suffix, suffix_len);
-    // SAFETY: the caller vouches `str_` addresses a valid `String` whose
-    // `data`/`length` describe one readable run, and that `suffix` is readable
-    // for `suffix_len` bytes; both byte borrows end with the call.
-    if ends_with(unsafe { (*str_).as_bytes() }, unsafe {
-        suffix_str.as_bytes()
-    }) {
-        // SAFETY: `ends_with` just confirmed `str_->length >= suffix_len`, so
-        // the shortened length is non-negative.
-        unsafe { (*str_).length -= suffix_len };
+pub(crate) fn remove_suffix_len(str_: &StringView, suffix: &[u8]) -> bool {
+    // C: `ufbx_string suffix_str = { suffix, suffix_len };` — the (pointer,
+    // length) pair is the slice itself.
+    let suffix_str: &[u8] = suffix;
+    if ends_with(str_.bytes(), suffix_str) {
+        // `ends_with` just confirmed `str_->length >= suffix_len`, so the
+        // shortened length is non-negative.
+        str_.set_length(str_.length() - suffix.len());
         return true;
     }
     false
@@ -374,19 +358,21 @@ pub(crate) unsafe fn remove_suffix_len(
 
 // ufbx.c:5005-5008 `ufbxi_remove_prefix_str`
 #[inline(always)]
-pub(crate) unsafe fn remove_prefix_str(str_: *mut String, prefix: String) -> bool {
-    // SAFETY: the caller's `str_` contract is forwarded unchanged, and `prefix`
-    // is a valid `String` whose `data`/`length` describe one readable run.
-    unsafe { remove_prefix_len(str_, prefix.data, prefix.length) }
+pub(crate) fn remove_prefix_str<M: Mode>(str_: &StringView, prefix: &View<String, M>) -> bool {
+    remove_prefix_len(str_, prefix.bytes())
 }
 
 // ufbx.c:5010-5013 `ufbxi_remove_suffix_c`
 #[inline(always)]
-pub(crate) unsafe fn remove_suffix_c(str_: *mut String, suffix: *const u8) -> bool {
-    // SAFETY: the caller's `str_` contract is forwarded unchanged, and `suffix`
-    // points at a NUL-terminated C string, so `strlen` reads its run and the
-    // same run is readable for the length it returns.
-    unsafe { remove_suffix_len(str_, suffix, strlen(suffix)) }
+pub(crate) fn remove_suffix_c(str_: &StringView, suffix: &[u8]) -> bool {
+    // C: `strlen(suffix)` — the slice carries the C string's NUL terminator, so
+    // its run ends at the first NUL byte; an exhausted slice reads as NUL, the
+    // same C-string-over-slice convention `c_strcmp` uses.
+    let suffix_len = match suffix.iter().position(|&c| c == 0) {
+        Some(n) => n,
+        None => suffix.len(),
+    };
+    remove_suffix_len(str_, &suffix[..suffix_len])
 }
 
 // ufbx.c:5015-5020 `ufbxi_map_cmp_string`
@@ -2230,13 +2216,17 @@ mod tests {
             assert!(!ends_with(b"W", b"sW"));
 
             let mut t = s(b"d|X");
-            assert!(remove_prefix_len(&mut t, b"d|".as_ptr(), 2));
+            assert!(remove_prefix_len(StringView::from_mut(&mut t), b"d|"));
             assert_eq!(bytes(t.data, t.length), b"X");
-            assert!(!remove_prefix_str(&mut t, s(b"Y")));
+            let y = s(b"Y");
+            assert!(!remove_prefix_str(
+                StringView::from_mut(&mut t),
+                View::<String, crate::native::view::Const>::from_ref(&y)
+            ));
             let mut u = s(b"FileName");
-            assert!(remove_suffix_c(&mut u, b"Name\0".as_ptr()));
+            assert!(remove_suffix_c(StringView::from_mut(&mut u), b"Name\0"));
             assert_eq!(bytes(u.data, u.length), b"File");
-            assert!(!remove_suffix_len(&mut u, b"x".as_ptr(), 1));
+            assert!(!remove_suffix_len(StringView::from_mut(&mut u), b"x"));
 
             let sf = safe_string(core::ptr::null(), 0);
             assert_eq!(sf.data, EMPTY_CHAR.as_ptr());
