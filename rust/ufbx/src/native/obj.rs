@@ -1252,11 +1252,10 @@ pub(crate) fn obj_parse_comment(uc: &Context) -> Result<(), Fail> {
     }
 
     if !uc.opts_view().disable_quirks() {
-        // SAFETY: matches a NUL-terminated pattern literal against the obj
-        // context's own stored line.
+        // SAFETY: the pattern literal is NUL-terminated — `r#match`'s contract.
         if unsafe {
             r#match(
-                uc.obj().line_mut_ptr(),
+                uc.obj().line_view().bytes(),
                 b"\\s*#\\s*File exported by ZBrush.*\0".as_ptr(),
             )
         } {
@@ -2171,11 +2170,12 @@ pub(crate) unsafe fn obj_parse_prop(
     if !include_rest {
         while start + num_args < uc.obj().num_tokens() - 1 {
             // SAFETY: `start + num_args < num_tokens - 1` (loop condition), so
-            // it indexes the stored token run; the pattern literal is
-            // NUL-terminated.
+            // it indexes the stored token run, whose entries span their own
+            // readable bytes — `String::as_bytes`' contract; the pattern
+            // literal is NUL-terminated, `r#match`'s contract.
             if unsafe {
                 r#match(
-                    uc.obj().tokens().add(start + num_args),
+                    (*uc.obj().tokens().add(start + num_args)).as_bytes(),
                     b"-[A-Za-z][\\-A-Za-z0-9_]*\0".as_ptr(),
                 )
             } {
@@ -2265,9 +2265,9 @@ pub(crate) fn obj_parse_mtl_map(uc: &Context, prefix_len: usize) -> Result<(), F
         // least two bytes, so dropping the leading '-' keeps `tok` inside its
         // own span.
         let mut tok: String = unsafe { *uc.obj().tokens().add(start) };
-        // SAFETY: the pattern literal is NUL-terminated and `tok` is that
-        // token's own span.
-        if unsafe { r#match(&tok, b"-[A-Za-z][\\-A-Za-z0-9_]*\0".as_ptr()) } {
+        // SAFETY: `tok` is that token's own readable span — `String::as_bytes`'
+        // contract; the pattern literal is NUL-terminated, `r#match`'s.
+        if unsafe { r#match(tok.as_bytes(), b"-[A-Za-z][\\-A-Za-z0-9_]*\0".as_ptr()) } {
             // SAFETY: the match guarantees at least two bytes, so the
             // advanced `data` stays inside the token's own span.
             tok.data = unsafe { tok.data.add(1) };
@@ -2538,9 +2538,10 @@ pub(crate) fn obj_load_mtl(uc: &Context) -> Result<(), Fail> {
             // SAFETY: `path.length > 4` (checked above), so the 4-byte
             // extension window is inside the scene filename.
             let ext: String = unsafe { String::new_c(path.data.add(path.length - 4), 4) };
-            // SAFETY: the pattern literal is NUL-terminated and `ext` spans
-            // the filename's own last 4 bytes.
-            if unsafe { r#match(&ext, b"\\c.obj\0".as_ptr()) } {
+            // SAFETY: `ext` spans the filename's own last 4 bytes —
+            // `String::as_bytes`' contract; the pattern literal is
+            // NUL-terminated, `r#match`'s.
+            if unsafe { r#match(ext.as_bytes(), b"\\c.obj\0".as_ptr()) } {
                 ufbxi_analysis_assert!(path.length < usize::MAX - 1);
                 // SAFETY: copies the filename (with its terminator) onto uc's
                 // own tmp arena.

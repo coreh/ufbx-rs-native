@@ -1076,11 +1076,6 @@ impl ObjContext {
     }
 
     #[inline(always)]
-    pub(crate) fn line_mut_ptr(&self) -> *mut String {
-        view_raw_mut!(self, line)
-    }
-
-    #[inline(always)]
     pub(crate) fn mtllib_relative_path(&self) -> crate::prelude::Blob {
         view_read!(self, mtllib_relative_path)
     }
@@ -6544,12 +6539,18 @@ unsafe fn match_imp_rec(p_str: *mut *const u8, end: *const u8, p_fmt: *mut *cons
 }
 
 // ufbx.c:11086-11094 `ufbxi_match`
+//
+// `str_: &[u8]` carries C's `str->data`/`str->length` pair — the fn only reads
+// the byte span. `fmt` stays raw: the matcher walks the pattern by its NUL
+// terminator, a run length no parameter type carries.
+//
+// # Safety
+// `fmt` must address a NUL-terminated match pattern.
 #[inline(never)]
-pub(crate) unsafe fn r#match(str_: *const String, fmt: *const u8) -> bool {
-    // SAFETY: `str_` is a valid `*const String` (fn contract); read its `data`
-    // pointer and derive `end` from `data + length`, one past its byte span.
-    let mut ptr: *const u8 = unsafe { (*str_).data };
-    let end: *const u8 = unsafe { (*str_).data.add((*str_).length) };
+pub(crate) unsafe fn r#match(str_: &[u8], fmt: *const u8) -> bool {
+    // C: `const char *ptr = str->data, *end = str->data + str->length;`
+    let mut ptr: *const u8 = str_.as_ptr();
+    let end: *const u8 = str_.as_ptr_range().end;
     let mut fmt: *const u8 = fmt;
     // SAFETY: `ptr`/`end` bound the string's byte span and `fmt` is a
     // NUL-terminated pattern — `match_imp`'s contract.
@@ -6581,18 +6582,19 @@ pub(crate) unsafe fn is_format(data: *const u8, size: usize, format: FileFormat)
         // SAFETY: `buf` spans `[data, data+size)`, a readable byte range —
         // `next_line`'s contract.
         while unsafe { next_line(&mut line, &mut buf, true) } {
-            // SAFETY: `line` is a valid `String` and the pattern is NUL-terminated
-            // — `r#match`'s contract.
+            // SAFETY: `line` spans a readable byte run inside `[data, data+size)`
+            // (`next_line`'s output) and the pattern literal is NUL-terminated —
+            // `String::as_bytes`' and `r#match`'s contracts.
             if unsafe {
                 r#match(
-                    &line,
+                    line.as_bytes(),
                     b";\\s*FBX\\s*\\d+\\.\\d+\\.\\d+\\s*project\\s+file\0".as_ptr(),
                 )
             } {
                 return true;
             }
             // SAFETY: as above.
-            if unsafe { r#match(&line, b"FBXHeaderExtension:.*\0".as_ptr()) } {
+            if unsafe { r#match(line.as_bytes(), b"FBXHeaderExtension:.*\0".as_ptr()) } {
                 return true;
             }
         }
@@ -6601,9 +6603,10 @@ pub(crate) unsafe fn is_format(data: *const u8, size: usize, format: FileFormat)
         // `next_line`'s contract.
         while unsafe { next_line(&mut line, &mut buf, true) } {
             let pattern: *const u8 = b"(vn?\\s+\\F|vt)\\s+\\F\\s+\\F.*|f\\s+[\\-/0-9]+\\s+[\\-/0-9]+\\s*[\\-/0-9]+.*|(usemtl|mtllib)\\s+\\S.*\0".as_ptr();
-            // SAFETY: `line` is a valid `String` and `pattern` is NUL-terminated —
-            // `r#match`'s contract.
-            if unsafe { r#match(&line, pattern) } {
+            // SAFETY: `line` spans a readable byte run inside `[data, data+size)`
+            // (`next_line`'s output) and `pattern` is NUL-terminated —
+            // `String::as_bytes`' and `r#match`'s contracts.
+            if unsafe { r#match(line.as_bytes(), pattern) } {
                 return true;
             }
         }
@@ -6612,9 +6615,10 @@ pub(crate) unsafe fn is_format(data: *const u8, size: usize, format: FileFormat)
         // `next_line`'s contract.
         while unsafe { next_line(&mut line, &mut buf, true) } {
             let pattern: *const u8 = b"newmtl\\s+\\S.*\0".as_ptr();
-            // SAFETY: `line` is a valid `String` and `pattern` is NUL-terminated —
-            // `r#match`'s contract.
-            if unsafe { r#match(&line, pattern) } {
+            // SAFETY: `line` spans a readable byte run inside `[data, data+size)`
+            // (`next_line`'s output) and `pattern` is NUL-terminated —
+            // `String::as_bytes`' and `r#match`'s contracts.
+            if unsafe { r#match(line.as_bytes(), pattern) } {
                 return true;
             }
         }
@@ -6711,13 +6715,14 @@ pub(crate) fn determine_format(uc: &Context) -> Result<(), Fail> {
             }
 
             // SAFETY: `extension` is the valid `data`/`length` run established
-            // above; the format strings are NUL-terminated literals.
+            // above — `String::as_bytes`' contract; the format strings are
+            // NUL-terminated literals, `r#match`'s contract.
             unsafe {
-                if r#match(&extension, b"\\c\\.fbx\0".as_ptr()) {
+                if r#match(extension.as_bytes(), b"\\c\\.fbx\0".as_ptr()) {
                     format = FileFormat::Fbx;
-                } else if r#match(&extension, b"\\c\\.obj\0".as_ptr()) {
+                } else if r#match(extension.as_bytes(), b"\\c\\.obj\0".as_ptr()) {
                     format = FileFormat::Obj;
-                } else if r#match(&extension, b"\\c\\.mtl\0".as_ptr()) {
+                } else if r#match(extension.as_bytes(), b"\\c\\.mtl\0".as_ptr()) {
                     format = FileFormat::Mtl;
                 }
             }

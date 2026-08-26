@@ -1956,7 +1956,10 @@ pub(crate) fn cache_setup_channels(cc: &CacheContext) -> Result<(), Fail> {
                 let name_end: *const CacheInterpretationName =
                     name.add(CACHE_INTERPRETATION_NAMES.len());
                 while name != name_end {
-                    if r#match(&raw const (*chan).interpretation_name, (*name).pattern) {
+                    // `interpretation_name` is either the empty string or an
+                    // interned pool string — a readable span of its own length
+                    // (`String::as_bytes`' contract).
+                    if r#match((*chan).interpretation_name.as_bytes(), (*name).pattern) {
                         (*chan).interpretation = (*name).interpretation;
                         break;
                     }
