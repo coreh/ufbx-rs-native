@@ -330,18 +330,21 @@ impl RawBlobView {
 // Typed interior-mutable VIEW over the public `Blob` (Copy; subfields read+written).
 pub(crate) type BlobView = crate::native::view::View<Blob>;
 
-impl BlobView {
+impl<M: crate::native::view::Mode> crate::native::view::View<Blob, M> {
     #[inline(always)]
     pub(crate) fn data(&self) -> *const u8 {
-        view_read!(self, data)
-    }
-    #[inline(always)]
-    pub(crate) fn set_data(&self, data: *const u8) {
-        view_write!(self, data, data)
+        view_read_shared!(self, data)
     }
     #[inline(always)]
     pub(crate) fn size(&self) -> usize {
-        view_read!(self, size)
+        view_read_shared!(self, size)
+    }
+}
+
+impl BlobView {
+    #[inline(always)]
+    pub(crate) fn set_data(&self, data: *const u8) {
+        view_write!(self, data, data)
     }
     #[inline(always)]
     pub(crate) fn set_size(&self, size: usize) {

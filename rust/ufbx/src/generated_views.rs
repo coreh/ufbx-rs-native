@@ -5,8 +5,8 @@
 //
 // Crate-internal `View<T, M>` field accessors over the generated public
 // structs (`view_accessor_structs` in generate_rust.py): a by-value read
-// per leaf field, an in-place `&View` projection per aggregate and list
-// (`*_view`) field, a followed-`Ref` projection per element-reference
+// per leaf field, an in-place `&View` projection per aggregate, string,
+// blob and list (`*_view`) field, a followed-`Ref` projection per element-reference
 // (`*_view`) field, a `*_ptr` read-address projection per field, and
 // `Mut`-only setters / raw field pointers. Soundness model (mint vouch,
 // `Mut`/`Const` provenance): src/native/view.rs.
@@ -322,6 +322,10 @@ impl<M: Mode> View<Prop, M> {
     #[inline(always)]
     pub(crate) fn value_blob(&self) -> Blob {
         view_read_shared!(self, value_blob)
+    }
+    #[inline(always)]
+    pub(crate) fn value_blob_view(&self) -> &View<Blob, M> {
+        view_project!(self, value_blob)
     }
     #[inline(always)]
     pub(crate) fn value_blob_ptr(&self) -> *const Blob {
@@ -4071,6 +4075,10 @@ impl<M: Mode> View<ShaderTexture, M> {
         view_read_shared!(self, raw_shader_source)
     }
     #[inline(always)]
+    pub(crate) fn raw_shader_source_view(&self) -> &View<Blob, M> {
+        view_project!(self, raw_shader_source)
+    }
+    #[inline(always)]
     pub(crate) fn raw_shader_source_ptr(&self) -> *const Blob {
         view_raw_shared!(self, raw_shader_source)
     }
@@ -4229,6 +4237,10 @@ impl<M: Mode> View<ShaderTextureInput, M> {
     #[inline(always)]
     pub(crate) fn value_blob(&self) -> Blob {
         view_read_shared!(self, value_blob)
+    }
+    #[inline(always)]
+    pub(crate) fn value_blob_view(&self) -> &View<Blob, M> {
+        view_project!(self, value_blob)
     }
     #[inline(always)]
     pub(crate) fn value_blob_ptr(&self) -> *const Blob {
@@ -5295,12 +5307,20 @@ impl<M: Mode> View<Texture, M> {
         view_read_shared!(self, raw_filename)
     }
     #[inline(always)]
+    pub(crate) fn raw_filename_view(&self) -> &View<Blob, M> {
+        view_project!(self, raw_filename)
+    }
+    #[inline(always)]
     pub(crate) fn raw_filename_ptr(&self) -> *const Blob {
         view_raw_shared!(self, raw_filename)
     }
     #[inline(always)]
     pub(crate) fn raw_absolute_filename(&self) -> Blob {
         view_read_shared!(self, raw_absolute_filename)
+    }
+    #[inline(always)]
+    pub(crate) fn raw_absolute_filename_view(&self) -> &View<Blob, M> {
+        view_project!(self, raw_absolute_filename)
     }
     #[inline(always)]
     pub(crate) fn raw_absolute_filename_ptr(&self) -> *const Blob {
@@ -5311,12 +5331,20 @@ impl<M: Mode> View<Texture, M> {
         view_read_shared!(self, raw_relative_filename)
     }
     #[inline(always)]
+    pub(crate) fn raw_relative_filename_view(&self) -> &View<Blob, M> {
+        view_project!(self, raw_relative_filename)
+    }
+    #[inline(always)]
     pub(crate) fn raw_relative_filename_ptr(&self) -> *const Blob {
         view_raw_shared!(self, raw_relative_filename)
     }
     #[inline(always)]
     pub(crate) fn content(&self) -> Blob {
         view_read_shared!(self, content)
+    }
+    #[inline(always)]
+    pub(crate) fn content_view(&self) -> &View<Blob, M> {
+        view_project!(self, content)
     }
     #[inline(always)]
     pub(crate) fn content_ptr(&self) -> *const Blob {
@@ -6027,12 +6055,20 @@ impl<M: Mode> View<Video, M> {
         view_read_shared!(self, raw_filename)
     }
     #[inline(always)]
+    pub(crate) fn raw_filename_view(&self) -> &View<Blob, M> {
+        view_project!(self, raw_filename)
+    }
+    #[inline(always)]
     pub(crate) fn raw_filename_ptr(&self) -> *const Blob {
         view_raw_shared!(self, raw_filename)
     }
     #[inline(always)]
     pub(crate) fn raw_absolute_filename(&self) -> Blob {
         view_read_shared!(self, raw_absolute_filename)
+    }
+    #[inline(always)]
+    pub(crate) fn raw_absolute_filename_view(&self) -> &View<Blob, M> {
+        view_project!(self, raw_absolute_filename)
     }
     #[inline(always)]
     pub(crate) fn raw_absolute_filename_ptr(&self) -> *const Blob {
@@ -6043,12 +6079,20 @@ impl<M: Mode> View<Video, M> {
         view_read_shared!(self, raw_relative_filename)
     }
     #[inline(always)]
+    pub(crate) fn raw_relative_filename_view(&self) -> &View<Blob, M> {
+        view_project!(self, raw_relative_filename)
+    }
+    #[inline(always)]
     pub(crate) fn raw_relative_filename_ptr(&self) -> *const Blob {
         view_raw_shared!(self, raw_relative_filename)
     }
     #[inline(always)]
     pub(crate) fn content(&self) -> Blob {
         view_read_shared!(self, content)
+    }
+    #[inline(always)]
+    pub(crate) fn content_view(&self) -> &View<Blob, M> {
+        view_project!(self, content)
     }
     #[inline(always)]
     pub(crate) fn content_ptr(&self) -> *const Blob {
@@ -7435,12 +7479,20 @@ impl<M: Mode> View<TextureFile, M> {
         view_read_shared!(self, raw_filename)
     }
     #[inline(always)]
+    pub(crate) fn raw_filename_view(&self) -> &View<Blob, M> {
+        view_project!(self, raw_filename)
+    }
+    #[inline(always)]
     pub(crate) fn raw_filename_ptr(&self) -> *const Blob {
         view_raw_shared!(self, raw_filename)
     }
     #[inline(always)]
     pub(crate) fn raw_absolute_filename(&self) -> Blob {
         view_read_shared!(self, raw_absolute_filename)
+    }
+    #[inline(always)]
+    pub(crate) fn raw_absolute_filename_view(&self) -> &View<Blob, M> {
+        view_project!(self, raw_absolute_filename)
     }
     #[inline(always)]
     pub(crate) fn raw_absolute_filename_ptr(&self) -> *const Blob {
@@ -7451,12 +7503,20 @@ impl<M: Mode> View<TextureFile, M> {
         view_read_shared!(self, raw_relative_filename)
     }
     #[inline(always)]
+    pub(crate) fn raw_relative_filename_view(&self) -> &View<Blob, M> {
+        view_project!(self, raw_relative_filename)
+    }
+    #[inline(always)]
     pub(crate) fn raw_relative_filename_ptr(&self) -> *const Blob {
         view_raw_shared!(self, raw_relative_filename)
     }
     #[inline(always)]
     pub(crate) fn content(&self) -> Blob {
         view_read_shared!(self, content)
+    }
+    #[inline(always)]
+    pub(crate) fn content_view(&self) -> &View<Blob, M> {
+        view_project!(self, content)
     }
     #[inline(always)]
     pub(crate) fn content_ptr(&self) -> *const Blob {
@@ -7655,6 +7715,10 @@ impl<M: Mode> View<CacheFile, M> {
         view_read_shared!(self, raw_filename)
     }
     #[inline(always)]
+    pub(crate) fn raw_filename_view(&self) -> &View<Blob, M> {
+        view_project!(self, raw_filename)
+    }
+    #[inline(always)]
     pub(crate) fn raw_filename_ptr(&self) -> *const Blob {
         view_raw_shared!(self, raw_filename)
     }
@@ -7663,12 +7727,20 @@ impl<M: Mode> View<CacheFile, M> {
         view_read_shared!(self, raw_absolute_filename)
     }
     #[inline(always)]
+    pub(crate) fn raw_absolute_filename_view(&self) -> &View<Blob, M> {
+        view_project!(self, raw_absolute_filename)
+    }
+    #[inline(always)]
     pub(crate) fn raw_absolute_filename_ptr(&self) -> *const Blob {
         view_raw_shared!(self, raw_absolute_filename)
     }
     #[inline(always)]
     pub(crate) fn raw_relative_filename(&self) -> Blob {
         view_read_shared!(self, raw_relative_filename)
+    }
+    #[inline(always)]
+    pub(crate) fn raw_relative_filename_view(&self) -> &View<Blob, M> {
+        view_project!(self, raw_relative_filename)
     }
     #[inline(always)]
     pub(crate) fn raw_relative_filename_ptr(&self) -> *const Blob {
@@ -9262,12 +9334,20 @@ impl<M: Mode> View<AudioClip, M> {
         view_read_shared!(self, raw_filename)
     }
     #[inline(always)]
+    pub(crate) fn raw_filename_view(&self) -> &View<Blob, M> {
+        view_project!(self, raw_filename)
+    }
+    #[inline(always)]
     pub(crate) fn raw_filename_ptr(&self) -> *const Blob {
         view_raw_shared!(self, raw_filename)
     }
     #[inline(always)]
     pub(crate) fn raw_absolute_filename(&self) -> Blob {
         view_read_shared!(self, raw_absolute_filename)
+    }
+    #[inline(always)]
+    pub(crate) fn raw_absolute_filename_view(&self) -> &View<Blob, M> {
+        view_project!(self, raw_absolute_filename)
     }
     #[inline(always)]
     pub(crate) fn raw_absolute_filename_ptr(&self) -> *const Blob {
@@ -9278,12 +9358,20 @@ impl<M: Mode> View<AudioClip, M> {
         view_read_shared!(self, raw_relative_filename)
     }
     #[inline(always)]
+    pub(crate) fn raw_relative_filename_view(&self) -> &View<Blob, M> {
+        view_project!(self, raw_relative_filename)
+    }
+    #[inline(always)]
     pub(crate) fn raw_relative_filename_ptr(&self) -> *const Blob {
         view_raw_shared!(self, raw_relative_filename)
     }
     #[inline(always)]
     pub(crate) fn content(&self) -> Blob {
         view_read_shared!(self, content)
+    }
+    #[inline(always)]
+    pub(crate) fn content_view(&self) -> &View<Blob, M> {
+        view_project!(self, content)
     }
     #[inline(always)]
     pub(crate) fn content_ptr(&self) -> *const Blob {

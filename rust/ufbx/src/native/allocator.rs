@@ -985,9 +985,9 @@ mod tests {
                 allocation_limit: 1,
                 ..Default::default()
             };
-            // SAFETY: `err`/`opts` are this frame's live, unmoved locals.
+            // SAFETY: `err` is this frame's live, unmoved local.
             let err_view = ErrorView::from_ptr(&raw mut err);
-            let opts_view = View::<RawAllocatorOpts, Const>::from_ptr(&raw const opts);
+            let opts_view = View::<RawAllocatorOpts, Const>::from_ref(&opts);
             let mut ator = make_ator(err_view, Some(opts_view));
 
             // SAFETY: `ator` is this frame's live, unmoved `Allocator` local.

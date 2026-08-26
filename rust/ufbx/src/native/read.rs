@@ -7619,9 +7619,7 @@ pub(crate) fn read_object(uc: &Context, node: &NodeView) -> Result<(), Fail> {
                     name_run,
                 )?;
             }
-            // SAFETY: `info` is this frame's own `ufbxi_element_info` local —
-            // write-capable provenance, live and unmoved across the call.
-            read_model(uc, node, View::<ElementInfo, Mut>::from_ptr(&raw mut info))?;
+            read_model(uc, node, View::<ElementInfo, Mut>::from_mut(&mut info))?;
         } else if name == sp::NodeAttribute.as_ptr() {
             if sub_type == sp::Light.as_ptr() {
                 read_element(

@@ -1994,11 +1994,10 @@ pub(crate) unsafe fn evaluate_transform_flags(
     // C: `(ufbx_rotation_order)ufbxi_find_enum(...)` — clamped to the valid range.
     // The const view carries the local `props` value's read-only provenance.
     // SAFETY: `find_enum` clamps its result into `[Xyz, Spheric]`, every value of
-    // which is a valid `#[repr(u32)]` `RotationOrder` discriminant; `&raw const
-    // props` roots a read-only view over the local `props`.
+    // which is a valid `#[repr(u32)]` `RotationOrder` discriminant.
     let order: RotationOrder = unsafe {
         core::mem::transmute::<u32, RotationOrder>(find_enum(
-            View::<Props, Const>::from_ptr(&raw const props),
+            View::<Props, Const>::from_ref(&props),
             &sp::RotationOrder,
             RotationOrder::Xyz as i64,
             RotationOrder::Spheric as i64,

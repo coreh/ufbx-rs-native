@@ -1074,6 +1074,7 @@ class RustType:
         self.is_function = False
         self.is_raw = False
         self.is_string = False
+        self.is_blob = False
         self.kind = ""
         self.inner = inner
         if irt:
@@ -1092,6 +1093,8 @@ class RustType:
                     self.inner = init_type(data_type)
                 if st.name == "ufbx_string":
                     self.is_string = True
+                if st.name == "ufbx_blob":
+                    self.is_blob = True
             elif irt.kind == "enum":
                 en = file.enums[irt.base_name]
                 self.name = get_enum_name(en)
@@ -2593,6 +2596,16 @@ def emit_view_impls(rs: RustStruct):
             emit(f"view_project!(self, {field.name})")
             unindent()
             emit("}")
+        if field.type.is_blob:
+            # In-place blob projection: the anchored carrier for the safe
+            # `bytes()` read and the in-place interning writes (prelude.rs
+            # `View<Blob, M>`); the by-value read above serves whole-Blob copies.
+            emit("#[inline(always)]")
+            emit(f"pub(crate) fn {base}_view(&self) -> &View<Blob, M> {{")
+            indent()
+            emit(f"view_project!(self, {field.name})")
+            unindent()
+            emit("}")
         if field.type.is_list:
             # In-place list projection for sub-field access (`.data()`,
             # `.count()`, and Mut-side sub-field writes via the ListView
@@ -2656,8 +2669,8 @@ def emit_views_file():
     emit("//")
     emit("// Crate-internal `View<T, M>` field accessors over the generated public")
     emit("// structs (`view_accessor_structs` in generate_rust.py): a by-value read")
-    emit("// per leaf field, an in-place `&View` projection per aggregate and list")
-    emit("// (`*_view`) field, a followed-`Ref` projection per element-reference")
+    emit("// per leaf field, an in-place `&View` projection per aggregate, string,")
+    emit("// blob and list (`*_view`) field, a followed-`Ref` projection per element-reference")
     emit("// (`*_view`) field, a `*_ptr` read-address projection per field, and")
     emit("// `Mut`-only setters / raw field pointers. Soundness model (mint vouch,")
     emit("// `Mut`/`Const` provenance): src/native/view.rs.")

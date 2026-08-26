@@ -1538,9 +1538,7 @@ mod tests {
         let mut buf = make_buf(ator, false, false);
 
         // Zero-count push returns the shared zero-size buffer.
-        // SAFETY: a live stack-local `Buf` owned by this test; minting the
-        // `BufView` the push takes.
-        let z = push_size(unsafe { BufView::from_ptr(&raw mut buf) }, 4, 0);
+        let z = push_size(BufView::from_mut(&mut buf), 4, 0);
         assert_eq!(z as *const u8, ZERO_SIZE_BUFFER.as_ptr());
         assert_eq!(buf.num_items, 0);
 

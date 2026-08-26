@@ -162,6 +162,22 @@ impl<T> View<T, Mut> {
         // (fn contract above); `View` is `repr(transparent)` over the storage.
         unsafe { &*(ptr as *const Self) }
     }
+
+    /// View an exclusively borrowed `T` (a stack local, a test-owned struct)
+    /// in place, for the borrow's lifetime. Safe: the `&mut` supplies liveness
+    /// and write-capable provenance, and its exclusivity guarantees no other
+    /// reference to the `T` is active while the view exists — the borrow
+    /// checker enforces the `UnsafeCell` no-concurrent-`&mut` rule for us.
+    /// This is the caller-side form for `String`/`Blob`/`Buf`-typed locals
+    /// passed to fns that take a `&View<T, Mut>` place.
+    #[inline(always)]
+    pub(crate) fn from_mut(value: &mut T) -> &Self {
+        // SAFETY: `value` is a live, aligned `T` for the returned lifetime with
+        // Unique (write-capable) provenance; the retag to SharedReadWrite via
+        // `&UnsafeCell` is a legal child of it, and the `&mut` itself is
+        // reborrowed away for as long as the view lives.
+        unsafe { &*(value as *mut T as *const Self) }
+    }
 }
 
 impl<T> View<T, Const> {
@@ -178,6 +194,19 @@ impl<T> View<T, Const> {
         // SAFETY: caller vouches for liveness and the no-parent-writes freeze
         // (fn contract above); `View` is `repr(transparent)` over the storage.
         unsafe { &*(ptr as *const Self) }
+    }
+
+    /// View a shared-borrowed `T` in place, for the borrow's lifetime. Safe:
+    /// the `&T` supplies liveness and readable provenance, and Rust's shared
+    /// borrow already freezes the bytes for that lifetime (`T` is a C POD
+    /// without interior mutability), which is exactly the `Const` contract.
+    #[inline(always)]
+    pub(crate) fn from_ref(value: &T) -> &Self {
+        // SAFETY: `value` is a live, aligned `T` frozen for the returned
+        // lifetime by the shared borrow; `View<T, Const>` is
+        // `repr(transparent)` over `MaybeUninit<T>` (no `UnsafeCell`), so the
+        // retag is SharedReadOnly under a SharedReadOnly parent.
+        unsafe { &*(value as *const T as *const Self) }
     }
 }
 
