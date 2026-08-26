@@ -881,19 +881,13 @@ pub(crate) fn init_ator<M: Mode>(
 mod tests {
     use super::*;
     use crate::generated::ErrorType;
+    use crate::native::error::ErrorView;
     use core::mem::MaybeUninit;
 
-    unsafe fn make_ator(error: *mut Error, opts: *const RawAllocatorOpts) -> Allocator {
+    fn make_ator(error: &ErrorView, opts: Option<&View<RawAllocatorOpts, Const>>) -> Allocator {
         let mut ator = MaybeUninit::<Allocator>::zeroed();
-        // SAFETY: `opts` — when non-null, the caller's obligation on this
-        // `unsafe fn` — is read only while the view is held.
-        let opts = if opts.is_null() {
-            None
-        } else {
-            Some(unsafe { View::<RawAllocatorOpts, Const>::from_ptr(opts) })
-        };
         init_ator(
-            error,
+            error.get(),
             // SAFETY: `ator.as_mut_ptr()` addresses this frame's own
             // `Allocator` slot, live and unmoved for the call.
             unsafe { AllocatorView::from_ptr(ator.as_mut_ptr()) },
@@ -936,7 +930,9 @@ mod tests {
     fn test_init_ator_defaults() {
         unsafe {
             let mut err = Error::default();
-            let ator = make_ator(&mut err, core::ptr::null());
+            // SAFETY: `err` is this frame's live, unmoved `Error` local.
+            let err_view = ErrorView::from_ptr(&raw mut err);
+            let ator = make_ator(err_view, None);
             assert_eq!(ator.max_size, usize::MAX);
             assert_eq!(ator.max_allocs, usize::MAX);
             assert_eq!(ator.huge_size, 0x100000);
@@ -948,7 +944,9 @@ mod tests {
     fn test_alloc_free_accounting() {
         unsafe {
             let mut err = Error::default();
-            let mut ator = make_ator(&mut err, core::ptr::null());
+            // SAFETY: `err` is this frame's live, unmoved `Error` local.
+            let err_view = ErrorView::from_ptr(&raw mut err);
+            let mut ator = make_ator(err_view, None);
 
             // Zero-size allocation returns the shared zero-size buffer, no accounting.
             // SAFETY: `ator` is this frame's live, unmoved `Allocator` local.
@@ -987,7 +985,10 @@ mod tests {
                 allocation_limit: 1,
                 ..Default::default()
             };
-            let mut ator = make_ator(&mut err, &opts);
+            // SAFETY: `err`/`opts` are this frame's live, unmoved locals.
+            let err_view = ErrorView::from_ptr(&raw mut err);
+            let opts_view = View::<RawAllocatorOpts, Const>::from_ptr(&raw const opts);
+            let mut ator = make_ator(err_view, Some(opts_view));
 
             // SAFETY: `ator` is this frame's live, unmoved `Allocator` local.
             let p = alloc::<u8>(AllocatorView::from_ptr(&raw mut ator), 8);
@@ -1023,7 +1024,10 @@ mod tests {
                 memory_limit: 100,
                 ..Default::default()
             };
-            let mut ator = make_ator(&mut err, &opts);
+            // SAFETY: `err`/`opts` are this frame's live, unmoved locals.
+            let err_view = ErrorView::from_ptr(&raw mut err);
+            let opts_view = View::<RawAllocatorOpts, Const>::from_ptr(&raw const opts);
+            let mut ator = make_ator(err_view, Some(opts_view));
 
             // C check is `total < max_size - current_size`: exactly-at-limit fails.
             // SAFETY: `ator` is this frame's live, unmoved `Allocator` local.
@@ -1051,7 +1055,9 @@ mod tests {
     fn test_overflow_check() {
         unsafe {
             let mut err = Error::default();
-            let mut ator = make_ator(&mut err, core::ptr::null());
+            // SAFETY: `err` is this frame's live, unmoved `Error` local.
+            let err_view = ErrorView::from_ptr(&raw mut err);
+            let mut ator = make_ator(err_view, None);
             // SAFETY: `ator` is this frame's live, unmoved `Allocator` local.
             let p = alloc_size(AllocatorView::from_ptr(&raw mut ator), 8, usize::MAX / 4);
             assert!(p.is_null());
@@ -1070,7 +1076,9 @@ mod tests {
     fn test_grow_array() {
         unsafe {
             let mut err = Error::default();
-            let mut ator = make_ator(&mut err, core::ptr::null());
+            // SAFETY: `err` is this frame's live, unmoved `Error` local.
+            let err_view = ErrorView::from_ptr(&raw mut err);
+            let mut ator = make_ator(err_view, None);
 
             let mut ptr: *mut u32 = core::ptr::null_mut();
             let mut cap: usize = 0;
@@ -1131,7 +1139,10 @@ mod tests {
             let mut opts = RawAllocatorOpts::default();
             opts.allocator.alloc_fn = Some(my_alloc);
             opts.allocator.free_fn = Some(my_free);
-            let mut ator = make_ator(&mut err, &opts);
+            // SAFETY: `err`/`opts` are this frame's live, unmoved locals.
+            let err_view = ErrorView::from_ptr(&raw mut err);
+            let opts_view = View::<RawAllocatorOpts, Const>::from_ptr(&raw const opts);
+            let mut ator = make_ator(err_view, Some(opts_view));
 
             // SAFETY: `ator` is this frame's live, unmoved `Allocator` local.
             let p = alloc::<u64>(AllocatorView::from_ptr(&raw mut ator), 4);
