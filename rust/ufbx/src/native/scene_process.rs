@@ -5519,10 +5519,13 @@ pub(crate) unsafe fn push_prop_prefix(
         prefix.length = prefix.length.wrapping_add(1);
     }
 
-    // SAFETY: `string_pool_mut_ptr` is `uc`'s own live string pool, and `prefix`
-    // is a local whose `data`/`length` span is either the caller's or the
-    // `tmp_stack` copy above — both readable for `length` bytes.
-    unsafe { sp::push_string_place_str(uc.string_pool_mut_ptr(), &raw mut prefix, false)? };
+    // `prefix` is a local whose `data`/`length` span is either the caller's or
+    // the `tmp_stack` copy above — both readable for `length` bytes.
+    sp::push_string_place_str(
+        uc.string_pool_view(),
+        StringView::from_mut(&mut prefix),
+        false,
+    )?;
     // C: `*dst = prefix;` — the `ufbx_string` assignment (memcpy of the two
     // POD members) is spelled as the viewed slot's two leaf writes.
     dst.set_data(prefix.data);
@@ -5912,11 +5915,10 @@ pub(crate) fn finalize_shader_texture<'a>(
 
                 (*shader).shader_name.data = name.data.add(begin);
                 (*shader).shader_name.length = name.length - begin;
-                sp::push_string_place_str(
-                    uc.string_pool_mut_ptr(),
-                    &raw mut (*shader).shader_name,
-                    false,
-                )?;
+                // SAFETY: `shader` is the fresh push above, so its
+                // `shader_name` leaf is a live `String` slot.
+                let shader_name = StringView::from_ptr(&raw mut (*shader).shader_name);
+                sp::push_string_place_str(uc.string_pool_view(), shader_name, false)?;
             }
         }
 

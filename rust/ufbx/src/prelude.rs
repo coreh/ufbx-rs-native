@@ -709,6 +709,16 @@ impl StringView {
     pub(crate) fn set_length(&self, length: usize) {
         view_write!(self, length, length)
     }
+    // `data`/`length` as in-out slots for callees taking split `*mut` place
+    // out-params (`ufbxi_push_string_place`).
+    #[inline(always)]
+    pub(crate) fn data_mut_ptr(&self) -> *mut *const u8 {
+        view_raw_mut!(self, data)
+    }
+    #[inline(always)]
+    pub(crate) fn length_mut_ptr(&self) -> *mut usize {
+        view_raw_mut!(self, length)
+    }
 }
 
 impl String {

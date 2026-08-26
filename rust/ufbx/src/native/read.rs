@@ -906,7 +906,7 @@ pub(crate) fn read_definitions(uc: &Context) -> Result<(), Fail> {
             // just filled by the `S` read, so it is a pooled NUL-terminated
             // string of `length` bytes and the compares/advance below stay
             // inside it (each is guarded by a length check). The re-intern
-            // hands uc's own string pool the same field.
+            // views that same live field in place.
             unsafe {
                 if (*tmpl).sub_type.length > 3
                     && strncmp((*tmpl).sub_type.data, b"Fbx\0".as_ptr(), 3) == 0
@@ -921,11 +921,8 @@ pub(crate) fn read_definitions(uc: &Context) -> Result<(), Fail> {
                         (*tmpl).sub_type.data = LOD_GROUP.as_ptr();
                     }
 
-                    push_string_place_str(
-                        uc.string_pool_mut_ptr(),
-                        &raw mut (*tmpl).sub_type,
-                        false,
-                    )?;
+                    let sub_type = StringView::from_ptr(&raw mut (*tmpl).sub_type);
+                    push_string_place_str(uc.string_pool_view(), sub_type, false)?;
                 }
 
                 // SAFETY: `&raw mut (*tmpl).props` addresses the freshly pushed
@@ -1124,13 +1121,10 @@ pub(crate) unsafe fn split_type_and_name(
         type_.length = 0;
     }
 
-    // SAFETY: `type_`/`name` are exclusive borrows of live `ufbx_string` slots,
-    // each holding a data/length pair written above, and the pool is uc's own
-    // string pool — `push_string_place_str`'s contract.
-    unsafe {
-        push_string_place_str(uc.string_pool_mut_ptr(), &raw mut *type_, false)?;
-        push_string_place_str(uc.string_pool_mut_ptr(), &raw mut *name, false)?;
-    }
+    // `type_`/`name` are exclusive borrows of live `ufbx_string` slots, each
+    // holding a data/length pair written above.
+    push_string_place_str(uc.string_pool_view(), StringView::from_mut(type_), false)?;
+    push_string_place_str(uc.string_pool_view(), StringView::from_mut(name), false)?;
 
     Ok(())
 }
@@ -2087,21 +2081,18 @@ pub(crate) unsafe fn read_unknown(
     }
 
     // `type`, `sub_type` and `node_name` are raw strings so they may need to be sanitized.
-    // SAFETY: each argument is a field of the fresh element above, holding the
-    // data/length pair written just now, and the pool is uc's own string pool.
-    unsafe {
-        push_string_place_str(uc.string_pool_mut_ptr(), &raw mut (*unknown).type_, false)?;
-        push_string_place_str(
-            uc.string_pool_mut_ptr(),
-            &raw mut (*unknown).sub_type,
-            false,
-        )?;
-        push_string_place_str(
-            uc.string_pool_mut_ptr(),
-            &raw mut (*unknown).super_type,
-            false,
-        )?;
-    }
+    // SAFETY: each view is minted over a field of the fresh element above,
+    // holding the data/length pair written just now.
+    let (type_view, sub_type_view, super_type_view) = unsafe {
+        (
+            StringView::from_ptr(&raw mut (*unknown).type_),
+            StringView::from_ptr(&raw mut (*unknown).sub_type),
+            StringView::from_ptr(&raw mut (*unknown).super_type),
+        )
+    };
+    push_string_place_str(uc.string_pool_view(), type_view, false)?;
+    push_string_place_str(uc.string_pool_view(), sub_type_view, false)?;
+    push_string_place_str(uc.string_pool_view(), super_type_view, false)?;
 
     Ok(())
 }
@@ -4742,12 +4733,13 @@ pub(crate) fn read_mesh(uc: &Context, node: &NodeView, info: &ElementInfoView) -
             }
 
             if prop_name.length > 0 {
-                // SAFETY: `uc.string_pool_mut_ptr()` is uc's own live string
-                // pool and `prop_name` is a live local whose `data` spans
-                // `length` readable bytes.
-                unsafe {
-                    push_string_place_str(uc.string_pool_mut_ptr(), &raw mut prop_name, false)
-                }?;
+                // `prop_name` is a live local whose `data` spans `length`
+                // readable bytes.
+                push_string_place_str(
+                    uc.string_pool_view(),
+                    StringView::from_mut(&mut prop_name),
+                    false,
+                )?;
                 // C: `const char *mapping = NULL;`
                 if let Some(Unchecked(mapping)) =
                     find_val1::<Unchecked<*const u8>>(n, sp::MappingInformationType.as_ptr())
@@ -7545,13 +7537,15 @@ pub(crate) fn read_object(uc: &Context, node: &NodeView) -> Result<(), Fail> {
     // Remove the "Fbx" prefix from sub-types, remember to re-intern!
     // SAFETY: `sub_type_str` was filled by the reads above, so it is a pooled
     // string of `length` bytes; the compare and the 3-byte advance are guarded
-    // by the `length > 3` check, and the re-intern goes to uc's own pool.
-    unsafe {
-        if sub_type_str.length > 3 && memcmp(sub_type_str.data, b"Fbx".as_ptr(), 3) == 0 {
-            sub_type_str.data = sub_type_str.data.add(3);
-            sub_type_str.length -= 3;
-            push_string_place_str(uc.string_pool_mut_ptr(), &raw mut sub_type_str, false)?;
-        }
+    // by the `length > 3` check.
+    if unsafe { sub_type_str.length > 3 && memcmp(sub_type_str.data, b"Fbx".as_ptr(), 3) == 0 } {
+        sub_type_str.data = unsafe { sub_type_str.data.add(3) };
+        sub_type_str.length -= 3;
+        push_string_place_str(
+            uc.string_pool_view(),
+            StringView::from_mut(&mut sub_type_str),
+            false,
+        )?;
     }
 
     // C: `ufbx_string type_str;` — fully written by `ufbxi_split_type_and_name`.
@@ -8204,10 +8198,10 @@ pub(crate) fn read_connections(uc: &Context) -> Result<(), Fail> {
             let dst_name: *const u8;
             // Pre-7000 versions use Type::Name pairs as identifiers
 
-            // SAFETY (this branch): `node` is a parse-tree NodeView; the strings
-            // the fetches yield are pooled and NUL-terminated, which is what the
+            // This branch: `node` is a parse-tree NodeView; the strings the
+            // fetches yield are pooled and NUL-terminated, which is what the
             // re-intern and the synthetic-id hashes below require.
-            unsafe {
+            {
                 let Some(Unchecked(type_)) = get_val1::<Unchecked<*const u8>>(node) else {
                     continue;
                 };
@@ -8270,10 +8264,18 @@ pub(crate) fn read_connections(uc: &Context) -> Result<(), Fail> {
                 }
 
                 if src_prop.length > 0 {
-                    push_string_place_str(uc.string_pool_mut_ptr(), &raw mut src_prop, false)?;
+                    push_string_place_str(
+                        uc.string_pool_view(),
+                        StringView::from_mut(&mut src_prop),
+                        false,
+                    )?;
                 }
                 if dst_prop.length > 0 {
-                    push_string_place_str(uc.string_pool_mut_ptr(), &raw mut dst_prop, false)?;
+                    push_string_place_str(
+                        uc.string_pool_view(),
+                        StringView::from_mut(&mut dst_prop),
+                        false,
+                    )?;
                 }
 
                 src_id = synthetic_id_from_string(uc, src_name);
@@ -8836,10 +8838,13 @@ unsafe fn read_take_prop_channel_rec(
                 } == 0
             {
                 name.length -= suffix_len;
-                // SAFETY: `uc.string_pool_mut_ptr()` is uc's own live `string_pool`
-                // and `&raw mut name` is a live local whose `data` spans the shortened
+                // `name` is a live local whose `data` spans the shortened
                 // `length` bytes.
-                unsafe { push_string_place_str(uc.string_pool_mut_ptr(), &raw mut name, false) }?;
+                push_string_place_str(
+                    uc.string_pool_view(),
+                    StringView::from_mut(&mut name),
+                    false,
+                )?;
             }
         }
 
@@ -10798,7 +10803,11 @@ pub(crate) fn read_legacy_root(uc: &Context) -> Result<(), Fail> {
             layer_info.fbx_id = uc.legacy_implicit_anim_layer_id();
             layer_info.name.data = b"(internal)\0".as_ptr();
             layer_info.name.length = strlen(layer_info.name.data);
-            push_string_place_str(uc.string_pool_mut_ptr(), &raw mut layer_info.name, true)?;
+            push_string_place_str(
+                uc.string_pool_view(),
+                StringView::from_mut(&mut layer_info.name),
+                true,
+            )?;
             let layer: *mut AnimLayer = push_element::<AnimLayer>(
                 uc,
                 View::<ElementInfo>::from_ptr(&raw mut layer_info),
@@ -10885,15 +10894,11 @@ pub(crate) fn init_file_paths(uc: &Context) -> Result<(), Fail> {
             .set_size(uc.opts_view().filename_view().length());
     }
 
-    // SAFETY: interning uc's own metadata `filename` slot, reached through its
-    // element views, into uc's own string pool.
-    unsafe {
-        push_string_place_str(
-            uc.string_pool_mut_ptr(),
-            uc.scene_view().metadata_view().filename_mut_ptr(),
-            false,
-        )?;
-    }
+    push_string_place_str(
+        uc.string_pool_view(),
+        uc.scene_view().metadata_view().filename_view(),
+        false,
+    )?;
     push_string_place_blob(
         uc.string_pool_view(),
         uc.scene_view().metadata_view().raw_filename_view(),
@@ -10934,15 +10939,11 @@ pub(crate) fn init_file_paths(uc: &Context) -> Result<(), Fail> {
             )
         });
 
-    // SAFETY: interning uc's own metadata `relative_root` slot — a prefix of the
-    // filename interned above — into uc's string pool.
-    unsafe {
-        push_string_place_str(
-            uc.string_pool_mut_ptr(),
-            uc.scene_view().metadata_view().relative_root_mut_ptr(),
-            false,
-        )?;
-    }
+    push_string_place_str(
+        uc.string_pool_view(),
+        uc.scene_view().metadata_view().relative_root_view(),
+        false,
+    )?;
     push_string_place_blob(
         uc.string_pool_view(),
         uc.scene_view().metadata_view().raw_relative_root_view(),
@@ -11179,11 +11180,8 @@ pub(crate) fn resolve_relative_filename<M: Mode>(
     // `ptr` at or after `result`.
     let mut dst: String = String::new_c(result, to_size(unsafe { ptr.offset_from(result) }));
     ufbx_assert!(dst.length <= result_cap);
-    // SAFETY: the string pool is uc's own, and `dst` is a live local naming the
-    // bytes written into the scratch run above.
-    unsafe {
-        push_string_place_str(uc.string_pool_mut_ptr(), &raw mut dst, raw)?;
-    }
+    // `dst` is a live local naming the bytes written into the scratch run above.
+    push_string_place_str(uc.string_pool_view(), StringView::from_mut(&mut dst), raw)?;
     // SAFETY: the temporary stack is uc's own and `result_cap` bytes were pushed
     // onto it above and are still its topmost allocation; a null destination
     // discards them.

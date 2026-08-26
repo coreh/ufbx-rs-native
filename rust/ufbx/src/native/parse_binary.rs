@@ -50,7 +50,7 @@ use crate::native::string_pool::{
     push_sanitized_string, push_string, push_string_place_str, SanitizedStringView,
 };
 use crate::native::thread::{thread_pool_create_task, thread_pool_run_task, Task};
-use crate::prelude::{slice_from_ptr, String};
+use crate::prelude::{slice_from_ptr, String, StringView};
 
 // -- Binary parsing
 
@@ -603,9 +603,10 @@ pub(crate) unsafe fn binary_parse_multivalue_array(
                 // SAFETY: `d` is a live `String` slot as above.
                 ufbxi_check!(uc, !unsafe { (*d).data }.is_null(), "d->data");
             } else {
-                // SAFETY: `d` is a live `String` slot; `push_string_place_str`
-                // interns its `data`/`length` run into the string pool in place.
-                unsafe { push_string_place_str(uc.string_pool_mut_ptr(), d, raw) }?;
+                // SAFETY: `d` is a live `String` slot of the `dst` array, as
+                // above, holding the `data`/`length` run just written.
+                let d = unsafe { StringView::from_ptr(d) };
+                push_string_place_str(uc.string_pool_view(), d, raw)?;
             }
             // SAFETY: within the `size`-iteration loop `d` stays inside the `dst`
             // `String` array, so stepping one slot is in bounds.

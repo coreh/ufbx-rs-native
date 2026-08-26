@@ -933,7 +933,7 @@ pub(crate) unsafe fn push_string(
 // ufbx.c:5260-5269 `ufbxi_push_string_place`
 #[inline(always)]
 pub(crate) unsafe fn push_string_place(
-    pool: *mut StringPool,
+    pool: &StringPoolView,
     p_str: *mut *const u8,
     p_length: *mut usize,
     raw: bool,
@@ -943,21 +943,15 @@ pub(crate) unsafe fn push_string_place(
     let mut str_ = unsafe { *p_str };
     let length = unsafe { *p_length };
     ufbxi_check_err!(
-        unsafe { crate::native::error::ErrorView::from_ptr((*pool).error) },
+        pool.error_view(),
         !str_.is_null() || length == 0,
         "str || length == 0"
     );
-    // SAFETY: `pool` addresses the live, context-owned `StringPool`,
-    // reinterpreted in place; the caller vouches `*p_str`/`*p_length` describe a
-    // run readable for `length` bytes (the check above additionally rejects a null
-    // `str_` with nonzero length), and `p_length` is the caller's live in-out
-    // length slot.
-    str_ = unsafe { push_string(StringPoolView::from_ptr(pool), str_, length, p_length, raw) };
-    ufbxi_check_err!(
-        unsafe { crate::native::error::ErrorView::from_ptr((*pool).error) },
-        !str_.is_null(),
-        "str"
-    );
+    // SAFETY: the caller vouches `*p_str`/`*p_length` describe a run readable for
+    // `length` bytes (the check above additionally rejects a null `str_` with
+    // nonzero length), and `p_length` is the caller's live in-out length slot.
+    str_ = unsafe { push_string(pool, str_, length, p_length, raw) };
+    ufbxi_check_err!(pool.error_view(), !str_.is_null(), "str");
     // SAFETY: `p_str` is the caller's live out-param.
     unsafe { *p_str = str_ };
     Ok(())
@@ -965,20 +959,18 @@ pub(crate) unsafe fn push_string_place(
 
 // ufbx.c:5271-5275 `ufbxi_push_string_place_str`
 #[inline(never)]
-pub(crate) unsafe fn push_string_place_str(
-    pool: *mut StringPool,
-    p_str: *mut String,
+pub(crate) fn push_string_place_str(
+    pool: &StringPoolView,
+    p_str: &StringView,
     raw: bool,
 ) -> Result<(), Fail> {
-    ufbxi_check_err!(
-        unsafe { crate::native::error::ErrorView::from_ptr((*pool).error) },
-        !p_str.is_null(),
-        "p_str"
-    );
-    // SAFETY: `pool` is live; `p_str` was just checked non-null and addresses a
-    // live `String`; `&raw mut` projects its field out-params without creating
-    // temporary references from the raw pointer.
-    unsafe { push_string_place(pool, &raw mut (*p_str).data, &raw mut (*p_str).length, raw) }
+    // C-parity: `ufbxi_check_err(pool->error, p_str)` is a null check on the
+    // place pointer; a `&StringView` reference cannot be null, so the condition
+    // holds by typing.
+    // SAFETY: `data_mut_ptr()`/`length_mut_ptr()` project `p_str`'s own live,
+    // initialized `data`/`length` leaves as the in-out slots
+    // `push_string_place` reads and writes.
+    unsafe { push_string_place(pool, p_str.data_mut_ptr(), p_str.length_mut_ptr(), raw) }
 }
 
 // ufbx.c:5277-5286 `ufbxi_push_string_place_blob`
@@ -2147,7 +2139,11 @@ mod tests {
 
             let mut str_ = s(b"Vertices");
             assert_eq!(
-                push_string_place_str(&mut fx.pool, &mut str_, false),
+                push_string_place_str(
+                    StringPoolView::from_mut(&mut fx.pool),
+                    StringView::from_mut(&mut str_),
+                    false
+                ),
                 Ok(())
             );
             assert_eq!(str_.length, 8);
@@ -2156,7 +2152,11 @@ mod tests {
             // NULL data with zero length is allowed.
             let mut str2 = String::new_c(core::ptr::null(), 0);
             assert_eq!(
-                push_string_place_str(&mut fx.pool, &mut str2, false),
+                push_string_place_str(
+                    StringPoolView::from_mut(&mut fx.pool),
+                    StringView::from_mut(&mut str2),
+                    false
+                ),
                 Ok(())
             );
             assert_eq!(str2.data, EMPTY_CHAR.as_ptr());

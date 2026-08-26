@@ -1975,12 +1975,15 @@ fn ascii_parse_node_rec(
                     } else {
                         // SAFETY: `v` is the freshly pushed, non-null `String` slot;
                         // writes its `data`/`length` from `tok`'s live `prev_token`
-                        // string, then interns it through `uc`'s own string pool.
+                        // string.
                         unsafe {
                             (*v).data = (*tok).str_data;
                             (*v).length = (*tok).str_len;
-                            push_string_place_str(uc.string_pool_mut_ptr(), v, raw)?;
                         }
+                        // SAFETY: `v` is that same live `String` slot, holding
+                        // the pair just written.
+                        let v = unsafe { StringView::from_ptr(v) };
+                        push_string_place_str(uc.string_pool_view(), v, raw)?;
                     }
                 } else {
                     // Ignore strings in non-string arrays, decrement `num_values` as it will be

@@ -86,7 +86,7 @@ use crate::native::warnings::ufbxi_warnf;
 #[cfg(feature = "obj")]
 use crate::prelude::as_f64;
 #[cfg(feature = "obj")]
-use crate::prelude::{Blob, BlobView, List, ListView, Real, ScalarView, String};
+use crate::prelude::{Blob, BlobView, List, ListView, Real, ScalarView, String, StringView};
 #[cfg(feature = "obj")]
 use core::ffi::c_void;
 #[cfg(feature = "obj")]
@@ -1283,13 +1283,15 @@ pub(crate) fn obj_parse_material(uc: &Context) -> Result<(), Fail> {
 
     let mut name: String = obj_span_token(uc, 1, usize::MAX);
 
-    // SAFETY: interns the span into uc's own string pool through an unaliased
-    // local, then derives the synthetic id from the interned (pool-owned,
-    // NUL-terminated) pointer.
-    let fbx_id: u64 = unsafe {
-        push_string_place_str(uc.string_pool_mut_ptr(), &raw mut name, false)?;
-        synthetic_id_from_string(uc, name.data)
-    };
+    // Interns the span through an unaliased local.
+    push_string_place_str(
+        uc.string_pool_view(),
+        StringView::from_mut(&mut name),
+        false,
+    )?;
+    // Derives the synthetic id from the interned (pool-owned, NUL-terminated)
+    // pointer.
+    let fbx_id: u64 = synthetic_id_from_string(uc, name.data);
     ufbxi_check!(uc, fbx_id != 0, "fbx_id");
 
     let entry: *mut FbxIdEntry = find_fbx_id(uc, fbx_id);
@@ -2013,29 +2015,13 @@ pub(crate) fn obj_parse_file(uc: &Context) -> Result<(), Fail> {
         } else if key == obj_cmd1(b'o') {
             if num_tokens >= 2 {
                 uc.obj().set_object(obj_span_token(uc, 1, usize::MAX));
-                // SAFETY: interns the obj context's own `object` string into
-                // uc's string pool, both taken through their raw-ptr getters.
-                unsafe {
-                    push_string_place_str(
-                        uc.string_pool_mut_ptr(),
-                        uc.obj().object_mut_ptr(),
-                        false,
-                    )?
-                };
+                push_string_place_str(uc.string_pool_view(), uc.obj().object_view(), false)?;
                 uc.obj().set_object_dirty(true);
             }
         } else if key == obj_cmd1(b'g') {
             if num_tokens >= 2 {
                 uc.obj().set_group(obj_span_token(uc, 1, usize::MAX));
-                // SAFETY: interns the obj context's own `group` string into
-                // uc's string pool, both taken through their raw-ptr getters.
-                unsafe {
-                    push_string_place_str(
-                        uc.string_pool_mut_ptr(),
-                        uc.obj().group_mut_ptr(),
-                        false,
-                    )?
-                };
+                push_string_place_str(uc.string_pool_view(), uc.obj().group_view(), false)?;
                 uc.obj().set_group_dirty(true);
             } else {
                 uc.obj().set_group(EMPTY_STRING.0);
@@ -2139,9 +2125,8 @@ pub(crate) unsafe fn obj_parse_prop(
     let prop: &View<Prop> = unsafe { View::<Prop>::from_ptr(prop) };
     prop.set_name(name);
 
-    // SAFETY: interns the prop's own `name` field into uc's string pool, both
-    // taken through their raw-ptr getters.
-    unsafe { push_string_place_str(uc.string_pool_mut_ptr(), prop.name_raw(), false)? };
+    // Interns the prop's own `name` field into uc's string pool.
+    push_string_place_str(uc.string_pool_view(), prop.name_view(), false)?;
 
     let mut flags: u32 = PropFlags::VALUE_STR.raw();
 
@@ -2218,11 +2203,8 @@ pub(crate) unsafe fn obj_parse_prop(
         value_blob.size = span.length;
         prop.set_value_blob(value_blob);
 
-        // SAFETY: interns the prop's own `value_str` field into uc's string
-        // pool, taken through its raw-ptr getter.
-        unsafe {
-            push_string_place_str(uc.string_pool_mut_ptr(), prop.value_str_raw(), false)?;
-        }
+        // Interns the prop's own `value_str` field into uc's string pool.
+        push_string_place_str(uc.string_pool_view(), prop.value_str_view(), false)?;
         push_string_place_blob(uc.string_pool_view(), prop.value_blob_view(), true)?;
     } else {
         let mut value_str: String = prop.value_str();
@@ -2302,11 +2284,13 @@ pub(crate) fn obj_parse_mtl_map(uc: &Context, prefix_len: usize) -> Result<(), F
     let mut tex_str: String = obj_span_token(uc, start, usize::MAX);
     let mut tex_raw: Blob = Blob::new_c(tex_str.data, tex_str.length);
 
-    // SAFETY: interns the texture path into uc's own string pool through an
-    // unaliased local.
-    unsafe {
-        push_string_place_str(uc.string_pool_mut_ptr(), &raw mut tex_str, false)?;
-    }
+    // Interns the texture path into uc's own string pool through an unaliased
+    // local.
+    push_string_place_str(
+        uc.string_pool_view(),
+        StringView::from_mut(&mut tex_str),
+        false,
+    )?;
     push_string_place_blob(
         uc.string_pool_view(),
         BlobView::from_mut(&mut tex_raw),
@@ -2349,7 +2333,11 @@ pub(crate) fn obj_parse_mtl_map(uc: &Context, prefix_len: usize) -> Result<(), F
         ufbx_assert!(prop.length >= prefix_len);
         prop.data = prop.data.add(prefix_len);
         prop.length -= prefix_len;
-        push_string_place_str(uc.string_pool_mut_ptr(), &raw mut prop, false)?;
+        push_string_place_str(
+            uc.string_pool_view(),
+            StringView::from_mut(&mut prop),
+            false,
+        )?;
         prop
     };
 

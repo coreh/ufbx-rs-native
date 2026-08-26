@@ -531,13 +531,11 @@ pub(crate) fn fixup_opts_string(uc: &Context, str: &RawStringView, push: bool) -
             });
         }
         if push {
-            // SAFETY: `uc`'s string pool is live for the borrow, and
-            // `str.get()` addresses the live `ufbx_string` this view borrows
-            // (`RawString` and `String` are the same `#[repr(C)]` pair of
-            // `data`/`length` fields), which the pool rewrites in place.
-            unsafe {
-                push_string_place_str(uc.string_pool_mut_ptr(), str.get() as *mut String, false)?
-            };
+            // SAFETY: `str.get()` addresses the live `ufbx_string` this view
+            // borrows (`RawString` and `String` are the same `#[repr(C)]` pair
+            // of `data`/`length` fields), which the pool rewrites in place.
+            let str_ = unsafe { StringView::from_ptr(str.get() as *mut String) };
+            push_string_place_str(uc.string_pool_view(), str_, false)?;
         }
     } else {
         str.set_data(EMPTY_CHAR.as_ptr());

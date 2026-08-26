@@ -58,7 +58,7 @@ use crate::native::warnings::ufbxi_warnf;
 use crate::native::xml::{
     free_xml, load_xml, xml_find_attrib, xml_find_child, XmlDocument, XmlLoadOpts, XmlTagView,
 };
-use crate::prelude::{Real, Ref, String};
+use crate::prelude::{Real, Ref, String, StringView};
 
 // ufbx.c:23950-23957 `ufbxi_geometry_cache_imp` (UFBXI_FEATURE_GEOMETRY_CACHE)
 #[cfg(feature = "geometry-cache")]
@@ -443,7 +443,8 @@ impl CacheContext {
         unsafe { &*(&raw mut (*self.get()).error as *mut crate::native::error::ErrorView) }
     }
 
-    // `channel_name`/`xml_filename` (String) — typed VIEW handles (reinterpret-in-place).
+    // `channel_name`/`xml_filename`/`stream_filename` (String) — typed VIEW
+    // handles (reinterpret-in-place).
     #[inline(always)]
     pub(crate) fn channel_name_view(&self) -> &crate::prelude::StringView {
         unsafe { &*(&raw mut (*self.get()).channel_name as *mut crate::prelude::StringView) }
@@ -451,6 +452,10 @@ impl CacheContext {
     #[inline(always)]
     pub(crate) fn xml_filename_view(&self) -> &crate::prelude::StringView {
         unsafe { &*(&raw mut (*self.get()).xml_filename as *mut crate::prelude::StringView) }
+    }
+    #[inline(always)]
+    pub(crate) fn stream_filename_view(&self) -> &crate::prelude::StringView {
+        unsafe { &*(&raw mut (*self.get()).stream_filename as *mut crate::prelude::StringView) }
     }
     // `open_file_cb` (RawOpenFileCb) — typed VIEW handle; `.fn_` is read + written.
     #[inline(always)]
@@ -572,12 +577,6 @@ impl CacheContext {
         view_write!(self, string_pool, string_pool)
     }
 
-    // `stream_filename` — raw-ptr getter (address of field for out-param/mutation sites).
-    #[inline(always)]
-    pub(crate) fn stream_filename_mut_ptr(&self) -> *mut String {
-        view_raw_mut!(self, stream_filename)
-    }
-
     // `stream` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn stream_mut_ptr(&self) -> *mut RawStream {
@@ -606,12 +605,6 @@ impl CacheContext {
     #[inline(always)]
     pub(crate) fn error_mut_ptr(&self) -> *mut Error {
         view_raw_mut!(self, error)
-    }
-
-    // `channel_name` — raw-ptr getter (address of field for out-param/mutation sites).
-    #[inline(always)]
-    pub(crate) fn channel_name_mut_ptr(&self) -> *mut String {
-        view_raw_mut!(self, channel_name)
     }
 
     // `ator_result` — raw-ptr getter (address of field for out-param/mutation sites).
@@ -1156,19 +1149,15 @@ pub(crate) fn cache_load_mc(cc: &CacheContext) -> Result<(), Fail> {
                     },
                     "ufbxi_grow_array_size((cc->ator_tmp), sizeof(**(&cc->name_buf)), (&cc->name_buf), (&cc->name_cap), (padded_length))"
                 );
-                // SAFETY: `name_buf` was just grown to `padded_length`; the
-                // string-pool intern reads cc's own channel-name storage
-                // through its raw-ptr getters (cc construction invariant).
+                // SAFETY: `name_buf` was just grown to `padded_length`, so it
+                // addresses cc's own storage for that many bytes (cc
+                // construction invariant).
                 unsafe {
                     cache_read(cc, cc.name_buf() as *mut c_void, padded_length, false)?;
                     cc.channel_name_view().set_data(cc.name_buf());
                     cc.channel_name_view().set_length(length);
-                    push_string_place_str(
-                        cc.string_pool_mut_ptr(),
-                        cc.channel_name_mut_ptr(),
-                        false,
-                    )?;
                 }
+                push_string_place_str(cc.string_pool_view(), cc.channel_name_view(), false)?;
             }
             TAG_SIZE => cache_mc_read_u32(cc, &mut count)?,
             TAG_FVCA => format = CacheDataFormat::Vec3Float,
@@ -1385,12 +1374,14 @@ pub(crate) fn cache_load_xml_imp(cc: &CacheContext, doc: &XmlDocumentView) -> Re
             ufbxi_check_err!(cc.error_view(), !extra.is_null(), "extra");
             // C: `tag->children[0].text` — `num_children == 1` guarantees the child.
             // SAFETY: `extra` is the fresh non-null push result; the child is the
-            // first element of a valid arena run of length >= 1; the intern goes
-            // through cc's own string pool.
+            // first element of a valid arena run of length >= 1.
             unsafe {
                 *extra = XmlTagView::from_ptr(tag.children()).text();
-                push_string_place_str(cc.string_pool_mut_ptr(), extra, false)?;
             }
+            // SAFETY: `extra` addresses a live, stable `String` slot in cc's tmp
+            // stack, holding the value just written.
+            let extra = unsafe { StringView::from_ptr(extra) };
+            push_string_place_str(cc.string_pool_view(), extra, false)?;
             num_extra += 1;
         }
         cc.cache_view().extra_info_view().set_count(num_extra);
@@ -1464,24 +1455,21 @@ pub(crate) fn cache_load_xml_imp(cc: &CacheContext, doc: &XmlDocumentView) -> Re
                 // C: `&cc->channels[cc->num_channels++]`
                 // SAFETY: at most one channel is appended per child tag, so
                 // `num_channels` stays within the `num_children`-element run
-                // pushed above; `channel` is that fresh in-bounds slot, and
-                // the interns go through cc's own string pool.
+                // pushed above; `channel` is that fresh in-bounds slot.
                 let channel: *mut CacheTmpChannel = unsafe { cc.channels().add(cc.num_channels()) };
                 cc.set_num_channels(cc.num_channels() + 1);
                 unsafe {
                     (*channel).name = name.value();
                     (*channel).interpretation = interpretation.value();
-                    push_string_place_str(
-                        cc.string_pool_mut_ptr(),
-                        &raw mut (*channel).name,
-                        false,
-                    )?;
-                    push_string_place_str(
-                        cc.string_pool_mut_ptr(),
-                        &raw mut (*channel).interpretation,
-                        false,
-                    )?;
                 }
+                // SAFETY: `channel` is the in-bounds slot from above, so its
+                // `name` leaf is a live `String` slot in cc's tmp run.
+                let channel_name = unsafe { StringView::from_ptr(&raw mut (*channel).name) };
+                push_string_place_str(cc.string_pool_view(), channel_name, false)?;
+                // SAFETY: as above, for the same slot's `interpretation` leaf.
+                let channel_interpretation =
+                    unsafe { StringView::from_ptr(&raw mut (*channel).interpretation) };
+                push_string_place_str(cc.string_pool_view(), channel_interpretation, false)?;
 
                 let sampling_rate = xml_find_attrib(tag, c"SamplingRate");
                 let start_time = xml_find_attrib(tag, c"StartTime");
@@ -1554,16 +1542,7 @@ pub(crate) fn cache_load_xml(cc: &CacheContext) -> Result<(), Fail> {
 #[inline(never)]
 pub(crate) unsafe fn cache_load_file(cc: &CacheContext, filename: String) -> Result<(), Fail> {
     cc.set_stream_filename(filename);
-    // SAFETY: both pointers address `cc`'s own fields — the string pool it
-    // owns and the `stream_filename` just stored — so they are live and
-    // properly aligned for the in-place interning `push_string_place_str` does.
-    unsafe {
-        push_string_place_str(
-            cc.string_pool_mut_ptr(),
-            cc.stream_filename_mut_ptr(),
-            false,
-        )?;
-    }
+    push_string_place_str(cc.string_pool_view(), cc.stream_filename_view(), false)?;
 
     // Assume all files have at least 16 bytes of header
     // SAFETY: the stream's `read_fn` is non-null for the whole lifetime of an

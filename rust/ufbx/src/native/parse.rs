@@ -1069,18 +1069,10 @@ impl ObjContext {
     pub(crate) fn set_group(&self, group: String) {
         view_write!(self, group, group)
     }
-    #[inline(always)]
-    pub(crate) fn group_mut_ptr(&self) -> *mut String {
-        view_raw_mut!(self, group)
-    }
 
     #[inline(always)]
     pub(crate) fn set_object(&self, object: String) {
         view_write!(self, object, object)
-    }
-    #[inline(always)]
-    pub(crate) fn object_mut_ptr(&self) -> *mut String {
-        view_raw_mut!(self, object)
     }
 
     #[inline(always)]
@@ -2608,10 +2600,6 @@ impl SceneMetadataView {
         unsafe { &*(&raw mut (*self.get()).filename as *mut crate::prelude::StringView) }
     }
     #[inline(always)]
-    pub(crate) fn filename_mut_ptr(&self) -> *mut crate::prelude::String {
-        view_raw_mut!(self, filename)
-    }
-    #[inline(always)]
     pub(crate) fn creator_view(&self) -> &crate::prelude::StringView {
         unsafe { &*(&raw mut (*self.get()).creator as *mut crate::prelude::StringView) }
     }
@@ -2622,10 +2610,6 @@ impl SceneMetadataView {
     #[inline(always)]
     pub(crate) fn relative_root_view(&self) -> &crate::prelude::StringView {
         unsafe { &*(&raw mut (*self.get()).relative_root as *mut crate::prelude::StringView) }
-    }
-    #[inline(always)]
-    pub(crate) fn relative_root_mut_ptr(&self) -> *mut crate::prelude::String {
-        view_raw_mut!(self, relative_root)
     }
     #[inline(always)]
     pub(crate) fn set_original_file_path(&self, original_file_path: crate::prelude::String) {
@@ -3143,11 +3127,6 @@ impl Context {
         view_raw_mut!(self, tmp)
     }
 
-    // `string_pool` — raw-ptr getter (address of field for out-param/mutation sites).
-    #[inline(always)]
-    pub(crate) fn string_pool_mut_ptr(&self) -> *mut StringPool {
-        view_raw_mut!(self, string_pool)
-    }
     // `string_pool` (StringPool) — typed VIEW handle (reinterpret-in-place) for nested
     // access; whole value getter/setter for the faithful C struct-copy sites.
     #[inline(always)]
@@ -5942,10 +5921,10 @@ fn retain_dom_node_rec(
         }
     }
 
-    // SAFETY: `dst` is the live result `DomNode`; `&raw mut (*dst).name` addresses
-    // its name field, and `string_pool_mut_ptr` yields `uc`'s own pool pointer —
-    // `push_string_place_str`'s contract.
-    unsafe { sp::push_string_place_str(uc.string_pool_mut_ptr(), &raw mut (*dst).name, false)? };
+    // SAFETY: `dst` is the live result `DomNode`, so its `name` leaf is a live
+    // `String` slot.
+    let dst_name = unsafe { View::<DomNode>::from_ptr(dst).name_view() };
+    sp::push_string_place_str(uc.string_pool_view(), dst_name, false)?;
 
     if node_view.value_type_mask() == ValueType::Array as u16 {
         // `value_type_mask == Array` selects the `array` arm of `node`'s
