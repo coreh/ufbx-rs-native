@@ -1125,16 +1125,18 @@ mod tests {
                 core::slice::from_raw_parts(uc.error.description.data, uc.error.description.length);
             assert_eq!(desc, b"Truncated file");
 
-            // SAFETY: `read_buffer`/`read_buffer_size` are the block `uc.ator_tmp`
-            // handed out.
+            // SAFETY: `&raw mut` (not `&mut`) — `uc.ator_tmp` is a context FIELD
+            // whose address C stores into sibling structs, so the mint must not
+            // retag Unique. It is live and unmoved, and
+            // `read_buffer`/`read_buffer_size` are the block it handed out.
             free(
-                Some(AllocatorView::from_mut(&mut uc.ator_tmp)),
+                Some(AllocatorView::from_ptr(&raw mut uc.ator_tmp)),
                 uc.read_buffer,
                 uc.read_buffer_size,
             );
-            // SAFETY: single teardown — the test's own temp allocator, torn down
-            // once here.
-            free_ator(AllocatorView::from_mut(&mut uc.ator_tmp));
+            // SAFETY: same `&raw mut` field mint; single teardown — the test's
+            // own temp allocator, torn down once here.
+            free_ator(AllocatorView::from_ptr(&raw mut uc.ator_tmp));
         }
     }
 
@@ -1177,16 +1179,18 @@ mod tests {
             assert_eq!(&dst[..], &DATA[..24]);
             assert_eq!(uc.data_offset, 24);
 
-            // SAFETY: `read_buffer`/`read_buffer_size` are the block `uc.ator_tmp`
-            // handed out.
+            // SAFETY: `&raw mut` (not `&mut`) — `uc.ator_tmp` is a context FIELD
+            // whose address C stores into sibling structs, so the mint must not
+            // retag Unique. It is live and unmoved, and
+            // `read_buffer`/`read_buffer_size` are the block it handed out.
             free(
-                Some(AllocatorView::from_mut(&mut uc.ator_tmp)),
+                Some(AllocatorView::from_ptr(&raw mut uc.ator_tmp)),
                 uc.read_buffer,
                 uc.read_buffer_size,
             );
-            // SAFETY: single teardown — the test's own temp allocator, torn down
-            // once here.
-            free_ator(AllocatorView::from_mut(&mut uc.ator_tmp));
+            // SAFETY: same `&raw mut` field mint; single teardown — the test's
+            // own temp allocator, torn down once here.
+            free_ator(AllocatorView::from_ptr(&raw mut uc.ator_tmp));
         }
     }
 
