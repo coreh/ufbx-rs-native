@@ -22,7 +22,7 @@ use crate::native::error::{
 use crate::native::platform::{ufbx_assert, IS_REGRESSION};
 use crate::native::view::{view_raw_mut, view_read, view_write};
 use crate::native::view::{SliceViewIter, View};
-use crate::prelude::String;
+use crate::prelude::{String, StringView};
 
 // ufbx.c:53 `#define UFBXI_MAX_XML_DEPTH 32` — owned here; the XML tag parser
 // is its only user.
@@ -72,10 +72,6 @@ impl View<XmlTag> {
         }
     }
     #[inline(always)]
-    pub(crate) fn name_raw(&self) -> *mut String {
-        view_raw_mut!(self, name)
-    }
-    #[inline(always)]
     pub(crate) fn name_view(&self) -> &View<String> {
         // SAFETY: in-place projection of the `name` field; liveness and
         // provenance carry over from this view's own mint.
@@ -100,8 +96,10 @@ impl View<XmlTag> {
         }
     }
     #[inline(always)]
-    pub(crate) fn text_raw(&self) -> *mut String {
-        view_raw_mut!(self, text)
+    pub(crate) fn text_view(&self) -> &View<String> {
+        // SAFETY: in-place projection of the `text` field; liveness and
+        // provenance carry over from this view's own mint.
+        unsafe { View::mint(&raw mut (*self.get()).text) }
     }
     #[inline(always)]
     pub(crate) fn attribs(&self) -> *mut XmlAttrib {
@@ -141,10 +139,6 @@ pub(crate) type XmlAttribView = View<XmlAttrib>;
 
 impl View<XmlAttrib> {
     #[inline(always)]
-    pub(crate) fn name_raw(&self) -> *mut String {
-        view_raw_mut!(self, name)
-    }
-    #[inline(always)]
     pub(crate) fn name_view(&self) -> &View<String> {
         // SAFETY: in-place projection of the `name` field; liveness and
         // provenance carry over from this view's own mint.
@@ -153,10 +147,6 @@ impl View<XmlAttrib> {
     #[inline(always)]
     pub(crate) fn value(&self) -> String {
         view_read!(self, value)
-    }
-    #[inline(always)]
-    pub(crate) fn value_raw(&self) -> *mut String {
-        view_raw_mut!(self, value)
     }
     #[inline(always)]
     pub(crate) fn value_view(&self) -> &View<String> {
@@ -529,17 +519,17 @@ pub(crate) fn xml_skip_while(xc: &XmlContext, ctypes: u32) {
 // ufbx.c:7354-7386 `ufbxi_xml_skip_until_string`
 #[allow(unused_assignments)]
 #[inline(never)]
-pub(crate) unsafe fn xml_skip_until_string(
+pub(crate) fn xml_skip_until_string(
     xc: &XmlContext,
-    dst: *mut String,
-    suffix: *const u8,
+    dst: Option<&StringView>,
+    suffix: &[u8],
 ) -> Result<(), Fail> {
     xc.set_tok_len(0);
     let mut match_len: usize = 0;
     let mut ix: usize = 0;
-    // SAFETY: `suffix` is a NUL-terminated string (every call site passes a
-    // byte-string literal), which is `strlen`'s raw-param contract.
-    let suffix_len: usize = unsafe { crate::native::error::strlen(suffix) };
+    // C: `strlen(suffix)` — `suffix` carries the NUL of the C string literal
+    // every call site passes, so the C length is the slice minus that byte.
+    let suffix_len: usize = suffix.len() - 1;
     let mut buf: [u8; 16] = [0; 16];
     let wrap_mask: usize = buf.len() - 1;
     ufbx_assert!(suffix_len < buf.len());
@@ -563,10 +553,8 @@ pub(crate) unsafe fn xml_skip_until_string(
         while match_len < suffix_len {
             // C-parity: `ix - suffix_len + match_len` wraps while the ring
             // buffer is still filling; the mask makes the wrapped value valid.
-            // SAFETY: `match_len < suffix_len`, so the offset stays inside the
-            // NUL-terminated `suffix` string.
             if buf[ix.wrapping_sub(suffix_len).wrapping_add(match_len) & wrap_mask]
-                != unsafe { *suffix.add(match_len) }
+                != suffix[match_len]
             {
                 break;
             }
@@ -578,19 +566,12 @@ pub(crate) unsafe fn xml_skip_until_string(
     }
 
     xml_push_token_char(xc, b'\0')?;
-    if !dst.is_null() {
-        // SAFETY: `dst` is non-null per the check and points at a caller-owned
-        // `String` slot (fn raw-param contract).
-        unsafe { (*dst).length = xc.tok_len() - 1 };
-        // SAFETY: `dst` as above; `push_copy` copies `tok_len` bytes out of xc's
-        // own token buffer, which holds exactly that many, into xc's result buf.
-        unsafe { (*dst).data = xc.result_view().push_copy_raw::<u8>(xc.tok_len(), xc.tok()) };
-        ufbxi_check_err!(
-            xc.error_view(),
-            // SAFETY: reading the pointer field just stored through `dst`.
-            !unsafe { (*dst).data }.is_null(),
-            "dst->data"
-        );
+    if let Some(dst) = dst {
+        dst.set_length(xc.tok_len() - 1);
+        // SAFETY: `push_copy` copies `tok_len` bytes out of xc's own token
+        // buffer, which holds exactly that many, into xc's result buf.
+        dst.set_data(unsafe { xc.result_view().push_copy_raw::<u8>(xc.tok_len(), xc.tok()) });
+        ufbxi_check_err!(xc.error_view(), !dst.data().is_null(), "dst->data");
     }
 
     Ok(())
@@ -599,9 +580,9 @@ pub(crate) unsafe fn xml_skip_until_string(
 // ufbx.c:7388-7463 `ufbxi_xml_read_until`
 #[allow(unused_assignments)]
 #[inline(never)]
-pub(crate) unsafe fn xml_read_until(
+pub(crate) fn xml_read_until(
     xc: &XmlContext,
-    dst: *mut String,
+    dst: Option<&StringView>,
     ctypes: u32,
 ) -> Result<(), Fail> {
     xc.set_tok_len(0);
@@ -714,19 +695,12 @@ pub(crate) unsafe fn xml_read_until(
     }
 
     xml_push_token_char(xc, b'\0')?;
-    if !dst.is_null() {
-        // SAFETY: `dst` is non-null per the check and points at a caller-owned
-        // `String` slot (fn raw-param contract).
-        unsafe { (*dst).length = xc.tok_len() - 1 };
-        // SAFETY: `dst` as above; `push_copy` copies `tok_len` bytes out of xc's
-        // own token buffer, which holds exactly that many, into xc's result buf.
-        unsafe { (*dst).data = xc.result_view().push_copy_raw::<u8>(xc.tok_len(), xc.tok()) };
-        ufbxi_check_err!(
-            xc.error_view(),
-            // SAFETY: reading the pointer field just stored through `dst`.
-            !unsafe { (*dst).data }.is_null(),
-            "dst->data"
-        );
+    if let Some(dst) = dst {
+        dst.set_length(xc.tok_len() - 1);
+        // SAFETY: `push_copy` copies `tok_len` bytes out of xc's own token
+        // buffer, which holds exactly that many, into xc's result buf.
+        dst.set_data(unsafe { xc.result_view().push_copy_raw::<u8>(xc.tok_len(), xc.tok()) });
+        ufbxi_check_err!(xc.error_view(), !dst.data().is_null(), "dst->data");
     }
 
     Ok(())
@@ -794,15 +768,8 @@ unsafe fn xml_parse_tag_rec(
             // raw-param contract).
             unsafe { *p_closing = true };
         } else {
-            // SAFETY: a null `dst` is the "discard the token" sentinel the
-            // callee checks for.
-            unsafe {
-                xml_read_until(
-                    xc,
-                    core::ptr::null_mut(),
-                    XML_CTYPE_TAG_START | XML_CTYPE_END_OF_FILE,
-                )?
-            };
+            // C: a null `dst` — the "discard the token" sentinel.
+            xml_read_until(xc, None, XML_CTYPE_TAG_START | XML_CTYPE_END_OF_FILE)?;
             let mut has_text: bool = false;
             let mut i: usize = 0;
             while i < xc.tok_len() {
@@ -844,9 +811,8 @@ unsafe fn xml_parse_tag_rec(
     }
 
     if xml_accept(xc, b'/') {
-        // SAFETY: a null `dst` is the "discard the token" sentinel the callee
-        // checks for.
-        unsafe { xml_read_until(xc, core::ptr::null_mut(), XML_CTYPE_NAME_END)? };
+        // C: a null `dst` — the "discard the token" sentinel.
+        xml_read_until(xc, None, XML_CTYPE_NAME_END)?;
         ufbxi_check_err!(
             xc.error_view(),
             // SAFETY: `strcmp` runs only once `opening` is known non-null, and
@@ -883,31 +849,24 @@ unsafe fn xml_parse_tag_rec(
             // addresses xc's own tmp-stack allocation (write-capable
             // provenance).
             let tag: &XmlTagView = unsafe { XmlTagView::from_ptr(tag) };
-            // SAFETY: the `text` field projection addresses that same fresh
-            // push; the suffix is a NUL-terminated `'static` literal.
-            unsafe { xml_skip_until_string(xc, tag.text_raw(), b"]]>\0".as_ptr())? };
+            xml_skip_until_string(xc, Some(tag.text_view()), b"]]>\0")?;
             // `EMPTY_CHAR` is a NUL-terminated `'static` run.
             tag.set_name_data(EMPTY_CHAR.as_ptr());
         } else if xml_accept(xc, b'-') {
             if !xml_accept(xc, b'-') {
                 return Err(Fail::unrecorded());
             }
-            // SAFETY: a null `dst` is the "discard the token" sentinel the
-            // callee checks for; the suffix is a NUL-terminated `'static`
-            // literal.
-            unsafe { xml_skip_until_string(xc, core::ptr::null_mut(), b"-->\0".as_ptr())? };
+            // C: a null `dst` — the "discard the token" sentinel.
+            xml_skip_until_string(xc, None, b"-->\0")?;
         } else {
             // TODO: !DOCTYPE
-            // SAFETY: a null `dst` is the "discard the token" sentinel the
-            // callee checks for; the suffix is a NUL-terminated `'static`
-            // literal.
-            unsafe { xml_skip_until_string(xc, core::ptr::null_mut(), b">\0".as_ptr())? };
+            // C: a null `dst` — the "discard the token" sentinel.
+            xml_skip_until_string(xc, None, b">\0")?;
         }
         return Ok(());
     } else if xml_accept(xc, b'?') {
-        // SAFETY: a null `dst` is the "discard the token" sentinel the callee
-        // checks for; the suffix is a NUL-terminated `'static` literal.
-        unsafe { xml_skip_until_string(xc, core::ptr::null_mut(), b"?>\0".as_ptr())? };
+        // C: a null `dst` — the "discard the token" sentinel.
+        xml_skip_until_string(xc, None, b"?>\0")?;
         return Ok(());
     }
 
@@ -916,8 +875,7 @@ unsafe fn xml_parse_tag_rec(
     // SAFETY: `tag` is the fresh, checked-non-null push above, so it addresses
     // xc's own tmp-stack allocation (write-capable provenance).
     let tag: &XmlTagView = unsafe { XmlTagView::from_ptr(tag) };
-    // SAFETY: the `name` field projection addresses that same fresh push.
-    unsafe { xml_read_until(xc, tag.name_raw(), XML_CTYPE_NAME_END)? };
+    xml_read_until(xc, Some(tag.name_view()), XML_CTYPE_NAME_END)?;
     // `EMPTY_CHAR` is a NUL-terminated `'static` run.
     tag.set_text_data(EMPTY_CHAR.as_ptr());
 
@@ -941,8 +899,7 @@ unsafe fn xml_parse_tag_rec(
             // addresses xc's own tmp-stack allocation (write-capable
             // provenance).
             let attrib: &XmlAttribView = unsafe { XmlAttribView::from_ptr(attrib) };
-            // SAFETY: the `name` field projection addresses that same fresh push.
-            unsafe { xml_read_until(xc, attrib.name_raw(), XML_CTYPE_NAME_END)? };
+            xml_read_until(xc, Some(attrib.name_view()), XML_CTYPE_NAME_END)?;
             xml_skip_while(xc, XML_CTYPE_WHITESPACE);
             if !xml_accept(xc, b'=') {
                 return Err(Fail::unrecorded());
@@ -956,8 +913,7 @@ unsafe fn xml_parse_tag_rec(
             } else {
                 ufbxi_fail_err!(xc.error_view(), "Bad attrib value");
             }
-            // SAFETY: the `value` field projection addresses that same fresh push.
-            unsafe { xml_read_until(xc, attrib.value_raw(), quote_ctype)? };
+            xml_read_until(xc, Some(attrib.value_view()), quote_ctype)?;
             xml_advance(xc);
             num_attribs += 1;
         }
