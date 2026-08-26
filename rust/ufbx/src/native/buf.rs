@@ -1477,6 +1477,7 @@ mod tests {
     use super::*;
     use crate::generated::Error;
     use crate::native::allocator::init_ator;
+    use crate::native::error::ErrorView;
     use core::mem::MaybeUninit;
 
     fn make_buf(ator: *mut Allocator, unordered: bool, clearable: bool) -> Buf {
@@ -1526,9 +1527,14 @@ mod tests {
     fn test_push_basic_geometry() {
         let mut err = Error::default();
         let mut ator = MaybeUninit::<Allocator>::zeroed();
-        unsafe {
-            init_ator(&mut err, ator.as_mut_ptr(), core::ptr::null(), c"test");
-        }
+        // SAFETY: `err` and the `ator` slot are this frame's live, unmoved
+        // locals; the mints are the one vouch for them.
+        init_ator(
+            unsafe { ErrorView::from_ptr(&raw mut err) },
+            unsafe { AllocatorView::from_ptr(ator.as_mut_ptr()) },
+            None,
+            c"test",
+        );
         let ator = ator.as_mut_ptr();
         let mut buf = make_buf(ator, false, false);
 
@@ -1573,9 +1579,14 @@ mod tests {
     fn test_new_block_growth_doubling() {
         let mut err = Error::default();
         let mut ator = MaybeUninit::<Allocator>::zeroed();
-        unsafe {
-            init_ator(&mut err, ator.as_mut_ptr(), core::ptr::null(), c"test");
-        }
+        // SAFETY: `err` and the `ator` slot are this frame's live, unmoved
+        // locals; the mints are the one vouch for them.
+        init_ator(
+            unsafe { ErrorView::from_ptr(&raw mut err) },
+            unsafe { AllocatorView::from_ptr(ator.as_mut_ptr()) },
+            None,
+            c"test",
+        );
         let ator = ator.as_mut_ptr();
         let mut buf = make_buf(ator, false, false);
 
@@ -1604,9 +1615,14 @@ mod tests {
     fn test_huge_unordered_second_list() {
         let mut err = Error::default();
         let mut ator = MaybeUninit::<Allocator>::zeroed();
-        unsafe {
-            init_ator(&mut err, ator.as_mut_ptr(), core::ptr::null(), c"test");
-        }
+        // SAFETY: `err` and the `ator` slot are this frame's live, unmoved
+        // locals; the mints are the one vouch for them.
+        init_ator(
+            unsafe { ErrorView::from_ptr(&raw mut err) },
+            unsafe { AllocatorView::from_ptr(ator.as_mut_ptr()) },
+            None,
+            c"test",
+        );
         let ator = ator.as_mut_ptr();
         let mut buf = make_buf(ator, true, false);
 
@@ -1630,9 +1646,14 @@ mod tests {
     fn test_push_zero_and_copy() {
         let mut err = Error::default();
         let mut ator = MaybeUninit::<Allocator>::zeroed();
-        unsafe {
-            init_ator(&mut err, ator.as_mut_ptr(), core::ptr::null(), c"test");
-        }
+        // SAFETY: `err` and the `ator` slot are this frame's live, unmoved
+        // locals; the mints are the one vouch for them.
+        init_ator(
+            unsafe { ErrorView::from_ptr(&raw mut err) },
+            unsafe { AllocatorView::from_ptr(ator.as_mut_ptr()) },
+            None,
+            c"test",
+        );
         let ator = ator.as_mut_ptr();
         let mut buf = make_buf(ator, false, false);
 
@@ -1670,9 +1691,14 @@ mod tests {
     fn test_pop_and_peek_across_chunks() {
         let mut err = Error::default();
         let mut ator = MaybeUninit::<Allocator>::zeroed();
-        unsafe {
-            init_ator(&mut err, ator.as_mut_ptr(), core::ptr::null(), c"test");
-        }
+        // SAFETY: `err` and the `ator` slot are this frame's live, unmoved
+        // locals; the mints are the one vouch for them.
+        init_ator(
+            unsafe { ErrorView::from_ptr(&raw mut err) },
+            unsafe { AllocatorView::from_ptr(ator.as_mut_ptr()) },
+            None,
+            c"test",
+        );
         let ator = ator.as_mut_ptr();
         let mut buf = make_buf(ator, false, false);
 
@@ -1737,9 +1763,14 @@ mod tests {
     fn test_pop_null_dst_rewinds_padding() {
         let mut err = Error::default();
         let mut ator = MaybeUninit::<Allocator>::zeroed();
-        unsafe {
-            init_ator(&mut err, ator.as_mut_ptr(), core::ptr::null(), c"test");
-        }
+        // SAFETY: `err` and the `ator` slot are this frame's live, unmoved
+        // locals; the mints are the one vouch for them.
+        init_ator(
+            unsafe { ErrorView::from_ptr(&raw mut err) },
+            unsafe { AllocatorView::from_ptr(ator.as_mut_ptr()) },
+            None,
+            c"test",
+        );
         let ator = ator.as_mut_ptr();
         let mut buf = make_buf(ator, false, false);
 
@@ -1779,9 +1810,14 @@ mod tests {
     fn test_push_pop_flatten() {
         let mut err = Error::default();
         let mut ator = MaybeUninit::<Allocator>::zeroed();
-        unsafe {
-            init_ator(&mut err, ator.as_mut_ptr(), core::ptr::null(), c"test");
-        }
+        // SAFETY: `err` and the `ator` slot are this frame's live, unmoved
+        // locals; the mints are the one vouch for them.
+        init_ator(
+            unsafe { ErrorView::from_ptr(&raw mut err) },
+            unsafe { AllocatorView::from_ptr(ator.as_mut_ptr()) },
+            None,
+            c"test",
+        );
         let ator = ator.as_mut_ptr();
         let mut stack = make_buf(ator, false, false);
         let mut result = make_buf(ator, false, false);
@@ -1832,9 +1868,14 @@ mod tests {
     fn test_buf_free_unused_frees_forward_chunks() {
         let mut err = Error::default();
         let mut ator = MaybeUninit::<Allocator>::zeroed();
-        unsafe {
-            init_ator(&mut err, ator.as_mut_ptr(), core::ptr::null(), c"test");
-        }
+        // SAFETY: `err` and the `ator` slot are this frame's live, unmoved
+        // locals; the mints are the one vouch for them.
+        init_ator(
+            unsafe { ErrorView::from_ptr(&raw mut err) },
+            unsafe { AllocatorView::from_ptr(ator.as_mut_ptr()) },
+            None,
+            c"test",
+        );
         let ator = ator.as_mut_ptr();
         let mut buf = make_buf(ator, false, false);
 
@@ -1884,9 +1925,14 @@ mod tests {
     fn test_buf_clear_resets_and_trims_huge() {
         let mut err = Error::default();
         let mut ator = MaybeUninit::<Allocator>::zeroed();
-        unsafe {
-            init_ator(&mut err, ator.as_mut_ptr(), core::ptr::null(), c"test");
-        }
+        // SAFETY: `err` and the `ator` slot are this frame's live, unmoved
+        // locals; the mints are the one vouch for them.
+        init_ator(
+            unsafe { ErrorView::from_ptr(&raw mut err) },
+            unsafe { AllocatorView::from_ptr(ator.as_mut_ptr()) },
+            None,
+            c"test",
+        );
         let ator = ator.as_mut_ptr();
         let mut buf = make_buf(ator, true, true);
 

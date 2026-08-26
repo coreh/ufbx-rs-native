@@ -20,11 +20,12 @@ use core::mem::size_of;
 use crate::generated::{Error, RawAllocatorOpts};
 use crate::native::error::{
     ufbxi_check_return_err, ufbxi_check_return_err_msg, ufbxi_fmt_err_info, ufbxi_report_err_msg,
+    ErrorView,
 };
 use crate::native::platform::{
     is_aligned_mask, max_sz, ufbx_assert, ufbxi_maybe_null, MAXIMUM_ALIGNMENT,
 };
-use crate::native::view::{view_read, view_write};
+use crate::native::view::{view_read, view_write, Const, View};
 
 // -- Default global allocator (ufbx.c:370-386)
 //
@@ -795,57 +796,72 @@ pub(crate) const REFCOUNT_IMP_MAGIC: u32 = 0x46455255;
 pub(crate) const BUF_CHUNK_IMP_MAGIC: u32 = 0x46554255;
 
 // ufbx.c:6936-6953 `ufbxi_init_ator`
+//
+// The `&AllocatorView` param carries liveness and write-capable provenance of
+// the allocator this fn fills in, `Option<&View<RawAllocatorOpts, Const>>` is
+// C's nullable `opts` (`None` selects the zeroed defaults), and `&ErrorView`
+// the error slot, so the fn is safe. The `error` pointer STORED into
+// `ator->error` outlives this borrow — the same handoff the safe
+// `AllocatorView::set_error` performs: every later deref of `ator->error`
+// carries its own vouch, exactly as each raw deref does throughout the port.
 #[inline(never)]
-pub(crate) unsafe fn init_ator(
-    error: *mut Error,
-    ator: *mut Allocator,
-    opts: *const RawAllocatorOpts,
+pub(crate) fn init_ator(
+    error: &ErrorView,
+    ator: &AllocatorView,
+    opts: Option<&View<RawAllocatorOpts, Const>>,
     name: &'static CStr,
 ) {
     // C: `ufbx_allocator_opts zero_opts;` + `memset` in the null branch only.
     let mut zero_opts = core::mem::MaybeUninit::<RawAllocatorOpts>::uninit();
-    let mut opts = opts;
-    if opts.is_null() {
-        // SAFETY: `zero_opts` is a local `MaybeUninit<RawAllocatorOpts>`, so the
-        // destination is one properly aligned, writable `RawAllocatorOpts` slot.
-        unsafe { core::ptr::write_bytes(zero_opts.as_mut_ptr(), 0, 1) };
-        opts = zero_opts.as_ptr();
-    }
+    let opts: *const RawAllocatorOpts = match opts {
+        Some(opts) => opts.as_ptr(),
+        None => {
+            // SAFETY: `zero_opts` is a local `MaybeUninit<RawAllocatorOpts>`, so the
+            // destination is one properly aligned, writable `RawAllocatorOpts` slot.
+            unsafe { core::ptr::write_bytes(zero_opts.as_mut_ptr(), 0, 1) };
+            zero_opts.as_ptr()
+        }
+    };
 
     // `opts` is either passed in or `zero_opts`.
     // cppcheck-suppress uninitvar
     // C: `ator->ator = *opts` — struct assignment (memcpy; `RawAllocatorOpts` is `Copy`).
-    // SAFETY: `ator` points at a live (possibly uninitialized) `Allocator` slot
-    // this fn fills in — the raw-pointer contract of this `unsafe fn`.
-    let a = unsafe { &mut *ator };
-    // SAFETY: `opts` is either the caller's live `RawAllocatorOpts` (fn
-    // contract) or the `zero_opts` local just zero-filled above.
-    let o = unsafe { &*opts };
-    a.ator = *o;
-    a.error = error;
-    a.max_size = if o.memory_limit != 0 {
-        o.memory_limit
-    } else {
-        usize::MAX
-    };
-    a.max_allocs = if o.allocation_limit != 0 {
-        o.allocation_limit
-    } else {
-        usize::MAX
-    };
-    a.huge_size = if o.huge_threshold != 0 {
-        o.huge_threshold
-    } else {
-        0x100000
-    };
-    a.chunk_max = if o.max_chunk_size != 0 {
-        o.max_chunk_size
-    } else {
-        0x1000000
-    };
-    // The `%s` reads in `alloc_size`/`realloc_size` walk to the literal's
-    // terminating NUL, which `&'static CStr` guarantees by construction.
-    a.name = name.as_ptr().cast::<u8>();
+    let a = ator.get();
+    // SAFETY: `a` addresses the live, unmoved `Allocator` the view was minted
+    // over, with write-capable provenance (the `View::from_ptr` mint
+    // invariant); every write below lands in ONE field of it reached as a raw
+    // place, so no reference to the containing struct is formed and no
+    // whole-value validity is asserted. The reads through `opts` touch the
+    // caller's `RawAllocatorOpts`, live for the view's lifetime and
+    // initialized by whoever built it (the per-leaf read discipline), or the
+    // `zero_opts` local zero-filled above.
+    unsafe {
+        (*a).ator = *opts;
+        (*a).error = error.get();
+        (*a).max_size = if (*opts).memory_limit != 0 {
+            (*opts).memory_limit
+        } else {
+            usize::MAX
+        };
+        (*a).max_allocs = if (*opts).allocation_limit != 0 {
+            (*opts).allocation_limit
+        } else {
+            usize::MAX
+        };
+        (*a).huge_size = if (*opts).huge_threshold != 0 {
+            (*opts).huge_threshold
+        } else {
+            0x100000
+        };
+        (*a).chunk_max = if (*opts).max_chunk_size != 0 {
+            (*opts).max_chunk_size
+        } else {
+            0x1000000
+        };
+        // The `%s` reads in `alloc_size`/`realloc_size` walk to the literal's
+        // terminating NUL, which `&'static CStr` guarantees by construction.
+        (*a).name = name.as_ptr().cast::<u8>();
+    }
 }
 
 #[cfg(test)]
@@ -856,9 +872,21 @@ mod tests {
 
     unsafe fn make_ator(error: *mut Error, opts: *const RawAllocatorOpts) -> Allocator {
         let mut ator = MaybeUninit::<Allocator>::zeroed();
-        // SAFETY: `ator` is a local `Allocator` slot; `error`/`opts` carry the
-        // caller's obligation on this `unsafe fn` (`opts` may be null).
-        unsafe { init_ator(error, ator.as_mut_ptr(), opts, c"test") };
+        // SAFETY: `error` is the caller's live error slot (the obligation on
+        // this `unsafe fn`), `ator.as_mut_ptr()` this frame's own `Allocator`
+        // slot, and `opts` — when non-null, likewise the caller's obligation —
+        // is read only while the view is held.
+        let opts = if opts.is_null() {
+            None
+        } else {
+            Some(unsafe { View::<RawAllocatorOpts, Const>::from_ptr(opts) })
+        };
+        init_ator(
+            unsafe { ErrorView::from_ptr(error) },
+            unsafe { AllocatorView::from_ptr(ator.as_mut_ptr()) },
+            opts,
+            c"test",
+        );
         // SAFETY: the slot is zero-initialized above and `init_ator` writes
         // every remaining field (`current_size`/`num_allocs` stay 0, matching
         // the memset of the containing C context), so all fields are

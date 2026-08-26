@@ -26,6 +26,7 @@ use core::ptr;
 
 #[cfg(any(feature = "scene-eval", feature = "baking"))]
 use crate::generated::Node as UfbxNode;
+use crate::generated::RawAllocatorOpts;
 use crate::generated::{
     Anim, AnimCurve, AnimLayer, AnimProp, AnimValue, BakedAnim, Connection, DomNode, Element,
     Error, ErrorType, Extrapolation, ExtrapolationMode, FileFormat, IndexErrorHandling,
@@ -1335,23 +1336,26 @@ pub(crate) unsafe fn load(
     // without reading any of the still-uninitialized bytes around it.
     unsafe { (&raw mut (*inflate_retain.as_mut_ptr()).initialized).write(false) };
 
-    // SAFETY: the error slot, both allocators and the `opts.temp_allocator` /
-    // `opts.result_allocator` sources are all `uc`'s own fields, live for the
-    // `&Context` borrow.
-    unsafe {
-        init_ator(
-            uc.error_mut_ptr(),
-            uc.ator_tmp_mut_ptr(),
-            uc.opts_view().temp_allocator_ptr(),
-            c"temp",
-        );
-        init_ator(
-            uc.error_mut_ptr(),
-            uc.ator_result_mut_ptr(),
-            uc.opts_view().result_allocator_ptr(),
-            c"result",
-        );
-    }
+    init_ator(
+        uc.error_view(),
+        uc.ator_tmp_view(),
+        // SAFETY: `opts.temp_allocator` is `uc`'s own field, live for the
+        // `&Context` borrow and written nowhere while the read-only view is
+        // held.
+        Some(unsafe {
+            View::<RawAllocatorOpts, Const>::from_ptr(uc.opts_view().temp_allocator_ptr())
+        }),
+        c"temp",
+    );
+    init_ator(
+        uc.error_view(),
+        uc.ator_result_view(),
+        // SAFETY: as above, for the sibling `result_allocator` field.
+        Some(unsafe {
+            View::<RawAllocatorOpts, Const>::from_ptr(uc.opts_view().result_allocator_ptr())
+        }),
+        c"result",
+    );
 
     if uc.opts_view().read_buffer_size() == 0 {
         uc.opts_view().set_read_buffer_size(0x4000);
@@ -4465,23 +4469,26 @@ pub(crate) unsafe fn evaluate_scene(
     });
     ec.set_time(time);
 
-    // SAFETY: the error slot, both allocators and the `opts.temp_allocator` /
-    // `opts.result_allocator` sources are all `ec`'s own fields, live for the
-    // `&EvalContext` borrow.
-    unsafe {
-        init_ator(
-            ec.error_mut_ptr(),
-            ec.ator_tmp_mut_ptr(),
-            ec.opts_view().temp_allocator_ptr(),
-            c"temp",
-        );
-        init_ator(
-            ec.error_mut_ptr(),
-            ec.ator_result_mut_ptr(),
-            ec.opts_view().result_allocator_ptr(),
-            c"result",
-        );
-    }
+    init_ator(
+        ec.error_view(),
+        ec.ator_tmp_view(),
+        // SAFETY: `opts.temp_allocator` is `ec`'s own field, live for the
+        // `&EvalContext` borrow and written nowhere while the read-only view
+        // is held.
+        Some(unsafe {
+            View::<RawAllocatorOpts, Const>::from_ptr(ec.opts_view().temp_allocator_ptr())
+        }),
+        c"temp",
+    );
+    init_ator(
+        ec.error_view(),
+        ec.ator_result_view(),
+        // SAFETY: as above, for the sibling `result_allocator` field.
+        Some(unsafe {
+            View::<RawAllocatorOpts, Const>::from_ptr(ec.opts_view().result_allocator_ptr())
+        }),
+        c"result",
+    );
 
     ec.result_view().set_ator(ec.ator_result_mut_ptr());
     ec.tmp_view().set_ator(ec.ator_tmp_mut_ptr());
@@ -4872,17 +4879,20 @@ pub(crate) fn create_anim_imp(ac: &CreateAnimContext) -> Result<FinishedImp<Anim
     let scene: *const Scene = ac.scene();
     let anim: &View<Anim> = ac.anim_view();
 
-    // SAFETY: initializing ac's own result allocator from ac's own error slot
-    // and the caller's opts allocator descriptor, named by a `'static`
-    // NUL-terminated literal.
-    unsafe {
-        init_ator(
-            ac.error_mut_ptr(),
-            ac.ator_result_mut_ptr(),
-            ac.opts_view().result_allocator_ptr(),
-            c"result",
-        );
-    }
+    // Initializing ac's own result allocator from ac's own error slot and ac's
+    // own opts allocator descriptor, named by a `'static` NUL-terminated
+    // literal.
+    init_ator(
+        ac.error_view(),
+        ac.ator_result_view(),
+        // SAFETY: `opts.result_allocator` is `ac`'s own field, live for the
+        // `&CreateAnimContext` borrow and written nowhere while the read-only
+        // view is held.
+        Some(unsafe {
+            View::<RawAllocatorOpts, Const>::from_ptr(ac.opts_view().result_allocator_ptr())
+        }),
+        c"result",
+    );
     ac.result_view().set_unordered(true);
     ac.result_view().set_ator(ac.ator_result_mut_ptr());
 
@@ -8099,23 +8109,26 @@ pub(crate) unsafe fn bake_anim_imp(bc: &BakeContext, anim: *const Anim) -> Resul
         });
     }
 
-    // SAFETY: the error slot, both allocators and the `opts.temp_allocator` /
-    // `opts.result_allocator` sources are all `bc`'s own fields, live for the
-    // `&BakeContext` borrow.
-    unsafe {
-        init_ator(
-            bc.error_mut_ptr(),
-            bc.ator_tmp_mut_ptr(),
-            bc.opts_view().temp_allocator_ptr(),
-            c"temp",
-        );
-        init_ator(
-            bc.error_mut_ptr(),
-            bc.ator_result_mut_ptr(),
-            bc.opts_view().result_allocator_ptr(),
-            c"result",
-        );
-    }
+    init_ator(
+        bc.error_view(),
+        bc.ator_tmp_view(),
+        // SAFETY: `opts.temp_allocator` is `bc`'s own field, live for the
+        // `&BakeContext` borrow and written nowhere while the read-only view
+        // is held.
+        Some(unsafe {
+            View::<RawAllocatorOpts, Const>::from_ptr(bc.opts_view().temp_allocator_ptr())
+        }),
+        c"temp",
+    );
+    init_ator(
+        bc.error_view(),
+        bc.ator_result_view(),
+        // SAFETY: as above, for the sibling `result_allocator` field.
+        Some(unsafe {
+            View::<RawAllocatorOpts, Const>::from_ptr(bc.opts_view().result_allocator_ptr())
+        }),
+        c"result",
+    );
 
     bc.result_view().set_unordered(true);
     bc.result_view().set_ator(bc.ator_result_mut_ptr());

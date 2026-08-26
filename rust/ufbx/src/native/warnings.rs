@@ -295,7 +295,8 @@ pub(crate) unsafe fn pop_warnings(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::native::allocator::{init_ator, Allocator};
+    use crate::native::allocator::{init_ator, Allocator, AllocatorView};
+    use crate::native::error::ErrorView;
     use core::mem::MaybeUninit;
 
     struct Fixture {
@@ -341,7 +342,12 @@ mod tests {
         // `fx` tag (fn contract above).
         unsafe {
             let ator = &raw mut (*fx).ator;
-            init_ator(&raw mut (*fx).err, ator, core::ptr::null(), c"test");
+            init_ator(
+                ErrorView::from_ptr(&raw mut (*fx).err),
+                AllocatorView::from_ptr(ator),
+                None,
+                c"test",
+            );
             (*fx).result = make_buf(ator);
         }
     }

@@ -1853,6 +1853,7 @@ mod tests {
     use crate::generated::UnicodeErrorHandling;
     use crate::native::allocator::{init_ator, Allocator, AllocatorView};
     use crate::native::buf::{buf_free, BufView};
+    use crate::native::error::ErrorView;
     use crate::native::hash::{map_init, MapView};
     use core::mem::MaybeUninit;
 
@@ -1873,11 +1874,14 @@ mod tests {
                 pool: MaybeUninit::zeroed().assume_init(),
             })
         };
-        // SAFETY: the allocator is initialized from the fixture's own `err`
-        // and a `'static` NUL-terminated name literal.
-        unsafe {
-            init_ator(&mut fx.err, &mut fx.ator, core::ptr::null(), c"test");
-        }
+        // SAFETY: `err`/`ator` are fields of the boxed fixture, live and
+        // unmoved for the test; the mints are the one vouch for them.
+        init_ator(
+            unsafe { ErrorView::from_ptr(&raw mut fx.err) },
+            unsafe { AllocatorView::from_ptr(&raw mut fx.ator) },
+            None,
+            c"test",
+        );
         let ator = &mut fx.ator as *mut Allocator;
         fx.pool.error = &mut fx.err;
         fx.pool.buf.ator = ator;

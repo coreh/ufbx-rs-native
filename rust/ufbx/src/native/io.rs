@@ -29,7 +29,7 @@ use crate::native::error::{
 };
 use crate::native::parse::{get_read_offset, report_progress, Context};
 use crate::native::platform::{max64, max_sz, min64, min_sz, to_size, ufbx_assert, MAX_SKIP_SIZE};
-use crate::native::view::{view_raw_mut, view_read, view_write};
+use crate::native::view::{view_raw_mut, view_read, view_write, Const, View};
 use crate::prelude::OpenFileContext;
 
 // -- IO
@@ -474,12 +474,6 @@ impl FileContext {
         unsafe { crate::native::error::ErrorView::from_ptr(&raw mut (*self.get()).error) }
     }
 
-    // `ator` — raw-ptr getter (address of field for out-param/mutation sites).
-    #[inline(always)]
-    pub(crate) fn ator_mut_ptr(&self) -> *mut Allocator {
-        view_raw_mut!(self, ator)
-    }
-
     // `ator` (Allocator) — typed VIEW handle (reinterpret-in-place); accessors on AllocatorView.
     #[inline(always)]
     pub(crate) fn ator_view(&self) -> &crate::native::allocator::AllocatorView {
@@ -519,10 +513,16 @@ pub(crate) unsafe fn begin_file_context(
         fc.set_ator(unsafe { *fc.parent_ator() });
         fc.ator_view().set_error(fc.error_mut_ptr());
     } else {
-        // SAFETY: `error`/`ator` are `fc`'s own fields (live for the borrow) and
-        // `ator_opts` is the caller's `RawAllocatorOpts` or null, which
-        // `init_ator` accepts.
-        unsafe { init_ator(fc.error_mut_ptr(), fc.ator_mut_ptr(), ator_opts, c"file") };
+        // SAFETY: a non-null `ator_opts` is the caller's live, initialized
+        // `RawAllocatorOpts` (the contract of this `unsafe fn`), written
+        // nowhere while the read-only view is held; null is C's NULL, which
+        // `init_ator` answers with the zeroed defaults.
+        let ator_opts = if ator_opts.is_null() {
+            None
+        } else {
+            Some(unsafe { View::<RawAllocatorOpts, Const>::from_ptr(ator_opts) })
+        };
+        init_ator(fc.error_view(), fc.ator_view(), ator_opts, c"file");
     }
 }
 
@@ -1052,16 +1052,9 @@ mod tests {
     }
 
     fn init_tmp_ator(uc: &Context) {
-        // SAFETY: initializing `uc`'s own `ator_tmp`/`error` fields through its
-        // raw-ptr getters; a null `opts` selects the defaults.
-        unsafe {
-            init_ator(
-                uc.error_mut_ptr(),
-                uc.ator_tmp_mut_ptr(),
-                core::ptr::null(),
-                c"tmp",
-            );
-        }
+        // Initializing `uc`'s own `ator_tmp`/`error` fields through its view
+        // getters; `None` opts selects the defaults.
+        init_ator(uc.error_view(), uc.ator_tmp_view(), None, c"tmp");
     }
 
     struct SliceReader {

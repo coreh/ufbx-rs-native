@@ -10,9 +10,9 @@
 #![cfg_attr(not(all(feature = "c-abi", feature = "dev")), allow(dead_code))]
 #[cfg(feature = "subdivision")]
 use crate::generated::{
-    ColorSet, Edge, Error, Face, Mesh, MeshPart, RawSubdivideOpts, SkinDeformer, SkinVertex,
-    SkinWeight, SubdivisionBoundary, SubdivisionResult, SubdivisionWeight, SubdivisionWeightRange,
-    TopoEdge, TopoFlags, UvSet, VertexAttrib, VertexReal, VertexVec3,
+    ColorSet, Edge, Error, Face, Mesh, MeshPart, RawAllocatorOpts, RawSubdivideOpts, SkinDeformer,
+    SkinVertex, SkinWeight, SubdivisionBoundary, SubdivisionResult, SubdivisionWeight,
+    SubdivisionWeightRange, TopoEdge, TopoFlags, UvSet, VertexAttrib, VertexReal, VertexVec3,
 };
 #[cfg(not(feature = "subdivision"))]
 use crate::generated::{Error, Mesh, RawSubdivideOpts};
@@ -47,7 +47,7 @@ use crate::native::string_pool::slow_normalize3;
 use crate::native::view::view_raw_mut;
 #[cfg(feature = "subdivision")]
 use crate::native::view::view_read_shared;
-use crate::native::view::{view_read, view_write};
+use crate::native::view::{view_raw_const, view_read, view_write};
 #[cfg(feature = "subdivision")]
 use crate::native::view::{Const, Mode, SliceViewIter, View};
 #[cfg(feature = "subdivision")]
@@ -290,8 +290,8 @@ impl SubdivideOptsView {
     }
 
     #[inline(always)]
-    pub(crate) fn result_allocator(&self) -> crate::generated::RawAllocatorOpts {
-        view_read!(self, result_allocator)
+    pub(crate) fn result_allocator_ptr(&self) -> *const crate::generated::RawAllocatorOpts {
+        view_raw_const!(self, result_allocator)
     }
 
     #[inline(always)]
@@ -300,8 +300,8 @@ impl SubdivideOptsView {
     }
 
     #[inline(always)]
-    pub(crate) fn temp_allocator(&self) -> crate::generated::RawAllocatorOpts {
-        view_read!(self, temp_allocator)
+    pub(crate) fn temp_allocator_ptr(&self) -> *const crate::generated::RawAllocatorOpts {
+        view_raw_const!(self, temp_allocator)
     }
 
     #[inline(always)]
@@ -3047,23 +3047,29 @@ pub(crate) fn subdivide_mesh_imp(
             .set_uv_boundary(sc.src_mesh_view().subdivision_uv_boundary());
     }
 
-    // SAFETY: initializing sc's own two allocators from sc's own error slot
-    // and its own copy of the opts allocator descriptors, named by `'static`
-    // NUL-terminated literals.
-    unsafe {
-        init_ator(
-            sc.error_mut_ptr(),
-            sc.ator_tmp_mut_ptr(),
-            &sc.opts_view().temp_allocator(),
-            c"temp",
-        );
-        init_ator(
-            sc.error_mut_ptr(),
-            sc.ator_result_mut_ptr(),
-            &sc.opts_view().result_allocator(),
-            c"result",
-        );
-    }
+    // Initializing sc's own two allocators from sc's own error slot and sc's
+    // own opts allocator descriptors, named by `'static` NUL-terminated
+    // literals.
+    init_ator(
+        sc.error_view(),
+        sc.ator_tmp_view(),
+        // SAFETY: `temp_allocator_ptr()` addresses sc's own opts field, live
+        // for the `&SubdivideContext` borrow and written nowhere while the
+        // read-only view is held.
+        Some(unsafe {
+            View::<RawAllocatorOpts, Const>::from_ptr(sc.opts_view().temp_allocator_ptr())
+        }),
+        c"temp",
+    );
+    init_ator(
+        sc.error_view(),
+        sc.ator_result_view(),
+        // SAFETY: as above, for the sibling `result_allocator` field.
+        Some(unsafe {
+            View::<RawAllocatorOpts, Const>::from_ptr(sc.opts_view().result_allocator_ptr())
+        }),
+        c"result",
+    );
 
     sc.result_view().set_unordered(true);
     sc.source_view().set_unordered(true);

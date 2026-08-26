@@ -24,7 +24,9 @@ use crate::native::allocator::{
     align_to_mask, alloc, free, free_ator, init_ator, size_align_mask, Allocator, AllocatorView,
 };
 #[cfg(feature = "index-gen")]
-use crate::native::error::{clear_error, fix_error_type, ufbxi_fmt_err_info, ufbxi_report_err_msg};
+use crate::native::error::{
+    clear_error, fix_error_type, ufbxi_fmt_err_info, ufbxi_report_err_msg, ErrorView,
+};
 #[cfg(not(feature = "index-gen"))]
 use crate::native::error::{ufbxi_fmt_err_info, ufbxi_report_err_msg};
 #[cfg(feature = "index-gen")]
@@ -33,6 +35,8 @@ use crate::native::hash::{
 };
 #[cfg(feature = "index-gen")]
 use crate::native::platform::{add_ptr, to_size, ufbx_assert};
+#[cfg(feature = "index-gen")]
+use crate::native::view::{Const, View};
 #[cfg(feature = "index-gen")]
 use core::ffi::c_void;
 use core::mem::size_of;
@@ -112,12 +116,26 @@ pub(crate) unsafe fn generate_indices(
     // `RawAllocatorOpts` (`None` when zeroed, via the null-fn niche), matching
     // the C zero-initializer.
     let mut ator: Allocator = unsafe { MaybeUninit::<Allocator>::zeroed().assume_init() };
-    // SAFETY: `error` is non-null — the sole caller (`api::generate_indices`)
-    // substitutes a local error slot for null, and `init_ator` stores it
-    // unchecked — `allocator` is the caller's options pointer (nullable,
-    // `init_ator` substitutes zeroed opts for null), the name literal carries
-    // its NUL, and the raw address identifies the zeroed allocator above.
-    unsafe { init_ator(error, &raw mut ator, allocator, c"allocator") };
+    // SAFETY: a non-null `allocator` is the caller's live, initialized options
+    // struct (this `unsafe fn`'s contract), written nowhere while the
+    // read-only view is held; null is C's NULL, which `init_ator` answers with
+    // the zeroed defaults.
+    let allocator = if allocator.is_null() {
+        None
+    } else {
+        Some(unsafe { View::<RawAllocatorOpts, Const>::from_ptr(allocator) })
+    };
+    init_ator(
+        // SAFETY: `error` is non-null — the sole caller (`api::generate_indices`)
+        // substitutes a local error slot for null — and addresses that live
+        // caller-owned `Error`.
+        unsafe { ErrorView::from_ptr(error) },
+        // SAFETY: the zeroed allocator above is this frame's live, unmoved
+        // local.
+        unsafe { AllocatorView::from_ptr(&raw mut ator) },
+        allocator,
+        c"allocator",
+    );
 
     let mut local_streams = MaybeUninit::<[VertexStream; LOCAL_STREAMS_COUNT]>::uninit(); // ufbxi_uninit
     let mut local_packed_vertex = MaybeUninit::<[u64; LOCAL_PACKED_VERTEX_COUNT]>::uninit(); // ufbxi_uninit

@@ -7458,6 +7458,7 @@ mod tests {
         init_ator, ANIM_IMP_MAGIC, BAKED_ANIM_IMP_MAGIC, MESH_IMP_MAGIC,
     };
     use crate::native::buf::push_size;
+    use crate::native::error::ErrorView;
     use crate::native::parse::MeshImp;
     use crate::prelude::Ref;
     use core::ffi::c_void;
@@ -7472,9 +7473,17 @@ mod tests {
         // (only POD fields are read before `init_ator` writes it).
         let mut ator = unsafe { core::mem::MaybeUninit::<Allocator>::zeroed().assume_init() };
         let opts = RawAllocatorOpts::default();
-        // SAFETY: `error` is this fn's raw-pointer param; `ator`/`opts` are live
-        // locals borrowed for initialization.
-        unsafe { init_ator(error, &mut ator, &opts, c"test") };
+        init_ator(
+            // SAFETY: `error` is this fn's raw-pointer param, vouched live by
+            // its caller.
+            unsafe { ErrorView::from_ptr(error) },
+            // SAFETY: `ator` is this frame's live, unmoved local.
+            unsafe { AllocatorView::from_ptr(&raw mut ator) },
+            // SAFETY: `opts` is this frame's live local, written nowhere while
+            // the read-only view is held.
+            Some(unsafe { View::<RawAllocatorOpts, Const>::from_ptr(&raw const opts) }),
+            c"test",
+        );
 
         // SAFETY: an all-zero bit pattern is a valid `Buf` for this test.
         let mut buf = unsafe { core::mem::MaybeUninit::<Buf>::zeroed().assume_init() };
@@ -8037,7 +8046,14 @@ mod tests {
             let mut error = Error::default();
             let mut ator = core::mem::MaybeUninit::<Allocator>::zeroed().assume_init();
             let opts = RawAllocatorOpts::default();
-            init_ator(&mut error, &mut ator, &opts, c"test");
+            // SAFETY: `error`/`ator`/`opts` are this frame's live, unmoved
+            // locals; nothing writes `opts` while the read-only view is held.
+            init_ator(
+                ErrorView::from_ptr(&raw mut error),
+                AllocatorView::from_ptr(&raw mut ator),
+                Some(View::<RawAllocatorOpts, Const>::from_ptr(&raw const opts)),
+                c"test",
+            );
             let mut buf = core::mem::MaybeUninit::<Buf>::zeroed().assume_init();
             buf.ator = &raw mut ator;
             // SAFETY: `buf` is a live local backed by `ator`; minting the
@@ -8085,9 +8101,17 @@ mod tests {
         // SAFETY: an all-zero bit pattern is a valid `Allocator` for this test.
         let mut ator = unsafe { core::mem::MaybeUninit::<Allocator>::zeroed().assume_init() };
         let opts = RawAllocatorOpts::default();
-        // SAFETY: `error` is this fn's raw-pointer param; `ator`/`opts` are live
-        // locals borrowed for initialization.
-        unsafe { init_ator(error, &mut ator, &opts, c"test") };
+        init_ator(
+            // SAFETY: `error` is this fn's raw-pointer param, vouched live by
+            // its caller.
+            unsafe { ErrorView::from_ptr(error) },
+            // SAFETY: `ator` is this frame's live, unmoved local.
+            unsafe { AllocatorView::from_ptr(&raw mut ator) },
+            // SAFETY: `opts` is this frame's live local, written nowhere while
+            // the read-only view is held.
+            Some(unsafe { View::<RawAllocatorOpts, Const>::from_ptr(&raw const opts) }),
+            c"test",
+        );
 
         // SAFETY: an all-zero bit pattern is a valid `Buf` for this test.
         let mut buf = unsafe { core::mem::MaybeUninit::<Buf>::zeroed().assume_init() };

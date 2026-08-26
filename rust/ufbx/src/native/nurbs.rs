@@ -22,6 +22,8 @@ use core::mem::size_of;
 use crate::generated::Error;
 use crate::generated::LineCurve;
 #[cfg(feature = "tessellation")]
+use crate::generated::RawAllocatorOpts;
+#[cfg(feature = "tessellation")]
 use crate::generated::{CurvePoint, SurfacePoint};
 #[cfg(feature = "tessellation")]
 use crate::generated::{
@@ -328,12 +330,6 @@ impl TessellateCurveContext {
         }
     }
 
-    // `ator_tmp` — raw-ptr getter (address of field for out-param/mutation sites).
-    #[inline(always)]
-    pub(crate) fn ator_tmp_mut_ptr(&self) -> *mut Allocator {
-        view_raw_mut!(self, ator_tmp)
-    }
-
     // `ator_tmp` (Allocator) — typed VIEW handle (reinterpret-in-place); accessors on AllocatorView.
     #[inline(always)]
     pub(crate) fn ator_tmp_view(&self) -> &crate::native::allocator::AllocatorView {
@@ -571,23 +567,29 @@ pub(crate) fn tessellate_nurbs_curve_imp(
         "curve->basis.valid && curve->control_points.count > 0"
     );
 
-    // SAFETY: initializing tc's own two allocators from tc's own error slot
-    // and the caller's opts allocator descriptors, named by `'static`
-    // NUL-terminated literals.
-    unsafe {
-        init_ator(
-            tc.error_mut_ptr(),
-            tc.ator_tmp_mut_ptr(),
-            tc.opts_view().temp_allocator_ptr(),
-            c"temp",
-        );
-        init_ator(
-            tc.error_mut_ptr(),
-            tc.ator_result_mut_ptr(),
-            tc.opts_view().result_allocator_ptr(),
-            c"result",
-        );
-    }
+    // Initializing tc's own two allocators from tc's own error slot and tc's
+    // own opts allocator descriptors, named by `'static` NUL-terminated
+    // literals.
+    init_ator(
+        tc.error_view(),
+        tc.ator_tmp_view(),
+        // SAFETY: `temp_allocator_ptr()` addresses tc's own opts field, live
+        // for the `&TessellateCurveContext` borrow and written nowhere while
+        // the read-only view is held.
+        Some(unsafe {
+            View::<RawAllocatorOpts, Const>::from_ptr(tc.opts_view().temp_allocator_ptr())
+        }),
+        c"temp",
+    );
+    init_ator(
+        tc.error_view(),
+        tc.ator_result_view(),
+        // SAFETY: as above, for the sibling `result_allocator` field.
+        Some(unsafe {
+            View::<RawAllocatorOpts, Const>::from_ptr(tc.opts_view().result_allocator_ptr())
+        }),
+        c"result",
+    );
 
     tc.result_view().set_unordered(true);
     tc.result_view().set_ator(tc.ator_result_mut_ptr());
@@ -761,23 +763,29 @@ pub(crate) fn tessellate_nurbs_surface_imp(
         "surface->basis_u.valid && surface->basis_v.valid && surface->num_control_points_u > 0 && surface->num_control_points_v > 0"
     );
 
-    // SAFETY: initializing tc's own two allocators from tc's own error slot
-    // and the caller's opts allocator descriptors, named by `'static`
-    // NUL-terminated literals.
-    unsafe {
-        init_ator(
-            tc.error_mut_ptr(),
-            tc.ator_tmp_mut_ptr(),
-            tc.opts_view().temp_allocator_ptr(),
-            c"temp",
-        );
-        init_ator(
-            tc.error_mut_ptr(),
-            tc.ator_result_mut_ptr(),
-            tc.opts_view().result_allocator_ptr(),
-            c"result",
-        );
-    }
+    // Initializing tc's own two allocators from tc's own error slot and tc's
+    // own opts allocator descriptors, named by `'static` NUL-terminated
+    // literals.
+    init_ator(
+        tc.error_view(),
+        tc.ator_tmp_view(),
+        // SAFETY: `temp_allocator_ptr()` addresses tc's own opts field, live
+        // for the `&TessellateSurfaceContext` borrow and written nowhere while
+        // the read-only view is held.
+        Some(unsafe {
+            View::<RawAllocatorOpts, Const>::from_ptr(tc.opts_view().temp_allocator_ptr())
+        }),
+        c"temp",
+    );
+    init_ator(
+        tc.error_view(),
+        tc.ator_result_view(),
+        // SAFETY: as above, for the sibling `result_allocator` field.
+        Some(unsafe {
+            View::<RawAllocatorOpts, Const>::from_ptr(tc.opts_view().result_allocator_ptr())
+        }),
+        c"result",
+    );
 
     tc.result_view().set_unordered(true);
     tc.tmp_view().set_unordered(true);

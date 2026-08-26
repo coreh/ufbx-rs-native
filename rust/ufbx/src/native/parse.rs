@@ -8055,13 +8055,21 @@ mod tests {
 
     #[test]
     fn test_push_element_extra_grows_and_dedups() {
-        use crate::native::allocator::init_ator;
+        use crate::native::allocator::{init_ator, AllocatorView};
         use crate::native::buf::{buf_free, BufView};
+        use crate::native::error::ErrorView;
 
         let mut uc: std::boxed::Box<InnerContext> =
             unsafe { std::boxed::Box::new_zeroed().assume_init() };
         unsafe {
-            init_ator(&mut uc.error, &mut uc.ator_tmp, core::ptr::null(), c"test");
+            // SAFETY: `error`/`ator_tmp` are fields of the boxed context, live
+            // and unmoved for the test; the mints are the one vouch for them.
+            init_ator(
+                ErrorView::from_ptr(&raw mut uc.error),
+                AllocatorView::from_ptr(&raw mut uc.ator_tmp),
+                None,
+                c"test",
+            );
             uc.tmp.ator = &raw mut uc.ator_tmp;
 
             let uc_ptr: &Context = Context::from_ptr(&raw mut *uc);
@@ -8120,17 +8128,26 @@ mod tests {
     fn test_retain_dom_node_tree() {
         use crate::native::allocator::{init_ator, AllocatorView};
         use crate::native::buf::{buf_free, BufView};
+        use crate::native::error::ErrorView;
         use crate::native::hash::{map_cmp_uintptr, map_free, map_init, MapView};
         use crate::native::string_pool::{map_cmp_string, string_pool_temp_free, StringPoolView};
 
         let mut uc: std::boxed::Box<InnerContext> =
             unsafe { std::boxed::Box::new_zeroed().assume_init() };
         unsafe {
-            init_ator(&mut uc.error, &mut uc.ator_tmp, core::ptr::null(), c"test");
+            // SAFETY: `error`/`ator_tmp`/`ator_result` are fields of the boxed
+            // context, live and unmoved for the test; the mints are the one
+            // vouch for them.
             init_ator(
-                &mut uc.error,
-                &mut uc.ator_result,
-                core::ptr::null(),
+                ErrorView::from_ptr(&raw mut uc.error),
+                AllocatorView::from_ptr(&raw mut uc.ator_tmp),
+                None,
+                c"test",
+            );
+            init_ator(
+                ErrorView::from_ptr(&raw mut uc.error),
+                AllocatorView::from_ptr(&raw mut uc.ator_result),
+                None,
                 c"test",
             );
             let ator_tmp: *mut Allocator = &mut uc.ator_tmp;
