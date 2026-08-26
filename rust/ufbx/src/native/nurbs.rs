@@ -22,8 +22,6 @@ use core::mem::size_of;
 use crate::generated::Error;
 use crate::generated::LineCurve;
 #[cfg(feature = "tessellation")]
-use crate::generated::RawAllocatorOpts;
-#[cfg(feature = "tessellation")]
 use crate::generated::{CurvePoint, SurfacePoint};
 #[cfg(feature = "tessellation")]
 use crate::generated::{
@@ -60,7 +58,7 @@ use crate::native::string_pool::slow_normalize3;
 use crate::native::view::view_raw_mut;
 #[cfg(feature = "tessellation")]
 use crate::native::view::Const;
-use crate::native::view::{view_raw_const, view_read, view_write};
+use crate::native::view::{view_project, view_read, view_write};
 use crate::native::view::{Mode, View};
 #[cfg(feature = "tessellation")]
 use crate::prelude::Ref;
@@ -226,13 +224,19 @@ impl TessellateCurveOptsView {
     pub(crate) fn set_span_subdivision(&self, span_subdivision: usize) {
         view_write!(self, span_subdivision, span_subdivision)
     }
+}
+
+// Mode-generic nested views over the two allocator descriptors: `init_ator`
+// only reads them, so the accessor serves a `Mut` context field and a `Const`
+// boundary mint alike.
+impl<M: crate::native::view::Mode> View<crate::generated::RawTessellateCurveOpts, M> {
     #[inline(always)]
-    pub(crate) fn temp_allocator_ptr(&self) -> *const crate::generated::RawAllocatorOpts {
-        view_raw_const!(self, temp_allocator)
+    pub(crate) fn temp_allocator_view(&self) -> &View<crate::generated::RawAllocatorOpts, M> {
+        view_project!(self, temp_allocator)
     }
     #[inline(always)]
-    pub(crate) fn result_allocator_ptr(&self) -> *const crate::generated::RawAllocatorOpts {
-        view_raw_const!(self, result_allocator)
+    pub(crate) fn result_allocator_view(&self) -> &View<crate::generated::RawAllocatorOpts, M> {
+        view_project!(self, result_allocator)
     }
 }
 
@@ -261,13 +265,18 @@ impl TessellateSurfaceOptsView {
     pub(crate) fn skip_mesh_parts(&self) -> bool {
         view_read!(self, skip_mesh_parts)
     }
+}
+
+// Mode-generic nested views over the two allocator descriptors (see the curve
+// counterpart above).
+impl<M: crate::native::view::Mode> View<crate::generated::RawTessellateSurfaceOpts, M> {
     #[inline(always)]
-    pub(crate) fn temp_allocator_ptr(&self) -> *const crate::generated::RawAllocatorOpts {
-        view_raw_const!(self, temp_allocator)
+    pub(crate) fn temp_allocator_view(&self) -> &View<crate::generated::RawAllocatorOpts, M> {
+        view_project!(self, temp_allocator)
     }
     #[inline(always)]
-    pub(crate) fn result_allocator_ptr(&self) -> *const crate::generated::RawAllocatorOpts {
-        view_raw_const!(self, result_allocator)
+    pub(crate) fn result_allocator_view(&self) -> &View<crate::generated::RawAllocatorOpts, M> {
+        view_project!(self, result_allocator)
     }
 }
 
@@ -571,23 +580,15 @@ pub(crate) fn tessellate_nurbs_curve_imp(
     // own opts allocator descriptors, named by `'static` NUL-terminated
     // literals.
     init_ator(
-        tc.error_view(),
+        tc.error_mut_ptr(),
         tc.ator_tmp_view(),
-        // SAFETY: `temp_allocator_ptr()` addresses tc's own opts field, live
-        // for the `&TessellateCurveContext` borrow and written nowhere while
-        // the read-only view is held.
-        Some(unsafe {
-            View::<RawAllocatorOpts, Const>::from_ptr(tc.opts_view().temp_allocator_ptr())
-        }),
+        Some(tc.opts_view().temp_allocator_view()),
         c"temp",
     );
     init_ator(
-        tc.error_view(),
+        tc.error_mut_ptr(),
         tc.ator_result_view(),
-        // SAFETY: as above, for the sibling `result_allocator` field.
-        Some(unsafe {
-            View::<RawAllocatorOpts, Const>::from_ptr(tc.opts_view().result_allocator_ptr())
-        }),
+        Some(tc.opts_view().result_allocator_view()),
         c"result",
     );
 
@@ -767,23 +768,15 @@ pub(crate) fn tessellate_nurbs_surface_imp(
     // own opts allocator descriptors, named by `'static` NUL-terminated
     // literals.
     init_ator(
-        tc.error_view(),
+        tc.error_mut_ptr(),
         tc.ator_tmp_view(),
-        // SAFETY: `temp_allocator_ptr()` addresses tc's own opts field, live
-        // for the `&TessellateSurfaceContext` borrow and written nowhere while
-        // the read-only view is held.
-        Some(unsafe {
-            View::<RawAllocatorOpts, Const>::from_ptr(tc.opts_view().temp_allocator_ptr())
-        }),
+        Some(tc.opts_view().temp_allocator_view()),
         c"temp",
     );
     init_ator(
-        tc.error_view(),
+        tc.error_mut_ptr(),
         tc.ator_result_view(),
-        // SAFETY: as above, for the sibling `result_allocator` field.
-        Some(unsafe {
-            View::<RawAllocatorOpts, Const>::from_ptr(tc.opts_view().result_allocator_ptr())
-        }),
+        Some(tc.opts_view().result_allocator_view()),
         c"result",
     );
 

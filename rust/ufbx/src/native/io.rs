@@ -522,7 +522,7 @@ pub(crate) unsafe fn begin_file_context(
         } else {
             Some(unsafe { View::<RawAllocatorOpts, Const>::from_ptr(ator_opts) })
         };
-        init_ator(fc.error_view(), fc.ator_view(), ator_opts, c"file");
+        init_ator(fc.error_mut_ptr(), fc.ator_view(), ator_opts, c"file");
     }
 }
 
@@ -1043,6 +1043,7 @@ pub(crate) unsafe extern "C" fn memory_close(user: *mut c_void) {
 mod tests {
     use super::*;
     use crate::generated::RawLoadOpts;
+    use crate::native::allocator::NO_ATOR_OPTS;
     use crate::native::parse::InnerContext;
 
     // A zeroed context is what C builds via `memset` before setup; only the
@@ -1053,8 +1054,8 @@ mod tests {
 
     fn init_tmp_ator(uc: &Context) {
         // Initializing `uc`'s own `ator_tmp`/`error` fields through its view
-        // getters; `None` opts selects the defaults.
-        init_ator(uc.error_view(), uc.ator_tmp_view(), None, c"tmp");
+        // getters; absent opts select the defaults.
+        init_ator(uc.error_mut_ptr(), uc.ator_tmp_view(), NO_ATOR_OPTS, c"tmp");
     }
 
     struct SliceReader {

@@ -24,9 +24,7 @@ use crate::native::allocator::{
     align_to_mask, alloc, free, free_ator, init_ator, size_align_mask, Allocator, AllocatorView,
 };
 #[cfg(feature = "index-gen")]
-use crate::native::error::{
-    clear_error, fix_error_type, ufbxi_fmt_err_info, ufbxi_report_err_msg, ErrorView,
-};
+use crate::native::error::{clear_error, fix_error_type, ufbxi_fmt_err_info, ufbxi_report_err_msg};
 #[cfg(not(feature = "index-gen"))]
 use crate::native::error::{ufbxi_fmt_err_info, ufbxi_report_err_msg};
 #[cfg(feature = "index-gen")]
@@ -126,10 +124,7 @@ pub(crate) unsafe fn generate_indices(
         Some(unsafe { View::<RawAllocatorOpts, Const>::from_ptr(allocator) })
     };
     init_ator(
-        // SAFETY: `error` is non-null — the sole caller (`api::generate_indices`)
-        // substitutes a local error slot for null — and addresses that live
-        // caller-owned `Error`.
-        unsafe { ErrorView::from_ptr(error) },
+        error,
         // SAFETY: the zeroed allocator above is this frame's live, unmoved
         // local.
         unsafe { AllocatorView::from_ptr(&raw mut ator) },

@@ -26,7 +26,6 @@ use core::ptr;
 
 #[cfg(any(feature = "scene-eval", feature = "baking"))]
 use crate::generated::Node as UfbxNode;
-use crate::generated::RawAllocatorOpts;
 use crate::generated::{
     Anim, AnimCurve, AnimLayer, AnimProp, AnimValue, BakedAnim, Connection, DomNode, Element,
     Error, ErrorType, Extrapolation, ExtrapolationMode, FileFormat, IndexErrorHandling,
@@ -1337,23 +1336,15 @@ pub(crate) unsafe fn load(
     unsafe { (&raw mut (*inflate_retain.as_mut_ptr()).initialized).write(false) };
 
     init_ator(
-        uc.error_view(),
+        uc.error_mut_ptr(),
         uc.ator_tmp_view(),
-        // SAFETY: `opts.temp_allocator` is `uc`'s own field, live for the
-        // `&Context` borrow and written nowhere while the read-only view is
-        // held.
-        Some(unsafe {
-            View::<RawAllocatorOpts, Const>::from_ptr(uc.opts_view().temp_allocator_ptr())
-        }),
+        Some(uc.opts_view().temp_allocator_view()),
         c"temp",
     );
     init_ator(
-        uc.error_view(),
+        uc.error_mut_ptr(),
         uc.ator_result_view(),
-        // SAFETY: as above, for the sibling `result_allocator` field.
-        Some(unsafe {
-            View::<RawAllocatorOpts, Const>::from_ptr(uc.opts_view().result_allocator_ptr())
-        }),
+        Some(uc.opts_view().result_allocator_view()),
         c"result",
     );
 
@@ -2872,15 +2863,20 @@ impl EvaluateOptsView {
     pub(crate) fn open_file_cb_ptr(&self) -> *const crate::generated::RawOpenFileCb {
         view_raw_const!(self, open_file_cb)
     }
+}
 
+// Mode-generic nested views over the allocator descriptors: `init_ator` only
+// reads them, so the accessor serves a `Mut` context field and a `Const`
+// boundary mint alike.
+#[cfg(feature = "scene-eval")]
+impl<M: crate::native::view::Mode> View<RawEvaluateOpts, M> {
     #[inline(always)]
-    pub(crate) fn result_allocator_ptr(&self) -> *const crate::generated::RawAllocatorOpts {
-        view_raw_const!(self, result_allocator)
+    pub(crate) fn temp_allocator_view(&self) -> &View<crate::generated::RawAllocatorOpts, M> {
+        view_project!(self, temp_allocator)
     }
-
     #[inline(always)]
-    pub(crate) fn temp_allocator_ptr(&self) -> *const crate::generated::RawAllocatorOpts {
-        view_raw_const!(self, temp_allocator)
+    pub(crate) fn result_allocator_view(&self) -> &View<crate::generated::RawAllocatorOpts, M> {
+        view_project!(self, result_allocator)
     }
 }
 
@@ -4470,23 +4466,15 @@ pub(crate) unsafe fn evaluate_scene(
     ec.set_time(time);
 
     init_ator(
-        ec.error_view(),
+        ec.error_mut_ptr(),
         ec.ator_tmp_view(),
-        // SAFETY: `opts.temp_allocator` is `ec`'s own field, live for the
-        // `&EvalContext` borrow and written nowhere while the read-only view
-        // is held.
-        Some(unsafe {
-            View::<RawAllocatorOpts, Const>::from_ptr(ec.opts_view().temp_allocator_ptr())
-        }),
+        Some(ec.opts_view().temp_allocator_view()),
         c"temp",
     );
     init_ator(
-        ec.error_view(),
+        ec.error_mut_ptr(),
         ec.ator_result_view(),
-        // SAFETY: as above, for the sibling `result_allocator` field.
-        Some(unsafe {
-            View::<RawAllocatorOpts, Const>::from_ptr(ec.opts_view().result_allocator_ptr())
-        }),
+        Some(ec.opts_view().result_allocator_view()),
         c"result",
     );
 
@@ -4603,10 +4591,15 @@ impl AnimOptsView {
     ) -> *const crate::prelude::RawList<crate::generated::RawPropOverrideDesc> {
         view_raw_const!(self, prop_overrides)
     }
+}
 
+// Mode-generic nested views over the allocator descriptors: `init_ator` only
+// reads them, so the accessor serves a `Mut` context field and a `Const`
+// boundary mint alike.
+impl<M: crate::native::view::Mode> View<RawAnimOpts, M> {
     #[inline(always)]
-    pub(crate) fn result_allocator_ptr(&self) -> *const crate::generated::RawAllocatorOpts {
-        view_raw_const!(self, result_allocator)
+    pub(crate) fn result_allocator_view(&self) -> &View<crate::generated::RawAllocatorOpts, M> {
+        view_project!(self, result_allocator)
     }
 }
 
@@ -4883,14 +4876,9 @@ pub(crate) fn create_anim_imp(ac: &CreateAnimContext) -> Result<FinishedImp<Anim
     // own opts allocator descriptor, named by a `'static` NUL-terminated
     // literal.
     init_ator(
-        ac.error_view(),
+        ac.error_mut_ptr(),
         ac.ator_result_view(),
-        // SAFETY: `opts.result_allocator` is `ac`'s own field, live for the
-        // `&CreateAnimContext` borrow and written nowhere while the read-only
-        // view is held.
-        Some(unsafe {
-            View::<RawAllocatorOpts, Const>::from_ptr(ac.opts_view().result_allocator_ptr())
-        }),
+        Some(ac.opts_view().result_allocator_view()),
         c"result",
     );
     ac.result_view().set_unordered(true);
@@ -5499,15 +5487,20 @@ impl BakeOptsView {
     pub(crate) fn set_key_reduction_passes(&self, key_reduction_passes: usize) {
         view_write!(self, key_reduction_passes, key_reduction_passes)
     }
+}
 
+// Mode-generic nested views over the allocator descriptors: `init_ator` only
+// reads them, so the accessor serves a `Mut` context field and a `Const`
+// boundary mint alike.
+#[cfg(feature = "baking")]
+impl<M: crate::native::view::Mode> View<RawBakeOpts, M> {
     #[inline(always)]
-    pub(crate) fn temp_allocator_ptr(&self) -> *const crate::generated::RawAllocatorOpts {
-        view_raw_const!(self, temp_allocator)
+    pub(crate) fn temp_allocator_view(&self) -> &View<crate::generated::RawAllocatorOpts, M> {
+        view_project!(self, temp_allocator)
     }
-
     #[inline(always)]
-    pub(crate) fn result_allocator_ptr(&self) -> *const crate::generated::RawAllocatorOpts {
-        view_raw_const!(self, result_allocator)
+    pub(crate) fn result_allocator_view(&self) -> &View<crate::generated::RawAllocatorOpts, M> {
+        view_project!(self, result_allocator)
     }
 }
 
@@ -8110,23 +8103,15 @@ pub(crate) unsafe fn bake_anim_imp(bc: &BakeContext, anim: *const Anim) -> Resul
     }
 
     init_ator(
-        bc.error_view(),
+        bc.error_mut_ptr(),
         bc.ator_tmp_view(),
-        // SAFETY: `opts.temp_allocator` is `bc`'s own field, live for the
-        // `&BakeContext` borrow and written nowhere while the read-only view
-        // is held.
-        Some(unsafe {
-            View::<RawAllocatorOpts, Const>::from_ptr(bc.opts_view().temp_allocator_ptr())
-        }),
+        Some(bc.opts_view().temp_allocator_view()),
         c"temp",
     );
     init_ator(
-        bc.error_view(),
+        bc.error_mut_ptr(),
         bc.ator_result_view(),
-        // SAFETY: as above, for the sibling `result_allocator` field.
-        Some(unsafe {
-            View::<RawAllocatorOpts, Const>::from_ptr(bc.opts_view().result_allocator_ptr())
-        }),
+        Some(bc.opts_view().result_allocator_view()),
         c"result",
     );
 

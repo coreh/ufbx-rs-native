@@ -2210,7 +2210,7 @@ pub(crate) unsafe fn load_geometry_cache(
     let cc: CacheContext = unsafe { core::mem::zeroed() };
     let mut ator_tmp: Allocator = unsafe { core::mem::zeroed() };
     init_ator(
-        cc.error_view(),
+        cc.error_mut_ptr(),
         // SAFETY: `ator_tmp` is this frame's live, unmoved local, zeroed just
         // above and not moved while the view is used.
         unsafe { AllocatorView::from_ptr(&raw mut ator_tmp) },
@@ -2221,7 +2221,7 @@ pub(crate) unsafe fn load_geometry_cache(
         c"temp",
     );
     init_ator(
-        cc.error_view(),
+        cc.error_mut_ptr(),
         cc.ator_result_view(),
         // SAFETY: as above, for the sibling `result_allocator` field.
         Some(unsafe {

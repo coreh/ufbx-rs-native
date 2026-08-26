@@ -20,12 +20,11 @@ use core::mem::size_of;
 use crate::generated::{Error, RawAllocatorOpts};
 use crate::native::error::{
     ufbxi_check_return_err, ufbxi_check_return_err_msg, ufbxi_fmt_err_info, ufbxi_report_err_msg,
-    ErrorView,
 };
 use crate::native::platform::{
     is_aligned_mask, max_sz, ufbx_assert, ufbxi_maybe_null, MAXIMUM_ALIGNMENT,
 };
-use crate::native::view::{view_read, view_write, Const, View};
+use crate::native::view::{view_read, view_write, Const, Mode, View};
 
 // -- Default global allocator (ufbx.c:370-386)
 //
@@ -795,20 +794,34 @@ pub(crate) const BAKED_ANIM_IMP_MAGIC: u32 = 0x4b414255;
 pub(crate) const REFCOUNT_IMP_MAGIC: u32 = 0x46455255;
 pub(crate) const BUF_CHUNK_IMP_MAGIC: u32 = 0x46554255;
 
+/// C's `NULL` `opts` argument to [`init_ator`], typed so the mode generic
+/// resolves where no options are passed (`init_ator` only READS `opts`, so the
+/// mode is immaterial there). The library's own `NULL`-opts sites reach the
+/// same branch through a runtime `Option` (`begin_file_context`), so the
+/// spelled-out constant is used by tests alone.
+#[allow(dead_code)]
+pub(crate) const NO_ATOR_OPTS: Option<&'static View<RawAllocatorOpts, Const>> = None;
+
 // ufbx.c:6936-6953 `ufbxi_init_ator`
 //
 // The `&AllocatorView` param carries liveness and write-capable provenance of
-// the allocator this fn fills in, `Option<&View<RawAllocatorOpts, Const>>` is
-// C's nullable `opts` (`None` selects the zeroed defaults), and `&ErrorView`
-// the error slot, so the fn is safe. The `error` pointer STORED into
-// `ator->error` outlives this borrow — the same handoff the safe
-// `AllocatorView::set_error` performs: every later deref of `ator->error`
-// carries its own vouch, exactly as each raw deref does throughout the port.
+// the allocator this fn fills in, and `Option<&View<RawAllocatorOpts, M>>` is
+// C's nullable, read-only `opts` (`None` — spelled `NO_ATOR_OPTS` — selects the
+// zeroed defaults). `opts` is mode-generic because the same read serves both a
+// `Mut` context field (every internal caller, via
+// `uc/ec/ac/bc/tc/sc.opts_view().temp_allocator_view()`) and a `Const` mint
+// over a public caller's options struct.
+//
+// `error` stays a RAW pointer, matching `AllocatorView::set_error`: it is
+// STORED into `ator->error` and dereferenced long after any borrow taken here
+// would end, so a reference param would silently promise a lifetime the type
+// cannot carry. The `Allocator` type invariant documented on `alloc_size` —
+// the error slot outlives the allocator — is the caller's, exactly as in C.
 #[inline(never)]
-pub(crate) fn init_ator(
-    error: &ErrorView,
+pub(crate) fn init_ator<M: Mode>(
+    error: *mut Error,
     ator: &AllocatorView,
-    opts: Option<&View<RawAllocatorOpts, Const>>,
+    opts: Option<&View<RawAllocatorOpts, M>>,
     name: &'static CStr,
 ) {
     // C: `ufbx_allocator_opts zero_opts;` + `memset` in the null branch only.
@@ -837,7 +850,7 @@ pub(crate) fn init_ator(
     // `zero_opts` local zero-filled above.
     unsafe {
         (*a).ator = *opts;
-        (*a).error = error.get();
+        (*a).error = error;
         (*a).max_size = if (*opts).memory_limit != 0 {
             (*opts).memory_limit
         } else {
@@ -872,17 +885,17 @@ mod tests {
 
     unsafe fn make_ator(error: *mut Error, opts: *const RawAllocatorOpts) -> Allocator {
         let mut ator = MaybeUninit::<Allocator>::zeroed();
-        // SAFETY: `error` is the caller's live error slot (the obligation on
-        // this `unsafe fn`), `ator.as_mut_ptr()` this frame's own `Allocator`
-        // slot, and `opts` — when non-null, likewise the caller's obligation —
-        // is read only while the view is held.
+        // SAFETY: `opts` — when non-null, the caller's obligation on this
+        // `unsafe fn` — is read only while the view is held.
         let opts = if opts.is_null() {
             None
         } else {
             Some(unsafe { View::<RawAllocatorOpts, Const>::from_ptr(opts) })
         };
         init_ator(
-            unsafe { ErrorView::from_ptr(error) },
+            error,
+            // SAFETY: `ator.as_mut_ptr()` addresses this frame's own
+            // `Allocator` slot, live and unmoved for the call.
             unsafe { AllocatorView::from_ptr(ator.as_mut_ptr()) },
             opts,
             c"test",

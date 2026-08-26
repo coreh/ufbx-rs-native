@@ -1851,9 +1851,8 @@ mod tests {
     #![allow(clippy::assertions_on_constants)]
     use super::*;
     use crate::generated::UnicodeErrorHandling;
-    use crate::native::allocator::{init_ator, Allocator, AllocatorView};
+    use crate::native::allocator::{init_ator, Allocator, AllocatorView, NO_ATOR_OPTS};
     use crate::native::buf::{buf_free, BufView};
-    use crate::native::error::ErrorView;
     use crate::native::hash::{map_init, MapView};
     use core::mem::MaybeUninit;
 
@@ -1877,9 +1876,9 @@ mod tests {
         // SAFETY: `err`/`ator` are fields of the boxed fixture, live and
         // unmoved for the test; the mints are the one vouch for them.
         init_ator(
-            unsafe { ErrorView::from_ptr(&raw mut fx.err) },
+            &raw mut fx.err,
             unsafe { AllocatorView::from_ptr(&raw mut fx.ator) },
-            None,
+            NO_ATOR_OPTS,
             c"test",
         );
         let ator = &mut fx.ator as *mut Allocator;

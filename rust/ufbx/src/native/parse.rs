@@ -1923,11 +1923,6 @@ impl LoadOptsView {
     }
 
     #[inline(always)]
-    pub(crate) fn result_allocator_ptr(&self) -> *const crate::generated::RawAllocatorOpts {
-        view_raw_const!(self, result_allocator)
-    }
-
-    #[inline(always)]
     pub(crate) fn retain_dom(&self) -> bool {
         view_read!(self, retain_dom)
     }
@@ -1995,11 +1990,6 @@ impl LoadOptsView {
     }
 
     #[inline(always)]
-    pub(crate) fn temp_allocator_ptr(&self) -> *const crate::generated::RawAllocatorOpts {
-        view_raw_const!(self, temp_allocator)
-    }
-
-    #[inline(always)]
     pub(crate) fn thread_opts_view(&self) -> &crate::prelude::RawThreadOptsView {
         unsafe { &*(&raw mut (*self.get()).thread_opts as *mut crate::prelude::RawThreadOptsView) }
     }
@@ -2022,6 +2012,20 @@ impl LoadOptsView {
     #[inline(always)]
     pub(crate) fn use_root_transform(&self) -> bool {
         view_read!(self, use_root_transform)
+    }
+}
+
+// Mode-generic nested views over the two allocator descriptors: `init_ator`
+// only reads them, so the accessor serves a `Mut` context field and a `Const`
+// boundary mint alike.
+impl<M: crate::native::view::Mode> View<RawLoadOpts, M> {
+    #[inline(always)]
+    pub(crate) fn temp_allocator_view(&self) -> &View<crate::generated::RawAllocatorOpts, M> {
+        view_project!(self, temp_allocator)
+    }
+    #[inline(always)]
+    pub(crate) fn result_allocator_view(&self) -> &View<crate::generated::RawAllocatorOpts, M> {
+        view_project!(self, result_allocator)
     }
 }
 
@@ -8055,9 +8059,8 @@ mod tests {
 
     #[test]
     fn test_push_element_extra_grows_and_dedups() {
-        use crate::native::allocator::{init_ator, AllocatorView};
+        use crate::native::allocator::{init_ator, AllocatorView, NO_ATOR_OPTS};
         use crate::native::buf::{buf_free, BufView};
-        use crate::native::error::ErrorView;
 
         let mut uc: std::boxed::Box<InnerContext> =
             unsafe { std::boxed::Box::new_zeroed().assume_init() };
@@ -8065,9 +8068,9 @@ mod tests {
             // SAFETY: `error`/`ator_tmp` are fields of the boxed context, live
             // and unmoved for the test; the mints are the one vouch for them.
             init_ator(
-                ErrorView::from_ptr(&raw mut uc.error),
+                &raw mut uc.error,
                 AllocatorView::from_ptr(&raw mut uc.ator_tmp),
-                None,
+                NO_ATOR_OPTS,
                 c"test",
             );
             uc.tmp.ator = &raw mut uc.ator_tmp;
@@ -8126,9 +8129,8 @@ mod tests {
 
     #[test]
     fn test_retain_dom_node_tree() {
-        use crate::native::allocator::{init_ator, AllocatorView};
+        use crate::native::allocator::{init_ator, AllocatorView, NO_ATOR_OPTS};
         use crate::native::buf::{buf_free, BufView};
-        use crate::native::error::ErrorView;
         use crate::native::hash::{map_cmp_uintptr, map_free, map_init, MapView};
         use crate::native::string_pool::{map_cmp_string, string_pool_temp_free, StringPoolView};
 
@@ -8139,15 +8141,15 @@ mod tests {
             // context, live and unmoved for the test; the mints are the one
             // vouch for them.
             init_ator(
-                ErrorView::from_ptr(&raw mut uc.error),
+                &raw mut uc.error,
                 AllocatorView::from_ptr(&raw mut uc.ator_tmp),
-                None,
+                NO_ATOR_OPTS,
                 c"test",
             );
             init_ator(
-                ErrorView::from_ptr(&raw mut uc.error),
+                &raw mut uc.error,
                 AllocatorView::from_ptr(&raw mut uc.ator_result),
-                None,
+                NO_ATOR_OPTS,
                 c"test",
             );
             let ator_tmp: *mut Allocator = &mut uc.ator_tmp;

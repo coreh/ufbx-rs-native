@@ -1237,7 +1237,6 @@ pub(crate) unsafe extern "C" fn map_cmp_ptr_id(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::native::error::ErrorView;
 
     fn hs(b: &[u8]) -> u32 {
         // SAFETY: pointer and length come from the same local slice `b`.
@@ -1350,7 +1349,7 @@ mod tests {
     // -- Hash map tests
 
     use crate::generated::Error;
-    use crate::native::allocator::init_ator;
+    use crate::native::allocator::{init_ator, NO_ATOR_OPTS};
     use crate::native::error::ErrorView;
     use core::mem::MaybeUninit;
 
@@ -1378,11 +1377,13 @@ mod tests {
     fn make_test_ator(err: &ErrorView) -> Allocator {
         let mut ator = MaybeUninit::<Allocator>::zeroed();
         init_ator(
-            err,
+            // `err.get()` is the live `Error` the view was minted over (its
+            // mint invariant), and it outlives the allocator built here.
+            err.get(),
             // SAFETY: `ator.as_mut_ptr()` is this frame's live, unmoved
             // `Allocator` slot, as `View::from_ptr` requires.
             unsafe { AllocatorView::from_ptr(ator.as_mut_ptr()) },
-            None,
+            NO_ATOR_OPTS,
             c"test",
         );
         // SAFETY: `init_ator` wrote every config field; `current_size` and

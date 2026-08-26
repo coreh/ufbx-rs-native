@@ -1476,8 +1476,7 @@ pub(crate) unsafe fn push_peek<T>(dst: &BufView, src: &BufView, n: usize) -> *mu
 mod tests {
     use super::*;
     use crate::generated::Error;
-    use crate::native::allocator::init_ator;
-    use crate::native::error::ErrorView;
+    use crate::native::allocator::{init_ator, NO_ATOR_OPTS};
     use core::mem::MaybeUninit;
 
     fn make_buf(ator: *mut Allocator, unordered: bool, clearable: bool) -> Buf {
@@ -1530,9 +1529,9 @@ mod tests {
         // SAFETY: `err` and the `ator` slot are this frame's live, unmoved
         // locals; the mints are the one vouch for them.
         init_ator(
-            unsafe { ErrorView::from_ptr(&raw mut err) },
+            &raw mut err,
             unsafe { AllocatorView::from_ptr(ator.as_mut_ptr()) },
-            None,
+            NO_ATOR_OPTS,
             c"test",
         );
         let ator = ator.as_mut_ptr();
@@ -1582,9 +1581,9 @@ mod tests {
         // SAFETY: `err` and the `ator` slot are this frame's live, unmoved
         // locals; the mints are the one vouch for them.
         init_ator(
-            unsafe { ErrorView::from_ptr(&raw mut err) },
+            &raw mut err,
             unsafe { AllocatorView::from_ptr(ator.as_mut_ptr()) },
-            None,
+            NO_ATOR_OPTS,
             c"test",
         );
         let ator = ator.as_mut_ptr();
@@ -1618,9 +1617,9 @@ mod tests {
         // SAFETY: `err` and the `ator` slot are this frame's live, unmoved
         // locals; the mints are the one vouch for them.
         init_ator(
-            unsafe { ErrorView::from_ptr(&raw mut err) },
+            &raw mut err,
             unsafe { AllocatorView::from_ptr(ator.as_mut_ptr()) },
-            None,
+            NO_ATOR_OPTS,
             c"test",
         );
         let ator = ator.as_mut_ptr();
@@ -1649,9 +1648,9 @@ mod tests {
         // SAFETY: `err` and the `ator` slot are this frame's live, unmoved
         // locals; the mints are the one vouch for them.
         init_ator(
-            unsafe { ErrorView::from_ptr(&raw mut err) },
+            &raw mut err,
             unsafe { AllocatorView::from_ptr(ator.as_mut_ptr()) },
-            None,
+            NO_ATOR_OPTS,
             c"test",
         );
         let ator = ator.as_mut_ptr();
@@ -1694,9 +1693,9 @@ mod tests {
         // SAFETY: `err` and the `ator` slot are this frame's live, unmoved
         // locals; the mints are the one vouch for them.
         init_ator(
-            unsafe { ErrorView::from_ptr(&raw mut err) },
+            &raw mut err,
             unsafe { AllocatorView::from_ptr(ator.as_mut_ptr()) },
-            None,
+            NO_ATOR_OPTS,
             c"test",
         );
         let ator = ator.as_mut_ptr();
@@ -1766,9 +1765,9 @@ mod tests {
         // SAFETY: `err` and the `ator` slot are this frame's live, unmoved
         // locals; the mints are the one vouch for them.
         init_ator(
-            unsafe { ErrorView::from_ptr(&raw mut err) },
+            &raw mut err,
             unsafe { AllocatorView::from_ptr(ator.as_mut_ptr()) },
-            None,
+            NO_ATOR_OPTS,
             c"test",
         );
         let ator = ator.as_mut_ptr();
@@ -1813,9 +1812,9 @@ mod tests {
         // SAFETY: `err` and the `ator` slot are this frame's live, unmoved
         // locals; the mints are the one vouch for them.
         init_ator(
-            unsafe { ErrorView::from_ptr(&raw mut err) },
+            &raw mut err,
             unsafe { AllocatorView::from_ptr(ator.as_mut_ptr()) },
-            None,
+            NO_ATOR_OPTS,
             c"test",
         );
         let ator = ator.as_mut_ptr();
@@ -1871,9 +1870,9 @@ mod tests {
         // SAFETY: `err` and the `ator` slot are this frame's live, unmoved
         // locals; the mints are the one vouch for them.
         init_ator(
-            unsafe { ErrorView::from_ptr(&raw mut err) },
+            &raw mut err,
             unsafe { AllocatorView::from_ptr(ator.as_mut_ptr()) },
-            None,
+            NO_ATOR_OPTS,
             c"test",
         );
         let ator = ator.as_mut_ptr();
@@ -1928,9 +1927,9 @@ mod tests {
         // SAFETY: `err` and the `ator` slot are this frame's live, unmoved
         // locals; the mints are the one vouch for them.
         init_ator(
-            unsafe { ErrorView::from_ptr(&raw mut err) },
+            &raw mut err,
             unsafe { AllocatorView::from_ptr(ator.as_mut_ptr()) },
-            None,
+            NO_ATOR_OPTS,
             c"test",
         );
         let ator = ator.as_mut_ptr();

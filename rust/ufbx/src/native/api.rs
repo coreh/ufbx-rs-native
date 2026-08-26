@@ -7458,7 +7458,6 @@ mod tests {
         init_ator, ANIM_IMP_MAGIC, BAKED_ANIM_IMP_MAGIC, MESH_IMP_MAGIC,
     };
     use crate::native::buf::push_size;
-    use crate::native::error::ErrorView;
     use crate::native::parse::MeshImp;
     use crate::prelude::Ref;
     use core::ffi::c_void;
@@ -7474,9 +7473,7 @@ mod tests {
         let mut ator = unsafe { core::mem::MaybeUninit::<Allocator>::zeroed().assume_init() };
         let opts = RawAllocatorOpts::default();
         init_ator(
-            // SAFETY: `error` is this fn's raw-pointer param, vouched live by
-            // its caller.
-            unsafe { ErrorView::from_ptr(error) },
+            error,
             // SAFETY: `ator` is this frame's live, unmoved local.
             unsafe { AllocatorView::from_ptr(&raw mut ator) },
             // SAFETY: `opts` is this frame's live local, written nowhere while
@@ -8049,7 +8046,7 @@ mod tests {
             // SAFETY: `error`/`ator`/`opts` are this frame's live, unmoved
             // locals; nothing writes `opts` while the read-only view is held.
             init_ator(
-                ErrorView::from_ptr(&raw mut error),
+                &raw mut error,
                 AllocatorView::from_ptr(&raw mut ator),
                 Some(View::<RawAllocatorOpts, Const>::from_ptr(&raw const opts)),
                 c"test",
@@ -8102,9 +8099,7 @@ mod tests {
         let mut ator = unsafe { core::mem::MaybeUninit::<Allocator>::zeroed().assume_init() };
         let opts = RawAllocatorOpts::default();
         init_ator(
-            // SAFETY: `error` is this fn's raw-pointer param, vouched live by
-            // its caller.
-            unsafe { ErrorView::from_ptr(error) },
+            error,
             // SAFETY: `ator` is this frame's live, unmoved local.
             unsafe { AllocatorView::from_ptr(&raw mut ator) },
             // SAFETY: `opts` is this frame's live local, written nowhere while
