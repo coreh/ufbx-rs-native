@@ -350,6 +350,11 @@ impl BlobView {
     pub(crate) fn set_size(&self, size: usize) {
         view_write!(self, size, size)
     }
+    // `size` as an in-out slot for callees taking a `*mut usize` out-param.
+    #[inline(always)]
+    pub(crate) fn size_mut_ptr(&self) -> *mut usize {
+        view_raw_mut!(self, size)
+    }
 }
 
 // Typed interior-mutable VIEW over `crate::generated::RawThreadOpts` (non-Copy; subfields read+written).

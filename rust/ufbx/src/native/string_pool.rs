@@ -33,7 +33,7 @@ use crate::native::platform::{math, min_real, min_sz, ufbx_assert, ufbxi_regress
 use crate::native::view::{view_raw_mut, view_read, view_write, Mode, View};
 use crate::native::warnings::{ufbxi_warnf_imp, Warnings};
 use crate::prelude::as_f64;
-use crate::prelude::{Blob, Real, String, StringView};
+use crate::prelude::{BlobView, Real, String, StringView};
 
 // -- String pool (ufbx.c:4895)
 //
@@ -983,36 +983,29 @@ pub(crate) unsafe fn push_string_place_str(
 
 // ufbx.c:5277-5286 `ufbxi_push_string_place_blob`
 #[inline(never)]
-pub(crate) unsafe fn push_string_place_blob(
-    pool: *mut StringPool,
-    p_blob: *mut Blob,
+pub(crate) fn push_string_place_blob(
+    pool: &StringPoolView,
+    p_blob: &BlobView,
     raw: bool,
 ) -> Result<(), Fail> {
-    // SAFETY: the caller vouches `p_blob` addresses a live `Blob`.
-    if unsafe { (*p_blob).size } == 0 {
-        // SAFETY: `p_blob` addresses a live `Blob`.
-        unsafe { (*p_blob).data = ptr::null() };
+    if p_blob.size() == 0 {
+        p_blob.set_data(ptr::null());
         return Ok(());
     }
-    // SAFETY: `pool` addresses the live, context-owned `StringPool`,
-    // reinterpreted in place; `p_blob` is a live `Blob` whose `data`/`size`
-    // describe its run; `&raw mut` projects its size out-param without creating
-    // a temporary reference from the raw pointer.
-    unsafe {
-        (*p_blob).data = push_string(
-            StringPoolView::from_ptr(pool),
-            (*p_blob).data,
-            (*p_blob).size,
-            &raw mut (*p_blob).size,
+    // SAFETY: `p_blob`'s own `data`/`size` leaves describe its run, so `data` is
+    // readable for `size` bytes, and `size_mut_ptr()` is that same blob's live
+    // `usize` out-param slot — the `push_string` contract.
+    let data = unsafe {
+        push_string(
+            pool,
+            p_blob.data(),
+            p_blob.size(),
+            p_blob.size_mut_ptr(),
             raw,
-        );
-    }
-    ufbxi_check_err!(
-        unsafe { crate::native::error::ErrorView::from_ptr((*pool).error) },
-        // SAFETY: `p_blob` addresses a live `Blob`.
-        !unsafe { (*p_blob).data }.is_null(),
-        "p_blob->data"
-    );
+        )
+    };
+    p_blob.set_data(data);
+    ufbxi_check_err!(pool.error_view(), !p_blob.data().is_null(), "p_blob->data");
     Ok(())
 }
 
@@ -1836,6 +1829,7 @@ mod tests {
     use crate::native::allocator::{init_ator, Allocator, AllocatorView, NO_ATOR_OPTS};
     use crate::native::buf::{buf_free, BufView};
     use crate::native::hash::{map_init, MapView};
+    use crate::prelude::Blob;
     use core::mem::MaybeUninit;
 
     struct Fixture {
@@ -2172,7 +2166,11 @@ mod tests {
             blob.data = b"Vertices".as_ptr();
             blob.size = 8;
             assert_eq!(
-                push_string_place_blob(&mut fx.pool, &mut blob, true),
+                push_string_place_blob(
+                    StringPoolView::from_mut(&mut fx.pool),
+                    BlobView::from_mut(&mut blob),
+                    true
+                ),
                 Ok(())
             );
             assert_eq!(blob.data, interned);
@@ -2181,7 +2179,11 @@ mod tests {
             blob2.data = b"x".as_ptr();
             blob2.size = 0;
             assert_eq!(
-                push_string_place_blob(&mut fx.pool, &mut blob2, true),
+                push_string_place_blob(
+                    StringPoolView::from_mut(&mut fx.pool),
+                    BlobView::from_mut(&mut blob2),
+                    true
+                ),
                 Ok(())
             );
             assert!(blob2.data.is_null());

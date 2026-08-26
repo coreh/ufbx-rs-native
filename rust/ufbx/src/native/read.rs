@@ -10885,20 +10885,20 @@ pub(crate) fn init_file_paths(uc: &Context) -> Result<(), Fail> {
             .set_size(uc.opts_view().filename_view().length());
     }
 
-    // SAFETY: interning uc's own metadata `filename` / `raw_filename` slots,
-    // reached through its element views, into uc's own string pool.
+    // SAFETY: interning uc's own metadata `filename` slot, reached through its
+    // element views, into uc's own string pool.
     unsafe {
         push_string_place_str(
             uc.string_pool_mut_ptr(),
             uc.scene_view().metadata_view().filename_mut_ptr(),
             false,
         )?;
-        push_string_place_blob(
-            uc.string_pool_mut_ptr(),
-            uc.scene_view().metadata_view().raw_filename_mut_ptr(),
-            true,
-        )?;
     }
+    push_string_place_blob(
+        uc.string_pool_view(),
+        uc.scene_view().metadata_view().raw_filename_view(),
+        true,
+    )?;
 
     uc.scene_view()
         .metadata_view()
@@ -10934,20 +10934,20 @@ pub(crate) fn init_file_paths(uc: &Context) -> Result<(), Fail> {
             )
         });
 
-    // SAFETY: interning uc's own metadata `relative_root` / `raw_relative_root`
-    // slots — prefixes of the filenames interned above — into uc's string pool.
+    // SAFETY: interning uc's own metadata `relative_root` slot — a prefix of the
+    // filename interned above — into uc's string pool.
     unsafe {
         push_string_place_str(
             uc.string_pool_mut_ptr(),
             uc.scene_view().metadata_view().relative_root_mut_ptr(),
             false,
         )?;
-        push_string_place_blob(
-            uc.string_pool_mut_ptr(),
-            uc.scene_view().metadata_view().raw_relative_root_mut_ptr(),
-            true,
-        )?;
     }
+    push_string_place_blob(
+        uc.string_pool_view(),
+        uc.scene_view().metadata_view().raw_relative_root_view(),
+        true,
+    )?;
 
     Ok(())
 }

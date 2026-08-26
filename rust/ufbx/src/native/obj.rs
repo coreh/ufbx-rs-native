@@ -86,7 +86,7 @@ use crate::native::warnings::ufbxi_warnf;
 #[cfg(feature = "obj")]
 use crate::prelude::as_f64;
 #[cfg(feature = "obj")]
-use crate::prelude::{Blob, List, ListView, Real, ScalarView, String};
+use crate::prelude::{Blob, BlobView, List, ListView, Real, ScalarView, String};
 #[cfg(feature = "obj")]
 use core::ffi::c_void;
 #[cfg(feature = "obj")]
@@ -2218,12 +2218,12 @@ pub(crate) unsafe fn obj_parse_prop(
         value_blob.size = span.length;
         prop.set_value_blob(value_blob);
 
-        // SAFETY: interns the prop's own value fields into uc's string pool,
-        // both taken through their raw-ptr getters.
+        // SAFETY: interns the prop's own `value_str` field into uc's string
+        // pool, taken through its raw-ptr getter.
         unsafe {
             push_string_place_str(uc.string_pool_mut_ptr(), prop.value_str_raw(), false)?;
-            push_string_place_blob(uc.string_pool_mut_ptr(), prop.value_blob_raw(), true)?;
         }
+        push_string_place_blob(uc.string_pool_view(), prop.value_blob_view(), true)?;
     } else {
         let mut value_str: String = prop.value_str();
         value_str.data = EMPTY_CHAR.as_ptr();
@@ -2302,12 +2302,16 @@ pub(crate) fn obj_parse_mtl_map(uc: &Context, prefix_len: usize) -> Result<(), F
     let mut tex_str: String = obj_span_token(uc, start, usize::MAX);
     let mut tex_raw: Blob = Blob::new_c(tex_str.data, tex_str.length);
 
-    // SAFETY: interns the texture path into uc's own string pool through two
-    // unaliased locals.
+    // SAFETY: interns the texture path into uc's own string pool through an
+    // unaliased local.
     unsafe {
         push_string_place_str(uc.string_pool_mut_ptr(), &raw mut tex_str, false)?;
-        push_string_place_blob(uc.string_pool_mut_ptr(), &raw mut tex_raw, true)?;
     }
+    push_string_place_blob(
+        uc.string_pool_view(),
+        BlobView::from_mut(&mut tex_raw),
+        true,
+    )?;
 
     let mut fbx_id: u64 = 0;
     // SAFETY: `fbx_id` is an unaliased local out-param and the name is a

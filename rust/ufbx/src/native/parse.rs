@@ -2646,16 +2646,8 @@ impl SceneMetadataView {
         unsafe { &*(&raw mut (*self.get()).raw_filename as *mut crate::prelude::BlobView) }
     }
     #[inline(always)]
-    pub(crate) fn raw_filename_mut_ptr(&self) -> *mut crate::prelude::Blob {
-        view_raw_mut!(self, raw_filename)
-    }
-    #[inline(always)]
     pub(crate) fn raw_relative_root_view(&self) -> &crate::prelude::BlobView {
         unsafe { &*(&raw mut (*self.get()).raw_relative_root as *mut crate::prelude::BlobView) }
-    }
-    #[inline(always)]
-    pub(crate) fn raw_relative_root_mut_ptr(&self) -> *mut crate::prelude::Blob {
-        view_raw_mut!(self, raw_relative_root)
     }
     #[inline(always)]
     pub(crate) fn set_raw_original_file_path(&self, raw_original_file_path: crate::prelude::Blob) {
