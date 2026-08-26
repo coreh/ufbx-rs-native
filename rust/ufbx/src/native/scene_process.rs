@@ -10374,15 +10374,12 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
                     // C: `size_t index = SIZE_MAX;` — `ufbxi_macro_lower_bound_eq`
                     // leaves it untouched on a miss, which the loop below drops.
                     // The query key's bytes are minted ONCE for the whole
-                    // search.
-                    // SAFETY: `name` is an interned pool string, so its
-                    // `data`/`length` describe one live, initialized byte run.
-                    let name_bytes: &[u8] = unsafe { name.as_bytes() };
+                    // search, out of the viewed binding's own `material_prop`
+                    // field — the same string `name` copies.
+                    let name_bytes: &[u8] = prop.material_prop_view().bytes();
                     let index: Option<usize> = material.textures_view().lower_bound_eq(
                         4,
-                        // SAFETY: the probed element's `material_prop` is an
-                        // interned pool string, same as `name`.
-                        |a| str_less(unsafe { a.material_prop().as_bytes() }, name_bytes),
+                        |a| str_less(a.material_prop_view().bytes(), name_bytes),
                         |a| a.material_prop().data == name.data,
                     );
                     let mut index: usize = index.unwrap_or(usize::MAX);
