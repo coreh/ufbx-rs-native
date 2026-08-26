@@ -105,7 +105,7 @@ use crate::generated::{
     Thumbnail, ThumbnailFormat, TimeMode, Transform, Unknown, UvSet, Vec3, Vec4, VertexAttrib,
     VertexReal, VertexVec2, VertexVec3, VertexVec4, Video, VoidList, WarningType,
 };
-use crate::native::allocator::{grow_array, Allocator};
+use crate::native::allocator::{grow_array, AllocatorView};
 use crate::native::api::{
     find_int_len as api_find_int_len, find_prop_len, transform_to_matrix, EMPTY_BLOB, EMPTY_STRING,
     IDENTITY_MATRIX, IDENTITY_TRANSFORM,
@@ -11198,14 +11198,21 @@ pub(crate) fn resolve_relative_filename<M: Mode>(
 // Open file utility
 
 // ufbx.c:16654-16669 `ufbxi_open_file`
+///
+/// # Safety
+/// `cb` must be null or point at a live `ufbx_open_file_cb`, `stream` at a live
+/// `ufbx_stream` slot the callback may write, and `path` at a live run of
+/// `path_len` readable bytes that the callback additionally reads as a
+/// NUL-terminated C string — obligations the raw pointer and the separate
+/// length cannot express.
 #[inline(never)]
-pub(crate) unsafe fn open_file(
+pub(crate) unsafe fn open_file<M: Mode>(
     cb: *const RawOpenFileCb,
     stream: *mut RawStream,
     path: *const u8,
     path_len: usize,
-    original_filename: *const Blob,
-    ator: *mut Allocator,
+    original_filename: Option<&View<Blob, M>>,
+    ator: Option<&AllocatorView>,
     type_: OpenFileType,
 ) -> bool {
     // SAFETY: the null check short-circuits first, so `cb` is the caller's live
@@ -11220,14 +11227,15 @@ pub(crate) unsafe fn open_file(
     // is written, not read, and `ufbx_open_file_info` is plain C data with no
     // value to drop, so writing into uninitialized storage is well-defined.
     unsafe {
-        (*info).context = ator as OpenFileContext;
+        (*info).context = ator.map_or(0, |ator| ator.get() as OpenFileContext);
     }
-    if !original_filename.is_null() {
-        // SAFETY: `original_filename` is checked non-null and is the caller's
-        // live `ufbx_blob`; the destination is the local `info` storage as
-        // above.
+    if let Some(original_filename) = original_filename {
+        // C: `info.original_filename = *original_filename;` — `ufbx_blob` is
+        // the `{ data, size }` pair the two field reads cover.
+        // SAFETY: the destination is the local `info` storage as above.
         unsafe {
-            (*info).original_filename = *original_filename;
+            (*info).original_filename.data = original_filename.data();
+            (*info).original_filename.size = original_filename.size();
         }
     } else {
         // SAFETY: `info` points at the live local storage as above.

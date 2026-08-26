@@ -745,18 +745,18 @@ pub(crate) unsafe fn load_imp(uc: &Context) -> Result<(), Fail> {
                 }
             };
         } else {
-            // SAFETY: the callback pointer and temp allocator are `uc`'s own
-            // fields (live for the borrow), `stream` is a live local, and
+            // SAFETY: the callback pointer is `uc`'s own field (live for the
+            // borrow), `stream` is a live local, and
             // `uc.load_filename()`/`filename_len` describe the caller's filename
             // run — `open_file`'s contract.
             ok = unsafe {
-                open_file(
+                open_file::<Mut>(
                     uc.opts_view().open_file_cb_ptr(),
                     &raw mut stream,
                     uc.load_filename(),
                     filename_len,
-                    ptr::null(),
-                    uc.ator_tmp_mut_ptr(),
+                    None,
+                    Some(uc.ator_tmp_view()),
                     OpenFileType::MainModel,
                 )
             };

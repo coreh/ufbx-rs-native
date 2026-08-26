@@ -2442,13 +2442,13 @@ pub(crate) fn obj_load_mtl(uc: &Context) -> Result<(), Fail> {
             // the caller-supplied `obj_mtl_path` with its own length, and the
             // callback runs through uc's own temp allocator.
             has_stream = unsafe {
-                open_file(
+                open_file::<Mut>(
                     uc.opts_view().open_file_cb_ptr(),
                     &raw mut stream,
                     uc.opts_view().obj_mtl_path_view().data(),
                     uc.opts_view().obj_mtl_path_view().length(),
-                    core::ptr::null(),
-                    uc.ator_tmp_mut_ptr(),
+                    None,
+                    Some(uc.ator_tmp_view()),
                     OpenFileType::ObjMtl,
                 )
             };
@@ -2501,8 +2501,8 @@ pub(crate) fn obj_load_mtl(uc: &Context) -> Result<(), Fail> {
                     &raw mut stream,
                     (*dst).data,
                     (*dst).size,
-                    uc.obj().mtllib_relative_path_mut_ptr(),
-                    uc.ator_tmp_mut_ptr(),
+                    Some(uc.obj().mtllib_relative_path_view()),
+                    Some(uc.ator_tmp_view()),
                     OpenFileType::ObjMtl,
                 );
             }
@@ -2570,13 +2570,13 @@ pub(crate) fn obj_load_mtl(uc: &Context) -> Result<(), Fail> {
                     } else {
                         b'l'
                     };
-                    has_stream = open_file(
+                    has_stream = open_file::<Mut>(
                         uc.opts_view().open_file_cb_ptr(),
                         &raw mut stream,
                         copy,
                         path.length,
-                        core::ptr::null(),
-                        uc.ator_tmp_mut_ptr(),
+                        None,
+                        Some(uc.ator_tmp_view()),
                         OpenFileType::ObjMtl,
                     );
                 }

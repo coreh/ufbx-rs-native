@@ -1614,19 +1614,19 @@ pub(crate) unsafe fn cache_try_open_file(
     // `cache_load_frame_files` or the explicitly NUL-terminated arena copy from
     // `cache_load_imp` — so `strlen` stops within `length` bytes.
     ufbxi_regression_assert!(unsafe { strlen(filename.data) } == filename.length);
-    // SAFETY: the callback and stream pointers address `cc`'s own fields;
+    // SAFETY: the callback and stream pointers address `cc`'s own fields, and
     // `filename.data`/`.length` is a live, NUL-terminated caller buffer (the
-    // formatted `name_buf` or the arena copy), `original_filename` is either
-    // null or the caller's live `Blob` view, and the allocator is `cc`'s own
-    // temp one.
+    // formatted `name_buf` or the arena copy) — `open_file`'s contract. The
+    // allocator view is minted from `cc.ator_tmp`, the live temp allocator `cc`
+    // loads through (cc construction stores it and outlives the load).
     if !unsafe {
         open_file(
             cc.open_file_cb_ptr(),
             cc.stream_mut_ptr(),
             filename.data,
             filename.length,
-            original_filename.map_or(core::ptr::null(), |blob| blob.as_ptr()),
-            cc.ator_tmp(),
+            original_filename,
+            AllocatorView::from_ptr_opt(cc.ator_tmp()),
             OpenFileType::GeometryCache,
         )
     } {

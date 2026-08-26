@@ -5614,13 +5614,13 @@ pub(crate) unsafe fn read_geometry_cache_real(
         // its own blob fields; `open_file` receives borrows of local `opts`/
         // `stream` plus that filename under its documented contract.
         if !unsafe {
-            crate::native::read::open_file(
+            crate::native::read::open_file::<Mut>(
                 &raw const opts.open_file_cb,
                 &raw mut stream,
                 (*frame).filename.data,
                 (*frame).filename.length,
-                core::ptr::null(),
-                core::ptr::null_mut(),
+                None,
+                None,
                 OpenFileType::GeometryCache,
             )
         } {
