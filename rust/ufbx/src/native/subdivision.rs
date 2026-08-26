@@ -3312,9 +3312,7 @@ pub(crate) unsafe fn subdivide_mesh(
         // C copies the fixed error into the caller's slot; the `Result` shape
         // carries it by value (the shim owns the slot writes).
         let mut fixed: Error = Error::default();
-        // SAFETY: `&raw mut fixed` addresses this frame's live, write-capable
-        // `Error` local, unmoved for the mint's borrow.
-        let fixed_view = unsafe { crate::native::error::ErrorView::from_ptr(&raw mut fixed) };
+        let fixed_view = crate::native::error::ErrorView::from_mut(&mut fixed);
         fix_error_type(sc.error_view(), b"Failed to subdivide\0", Some(fixed_view));
         buf_free(sc.result_view());
         // SAFETY: both allocators are `sc`'s own live temp/result allocators,
@@ -3341,18 +3339,15 @@ pub(crate) unsafe fn subdivide_mesh(
     // builds the same bytes in a local carried by `Err` (the shim owns the
     // slot writes).
     let mut error: Error = Error::default();
-    // SAFETY: `&raw mut error` is this frame's live `Error` slot whose info
-    // buffer the macro formats into (a write-capable mint), and the format
-    // string is a literal with no conversions.
+    // SAFETY: the format string is a literal with no conversions.
     unsafe {
         ufbxi_fmt_err_info!(
-            Some(crate::native::error::ErrorView::from_ptr(&raw mut error)),
+            Some(crate::native::error::ErrorView::from_mut(&mut error)),
             "UFBX_ENABLE_SUBDIVISION"
         )
     };
     ufbxi_report_err_msg!(
-        // SAFETY: same live local `Error` slot, minted as a view for the report.
-        unsafe { crate::native::error::ErrorView::from_ptr(&raw mut error) },
+        crate::native::error::ErrorView::from_mut(&mut error),
         "UFBXI_FEATURE_SUBDIVISION",
         "Feature disabled"
     );

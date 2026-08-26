@@ -11386,11 +11386,8 @@ pub(crate) fn update_node(node_view: &NodeView, overrides: &[TransformOverride])
             // local `ufbx_transform`.
             let node_to_unscaled_parent: Matrix =
                 unsafe { transform_to_matrix(&raw const transform) };
-            // SAFETY: the view is minted over that same live, fully initialized
-            // local, which no parent pointer writes while the view is live.
-            let unscaled_node_to_unscaled_parent: Matrix = unscaled_transform_to_matrix(unsafe {
-                View::<Transform, Const>::from_ptr(&raw const transform)
-            });
+            let unscaled_node_to_unscaled_parent: Matrix =
+                unscaled_transform_to_matrix(View::<Transform, Const>::from_ref(&transform));
 
             node_view.set_inherit_scale(transform.scale);
             // SAFETY: the parent's matrix field is projected from its own view

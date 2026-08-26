@@ -243,11 +243,9 @@ pub(crate) unsafe fn obj_pop_props(
         // SAFETY: `props.data` is the fresh non-null run and `props.count` the
         // item count it was popped with.
         unsafe { sort_properties(uc, props.data as *mut Prop, props.count)? };
-        // SAFETY: `props` is an unaliased local descriptor of the run just
-        // sorted, which the dedup compacts in place — a stack local, live and
-        // unmoved for the call, addressed by `&raw mut` so the view carries
-        // write-capable provenance.
-        deduplicate_properties(unsafe { ListView::<Prop>::from_ptr(&raw mut props) });
+        // `props` is the local descriptor of the run just sorted, which the
+        // dedup compacts in place.
+        deduplicate_properties(ListView::<Prop>::from_mut(&mut props));
     }
 
     // C: `*dst = props;`
@@ -430,16 +428,15 @@ pub(crate) fn obj_init(uc: &Context) -> Result<(), Fail> {
         let mut root_info: ElementInfo = unsafe { core::mem::zeroed() };
         root_info.fbx_id = uc.root_id();
         root_info.name = EMPTY_STRING.0;
-        // SAFETY: `root_info` is an unaliased local — write-capable provenance,
-        // live and unmoved across the call — passed as the element-push
-        // out-param; the push targets uc's own element arenas. Its `name` is the
-        // static NUL-terminated empty string and its `props`/`dom_node` are
-        // zeroed, so the pointers the element stores outlive the scene;
-        // `UfbxNode` is the element struct for `ElementType::Node`.
+        // SAFETY: the push targets uc's own element arenas; `root_info`'s
+        // `name` is the static NUL-terminated empty string and its
+        // `props`/`dom_node` are zeroed, so the pointers the element stores
+        // outlive the scene; `UfbxNode` is the element struct for
+        // `ElementType::Node`.
         let root: *mut UfbxNode = unsafe {
             push_element::<UfbxNode>(
                 uc,
-                View::<ElementInfo>::from_ptr(&raw mut root_info),
+                View::<ElementInfo>::from_mut(&mut root_info),
                 ElementType::Node,
             )
         };
@@ -1305,16 +1302,15 @@ pub(crate) fn obj_parse_material(uc: &Context) -> Result<(), Fail> {
         info.fbx_id = fbx_id;
         info.name = name;
 
-        // SAFETY: `info` is an unaliased local — write-capable provenance, live
-        // and unmoved across the call — out-param for the element push onto uc's
-        // own element arenas. Its `name` is the pooled NUL-terminated material
-        // name and its `props`/`dom_node` are zeroed, so the pointers the element
-        // stores outlive the scene; `Material` is the element struct for
+        // SAFETY: the element push targets uc's own element arenas; `info`'s
+        // `name` is the pooled NUL-terminated material name and its
+        // `props`/`dom_node` are zeroed, so the pointers the element stores
+        // outlive the scene; `Material` is the element struct for
         // `ElementType::Material`.
         let material: *mut Material = unsafe {
             push_element::<Material>(
                 uc,
-                View::<ElementInfo>::from_ptr(&raw mut info),
+                View::<ElementInfo>::from_mut(&mut info),
                 ElementType::Material,
             )
         };

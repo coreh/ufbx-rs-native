@@ -2313,18 +2313,15 @@ pub(crate) unsafe fn load_geometry_cache(
     // builds the same bytes in a local carried by `Err` (the shim owns the
     // slot writes).
     let mut error: Error = Error::default();
-    // SAFETY: `&raw mut error` is this frame's live `Error` slot the format
-    // writes into (a write-capable mint), and the format string is a literal
-    // with no conversions.
+    // SAFETY: the format string is a literal with no conversions.
     unsafe {
         ufbxi_fmt_err_info!(
-            Some(crate::native::error::ErrorView::from_ptr(&raw mut error)),
+            Some(crate::native::error::ErrorView::from_mut(&mut error)),
             "UFBX_ENABLE_GEOMETRY_CACHE"
         )
     };
     ufbxi_report_err_msg!(
-        // SAFETY: same live local `Error` slot, minted as a view for the report.
-        unsafe { crate::native::error::ErrorView::from_ptr(&raw mut error) },
+        crate::native::error::ErrorView::from_mut(&mut error),
         "UFBXI_FEATURE_GEOMETRY_CACHE",
         "Feature disabled"
     );
@@ -2792,14 +2789,10 @@ pub(crate) fn transform_to_axes(uc: &Context, dst_axes: CoordinateAxes) {
             }
         }
 
-        // SAFETY: `axis_mat` is a live, fully written stack local, so `&raw mut`
-        // over it is write-capable and stays valid for the mirror call, and
-        // `&raw const` over it is a pure value read for the conversion.
+        // SAFETY: `&raw const axis_mat` over the live, fully written stack local
+        // is a pure value read for the conversion.
         unsafe {
-            mirror_matrix(
-                View::<Matrix>::from_ptr(&raw mut axis_mat),
-                uc.mirror_axis(),
-            );
+            mirror_matrix(View::<Matrix>::from_mut(&mut axis_mat), uc.mirror_axis());
             root_node_view.set_local_transform(matrix_to_transform(&raw const axis_mat));
         }
         root_node_view.set_node_to_parent(axis_mat);

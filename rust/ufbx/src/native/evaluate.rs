@@ -1538,9 +1538,7 @@ pub(crate) unsafe fn load(
         // rewrite is observable only through the slot, so applying it to the
         // carried value is byte-equivalent).
         let mut fixed: Error = Error::default();
-        // SAFETY: `&raw mut fixed` addresses this frame's live, write-capable
-        // `Error` local, unmoved for the mint's borrow.
-        let fixed_view = unsafe { crate::native::error::ErrorView::from_ptr(&raw mut fixed) };
+        let fixed_view = crate::native::error::ErrorView::from_mut(&mut fixed);
         fix_error_type(uc.error_view(), b"Failed to load\0", Some(fixed_view));
         if fixed.type_ == ErrorType::Unknown
             && uc.scene_view().metadata_view().file_format() == FileFormat::Fbx
@@ -1551,12 +1549,11 @@ pub(crate) unsafe fn load(
                 b"Unsupported version".len(),
             );
             fixed.type_ = ErrorType::UnsupportedVersion;
-            // SAFETY: `&raw mut fixed` is this frame's live error slot the
-            // `%u` format writes into (a write-capable mint), and the single
-            // `%u` conversion is matched by the `u32` argument.
+            // SAFETY: the single `%u` conversion is matched by the `u32`
+            // argument.
             unsafe {
                 ufbxi_fmt_err_info!(
-                    Some(crate::native::error::ErrorView::from_ptr(&raw mut fixed)),
+                    Some(crate::native::error::ErrorView::from_mut(&mut fixed)),
                     "%u",
                     uc.version()
                 )
@@ -4499,9 +4496,7 @@ pub(crate) unsafe fn evaluate_scene(
         // C copies the fixed error into the caller's slot; the `Result` shape
         // carries it by value instead (the shim owns the slot writes).
         let mut fixed: Error = Error::default();
-        // SAFETY: `&raw mut fixed` addresses this frame's live, write-capable
-        // `Error` local, unmoved for the mint's borrow.
-        let fixed_view = unsafe { crate::native::error::ErrorView::from_ptr(&raw mut fixed) };
+        let fixed_view = crate::native::error::ErrorView::from_mut(&mut fixed);
         fix_error_type(ec.error_view(), b"Failed to evaluate\0", Some(fixed_view));
         buf_free(ec.tmp_view());
         buf_free(ec.result_view());
@@ -6254,12 +6249,10 @@ pub(crate) fn finalize_bake_times(bc: &BakeContext, p_dst: &mut BakeTimeList) ->
         data: times,
         count: num_times,
     };
-    // SAFETY: `times_run` is a local, initialized, write-capable
-    // `ufbxi_bake_time_list` header, live and unmoved for the rest of this
-    // body (nothing touches it outside the view), describing the non-null
-    // run vouched above.
-    let times_view: &BakeTimeListView =
-        unsafe { View::<BakeTimeList, Mut>::from_ptr(&raw mut times_run) };
+    // `times_run` is a local, initialized `ufbxi_bake_time_list` header
+    // describing the non-null run vouched above; nothing touches it outside
+    // the view for the rest of this body.
+    let times_view: &BakeTimeListView = View::<BakeTimeList, Mut>::from_mut(&mut times_run);
 
     // Deduplicate times
     if num_times > 0 {
@@ -7271,16 +7264,13 @@ pub(crate) unsafe fn bake_node_imp(
 
     // C indexes `keys_t.data[ix_t]` etc. below; each list view addresses its own
     // local list, so `at(ix)` is the bounds-checked form of that indexing.
-    // SAFETY: each list is a live local `ufbx_baked_*_list` whose `data` is the
-    // non-null (checked) run of `count` slots just pushed onto `bc.tmp_prop`,
-    // arena memory with write-capable provenance.
-    let (keys_t_view, keys_r_view, keys_s_view) = unsafe {
-        (
-            View::<List<BakedVec3>>::from_ptr(&raw mut keys_t),
-            View::<List<BakedQuat>>::from_ptr(&raw mut keys_r),
-            View::<List<BakedVec3>>::from_ptr(&raw mut keys_s),
-        )
-    };
+    // Each list is a local `ufbx_baked_*_list` whose `data` is the non-null
+    // (checked) run of `count` slots just pushed onto `bc.tmp_prop`.
+    let (keys_t_view, keys_r_view, keys_s_view) = (
+        View::<List<BakedVec3>>::from_mut(&mut keys_t),
+        View::<List<BakedQuat>>::from_mut(&mut keys_r),
+        View::<List<BakedVec3>>::from_mut(&mut keys_s),
+    );
 
     let mut ix_t: usize = 0;
     let mut ix_r: usize = 0;

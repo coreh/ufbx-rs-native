@@ -1079,9 +1079,8 @@ pub(crate) unsafe fn free_xml(doc: *mut XmlDocument) {
     // contract); the bitwise read moves the owning `Buf` to the stack, and the
     // stale field dies with the storage this call frees.
     let mut buf: Buf = unsafe { core::ptr::read(&raw const (*doc).buf) };
-    // SAFETY: `buf` is that live stack copy, the sole owner of the chunk list;
-    // minting the `BufView` `buf_free` takes over that stack local.
-    buf_free(unsafe { BufView::from_ptr(&raw mut buf) });
+    // `buf` is that live stack copy, the sole owner of the chunk list.
+    buf_free(BufView::from_mut(&mut buf));
 }
 
 // ufbx.c:7662-7670 `ufbxi_xml_find_child`

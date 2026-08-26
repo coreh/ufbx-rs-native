@@ -1673,10 +1673,8 @@ pub(crate) fn set_own_prop_vec3_uniform(props: &PropsView, name: &[u8], value: R
     local_props.defaults = None;
     // `name` is the interned static run itself — `find_prop`'s
     // pointer-identity carrier (its length is never read).
-    // SAFETY: `&raw mut local_props` addresses this frame's live, fully
-    // initialized `Props` — the view mint's vouch.
     let prop: Option<&PropView> =
-        crate::native::parse::find_prop(unsafe { PropsView::from_ptr(&raw mut local_props) }, name);
+        crate::native::parse::find_prop(PropsView::from_mut(&mut local_props), name);
     if let Some(prop) = prop {
         // SAFETY: `value_vec4_raw()` addresses the found prop's own 4-`Real`
         // value union arm, which C writes component by component.
@@ -1921,11 +1919,10 @@ pub(crate) fn setup_scale_helper(
     let mut i: usize = 0;
     while i < max_props {
         let hp: *const ScaleHelperProp = &SCALE_HELPER_PROPS[i];
-        // SAFETY: `&raw mut props_copy` addresses this frame's live, fully
-        // initialized `Props`; `hp` points into the `SCALE_HELPER_PROPS`
-        // static, whose `name` is an interned `ufbxi_*` string.
+        // SAFETY: `hp` points into the `SCALE_HELPER_PROPS` static, whose
+        // `name` is an interned `ufbxi_*` string.
         let src_prop: *mut Prop =
-            match unsafe { find_prop(PropsView::from_ptr(&raw mut props_copy), (*hp).name) } {
+            match unsafe { find_prop(PropsView::from_mut(&mut props_copy), (*hp).name) } {
                 Some(prop) => prop.get(),
                 None => {
                     i += 1;
@@ -3318,11 +3315,7 @@ pub(crate) fn read_synthetic_blend_shapes(
         shape_info.name = name;
         shape_info.dom_node = get_dom_node(uc, Some(n));
 
-        // SAFETY: `shape_info` is this frame's own `ufbxi_element_info` local —
-        // write-capable provenance, live and unmoved across the call.
-        read_shape(uc, n, unsafe {
-            View::<ElementInfo, Mut>::from_ptr(&raw mut shape_info)
-        })?;
+        read_shape(uc, n, View::<ElementInfo, Mut>::from_mut(&mut shape_info))?;
 
         connect_oo(uc, channel_fbx_id, deformer_fbx_id)?;
         connect_oo(uc, shape_info.fbx_id, channel_fbx_id)?;
@@ -7300,19 +7293,16 @@ pub(crate) unsafe fn read_synthetic_attribute(
     }
 
     // SAFETY (this whole dispatch): every arm hands the same parse-tree NodeView
-    // `node`, the local `&raw mut attrib_info`, and interned NUL-terminated
+    // `node`, a handle on the local `attrib_info`, and interned NUL-terminated
     // `type_str` / `sub_type` / `super_type` strings to the per-type reader
     // selected by the pointer-identity comparisons; each `read_element` arm
     // pairs `size_of::<T>()` with `T`'s own `ElementType`.
     unsafe {
         if sub_type.as_ptr() == sp::Mesh.as_ptr() {
-            // SAFETY: `attrib_info` is this frame's own `ufbxi_element_info`
-            // local — write-capable provenance, live and unmoved across the
-            // call.
             read_mesh(
                 uc,
                 node,
-                View::<ElementInfo, Mut>::from_ptr(&raw mut attrib_info),
+                View::<ElementInfo, Mut>::from_mut(&mut attrib_info),
             )?;
         } else if sub_type.as_ptr() == sp::Light.as_ptr() {
             read_element(
@@ -7334,13 +7324,10 @@ pub(crate) unsafe fn read_synthetic_attribute(
             || sub_type.as_ptr() == sp::Limb.as_ptr()
             || sub_type.as_ptr() == sp::Root.as_ptr()
         {
-            // SAFETY: `attrib_info` is this frame's own `ufbxi_element_info`
-            // local — write-capable provenance, live and unmoved across the
-            // call.
             read_bone(
                 uc,
                 node,
-                View::<ElementInfo, Mut>::from_ptr(&raw mut attrib_info),
+                View::<ElementInfo, Mut>::from_mut(&mut attrib_info),
                 sub_type,
             )?;
         } else if sub_type.as_ptr() == sp::Null.as_ptr() || sub_type.as_ptr() == sp::Marker.as_ptr()
@@ -7356,13 +7343,10 @@ pub(crate) unsafe fn read_synthetic_attribute(
             if find_child(node, sp::KnotVector.as_ptr()).is_none() {
                 return Ok(());
             }
-            // SAFETY: `attrib_info` is this frame's own `ufbxi_element_info`
-            // local — write-capable provenance, live and unmoved across the
-            // call.
             read_nurbs_curve(
                 uc,
                 node,
-                View::<ElementInfo, Mut>::from_ptr(&raw mut attrib_info),
+                View::<ElementInfo, Mut>::from_mut(&mut attrib_info),
             )?;
         } else if sub_type.as_ptr() == sp::NurbsSurface.as_ptr() {
             if find_child(node, sp::KnotVectorU.as_ptr()).is_none() {
@@ -7371,13 +7355,10 @@ pub(crate) unsafe fn read_synthetic_attribute(
             if find_child(node, sp::KnotVectorV.as_ptr()).is_none() {
                 return Ok(());
             }
-            // SAFETY: `attrib_info` is this frame's own `ufbxi_element_info`
-            // local — write-capable provenance, live and unmoved across the
-            // call.
             read_nurbs_surface(
                 uc,
                 node,
-                View::<ElementInfo, Mut>::from_ptr(&raw mut attrib_info),
+                View::<ElementInfo, Mut>::from_mut(&mut attrib_info),
             )?;
         } else if sub_type.as_ptr() == sp::Line.as_ptr() {
             if find_child(node, sp::Points.as_ptr()).is_none() {
@@ -7386,13 +7367,10 @@ pub(crate) unsafe fn read_synthetic_attribute(
             if find_child(node, sp::PointsIndex.as_ptr()).is_none() {
                 return Ok(());
             }
-            // SAFETY: `attrib_info` is this frame's own `ufbxi_element_info`
-            // local — write-capable provenance, live and unmoved across the
-            // call.
             read_line(
                 uc,
                 node,
-                View::<ElementInfo, Mut>::from_ptr(&raw mut attrib_info),
+                View::<ElementInfo, Mut>::from_mut(&mut attrib_info),
             )?;
         } else if sub_type.as_ptr() == sp::TrimNurbsSurface.as_ptr() {
             if find_child(node, sp::Layer.as_ptr()).is_none() {
@@ -7430,13 +7408,10 @@ pub(crate) unsafe fn read_synthetic_attribute(
                 ElementType::CameraSwitcher,
             )?;
         } else if sub_type.as_ptr() == sp::FKEffector.as_ptr() {
-            // SAFETY: `attrib_info` is this frame's own `ufbxi_element_info`
-            // local — write-capable provenance, live and unmoved across the
-            // call.
             read_marker(
                 uc,
                 node,
-                View::<ElementInfo, Mut>::from_ptr(&raw mut attrib_info),
+                View::<ElementInfo, Mut>::from_mut(&mut attrib_info),
                 sub_type,
                 MarkerType::FkEffector,
             )?;
@@ -7445,7 +7420,7 @@ pub(crate) unsafe fn read_synthetic_attribute(
             read_marker(
                 uc,
                 node,
-                View::<ElementInfo, Mut>::from_ptr(&raw mut attrib_info),
+                View::<ElementInfo, Mut>::from_mut(&mut attrib_info),
                 sub_type,
                 MarkerType::IkEffector,
             )?;
@@ -7461,14 +7436,12 @@ pub(crate) unsafe fn read_synthetic_attribute(
             // C-parity: the length is `strlen`, not the borrowed run's own
             // length; `sub_type` is NUL-terminated within its run (fn contract).
             let sub_type_str: String = String::new_c(sub_type.as_ptr(), strlen(sub_type.as_ptr()));
-            // SAFETY: `attrib_info` is this frame's own `ufbxi_element_info`
-            // local — write-capable provenance, live and unmoved across the
-            // call; `super_type` is NUL-terminated within its own run (fn
+            // SAFETY: `super_type` is NUL-terminated within its own run (fn
             // contract), which is what `read_unknown`'s `strlen` walks.
             read_unknown(
                 uc,
                 node,
-                View::<ElementInfo, Mut>::from_ptr(&raw mut attrib_info),
+                View::<ElementInfo, Mut>::from_mut(&mut attrib_info),
                 type_str,
                 sub_type_str,
                 super_type,
@@ -7556,11 +7529,7 @@ pub(crate) fn read_object(uc: &Context, node: &NodeView) -> Result<(), Fail> {
 
     let name: *const u8 = node.name();
     let sub_type: *const u8 = sub_type_str.data;
-    // SAFETY: `&raw mut info.props` is a local `ufbx_props` out-param, exclusively
-    // owned by this frame — write-capable provenance, stable for the call.
-    unsafe {
-        read_properties(uc, node, PropsView::from_ptr(&raw mut info.props))?;
-    }
+    read_properties(uc, node, PropsView::from_mut(&mut info.props))?;
     // `find_template` matches on the interned runs' ADDRESSES, so borrow the
     // bytes `name` / `sub_type` already point at. `slice::from_raw_parts` (not
     // `slice_from_ptr`) keeps a zero-length run's own pointer, which the
@@ -7593,21 +7562,19 @@ pub(crate) fn read_object(uc: &Context, node: &NodeView) -> Result<(), Fail> {
     }
 
     // SAFETY (this whole dispatch): every arm hands the same parse-tree
-    // NodeView `node`, the local `&raw mut info`, and pooled `type_str` /
+    // NodeView `node`, a handle on the local `info`, and pooled `type_str` /
     // `sub_type_str` / `name` / `sub_type` strings to the per-type reader
     // selected by the pointer-identity comparisons — one logical dispatch, no
     // pointer arithmetic of its own.
     unsafe {
         if name == sp::Model.as_ptr() {
             if uc.version() < 7000 {
-                // SAFETY: `info` is this frame's own `ufbxi_element_info`
-                // local — write-capable provenance, live and unmoved across the
-                // call; `sub_type_run` and `name_run` each span a pooled run
-                // plus the terminator the callee's `strlen` walks end on.
+                // SAFETY: `sub_type_run` and `name_run` each span a pooled run plus
+                // the terminator the callee's `strlen` walks end on.
                 read_synthetic_attribute(
                     uc,
                     node,
-                    View::<ElementInfo, Mut>::from_ptr(&raw mut info),
+                    View::<ElementInfo, Mut>::from_mut(&mut info),
                     type_str,
                     sub_type_run,
                     name_run,
@@ -7635,13 +7602,10 @@ pub(crate) fn read_object(uc: &Context, node: &NodeView) -> Result<(), Fail> {
                 || sub_type == sp::Limb.as_ptr()
                 || sub_type == sp::Root.as_ptr()
             {
-                // SAFETY: `info` is this frame's own `ufbxi_element_info`
-                // local — write-capable provenance, live and unmoved across the
-                // call.
                 read_bone(
                     uc,
                     node,
-                    View::<ElementInfo, Mut>::from_ptr(&raw mut info),
+                    View::<ElementInfo, Mut>::from_mut(&mut info),
                     sub_type_bytes,
                 )?;
             } else if sub_type == sp::Null.as_ptr() || sub_type == sp::Marker.as_ptr() {
@@ -7669,13 +7633,10 @@ pub(crate) fn read_object(uc: &Context, node: &NodeView) -> Result<(), Fail> {
                     ElementType::CameraSwitcher,
                 )?;
             } else if sub_type == sp::FKEffector.as_ptr() {
-                // SAFETY: `info` is this frame's own `ufbxi_element_info`
-                // local — write-capable provenance, live and unmoved across the
-                // call.
                 read_marker(
                     uc,
                     node,
-                    View::<ElementInfo, Mut>::from_ptr(&raw mut info),
+                    View::<ElementInfo, Mut>::from_mut(&mut info),
                     sub_type_bytes,
                     MarkerType::FkEffector,
                 )?;
@@ -7684,7 +7645,7 @@ pub(crate) fn read_object(uc: &Context, node: &NodeView) -> Result<(), Fail> {
                 read_marker(
                     uc,
                     node,
-                    View::<ElementInfo, Mut>::from_ptr(&raw mut info),
+                    View::<ElementInfo, Mut>::from_mut(&mut info),
                     sub_type_bytes,
                     MarkerType::IkEffector,
                 )?;
@@ -7697,12 +7658,12 @@ pub(crate) fn read_object(uc: &Context, node: &NodeView) -> Result<(), Fail> {
                     ElementType::LodGroup,
                 )?;
             } else {
-                // SAFETY: `info` is this frame's own `ufbxi_element_info` local —
-                // write-capable provenance, live and unmoved across the call.
+                // SAFETY: `name_run` spans the pooled node name plus the terminator
+                // `read_unknown`'s `strlen` walks to.
                 read_unknown(
                     uc,
                     node,
-                    View::<ElementInfo, Mut>::from_ptr(&raw mut info),
+                    View::<ElementInfo, Mut>::from_mut(&mut info),
                     type_str,
                     sub_type_str,
                     name_run,
@@ -7710,25 +7671,15 @@ pub(crate) fn read_object(uc: &Context, node: &NodeView) -> Result<(), Fail> {
             }
         } else if name == sp::Geometry.as_ptr() {
             if sub_type == sp::Mesh.as_ptr() {
-                // SAFETY: `info` is this frame's own `ufbxi_element_info` local —
-                // write-capable provenance, live and unmoved across the call.
-                read_mesh(uc, node, View::<ElementInfo, Mut>::from_ptr(&raw mut info))?;
+                read_mesh(uc, node, View::<ElementInfo, Mut>::from_mut(&mut info))?;
             } else if sub_type == sp::Shape.as_ptr() {
-                // SAFETY: `info` is this frame's own `ufbxi_element_info` local —
-                // write-capable provenance, live and unmoved across the call.
-                read_shape(uc, node, View::<ElementInfo, Mut>::from_ptr(&raw mut info))?;
+                read_shape(uc, node, View::<ElementInfo, Mut>::from_mut(&mut info))?;
             } else if sub_type == sp::NurbsCurve.as_ptr() {
-                // SAFETY: `info` is this frame's own `ufbxi_element_info` local —
-                // write-capable provenance, live and unmoved across the call.
-                read_nurbs_curve(uc, node, View::<ElementInfo, Mut>::from_ptr(&raw mut info))?;
+                read_nurbs_curve(uc, node, View::<ElementInfo, Mut>::from_mut(&mut info))?;
             } else if sub_type == sp::NurbsSurface.as_ptr() {
-                // SAFETY: `info` is this frame's own `ufbxi_element_info` local —
-                // write-capable provenance, live and unmoved across the call.
-                read_nurbs_surface(uc, node, View::<ElementInfo, Mut>::from_ptr(&raw mut info))?;
+                read_nurbs_surface(uc, node, View::<ElementInfo, Mut>::from_mut(&mut info))?;
             } else if sub_type == sp::Line.as_ptr() {
-                // SAFETY: `info` is this frame's own `ufbxi_element_info` local —
-                // write-capable provenance, live and unmoved across the call.
-                read_line(uc, node, View::<ElementInfo, Mut>::from_ptr(&raw mut info))?;
+                read_line(uc, node, View::<ElementInfo, Mut>::from_mut(&mut info))?;
             } else if sub_type == sp::TrimNurbsSurface.as_ptr() {
                 read_element(
                     uc,
@@ -7746,12 +7697,12 @@ pub(crate) fn read_object(uc: &Context, node: &NodeView) -> Result<(), Fail> {
                     ElementType::NurbsTrimBoundary,
                 )?;
             } else {
-                // SAFETY: `info` is this frame's own `ufbxi_element_info` local —
-                // write-capable provenance, live and unmoved across the call.
+                // SAFETY: `name_run` spans the pooled node name plus the terminator
+                // `read_unknown`'s `strlen` walks to.
                 read_unknown(
                     uc,
                     node,
-                    View::<ElementInfo, Mut>::from_ptr(&raw mut info),
+                    View::<ElementInfo, Mut>::from_mut(&mut info),
                     type_str,
                     sub_type_str,
                     name_run,
@@ -7759,13 +7710,9 @@ pub(crate) fn read_object(uc: &Context, node: &NodeView) -> Result<(), Fail> {
             }
         } else if name == sp::Deformer.as_ptr() {
             if sub_type == sp::Skin.as_ptr() {
-                // SAFETY: `info` is this frame's own `ufbxi_element_info` local —
-                // write-capable provenance, live and unmoved across the call.
-                read_skin(uc, node, View::<ElementInfo, Mut>::from_ptr(&raw mut info))?;
+                read_skin(uc, node, View::<ElementInfo, Mut>::from_mut(&mut info))?;
             } else if sub_type == sp::Cluster.as_ptr() {
-                // SAFETY: `info` is this frame's own `ufbxi_element_info` local —
-                // write-capable provenance, live and unmoved across the call.
-                read_skin_cluster(uc, node, View::<ElementInfo, Mut>::from_ptr(&raw mut info))?;
+                read_skin_cluster(uc, node, View::<ElementInfo, Mut>::from_mut(&mut info))?;
             } else if sub_type == sp::BlendShape.as_ptr() {
                 read_element(
                     uc,
@@ -7775,9 +7722,7 @@ pub(crate) fn read_object(uc: &Context, node: &NodeView) -> Result<(), Fail> {
                     ElementType::BlendDeformer,
                 )?;
             } else if sub_type == sp::BlendShapeChannel.as_ptr() {
-                // SAFETY: `info` is this frame's own `ufbxi_element_info` local —
-                // write-capable provenance, live and unmoved across the call.
-                read_blend_channel(uc, node, View::<ElementInfo, Mut>::from_ptr(&raw mut info))?;
+                read_blend_channel(uc, node, View::<ElementInfo, Mut>::from_mut(&mut info))?;
             } else if sub_type == sp::VertexCacheDeformer.as_ptr() {
                 read_element(
                     uc,
@@ -7787,37 +7732,27 @@ pub(crate) fn read_object(uc: &Context, node: &NodeView) -> Result<(), Fail> {
                     ElementType::CacheDeformer,
                 )?;
             } else {
-                // SAFETY: `info` is this frame's own `ufbxi_element_info` local —
-                // write-capable provenance, live and unmoved across the call.
+                // SAFETY: `name_run` spans the pooled node name plus the terminator
+                // `read_unknown`'s `strlen` walks to.
                 read_unknown(
                     uc,
                     node,
-                    View::<ElementInfo, Mut>::from_ptr(&raw mut info),
+                    View::<ElementInfo, Mut>::from_mut(&mut info),
                     type_str,
                     sub_type_str,
                     name_run,
                 )?;
             }
         } else if name == sp::Material.as_ptr() {
-            // SAFETY: `info` is this frame's own `ufbxi_element_info` local —
-            // write-capable provenance, live and unmoved across the call.
-            read_material(uc, node, View::<ElementInfo, Mut>::from_ptr(&raw mut info))?;
+            read_material(uc, node, View::<ElementInfo, Mut>::from_mut(&mut info))?;
         } else if name == sp::Texture.as_ptr() {
-            // SAFETY: `info` is this frame's own `ufbxi_element_info` local —
-            // write-capable provenance, live and unmoved across the call.
-            read_texture(uc, node, View::<ElementInfo, Mut>::from_ptr(&raw mut info))?;
+            read_texture(uc, node, View::<ElementInfo, Mut>::from_mut(&mut info))?;
         } else if name == sp::LayeredTexture.as_ptr() {
-            // SAFETY: `info` is this frame's own `ufbxi_element_info` local —
-            // write-capable provenance, live and unmoved across the call.
-            read_layered_texture(uc, node, View::<ElementInfo, Mut>::from_ptr(&raw mut info))?;
+            read_layered_texture(uc, node, View::<ElementInfo, Mut>::from_mut(&mut info))?;
         } else if name == sp::Video.as_ptr() {
-            // SAFETY: `info` is this frame's own `ufbxi_element_info` local —
-            // write-capable provenance, live and unmoved across the call.
-            read_video(uc, node, View::<ElementInfo, Mut>::from_ptr(&raw mut info))?;
+            read_video(uc, node, View::<ElementInfo, Mut>::from_mut(&mut info))?;
         } else if name == sp::AnimationStack.as_ptr() {
-            // SAFETY: `info` is this frame's own `ufbxi_element_info` local —
-            // write-capable provenance, live and unmoved across the call.
-            read_anim_stack(uc, node, View::<ElementInfo, Mut>::from_ptr(&raw mut info))?;
+            read_anim_stack(uc, node, View::<ElementInfo, Mut>::from_mut(&mut info))?;
         } else if name == sp::AnimationLayer.as_ptr() {
             read_element(
                 uc,
@@ -7835,16 +7770,12 @@ pub(crate) fn read_object(uc: &Context, node: &NodeView) -> Result<(), Fail> {
                 ElementType::AnimValue,
             )?;
         } else if name == sp::AnimationCurve.as_ptr() {
-            // SAFETY: `info` is this frame's own `ufbxi_element_info` local —
-            // write-capable provenance, live and unmoved across the call.
-            read_animation_curve(uc, node, View::<ElementInfo, Mut>::from_ptr(&raw mut info))?;
+            read_animation_curve(uc, node, View::<ElementInfo, Mut>::from_mut(&mut info))?;
         } else if name == sp::Pose.as_ptr() {
-            // SAFETY: `info` is this frame's own `ufbxi_element_info` local —
-            // write-capable provenance, live and unmoved across the call.
             read_pose(
                 uc,
                 node,
-                View::<ElementInfo, Mut>::from_ptr(&raw mut info),
+                View::<ElementInfo, Mut>::from_mut(&mut info),
                 sub_type_bytes,
             )?;
         } else if name == sp::Implementation.as_ptr() {
@@ -7856,14 +7787,10 @@ pub(crate) fn read_object(uc: &Context, node: &NodeView) -> Result<(), Fail> {
                 ElementType::Shader,
             )?;
         } else if name == sp::BindingTable.as_ptr() {
-            // SAFETY: `info` is this frame's own `ufbxi_element_info` local —
-            // write-capable provenance, live and unmoved across the call.
-            read_binding_table(uc, node, View::<ElementInfo, Mut>::from_ptr(&raw mut info))?;
+            read_binding_table(uc, node, View::<ElementInfo, Mut>::from_mut(&mut info))?;
         } else if name == sp::Collection.as_ptr() {
             if sub_type == sp::SelectionSet.as_ptr() {
-                // SAFETY: `info` is this frame's own `ufbxi_element_info` local —
-                // write-capable provenance, live and unmoved across the call.
-                read_selection_set(uc, node, View::<ElementInfo, Mut>::from_ptr(&raw mut info))?;
+                read_selection_set(uc, node, View::<ElementInfo, Mut>::from_mut(&mut info))?;
             }
         } else if name == sp::CollectionExclusive.as_ptr() {
             if sub_type == sp::DisplayLayer.as_ptr() {
@@ -7876,18 +7803,12 @@ pub(crate) fn read_object(uc: &Context, node: &NodeView) -> Result<(), Fail> {
                 )?;
             }
         } else if name == sp::SelectionNode.as_ptr() {
-            // SAFETY: `info` is this frame's own `ufbxi_element_info` local —
-            // write-capable provenance, live and unmoved across the call.
-            read_selection_node(uc, node, View::<ElementInfo, Mut>::from_ptr(&raw mut info))?;
+            read_selection_node(uc, node, View::<ElementInfo, Mut>::from_mut(&mut info))?;
         } else if name == sp::Constraint.as_ptr() {
             if sub_type == sp::Character.as_ptr() {
-                // SAFETY: `info` is this frame's own `ufbxi_element_info` local —
-                // write-capable provenance, live and unmoved across the call.
-                read_character(uc, node, View::<ElementInfo, Mut>::from_ptr(&raw mut info))?;
+                read_character(uc, node, View::<ElementInfo, Mut>::from_mut(&mut info))?;
             } else {
-                // SAFETY: `info` is this frame's own `ufbxi_element_info` local —
-                // write-capable provenance, live and unmoved across the call.
-                read_constraint(uc, node, View::<ElementInfo, Mut>::from_ptr(&raw mut info))?;
+                read_constraint(uc, node, View::<ElementInfo, Mut>::from_mut(&mut info))?;
             }
         } else if name == sp::SceneInfo.as_ptr() {
             read_scene_info(uc, node)?;
@@ -7916,16 +7837,14 @@ pub(crate) fn read_object(uc: &Context, node: &NodeView) -> Result<(), Fail> {
                 ElementType::AudioLayer,
             )?;
         } else if name == sp::Audio.as_ptr() {
-            // SAFETY: `info` is this frame's own `ufbxi_element_info` local —
-            // write-capable provenance, live and unmoved across the call.
-            read_audio_clip(uc, node, View::<ElementInfo, Mut>::from_ptr(&raw mut info))?;
+            read_audio_clip(uc, node, View::<ElementInfo, Mut>::from_mut(&mut info))?;
         } else {
-            // SAFETY: `info` is this frame's own `ufbxi_element_info` local —
-            // write-capable provenance, live and unmoved across the call.
+            // SAFETY: `name_run` spans the pooled node name plus the terminator
+            // `read_unknown`'s `strlen` walks to.
             read_unknown(
                 uc,
                 node,
-                View::<ElementInfo, Mut>::from_ptr(&raw mut info),
+                View::<ElementInfo, Mut>::from_mut(&mut info),
                 type_str,
                 sub_type_str,
                 name_run,
@@ -9391,7 +9310,7 @@ pub(crate) fn read_root(uc: &Context) -> Result<(), Fail> {
             root_info.name = EMPTY_STRING.0;
             let root: *mut UfbxNode = push_element::<UfbxNode>(
                 uc,
-                View::<ElementInfo>::from_ptr(&raw mut root_info),
+                View::<ElementInfo>::from_mut(&mut root_info),
                 ElementType::Node,
             );
             ufbxi_check!(uc, !root.is_null(), "root");
@@ -10546,7 +10465,7 @@ pub(crate) fn read_legacy_media(uc: &Context, node: &NodeView) -> Result<(), Fai
                 read_video(
                     uc,
                     child,
-                    View::<ElementInfo, Mut>::from_ptr(&raw mut video_info),
+                    View::<ElementInfo, Mut>::from_mut(&mut video_info),
                 )?;
             }
         }
@@ -10591,7 +10510,7 @@ pub(crate) fn read_legacy_model(uc: &Context, node: &NodeView) -> Result<(), Fai
 
         let elem_node: *mut UfbxNode = push_element::<UfbxNode>(
             uc,
-            View::<ElementInfo>::from_ptr(&raw mut info),
+            View::<ElementInfo>::from_mut(&mut info),
             ElementType::Node,
         );
         ufbxi_check!(uc, !elem_node.is_null(), "elem_node");
@@ -10619,47 +10538,36 @@ pub(crate) fn read_legacy_model(uc: &Context, node: &NodeView) -> Result<(), Fai
         attrib_type = got.0;
     }
 
-    // SAFETY (this dispatch): each arm hands the same parse-tree NodeView and a
-    // handle on the local `attrib_info` to the legacy attribute reader selected
-    // by pointer-identity comparison of the pooled `attrib_type`; `attrib_info`
-    // is this frame's own live, unmoved `ufbxi_element_info`.
+    // Each arm hands the same parse-tree NodeView and a handle on the local
+    // `attrib_info` to the legacy attribute reader selected by pointer-identity
+    // comparison of the pooled `attrib_type`.
     let mut has_attrib: bool = true;
-    unsafe {
-        if attrib_type == sp::Light.as_ptr() {
-            // SAFETY: `attrib_info` is this frame's own `ufbxi_element_info`
-            // local — write-capable provenance, live and unmoved across the call.
-            read_legacy_light(
-                uc,
-                node,
-                View::<ElementInfo, Mut>::from_ptr(&raw mut attrib_info),
-            )?;
-        } else if attrib_type == sp::Camera.as_ptr() {
-            // SAFETY: `attrib_info` is this frame's own `ufbxi_element_info`
-            // local — write-capable provenance, live and unmoved across the call.
-            read_legacy_camera(
-                uc,
-                node,
-                View::<ElementInfo, Mut>::from_ptr(&raw mut attrib_info),
-            )?;
-        } else if attrib_type == sp::LimbNode.as_ptr() {
-            // SAFETY: `attrib_info` is this frame's own `ufbxi_element_info`
-            // local — write-capable provenance, live and unmoved across the call.
-            read_legacy_limb_node(
-                uc,
-                node,
-                View::<ElementInfo, Mut>::from_ptr(&raw mut attrib_info),
-            )?;
-        } else if find_child(node, sp::Vertices.as_ptr()).is_some() {
-            // SAFETY: `attrib_info` is this frame's own `ufbxi_element_info`
-            // local — write-capable provenance, live and unmoved across the call.
-            read_legacy_mesh(
-                uc,
-                node,
-                View::<ElementInfo, Mut>::from_ptr(&raw mut attrib_info),
-            )?;
-        } else {
-            has_attrib = false;
-        }
+    if attrib_type == sp::Light.as_ptr() {
+        read_legacy_light(
+            uc,
+            node,
+            View::<ElementInfo, Mut>::from_mut(&mut attrib_info),
+        )?;
+    } else if attrib_type == sp::Camera.as_ptr() {
+        read_legacy_camera(
+            uc,
+            node,
+            View::<ElementInfo, Mut>::from_mut(&mut attrib_info),
+        )?;
+    } else if attrib_type == sp::LimbNode.as_ptr() {
+        read_legacy_limb_node(
+            uc,
+            node,
+            View::<ElementInfo, Mut>::from_mut(&mut attrib_info),
+        )?;
+    } else if find_child(node, sp::Vertices.as_ptr()).is_some() {
+        read_legacy_mesh(
+            uc,
+            node,
+            View::<ElementInfo, Mut>::from_mut(&mut attrib_info),
+        )?;
+    } else {
+        has_attrib = false;
     }
 
     // Mark the node as having an attribute so property connections can be forwarded
@@ -10810,7 +10718,7 @@ pub(crate) fn read_legacy_root(uc: &Context) -> Result<(), Fail> {
             )?;
             let layer: *mut AnimLayer = push_element::<AnimLayer>(
                 uc,
-                View::<ElementInfo>::from_ptr(&raw mut layer_info),
+                View::<ElementInfo>::from_mut(&mut layer_info),
                 ElementType::AnimLayer,
             );
             ufbxi_check!(uc, !layer.is_null(), "layer");
@@ -10820,7 +10728,7 @@ pub(crate) fn read_legacy_root(uc: &Context) -> Result<(), Fail> {
             stack_info.fbx_id = push_synthetic_id(uc);
             let stack: *mut AnimStack = push_element::<AnimStack>(
                 uc,
-                View::<ElementInfo>::from_ptr(&raw mut stack_info),
+                View::<ElementInfo>::from_mut(&mut stack_info),
                 ElementType::AnimStack,
             );
             ufbxi_check!(uc, !stack.is_null(), "stack");

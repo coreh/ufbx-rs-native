@@ -250,12 +250,11 @@ pub(crate) unsafe fn release_ref(mut refcount: *mut Refcount) {
         // the same `Refcount`; `ptr::read` moves it out by value once.
         let mut buf: Buf = unsafe { core::ptr::read(&raw const (*refcount).buf) };
         buf.ator = &raw mut ator;
-        // SAFETY: `buf` is the just-moved `Buf`, now owning its stack `ator`;
-        // minting the `BufView` `buf_free` takes over that stack local.
-        buf_free(unsafe { BufView::from_ptr(&raw mut buf) });
+        // `buf` is the just-moved `Buf`, now owning its stack `ator`.
+        buf_free(BufView::from_mut(&mut buf));
         // SAFETY: `ator` is this frame's live, unmoved stack copy of the
         // refcount's allocator, torn down exactly once here.
-        unsafe { free_ator(AllocatorView::from_ptr(&raw mut ator)) };
+        unsafe { free_ator(AllocatorView::from_mut(&mut ator)) };
 
         refcount = parent;
     }
@@ -1598,13 +1597,12 @@ pub(crate) unsafe fn evaluate_prop_flags_len(
     if unsafe { (*anim).prop_overrides.count } > 0 {
         // SAFETY: `&raw const (*anim).prop_overrides` addresses the live anim's
         // own overrides list (read-only during evaluation — the `Const` mint's
-        // freeze) and `&raw mut result` roots a write-capable `Mut` view over
-        // the local prop.
+        // freeze); the result view is rooted on the local prop.
         unsafe {
             evaluate::find_prop_override(
                 View::<_, Const>::from_ptr(&raw const (*anim).prop_overrides),
                 element_view.element_id(),
-                View::<_, Mut>::from_ptr(&raw mut result),
+                View::<_, Mut>::from_mut(&mut result),
             )
         };
         return result;
@@ -2016,7 +2014,7 @@ pub(crate) unsafe fn evaluate_transform_flags(
             core::ptr::write(
                 t,
                 get_transform(
-                    View::<Props, Const>::from_ptr(&raw const props),
+                    View::<Props, Const>::from_ref(&props),
                     order,
                     View::<Node, Const>::from_ptr(node),
                     translation_scale,
@@ -2034,7 +2032,7 @@ pub(crate) unsafe fn evaluate_transform_flags(
             // through while the views are held.
             unsafe {
                 (*t).rotation = get_rotation(
-                    View::<Props, Const>::from_ptr(&raw const props),
+                    View::<Props, Const>::from_ref(&props),
                     order,
                     View::<Node, Const>::from_ptr(node),
                 );
@@ -2051,7 +2049,7 @@ pub(crate) unsafe fn evaluate_transform_flags(
             // through while the views are held.
             unsafe {
                 (*t).scale = get_scale(
-                    View::<Props, Const>::from_ptr(&raw const props),
+                    View::<Props, Const>::from_ref(&props),
                     View::<Node, Const>::from_ptr(node),
                 );
             }
@@ -2121,15 +2119,11 @@ pub(crate) fn evaluate_blend_weight_flags<M: Mode>(
     };
     // C: `ufbxi_find_real(&props, ufbxi_DeformPercent, channel->weight * (ufbx_real)100.0) * (ufbx_real)0.01`
     // Const view: same read-only defaults-chain provenance as above.
-    // SAFETY: `&raw const props` roots a read-only view over the local `props`,
-    // which is not written while the view is live.
-    (unsafe {
-        ufbxi_find_real(
-            View::<Props, Const>::from_ptr(&raw const props),
-            &sp::DeformPercent,
-            channel.weight() * (100.0 as Real),
-        )
-    }) * (0.01 as Real)
+    ufbxi_find_real(
+        View::<Props, Const>::from_ref(&props),
+        &sp::DeformPercent,
+        channel.weight() * (100.0 as Real),
+    ) * (0.01 as Real)
 }
 
 // ufbx.c:31178-31192 `ufbx_evaluate_scene`
@@ -2173,17 +2167,15 @@ pub(crate) unsafe fn evaluate_scene(
     // builds the same bytes in a local carried by `Err` (the shim owns the
     // slot writes).
     let mut error: Error = Error::default();
-    // SAFETY: `&raw mut error` is this frame's live `Error` slot the `%s`-less
-    // format writes into (a write-capable mint).
+    // SAFETY: the `%s`-less format string is a literal with no conversions.
     unsafe {
         ufbxi_fmt_err_info!(
-            Some(crate::native::error::ErrorView::from_ptr(&raw mut error)),
+            Some(crate::native::error::ErrorView::from_mut(&mut error)),
             "UFBX_ENABLE_SCENE_EVALUATION"
         )
     };
     ufbxi_report_err_msg!(
-        // SAFETY: same live local `Error` slot, minted as a view for the report.
-        unsafe { crate::native::error::ErrorView::from_ptr(&raw mut error) },
+        crate::native::error::ErrorView::from_mut(&mut error),
         "UFBXI_FEATURE_SCENE_EVALUATION",
         "Feature disabled"
     );
@@ -2237,9 +2229,7 @@ pub(crate) unsafe fn create_anim(
         // C copies the fixed error into the caller's slot; the `Result` shape
         // carries it by value (the shim owns the slot writes).
         let mut fixed: Error = Error::default();
-        // SAFETY: `&raw mut fixed` addresses this frame's live, write-capable
-        // `Error` local, unmoved for the mint's borrow.
-        let fixed_view = unsafe { crate::native::error::ErrorView::from_ptr(&raw mut fixed) };
+        let fixed_view = crate::native::error::ErrorView::from_mut(&mut fixed);
         fix_error_type(
             ac.error_view(),
             b"Failed to create anim\0",
@@ -2367,9 +2357,7 @@ pub(crate) unsafe fn bake_anim(
         // C copies the fixed error into the caller's slot; the `Result` shape
         // carries it by value (the shim owns the slot writes).
         let mut fixed: Error = Error::default();
-        // SAFETY: `&raw mut fixed` addresses this frame's live, write-capable
-        // `Error` local, unmoved for the mint's borrow.
-        let fixed_view = unsafe { crate::native::error::ErrorView::from_ptr(&raw mut fixed) };
+        let fixed_view = crate::native::error::ErrorView::from_mut(&mut fixed);
         fix_error_type(bc.error_view(), b"Failed to bake anim\0", Some(fixed_view));
         buf_free(bc.result_view());
         // SAFETY: `bc.ator_result_view()` is the context's own result
@@ -2392,17 +2380,15 @@ pub(crate) unsafe fn bake_anim(
     // builds the same bytes in a local carried by `Err` (the shim owns the
     // slot writes).
     let mut error: Error = Error::default();
-    // SAFETY: `&raw mut error` is this frame's live `Error` slot the `%s`-less
-    // format writes into (a write-capable mint).
+    // SAFETY: the `%s`-less format string is a literal with no conversions.
     unsafe {
         ufbxi_fmt_err_info!(
-            Some(crate::native::error::ErrorView::from_ptr(&raw mut error)),
+            Some(crate::native::error::ErrorView::from_mut(&mut error)),
             "UFBX_ENABLE_ANIMATION_BAKING"
         )
     };
     ufbxi_report_err_msg!(
-        // SAFETY: same live local `Error` slot, minted as a view for the report.
-        unsafe { crate::native::error::ErrorView::from_ptr(&raw mut error) },
+        crate::native::error::ErrorView::from_mut(&mut error),
         "UFBXI_FEATURE_ANIMATION_BAKING",
         "Feature disabled"
     );
@@ -4493,9 +4479,7 @@ pub(crate) unsafe fn tessellate_nurbs_curve(
         // C copies the fixed error into the caller's slot; the `Result` shape
         // carries it by value (the shim owns the slot writes).
         let mut fixed: Error = Error::default();
-        // SAFETY: `&raw mut fixed` addresses this frame's live, write-capable
-        // `Error` local, unmoved for the mint's borrow.
-        let fixed_view = unsafe { crate::native::error::ErrorView::from_ptr(&raw mut fixed) };
+        let fixed_view = crate::native::error::ErrorView::from_mut(&mut fixed);
         fix_error_type(tc.error_view(), b"Failed to tessellate\0", Some(fixed_view));
         buf_free(tc.result_view());
         // SAFETY: `ator_result_view()` addresses `tc`'s own result allocator,
@@ -4519,17 +4503,15 @@ pub(crate) unsafe fn tessellate_nurbs_curve(
     // builds the same bytes in a local carried by `Err` (the shim owns the
     // slot writes).
     let mut error: Error = Error::default();
-    // SAFETY: `&raw mut error` is this frame's live `Error` slot the `%s`-less
-    // format writes into (a write-capable mint).
+    // SAFETY: the `%s`-less format string is a literal with no conversions.
     unsafe {
         ufbxi_fmt_err_info!(
-            Some(crate::native::error::ErrorView::from_ptr(&raw mut error)),
+            Some(crate::native::error::ErrorView::from_mut(&mut error)),
             "UFBX_ENABLE_TESSELLATION"
         )
     };
     ufbxi_report_err_msg!(
-        // SAFETY: same live local `Error` slot, minted as a view for the report.
-        unsafe { crate::native::error::ErrorView::from_ptr(&raw mut error) },
+        crate::native::error::ErrorView::from_mut(&mut error),
         "UFBXI_FEATURE_TESSELLATION",
         "Feature disabled"
     );
@@ -4587,9 +4569,7 @@ pub(crate) unsafe fn tessellate_nurbs_surface(
         // C copies the fixed error into the caller's slot; the `Result` shape
         // carries it by value (the shim owns the slot writes).
         let mut fixed: Error = Error::default();
-        // SAFETY: `&raw mut fixed` addresses this frame's live, write-capable
-        // `Error` local, unmoved for the mint's borrow.
-        let fixed_view = unsafe { crate::native::error::ErrorView::from_ptr(&raw mut fixed) };
+        let fixed_view = crate::native::error::ErrorView::from_mut(&mut fixed);
         fix_error_type(tc.error_view(), b"Failed to tessellate\0", Some(fixed_view));
         buf_free(tc.result_view());
         // SAFETY: `ator_result_view()` addresses `tc`'s own result allocator,
@@ -4614,9 +4594,7 @@ pub(crate) unsafe fn tessellate_nurbs_surface(
     // slot writes).
     let mut error: Error = Error::default();
     ufbxi_report_err_msg!(
-        // SAFETY: `&raw mut error` is this frame's live `Error` slot, minted as
-        // a view for the report.
-        unsafe { crate::native::error::ErrorView::from_ptr(&raw mut error) },
+        crate::native::error::ErrorView::from_mut(&mut error),
         "UFBXI_FEATURE_TESSELLATION",
         "Feature disabled"
     );
@@ -7473,11 +7451,8 @@ mod tests {
         let opts = RawAllocatorOpts::default();
         init_ator(
             error,
-            // SAFETY: `ator` is this frame's live, unmoved local.
-            unsafe { AllocatorView::from_ptr(&raw mut ator) },
-            // SAFETY: `opts` is this frame's live local, written nowhere while
-            // the read-only view is held.
-            Some(unsafe { View::<RawAllocatorOpts, Const>::from_ptr(&raw const opts) }),
+            AllocatorView::from_mut(&mut ator),
+            Some(View::<RawAllocatorOpts, Const>::from_ref(&opts)),
             c"test",
         );
 
@@ -7485,13 +7460,9 @@ mod tests {
         let mut buf = unsafe { core::mem::MaybeUninit::<Buf>::zeroed().assume_init() };
         buf.ator = &raw mut ator;
 
-        // SAFETY: `buf` is a live local backed by `ator`; minting the `BufView`
-        // the push allocates `MeshImp`-sized storage from.
-        let imp = push_size(
-            unsafe { BufView::from_ptr(&raw mut buf) },
-            size_of::<MeshImp>(),
-            1,
-        ) as *mut MeshImp;
+        // `buf` is a live local backed by `ator`; the push allocates
+        // `MeshImp`-sized storage from it.
+        let imp = push_size(BufView::from_mut(&mut buf), size_of::<MeshImp>(), 1) as *mut MeshImp;
         assert!(!imp.is_null());
         // SAFETY: `imp` is the non-null `MeshImp`-sized allocation just made; the
         // write zero-fills exactly its byte extent.
@@ -7860,7 +7831,7 @@ mod tests {
             // `Const` mint: the test list's `data` comes from a `&Vec` borrow
             // (SharedReadOnly), so a `Mut`-mode probe mint over it would be the
             // documented Stacked Borrows trap; reads only, no writes spanned.
-            let layer_view = View::<AnimLayer, Const>::from_ptr(&raw const layer);
+            let layer_view = View::<AnimLayer, Const>::from_ref(&layer);
             let find = |e: *mut Element, n: &[u8]| {
                 find_anim_prop_len(Some(layer_view), e, n).map_or(core::ptr::null(), |p| p.as_ptr())
             };
@@ -7989,11 +7960,9 @@ mod tests {
             assert_eq!(len, out.len());
 
             // `info_length > 0` switches to the "%s (%.*s)" form.
-            // SAFETY: `error` is this frame's own live, unmoved `Error`, taken
-            // with `&raw mut` — a write-capable mint dropped before the `&error`
-            // read below; the info run is a 9-byte literal.
+            // SAFETY: the info run is a 9-byte literal.
             crate::native::error::set_err_info(
-                Some(crate::native::error::ErrorView::from_ptr(&raw mut error)),
+                Some(crate::native::error::ErrorView::from_mut(&mut error)),
                 b"some info\0".as_ptr(),
                 9,
             );
@@ -8042,20 +8011,19 @@ mod tests {
             let mut error = Error::default();
             let mut ator = core::mem::MaybeUninit::<Allocator>::zeroed().assume_init();
             let opts = RawAllocatorOpts::default();
-            // SAFETY: `error`/`ator`/`opts` are this frame's live, unmoved
-            // locals; nothing writes `opts` while the read-only view is held.
+            // `error` is this frame's live, unmoved local.
             init_ator(
                 &raw mut error,
-                AllocatorView::from_ptr(&raw mut ator),
-                Some(View::<RawAllocatorOpts, Const>::from_ptr(&raw const opts)),
+                AllocatorView::from_mut(&mut ator),
+                Some(View::<RawAllocatorOpts, Const>::from_ref(&opts)),
                 c"test",
             );
             let mut buf = core::mem::MaybeUninit::<Buf>::zeroed().assume_init();
             buf.ator = &raw mut ator;
-            // SAFETY: `buf` is a live local backed by `ator`; minting the
-            // `BufView` the push allocates `SceneImp`-sized storage from.
-            let imp = push_size(BufView::from_ptr(&raw mut buf), size_of::<SceneImp>(), 1)
-                as *mut SceneImp;
+            // `buf` is a live local backed by `ator`; the push allocates
+            // `SceneImp`-sized storage from it.
+            let imp =
+                push_size(BufView::from_mut(&mut buf), size_of::<SceneImp>(), 1) as *mut SceneImp;
             assert!(!imp.is_null());
             core::ptr::write_bytes(imp as *mut u8, 0, size_of::<SceneImp>());
             // Expose the wide allocation so `get_imp` can recover this header via
@@ -8099,11 +8067,8 @@ mod tests {
         let opts = RawAllocatorOpts::default();
         init_ator(
             error,
-            // SAFETY: `ator` is this frame's live, unmoved local.
-            unsafe { AllocatorView::from_ptr(&raw mut ator) },
-            // SAFETY: `opts` is this frame's live local, written nowhere while
-            // the read-only view is held.
-            Some(unsafe { View::<RawAllocatorOpts, Const>::from_ptr(&raw const opts) }),
+            AllocatorView::from_mut(&mut ator),
+            Some(View::<RawAllocatorOpts, Const>::from_ref(&opts)),
             c"test",
         );
 
@@ -8111,13 +8076,9 @@ mod tests {
         let mut buf = unsafe { core::mem::MaybeUninit::<Buf>::zeroed().assume_init() };
         buf.ator = &raw mut ator;
 
-        // SAFETY: `buf` is a live local backed by `ator`; minting the `BufView`
-        // the push allocates `T`-sized storage from.
-        let imp = push_size(
-            unsafe { BufView::from_ptr(&raw mut buf) },
-            size_of::<T>(),
-            1,
-        ) as *mut T;
+        // `buf` is a live local backed by `ator`; the push allocates `T`-sized
+        // storage from it.
+        let imp = push_size(BufView::from_mut(&mut buf), size_of::<T>(), 1) as *mut T;
         assert!(!imp.is_null());
         // SAFETY: `imp` is the non-null `T`-sized allocation just made; the write
         // zero-fills exactly its byte extent.
@@ -8258,12 +8219,12 @@ mod tests {
             let mut node: Node = MaybeUninit::zeroed().assume_init();
             node.element.typed_id = 5;
             node.element.element_id = 6;
-            let nv = View::<Node, crate::native::view::Mut>::from_ptr(&raw mut node);
+            let nv = View::<Node, crate::native::view::Mut>::from_mut(&mut node);
             assert_eq!(np(find_baked_node(Some(bv), Some(nv))), node_base.add(2));
             assert!(find_baked_node(None, Some(nv)).is_none());
             assert!(find_baked_node(Some(bv), None).is_none());
 
-            let ev = View::<Element, crate::native::view::Mut>::from_ptr(&raw mut node.element);
+            let ev = View::<Element, crate::native::view::Mut>::from_mut(&mut node.element);
             assert_eq!(ep(find_baked_element(Some(bv), Some(ev))), elem_base.add(2));
             assert!(find_baked_element(None, Some(ev)).is_none());
             assert!(find_baked_element(Some(bv), None).is_none());
