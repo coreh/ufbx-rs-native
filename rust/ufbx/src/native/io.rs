@@ -548,9 +548,7 @@ pub(crate) unsafe fn end_file_context(fc: &FileContext, ok: bool) -> Result<(), 
         // shape carries the fixed error by value (the shim owns the slot
         // writes, including the success-path clear).
         let mut fixed: Error = Error::default();
-        // SAFETY: `&raw mut fixed` addresses this frame's live, write-capable
-        // `Error` local, unmoved for the mint's borrow.
-        let fixed_view = unsafe { crate::native::error::ErrorView::from_ptr(&raw mut fixed) };
+        let fixed_view = crate::native::error::ErrorView::from_mut(&mut fixed);
         fix_error_type(fc.error_view(), b"Failed to open file\0", Some(fixed_view));
         Err(fixed)
     } else {
@@ -1022,20 +1020,18 @@ pub(crate) unsafe extern "C" fn memory_close(user: *mut c_void) {
         // keeps the allocator usable while the block holding it is released
         // (C-parity, ufbx.c:7238-7242).
         let mut ator: Allocator = unsafe { (*stream).local_ator };
-        // SAFETY: `ator` is that same allocator (by value), live and unmoved in
-        // this frame, and the stream block of `self_size` bytes came from it;
-        // `free_ator` then tears down an allocator with zero live bytes.
+        // SAFETY: the stream block of `self_size` bytes came from this allocator
+        // — the stack copy of the stream's own.
         unsafe {
             free::<u8>(
-                Some(AllocatorView::from_ptr(&raw mut ator)),
+                Some(AllocatorView::from_mut(&mut ator)),
                 stream as *mut u8,
                 (*stream).self_size,
             )
         };
-        // SAFETY: `ator` is this frame's live, unmoved stack copy of the
-        // stream's allocator, which holds zero live bytes at this point, and is
-        // torn down exactly once here.
-        unsafe { free_ator(AllocatorView::from_ptr(&raw mut ator)) };
+        // SAFETY: single teardown — the stack copy of the stream's allocator
+        // holds zero live bytes at this point and is torn down exactly once here.
+        unsafe { free_ator(AllocatorView::from_mut(&mut ator)) };
     }
 }
 
@@ -1129,17 +1125,16 @@ mod tests {
                 core::slice::from_raw_parts(uc.error.description.data, uc.error.description.length);
             assert_eq!(desc, b"Truncated file");
 
-            // SAFETY: `uc.ator_tmp` is the live, unmoved temp allocator field of
-            // the test's own context, and `read_buffer`/`read_buffer_size` are
-            // the block it handed out.
+            // SAFETY: `read_buffer`/`read_buffer_size` are the block `uc.ator_tmp`
+            // handed out.
             free(
-                Some(AllocatorView::from_ptr(&raw mut uc.ator_tmp)),
+                Some(AllocatorView::from_mut(&mut uc.ator_tmp)),
                 uc.read_buffer,
                 uc.read_buffer_size,
             );
-            // SAFETY: `uc.ator_tmp` is the live, unmoved temp allocator field of
-            // the test's own context.
-            free_ator(AllocatorView::from_ptr(&raw mut uc.ator_tmp));
+            // SAFETY: single teardown — the test's own temp allocator, torn down
+            // once here.
+            free_ator(AllocatorView::from_mut(&mut uc.ator_tmp));
         }
     }
 
@@ -1182,17 +1177,16 @@ mod tests {
             assert_eq!(&dst[..], &DATA[..24]);
             assert_eq!(uc.data_offset, 24);
 
-            // SAFETY: `uc.ator_tmp` is the live, unmoved temp allocator field of
-            // the test's own context, and `read_buffer`/`read_buffer_size` are
-            // the block it handed out.
+            // SAFETY: `read_buffer`/`read_buffer_size` are the block `uc.ator_tmp`
+            // handed out.
             free(
-                Some(AllocatorView::from_ptr(&raw mut uc.ator_tmp)),
+                Some(AllocatorView::from_mut(&mut uc.ator_tmp)),
                 uc.read_buffer,
                 uc.read_buffer_size,
             );
-            // SAFETY: `uc.ator_tmp` is the live, unmoved temp allocator field of
-            // the test's own context.
-            free_ator(AllocatorView::from_ptr(&raw mut uc.ator_tmp));
+            // SAFETY: single teardown — the test's own temp allocator, torn down
+            // once here.
+            free_ator(AllocatorView::from_mut(&mut uc.ator_tmp));
         }
     }
 

@@ -236,25 +236,27 @@ pub(crate) unsafe fn generate_indices(
     // (`Option<CmpFn>`, `None` when zeroed via the null-fn niche), matching the
     // C zero-initializer.
     let mut map: Map = unsafe { MaybeUninit::<Map>::zeroed().assume_init() };
-    // SAFETY: the two views are minted over the zeroed map and the initialized
-    // allocator, both locals that outlive every use of the map below. The user
-    // pointer identifies `packed_size`, a live `usize` — the type
-    // `map_cmp_vertex` reads through it — and a local that outlives every
-    // comparator call (all of which happen below, before this fn returns).
+    // SAFETY: the allocator view is minted over the initialized local, which
+    // outlives every use of the map below. The user pointer identifies
+    // `packed_size`, a live `usize` — the type `map_cmp_vertex` reads through
+    // it — and a local that outlives every comparator call (all of which happen
+    // below, before this fn returns). The allocator address is taken with
+    // `&raw mut`, not `&mut`: `map_init` stores it in `map.ator`, which the map
+    // uses past the end of any borrow (through `map_free` below), so every
+    // `ator` mint in this fn stays a raw address-of.
     unsafe {
         map_init(
-            MapView::from_ptr(&raw mut map),
+            MapView::from_mut(&mut map),
             AllocatorView::from_ptr(&raw mut ator),
             map_cmp_vertex,
             (&raw mut packed_size).cast::<c_void>(),
         );
     }
 
-    // SAFETY: the view is minted over the map initialized above, a local that
-    // outlives the call; `packed_size` is the map's element stride, the same
-    // stride `map_init` above set the comparator up for.
+    // SAFETY: `packed_size` is the map's element stride, the same stride
+    // `map_init` above set the comparator up for.
     if num_indices > 0
-        && !unsafe { map_grow_size(MapView::from_ptr(&raw mut map), packed_size, num_indices) }
+        && !unsafe { map_grow_size(MapView::from_mut(&mut map), packed_size, num_indices) }
     {
         fail = true;
     }
@@ -294,13 +296,11 @@ pub(crate) unsafe fn generate_indices(
             // all initialized — zeroed by the `write_bytes` above, with the
             // stream loop overwriting the non-padding ranges each iteration.
             let hash: u32 = unsafe { hash_string(packed_vertex, packed_size) };
-            // SAFETY: the mint addresses the initialized stack-local map, live and
-            // unmoved for the rest of this fn; the map's item size is the
-            // `packed_size` it was grown with, and the key addresses
-            // `packed_size` readable bytes.
+            // SAFETY: the map's item size is the `packed_size` it was grown with,
+            // and the key addresses `packed_size` readable bytes.
             let mut entry: *mut c_void = unsafe {
                 map_find_size(
-                    MapView::from_ptr(&raw mut map),
+                    MapView::from_mut(&mut map),
                     packed_size,
                     hash,
                     packed_vertex as *const c_void,
@@ -310,7 +310,7 @@ pub(crate) unsafe fn generate_indices(
                 // SAFETY: same map and key contract as the lookup above.
                 entry = unsafe {
                     map_insert_size(
-                        MapView::from_ptr(&raw mut map),
+                        MapView::from_mut(&mut map),
                         packed_size,
                         hash,
                         packed_vertex as *const c_void,
@@ -412,10 +412,9 @@ pub(crate) unsafe fn generate_indices(
         };
     }
 
-    // SAFETY: `map` and `ator` are the live initialized locals above, and the map
-    // is freed through the allocator that owns its storage before that allocator
-    // itself is torn down.
-    map_free(unsafe { MapView::from_ptr(&raw mut map) });
+    // The map is freed through the allocator that owns its storage before that
+    // allocator itself is torn down.
+    map_free(MapView::from_mut(&mut map));
     // SAFETY: `ator` is that same live, unmoved local allocator, torn down
     // exactly once here.
     unsafe { free_ator(AllocatorView::from_ptr(&raw mut ator)) };

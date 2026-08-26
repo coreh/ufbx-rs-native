@@ -1520,88 +1520,72 @@ mod tests {
 
     #[test]
     fn test_check_err_msg_and_first_error_wins() {
-        unsafe {
-            let mut err = Error::default();
-            let mut hits = 0u32;
-            assert_eq!(checked_fn(&mut err, true, &mut hits), Ok(42));
-            assert_eq!(hits, 1);
-            assert!(err.description.data.is_null());
+        let mut err = Error::default();
+        let mut hits = 0u32;
+        assert_eq!(checked_fn(&mut err, true, &mut hits), Ok(42));
+        assert_eq!(hits, 1);
+        assert!(err.description.data.is_null());
 
-            assert!(checked_fn(&mut err, false, &mut hits).is_err());
-            assert_eq!(hits, 2);
-            assert_eq!(desc_bytes(&err), b"Out of memory");
+        assert!(checked_fn(&mut err, false, &mut hits).is_err());
+        assert_eq!(hits, 2);
+        assert_eq!(desc_bytes(&err), b"Out of memory");
 
-            // First error wins: a second failure does not overwrite.
-            fn fail2(err: *mut Error) -> Result<(), Fail> {
-                ufbxi_check_err_msg!(
-                    unsafe { crate::native::error::ErrorView::from_ptr(err) },
-                    false,
-                    "Truncated file"
-                );
-                Ok(())
-            }
-            assert!(fail2(&mut err).is_err());
-            assert_eq!(desc_bytes(&err), b"Out of memory");
-
-            let mut p_error = Error::default();
-            // SAFETY: both locals are live, write-capable `Error` slots of this
-            // frame, unmoved for the mints' borrows.
-            fix_error_type(
-                ErrorView::from_ptr(&raw mut err),
-                b"Failed to load\0",
-                Some(ErrorView::from_ptr(&raw mut p_error)),
+        // First error wins: a second failure does not overwrite.
+        fn fail2(err: *mut Error) -> Result<(), Fail> {
+            ufbxi_check_err_msg!(
+                unsafe { crate::native::error::ErrorView::from_ptr(err) },
+                false,
+                "Truncated file"
             );
-            assert_eq!(err.type_, ErrorType::OutOfMemory);
-            assert_eq!(desc_bytes(&err), b"Out of memory");
-            assert_eq!(p_error.type_, ErrorType::OutOfMemory);
+            Ok(())
         }
+        assert!(fail2(&mut err).is_err());
+        assert_eq!(desc_bytes(&err), b"Out of memory");
+
+        let mut p_error = Error::default();
+        fix_error_type(
+            ErrorView::from_mut(&mut err),
+            b"Failed to load\0",
+            Some(ErrorView::from_mut(&mut p_error)),
+        );
+        assert_eq!(err.type_, ErrorType::OutOfMemory);
+        assert_eq!(desc_bytes(&err), b"Out of memory");
+        assert_eq!(p_error.type_, ErrorType::OutOfMemory);
     }
 
     #[test]
     fn test_fix_error_type_default_desc() {
-        unsafe {
-            // No description set -> per-entry-point default, type Unknown.
-            let mut err = Error::default();
-            // SAFETY: `err` is a live, write-capable `Error` local of this
-            // frame, unmoved for the mint's borrow.
-            fix_error_type(
-                ErrorView::from_ptr(&raw mut err),
-                b"Failed to evaluate\0",
-                None,
-            );
-            assert_eq!(err.type_, ErrorType::Unknown);
-            assert_eq!(desc_bytes(&err), b"Failed to evaluate");
+        // No description set -> per-entry-point default, type Unknown.
+        let mut err = Error::default();
+        fix_error_type(ErrorView::from_mut(&mut err), b"Failed to evaluate\0", None);
+        assert_eq!(err.type_, ErrorType::Unknown);
+        assert_eq!(desc_bytes(&err), b"Failed to evaluate");
 
-            // Ladder entries map byte-exactly.
-            let mut err = Error::default();
-            err.description.data = b"Threaded ASCII parse error\0".as_ptr();
-            err.description.length = 26;
-            // SAFETY: `err` is a live, write-capable `Error` local of this
-            // frame, unmoved for the mint's borrow.
-            fix_error_type(ErrorView::from_ptr(&raw mut err), b"Failed to load\0", None);
-            assert_eq!(err.type_, ErrorType::ThreadedAsciiParse);
-        }
+        // Ladder entries map byte-exactly.
+        let mut err = Error::default();
+        err.description.data = b"Threaded ASCII parse error\0".as_ptr();
+        err.description.length = 26;
+        fix_error_type(ErrorView::from_mut(&mut err), b"Failed to load\0", None);
+        assert_eq!(err.type_, ErrorType::ThreadedAsciiParse);
     }
 
     #[test]
     fn test_report_err_msg_keeps_going() {
-        unsafe {
-            let mut err = Error::default();
-            // Sentinel: stays `false` iff the macro early-returns (what this test forbids),
-            // so the initial value is load-bearing on the failure path.
-            #[allow(unused_assignments)]
-            let mut reached = false;
-            {
-                ufbxi_report_err_msg!(
-                    crate::native::error::ErrorView::from_ptr(&raw mut err),
-                    "ptr",
-                    "Out of memory"
-                );
-                reached = true;
-            };
-            assert!(reached, "ufbxi_report_err_msg must not return early");
-            assert_eq!(desc_bytes(&err), b"Out of memory");
-        }
+        let mut err = Error::default();
+        // Sentinel: stays `false` iff the macro early-returns (what this test forbids),
+        // so the initial value is load-bearing on the failure path.
+        #[allow(unused_assignments)]
+        let mut reached = false;
+        {
+            ufbxi_report_err_msg!(
+                crate::native::error::ErrorView::from_mut(&mut err),
+                "ptr",
+                "Out of memory"
+            );
+            reached = true;
+        };
+        assert!(reached, "ufbxi_report_err_msg must not return early");
+        assert_eq!(desc_bytes(&err), b"Out of memory");
     }
 
     #[test]
@@ -1648,27 +1632,21 @@ mod tests {
     fn test_clear_error_and_fmt_err_info() {
         unsafe {
             let mut err = Error::default();
-            // SAFETY: `err` is this frame's own live, unmoved `Error`, and the
-            // address is taken with `&raw mut` — a write-capable mint, dropped
-            // before the `&mut err` uses below.
-            clear_error(Some(ErrorView::from_ptr(&raw mut err)));
+            clear_error(Some(ErrorView::from_mut(&mut err)));
             assert_eq!(err.type_, ErrorType::None);
             assert_eq!(err.description.data, EMPTY_CHAR.as_ptr());
             assert_eq!(err.description.length, 0);
             assert_eq!(err.info(), "");
 
-            // SAFETY: `err` is this frame's own live, unmoved `Error`, taken
-            // with `&raw mut` — a write-capable mint; the view is dropped
-            // before the `&mut err` uses below.
-            let view = ErrorView::from_ptr(&raw mut err);
+            let view = ErrorView::from_mut(&mut err);
             ufbxi_fmt_err_info!(Some(view), "%u (max %u)", 5u32, 3u32);
             assert_eq!(err.info(), "5 (max 3)");
 
-            let view = ErrorView::from_ptr(&raw mut err);
+            let view = ErrorView::from_mut(&mut err);
             set_err_info(Some(view), b"UFBX_ENABLE_FORMAT_OBJ".as_ptr(), 22);
             assert_eq!(err.info(), "UFBX_ENABLE_FORMAT_OBJ");
             // SIZE_MAX length -> strlen
-            let view = ErrorView::from_ptr(&raw mut err);
+            let view = ErrorView::from_mut(&mut err);
             set_err_info(Some(view), b"abc\0".as_ptr(), usize::MAX);
             assert_eq!(err.info(), "abc");
         }
@@ -1734,10 +1712,7 @@ mod tests {
             type_: ErrorType::Io,
             ..Default::default()
         };
-        // SAFETY: `err` is a live, write-capable stack local owned by this
-        // test, unmoved for the view's lifetime (the `View::from_ptr`
-        // contract), and no `&mut` to it is active while the view is used.
-        let err_view = unsafe { ErrorView::from_ptr(&raw mut err) };
+        let err_view = ErrorView::from_mut(&mut err);
         let ret = uninitialized_options(Some(err_view));
         assert!(ret.is_null());
         assert_eq!(err.type_, ErrorType::UninitializedOptions);

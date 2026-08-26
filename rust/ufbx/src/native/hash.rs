@@ -1359,13 +1359,11 @@ mod tests {
         // SAFETY: an all-zero bit pattern is a valid `Map` (raw pointers null,
         // integers zero, `Option<CmpFn>` None).
         let mut map = unsafe { MaybeUninit::<Map>::zeroed().assume_init() };
-        // SAFETY: `&raw mut map` addresses the live, writable local `Map`, which
-        // outlives the view minted over it. `map_init`'s `cmp_user` obligation is
-        // discharged by the null pointer — what the test comparators expect (they
-        // read no user data).
+        // SAFETY: `map_init`'s `cmp_user` obligation is discharged by the null
+        // pointer — what the test comparators expect (they read no user data).
         unsafe {
             map_init(
-                MapView::from_ptr(&raw mut map),
+                MapView::from_mut(&mut map),
                 ator,
                 cmp_fn,
                 core::ptr::null_mut(),
@@ -1404,9 +1402,7 @@ mod tests {
             // owned exclusively by this test for the whole view lifetime.
             let ator_view = AllocatorView::from_ptr(&raw mut ator);
             let mut map = make_map(ator_view, map_cmp_uint64);
-            // SAFETY: `map` is the live local initialized by `make_map`, owned
-            // exclusively by this test for the whole view lifetime.
-            let map = MapView::from_ptr(&raw mut map);
+            let map = MapView::from_mut(&mut map);
 
             for i in 0..1000u64 {
                 let v = i * 7919;
@@ -1448,9 +1444,7 @@ mod tests {
             // owned exclusively by this test for the whole view lifetime.
             let ator_view = AllocatorView::from_ptr(&raw mut ator);
             let mut map = make_map(ator_view, map_cmp_uint64);
-            // SAFETY: `map` is the live local initialized by `make_map`, owned
-            // exclusively by this test for the whole view lifetime.
-            let map = MapView::from_ptr(&raw mut map);
+            let map = MapView::from_mut(&mut map);
 
             let v = 1u64;
             let p = map_insert::<u64>(map, hash64(v), &v as *const u64 as *const c_void);
@@ -1479,9 +1473,7 @@ mod tests {
             // owned exclusively by this test for the whole view lifetime.
             let ator_view = AllocatorView::from_ptr(&raw mut ator);
             let mut map = make_map(ator_view, map_cmp_uint64);
-            // SAFETY: `map` is the live local initialized by `make_map`, owned
-            // exclusively by this test for the whole view lifetime.
-            let map = MapView::from_ptr(&raw mut map);
+            let map = MapView::from_mut(&mut map);
 
             let n = (MAP_MAX_SCAN + 20) as u64;
             for i in 0..n {
@@ -1516,9 +1508,7 @@ mod tests {
             // owned exclusively by this test for the whole view lifetime.
             let ator_view = AllocatorView::from_ptr(&raw mut ator);
             let mut map = make_map(ator_view, map_cmp_uint64);
-            // SAFETY: `map` is the live local initialized by `make_map`, owned
-            // exclusively by this test for the whole view lifetime.
-            let map = MapView::from_ptr(&raw mut map);
+            let map = MapView::from_mut(&mut map);
             let v = 42u64;
             assert!(map_find::<u64>(map, hash64(v), &v as *const u64 as *const c_void).is_null());
             map_free(map);
@@ -1537,9 +1527,7 @@ mod tests {
             // owned exclusively by this test for the whole view lifetime.
             let ator_view = AllocatorView::from_ptr(&raw mut ator);
             let mut map = make_map(ator_view, map_cmp_uint64);
-            // SAFETY: `map` is the live local initialized by `make_map`, owned
-            // exclusively by this test for the whole view lifetime.
-            let map = MapView::from_ptr(&raw mut map);
+            let map = MapView::from_mut(&mut map);
             assert!(map_grow::<u64>(map, 1000));
             assert!(map.capacity() as usize >= 1000);
             let allocs_after_grow = ator.num_allocs;

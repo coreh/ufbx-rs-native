@@ -1542,9 +1542,7 @@ mod tests {
         assert_eq!(z as *const u8, ZERO_SIZE_BUFFER.as_ptr());
         assert_eq!(buf.num_items, 0);
 
-        // SAFETY: a live stack-local `Buf` owned by this test; minting the
-        // `BufView` the push takes.
-        let p = push_size(unsafe { BufView::from_ptr(&raw mut buf) }, 4, 3) as *mut u32;
+        let p = push_size(BufView::from_mut(&mut buf), 4, 3) as *mut u32;
         assert!(!p.is_null());
         assert_eq!(buf.num_items, 3);
         // First chunk: next_size 4096, chunk_size = 4096 - header, 16-aligned.
@@ -1558,9 +1556,7 @@ mod tests {
 
         // Aligned follow-up push in the same chunk (u64 after 12 bytes pads to 16,
         // ordered buffer writes a 16-byte padding record).
-        // SAFETY: a live stack-local `Buf` owned by this test; minting the
-        // `BufView` the push takes.
-        let q = push_size(unsafe { BufView::from_ptr(&raw mut buf) }, 8, 1) as *mut u64;
+        let q = push_size(BufView::from_mut(&mut buf), 8, 1) as *mut u64;
         assert!(!q.is_null());
         unsafe {
             *q = 0x1122334455667788;
@@ -1587,17 +1583,13 @@ mod tests {
         let ator = ator.as_mut_ptr();
         let mut buf = make_buf(ator, false, false);
 
-        // SAFETY: a live stack-local `Buf` owned by this test; minting the
-        // `BufView` the push takes.
-        let p = push_size(unsafe { BufView::from_ptr(&raw mut buf) }, 1, 100);
+        let p = push_size(BufView::from_mut(&mut buf), 1, 100);
         assert!(!p.is_null());
         assert_eq!(unsafe { (*buf.chunks[0]).next_size }, 4096);
 
         // Overflow the first chunk: next chunk doubles next_size.
         let big = buf.size; // larger than remaining space
-                            // SAFETY: a live stack-local `Buf` owned by this test; minting the
-                            // `BufView` the push takes.
-        let q = push_size(unsafe { BufView::from_ptr(&raw mut buf) }, 1, big);
+        let q = push_size(BufView::from_mut(&mut buf), 1, big);
         assert!(!q.is_null());
         assert_eq!(unsafe { (*buf.chunks[0]).next_size }, 8192);
         // Retired chunk stored its final position.
@@ -1624,9 +1616,7 @@ mod tests {
         let mut buf = make_buf(ator, true, false);
 
         let huge = unsafe { (*ator).huge_size }; // 0x100000
-                                                 // SAFETY: a live stack-local `Buf` owned by this test; minting the
-                                                 // `BufView` the push takes.
-        let p = push_size(unsafe { BufView::from_ptr(&raw mut buf) }, 1, huge);
+        let p = push_size(BufView::from_mut(&mut buf), 1, huge);
         assert!(!p.is_null());
         // Huge unordered pushes go to chunks[1]; chunks[0]/pos/size untouched.
         assert!(buf.chunks[0].is_null());
@@ -1654,10 +1644,7 @@ mod tests {
         let ator = ator.as_mut_ptr();
         let mut buf = make_buf(ator, false, false);
 
-        // SAFETY: `buf` is this test's own live, initialized stack `Buf`, not
-        // aliased for the duration of the pushes below — the
-        // `BufView::from_ptr` mint invariant.
-        let bv = unsafe { BufView::from_ptr(&raw mut buf) };
+        let bv = BufView::from_mut(&mut buf);
 
         let p = push_size_zero(bv, 1, 32) as *mut u8;
         assert!(!p.is_null());
@@ -1703,9 +1690,7 @@ mod tests {
         // ~4032 bytes; 4096 items = 16384 bytes).
         const N: usize = 4096;
         for i in 0..N {
-            // SAFETY: a live stack-local `Buf` owned by this test; minting the
-            // `BufView` the push takes.
-            let p = push::<u32>(unsafe { BufView::from_ptr(&raw mut buf) }, 1);
+            let p = push::<u32>(BufView::from_mut(&mut buf), 1);
             assert!(!p.is_null());
             unsafe {
                 *p = i as u32;
@@ -1720,11 +1705,10 @@ mod tests {
         // Peek the last 100 items — non-destructive; flattening walks the
         // chunk chain backwards.
         let mut out = [0u32; 100];
-        // SAFETY: a live stack-local `Buf` owned by this test, holding well
-        // over 100 items; minting the `BufView` the peek takes, with a
-        // 100-element destination run.
+        // SAFETY: the buf holds well over 100 items, and `out` is the
+        // 100-element destination run the peek writes.
         unsafe {
-            peek::<u32>(BufView::from_ptr(&raw mut buf), 100, out.as_mut_ptr());
+            peek::<u32>(BufView::from_mut(&mut buf), 100, out.as_mut_ptr());
         }
         for i in 0..100 {
             assert_eq!(out[i], (N - 100 + i) as u32);
@@ -1736,11 +1720,10 @@ mod tests {
         let mut dst = [0u32; 300];
         while remaining > 0 {
             let take = remaining.min(300);
-            // SAFETY: a live stack-local `Buf` owned by this test, holding
-            // `remaining >= take` items; minting the `BufView` the pop takes,
-            // with a `take`-element destination run.
+            // SAFETY: the buf holds `remaining >= take` items, and `dst` is the
+            // `take`-element destination run the pop writes.
             unsafe {
-                pop::<u32>(BufView::from_ptr(&raw mut buf), take, dst.as_mut_ptr());
+                pop::<u32>(BufView::from_mut(&mut buf), take, dst.as_mut_ptr());
             }
             for i in 0..take {
                 assert_eq!(dst[i], (remaining - take + i) as u32);
@@ -1750,9 +1733,7 @@ mod tests {
         assert_eq!(buf.num_items, 0);
         assert_eq!(buf.pos, 0);
 
-        // SAFETY: a live stack-local `Buf` owned by this test; minting the
-        // `BufView` `buf_free` takes over that local.
-        buf_free(unsafe { BufView::from_ptr(&raw mut buf) });
+        buf_free(BufView::from_mut(&mut buf));
         assert_eq!(unsafe { (*ator).current_size }, 0);
     }
 
@@ -1772,22 +1753,17 @@ mod tests {
         let mut buf = make_buf(ator, false, false);
 
         // 12 bytes, then an 8-aligned push forces a padding record.
-        // SAFETY: a live stack-local `Buf` owned by this test; minting the
-        // `BufView` the push takes.
-        let _ = push_size(unsafe { BufView::from_ptr(&raw mut buf) }, 4, 3);
-        // SAFETY: a live stack-local `Buf` owned by this test; minting the
-        // `BufView` the push takes.
-        let q = push_size(unsafe { BufView::from_ptr(&raw mut buf) }, 8, 1);
+        let _ = push_size(BufView::from_mut(&mut buf), 4, 3);
+        let q = push_size(BufView::from_mut(&mut buf), 8, 1);
         assert!(!q.is_null());
         assert_eq!(buf.pos, 16 + 16 + 8);
         assert_eq!(unsafe { (*buf.chunks[0]).padding_pos }, 16 + 16 + 1);
 
         // Discarding pop (dst == NULL) rewinds through the padding record.
-        // SAFETY: a live stack-local `Buf` owned by this test; minting the
-        // `BufView` the pop takes, with a null destination run.
+        // SAFETY: the pop takes a null destination run.
         unsafe {
             pop_size(
-                BufView::from_ptr(&raw mut buf),
+                BufView::from_mut(&mut buf),
                 8,
                 1,
                 core::ptr::null_mut(),
@@ -1797,9 +1773,7 @@ mod tests {
         assert_eq!(buf.pos, 12);
         assert_eq!(unsafe { (*buf.chunks[0]).padding_pos }, 0);
 
-        // SAFETY: a live stack-local `Buf` owned by this test; minting the
-        // `BufView` `buf_free` takes over that local.
-        buf_free(unsafe { BufView::from_ptr(&raw mut buf) });
+        buf_free(BufView::from_mut(&mut buf));
         assert_eq!(unsafe { (*ator).current_size }, 0);
     }
 
@@ -1821,9 +1795,7 @@ mod tests {
 
         const N: usize = 3000;
         for i in 0..N {
-            // SAFETY: a live stack-local `Buf` owned by this test; minting the
-            // `BufView` the push takes.
-            let p = push::<u64>(unsafe { BufView::from_ptr(&raw mut stack) }, 1);
+            let p = push::<u64>(BufView::from_mut(&mut stack), 1);
             assert!(!p.is_null());
             unsafe {
                 *p = i as u64;
@@ -1835,13 +1807,11 @@ mod tests {
         );
 
         // Flatten the non-contiguous stack into a contiguous array.
-        // SAFETY: two live stack-local `Buf`s owned by this test; minting the
-        // views the transfer takes, `stack` holding exactly the `N` items
-        // pushed above.
+        // SAFETY: `stack` holds exactly the `N` items pushed above.
         let arr = unsafe {
             push_pop::<u64>(
-                BufView::from_ptr(&raw mut result),
-                BufView::from_ptr(&raw mut stack),
+                BufView::from_mut(&mut result),
+                BufView::from_mut(&mut stack),
                 N,
             )
         };
@@ -1852,12 +1822,8 @@ mod tests {
         assert_eq!(stack.num_items, 0);
         assert_eq!(result.num_items, N);
 
-        // SAFETY: live stack-local `Buf`s owned by this test; minting the
-        // `BufView`s `buf_free` takes over those locals.
-        unsafe {
-            buf_free(BufView::from_ptr(&raw mut stack));
-            buf_free(BufView::from_ptr(&raw mut result));
-        }
+        buf_free(BufView::from_mut(&mut stack));
+        buf_free(BufView::from_mut(&mut result));
         assert_eq!(unsafe { (*ator).current_size }, 0);
     }
 
@@ -1878,25 +1844,20 @@ mod tests {
 
         // Span two chunks, then pop everything back to zero.
         let n1 = 4000usize;
-        // SAFETY: a live stack-local `Buf` owned by this test; minting the
-        // `BufView` the pushes take.
-        let _ = push_size(unsafe { BufView::from_ptr(&raw mut buf) }, 1, n1);
-        // SAFETY: a live stack-local `Buf` owned by this test; minting the
-        // `BufView` the push takes.
-        let _ = push_size(unsafe { BufView::from_ptr(&raw mut buf) }, 1, 1000);
+        let _ = push_size(BufView::from_mut(&mut buf), 1, n1);
+        let _ = push_size(BufView::from_mut(&mut buf), 1, 1000);
         assert!(unsafe { !(*buf.chunks[0]).prev.is_null() });
-        // SAFETY: a live stack-local `Buf` owned by this test; minting the
-        // `BufView` the pops take, with null destination runs.
+        // SAFETY: the pops take null destination runs.
         unsafe {
             pop_size(
-                BufView::from_ptr(&raw mut buf),
+                BufView::from_mut(&mut buf),
                 1,
                 1000,
                 core::ptr::null_mut(),
                 false,
             );
             pop_size(
-                BufView::from_ptr(&raw mut buf),
+                BufView::from_mut(&mut buf),
                 1,
                 n1,
                 core::ptr::null_mut(),
@@ -1906,16 +1867,12 @@ mod tests {
         assert_eq!(buf.pos, 0);
 
         // Frees the empty head chunks and the retired next-chain entirely.
-        // SAFETY: a live stack-local `Buf` owned by this test; minting the
-        // `BufView` `buf_free_unused` takes over that local.
-        buf_free_unused(unsafe { BufView::from_ptr(&raw mut buf) });
+        buf_free_unused(BufView::from_mut(&mut buf));
         assert!(buf.chunks[0].is_null());
         assert_eq!(buf.size, 0);
         assert_eq!(unsafe { (*ator).current_size }, 0);
 
-        // SAFETY: a live stack-local `Buf` owned by this test; minting the
-        // `BufView` `buf_free` takes over that local.
-        buf_free(unsafe { BufView::from_ptr(&raw mut buf) });
+        buf_free(BufView::from_mut(&mut buf));
     }
 
     #[test]
@@ -1934,21 +1891,15 @@ mod tests {
         let mut buf = make_buf(ator, true, true);
 
         // Normal chunks plus more huge chunks than UFBXI_HUGE_MAX_SCAN.
-        // SAFETY: a live stack-local `Buf` owned by this test; minting the
-        // `BufView` the push takes.
-        let _ = push_size(unsafe { BufView::from_ptr(&raw mut buf) }, 1, 100);
+        let _ = push_size(BufView::from_mut(&mut buf), 1, 100);
         let huge = unsafe { (*ator).huge_size };
         for i in 0..(HUGE_MAX_SCAN + 4) {
-            // SAFETY: a live stack-local `Buf` owned by this test; minting the
-            // `BufView` the push takes.
-            let p = push_size(unsafe { BufView::from_ptr(&raw mut buf) }, 1, huge + i);
+            let p = push_size(BufView::from_mut(&mut buf), 1, huge + i);
             assert!(!p.is_null());
         }
         assert!(!buf.chunks[1].is_null());
 
-        // SAFETY: a live stack-local `Buf` owned by this test; minting the
-        // `BufView` `buf_clear` takes over that local.
-        buf_clear(unsafe { BufView::from_ptr(&raw mut buf) });
+        buf_clear(BufView::from_mut(&mut buf));
         assert_eq!(buf.pos, 0);
         assert_eq!(buf.num_items, 0);
         assert_eq!(buf.pushed_size, 0);
@@ -1964,9 +1915,7 @@ mod tests {
         }
         assert_eq!(count, HUGE_MAX_SCAN);
 
-        // SAFETY: a live stack-local `Buf` owned by this test; minting the
-        // `BufView` `buf_free` takes over that local.
-        buf_free(unsafe { BufView::from_ptr(&raw mut buf) });
+        buf_free(BufView::from_mut(&mut buf));
         assert_eq!(unsafe { (*ator).current_size }, 0);
     }
 }

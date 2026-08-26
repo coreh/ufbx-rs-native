@@ -852,9 +852,7 @@ pub(crate) unsafe fn push_string_imp(
                 // `sanitize_string` asserts.
                 if sanitize_string(
                     pool,
-                    // SAFETY: the raw address of the local `sanitized` out-param
-                    // is write-capable and its slot outlives the call.
-                    unsafe { SanitizedStringView::from_ptr(&raw mut sanitized) },
+                    SanitizedStringView::from_mut(&mut sanitized),
                     // SAFETY: the caller vouches `str_` is readable for `length`
                     // bytes and unwritten for the borrow — in particular it is
                     // not the pool's own temp buffer, which the callee writes.
@@ -1841,11 +1839,11 @@ mod tests {
                 pool: MaybeUninit::zeroed().assume_init(),
             })
         };
-        // SAFETY: `err`/`ator` are fields of the boxed fixture, live and
-        // unmoved for the test; the mints are the one vouch for them.
+        // SAFETY: `err` is a field of the boxed fixture, live and unmoved for
+        // the test; the raw address is the one vouch for it.
         init_ator(
             &raw mut fx.err,
-            unsafe { AllocatorView::from_ptr(&raw mut fx.ator) },
+            AllocatorView::from_mut(&mut fx.ator),
             NO_ATOR_OPTS,
             c"test",
         );
@@ -1853,13 +1851,12 @@ mod tests {
         fx.pool.error = &mut fx.err;
         fx.pool.buf.ator = ator;
         // C: `ufbxi_map_init(&uc->string_pool.map, &uc->ator_tmp, &ufbxi_map_cmp_string, NULL)`
-        // SAFETY: the views are minted over the fixture's own zeroed map and
-        // its own allocator, both live for the fixture's lifetime;
-        // `map_cmp_string` takes no user data, so the null `user` is what it
-        // expects.
+        // SAFETY: the allocator is the fixture's own, live for the fixture's
+        // lifetime; `map_cmp_string` takes no user data, so the null `user` is
+        // what it expects.
         unsafe {
             map_init(
-                MapView::from_ptr(&raw mut fx.pool.map),
+                MapView::from_mut(&mut fx.pool.map),
                 AllocatorView::from_ptr(ator),
                 map_cmp_string,
                 core::ptr::null_mut(),
@@ -1872,15 +1869,12 @@ mod tests {
     }
 
     fn free_fixture(fx: &mut Fixture) {
-        // SAFETY: `fx` is a fixture the caller owns exclusively; its buf was
-        // built by `make_fixture` over that same fixture's allocator, and the
-        // `BufView` is minted over that field in place.
-        buf_free(unsafe { BufView::from_ptr(&raw mut fx.pool.buf) });
+        buf_free(BufView::from_mut(&mut fx.pool.buf));
         // SAFETY: single teardown — each test builds its own fixture and calls
         // `free_fixture` once at its end, so this is the only release of that
         // pool's `temp_str`.
         unsafe {
-            string_pool_temp_free(StringPoolView::from_ptr(&raw mut fx.pool));
+            string_pool_temp_free(StringPoolView::from_mut(&mut fx.pool));
         }
         assert_eq!(fx.ator.current_size, 0);
     }
@@ -1888,11 +1882,10 @@ mod tests {
     fn push(fx: &mut Fixture, s: &[u8]) -> (*const u8, usize) {
         let mut out_len = s.len();
         // SAFETY: `s.as_ptr()`/`s.len()` describe exactly one live run;
-        // `out_len` is an unaliased local out-param; the view is minted over
-        // `fx.pool`, the fixture's own initialized pool, in place.
+        // `out_len` is an unaliased local out-param.
         let ptr_ = unsafe {
             push_string(
-                StringPoolView::from_ptr(&raw mut fx.pool),
+                StringPoolView::from_mut(&mut fx.pool),
                 s.as_ptr(),
                 s.len(),
                 &mut out_len,
@@ -1938,7 +1931,7 @@ mod tests {
             // raw=true: bytes are interned untouched even when invalid UTF-8.
             let mut raw_len = 2usize;
             let r = push_string(
-                StringPoolView::from_ptr(&raw mut fx.pool),
+                StringPoolView::from_mut(&mut fx.pool),
                 b"\xff\xfe".as_ptr(),
                 2,
                 &mut raw_len,
@@ -2012,7 +2005,7 @@ mod tests {
             let mut fx = make_fixture(UnicodeErrorHandling::AbortLoading);
             let mut out_len = 3usize;
             let p = push_string(
-                StringPoolView::from_ptr(&raw mut fx.pool),
+                StringPoolView::from_mut(&mut fx.pool),
                 b"a\xffb".as_ptr(),
                 3,
                 &mut out_len,
@@ -2031,9 +2024,7 @@ mod tests {
     fn test_push_sanitized_string() {
         unsafe {
             let mut fx = make_fixture(UnicodeErrorHandling::ReplacementCharacter);
-            // SAFETY: the fixture owns `pool`, live and unmoved for the whole
-            // test, so its address is write-capable memory for the view.
-            let pool = StringPoolView::from_ptr(&raw mut fx.pool);
+            let pool = StringPoolView::from_mut(&mut fx.pool);
 
             // Valid UTF-8: raw_length = length, utf8_length = 0, interned copy.
             let mut san = SanitizedString {
@@ -2045,9 +2036,7 @@ mod tests {
             assert_eq!(
                 push_sanitized_string(
                     pool,
-                    // SAFETY: the local `san` out-slot is write-capable and
-                    // outlives the call.
-                    SanitizedStringView::from_ptr(&raw mut san),
+                    SanitizedStringView::from_mut(&mut san),
                     b"Model",
                     hash,
                     false
@@ -2068,9 +2057,7 @@ mod tests {
             assert_eq!(
                 push_sanitized_string(
                     pool,
-                    // SAFETY: the local `san2` out-slot is write-capable and
-                    // outlives the call.
-                    SanitizedStringView::from_ptr(&raw mut san2),
+                    SanitizedStringView::from_mut(&mut san2),
                     b"Model",
                     hash,
                     false
@@ -2090,9 +2077,7 @@ mod tests {
             assert_eq!(
                 push_sanitized_string(
                     pool,
-                    // SAFETY: the local `san3` out-slot is write-capable and
-                    // outlives the call.
-                    SanitizedStringView::from_ptr(&raw mut san3),
+                    SanitizedStringView::from_mut(&mut san3),
                     inp,
                     h,
                     false
@@ -2113,15 +2098,7 @@ mod tests {
                 utf8_length: 0,
             };
             assert_eq!(
-                push_sanitized_string(
-                    pool,
-                    // SAFETY: the local `san4` out-slot is write-capable and
-                    // outlives the call.
-                    SanitizedStringView::from_ptr(&raw mut san4),
-                    inp,
-                    h,
-                    true
-                ),
+                push_sanitized_string(pool, SanitizedStringView::from_mut(&mut san4), inp, h, true),
                 Ok(())
             );
             assert_eq!(san4.raw_length, 3);
@@ -2315,7 +2292,7 @@ mod tests {
             for str_ in STRINGS.0.iter() {
                 let mut out_len = str_.length;
                 let p = push_string(
-                    StringPoolView::from_ptr(&raw mut fx.pool),
+                    StringPoolView::from_mut(&mut fx.pool),
                     str_.data,
                     str_.length,
                     &mut out_len,
