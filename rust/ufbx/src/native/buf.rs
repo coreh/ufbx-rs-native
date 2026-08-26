@@ -333,7 +333,7 @@ impl BufView {
     #[inline(always)]
     #[must_use]
     pub(crate) fn push_fast<T>(&self, n: usize) -> *mut T {
-        unsafe { push_fast::<T>(self.get(), n) }
+        push_fast::<T>(self, n)
     }
     #[inline(always)]
     #[must_use]
@@ -356,7 +356,7 @@ impl BufView {
     #[inline(always)]
     #[must_use]
     pub(crate) fn push_copy_fast_ref<T>(&self, src: &T) -> *mut T {
-        unsafe { push_copy_fast::<T>(self.get(), 1, src) }
+        unsafe { push_copy_fast::<T>(self, 1, src) }
     }
     /// Copy-in from a RAW source run (arena pointers reached by pointer
     /// arithmetic, where no borrow exists to carry validity) — the buf-side
@@ -378,7 +378,7 @@ impl BufView {
     #[must_use]
     pub(crate) unsafe fn push_copy_fast_raw<T>(&self, n: usize, src: *const T) -> *mut T {
         // SAFETY: as for `push_copy_raw`.
-        unsafe { push_copy_fast::<T>(self.get(), n, src) }
+        unsafe { push_copy_fast::<T>(self, n, src) }
     }
     // Two-buf transfer: pop `n` items off the top of `src` and push them onto
     // `self`. The bufs must be distinct (C call sites always pair
@@ -1408,29 +1408,19 @@ pub(crate) unsafe fn push_copy<T>(b: &BufView, n: usize, data: *const T) -> *mut
 // ufbx.c:4349 `#define ufbxi_push_copy_fast(b, type, n, data)`
 #[inline(always)]
 #[must_use]
-pub(crate) unsafe fn push_copy_fast<T>(b: *mut Buf, n: usize, data: *const T) -> *mut T {
-    // SAFETY: `b` addresses a live, initialized `Buf` in context/arena-owned
-    // memory with write-capable provenance (this fn's raw-pointer contract) —
-    // the `BufView::from_ptr` mint invariant; and this fn's readable-`data`
-    // contract is `push_size_copy_fast`'s run contract for
-    // `size_of::<T>() * n` bytes.
-    (unsafe {
-        push_size_copy_fast(
-            BufView::from_ptr(b),
-            size_of::<T>(),
-            n,
-            data as *const c_void,
-        )
-    }) as *mut T
+/// # Safety
+/// `data` must be readable for `n` `T`s, and the run must not overlap the
+/// chunk memory the push writes.
+pub(crate) unsafe fn push_copy_fast<T>(b: &BufView, n: usize, data: *const T) -> *mut T {
+    // SAFETY: this fn's readable-`data` contract is `push_size_copy_fast`'s run
+    // contract for `size_of::<T>() * n` bytes.
+    (unsafe { push_size_copy_fast(b, size_of::<T>(), n, data as *const c_void) }) as *mut T
 }
 
 // ufbx.c:4350 `#define ufbxi_push_fast(b, type, n)`
 #[inline(always)]
-pub(crate) unsafe fn push_fast<T>(b: *mut Buf, n: usize) -> *mut T {
-    // SAFETY: `b` addresses a live, initialized `Buf` in context/arena-owned
-    // memory with write-capable provenance (this fn's raw-pointer contract) —
-    // the `BufView::from_ptr` mint invariant.
-    push_size_fast(unsafe { BufView::from_ptr(b) }, size_of::<T>(), n) as *mut T
+pub(crate) fn push_fast<T>(b: &BufView, n: usize) -> *mut T {
+    push_size_fast(b, size_of::<T>(), n) as *mut T
 }
 
 // ufbx.c:4351 `#define ufbxi_pop(b, type, n, dst)`
