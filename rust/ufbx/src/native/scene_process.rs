@@ -5592,14 +5592,15 @@ pub(crate) fn shader_texture_find_prefix(
             if prop.type_() != PropType::Compound {
                 continue;
             }
-            // SAFETY: the entry's `name` and `suffix` are both `ufbx_string`
-            // spans, which is what `ends_with` compares and what
-            // `push_prop_prefix` copies.
-            unsafe {
-                if sp::ends_with(prop.name(), suffix) {
+            // SAFETY: `suffix` is a live `ufbx_string` whose `data` is readable
+            // for `length` bytes; the borrow ends with the call. The prop's
+            // interned `name` span comes from its own view, and
+            // `push_prop_prefix` copies the `ufbx_string`.
+            if sp::ends_with(prop.name_view().bytes(), unsafe { suffix.as_bytes() }) {
+                unsafe {
                     push_prop_prefix(uc, shader.prop_prefix_view(), prop.name())?;
-                    return Ok(());
                 }
+                return Ok(());
             }
         }
         // SAFETY: `p_suffix != p_suffix_end`, so the advance lands at or before
@@ -5644,13 +5645,14 @@ pub(crate) fn shader_texture_find_prefix(
             name.length -= 1;
 
             // SAFETY: `name` is a prefix of the prop's interned span and
-            // `suffix` a live `ufbx_string`, which is what `ends_with` compares
-            // and what `push_prop_prefix` copies.
-            unsafe {
-                if sp::ends_with(name, suffix) {
+            // `suffix` a live `ufbx_string`, so each `data` is readable for its
+            // `length` bytes; both borrows end with the call.
+            // `push_prop_prefix` copies the `ufbx_string`.
+            if sp::ends_with(unsafe { name.as_bytes() }, unsafe { suffix.as_bytes() }) {
+                unsafe {
                     push_prop_prefix(uc, shader.prop_prefix_view(), name)?;
-                    return Ok(());
                 }
+                return Ok(());
             }
         }
         // SAFETY: `p_suffix != p_suffix_end`, so the advance lands at or before

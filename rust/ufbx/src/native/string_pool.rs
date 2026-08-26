@@ -25,8 +25,8 @@ use crate::generated::{Error, UnicodeErrorHandling, Vec2, Vec3, WarningType};
 use crate::native::allocator::{free, grow_array, AllocatorView};
 use crate::native::buf::Buf;
 use crate::native::error::{
-    memcmp, strlen, ufbxi_check_err, ufbxi_check_err_msg, ufbxi_check_return_err,
-    utf8_valid_length, Fail, EMPTY_CHAR,
+    strlen, ufbxi_check_err, ufbxi_check_err_msg, ufbxi_check_return_err, utf8_valid_length, Fail,
+    EMPTY_CHAR,
 };
 use crate::native::hash::{hash_string, hash_string_check_ascii, map_free, Map};
 use crate::native::platform::{math, min_real, min_sz, ufbx_assert, ufbxi_regression_assert};
@@ -308,28 +308,20 @@ pub(crate) unsafe fn concat_str_cmp(ref_: String, parts: &[String]) -> i32 {
 
 // ufbx.c:4974-4977 `ufbxi_starts_with`
 #[inline(always)]
-pub(crate) unsafe fn starts_with(str_: String, prefix: String) -> bool {
-    // SAFETY: the caller vouches `str_`/`prefix` are valid `String` runs; the
-    // compare is reached only when `str_.length >= prefix.length`, so
-    // `prefix.length` bytes are readable from both `str_.data` and `prefix.data`.
-    str_.length >= prefix.length && unsafe { memcmp(str_.data, prefix.data, prefix.length) } == 0
+pub(crate) fn starts_with(str_: &[u8], prefix: &[u8]) -> bool {
+    // C: `str.length >= prefix.length && !memcmp(str.data, prefix.data, prefix.length)`
+    // — the length precheck guards the compare, which runs over `prefix.length`
+    // bytes taken from the front of `str_`.
+    str_.len() >= prefix.len() && str_equal(&str_[..prefix.len()], prefix)
 }
 
 // ufbx.c:4979-4982 `ufbxi_ends_with`
 #[inline(always)]
-pub(crate) unsafe fn ends_with(str_: String, suffix: String) -> bool {
-    // SAFETY: the caller vouches `str_`/`suffix` are valid `String` runs; the
-    // compare is reached only when `str_.length >= suffix.length`, so
-    // `str_.length - suffix.length` is in bounds of `str_.data` and the trailing
-    // `suffix.length` bytes are readable from both there and `suffix.data`.
-    str_.length >= suffix.length
-        && unsafe {
-            memcmp(
-                str_.data.add(str_.length - suffix.length),
-                suffix.data,
-                suffix.length,
-            )
-        } == 0
+pub(crate) fn ends_with(str_: &[u8], suffix: &[u8]) -> bool {
+    // C: `str.length >= suffix.length && !memcmp(str.data + str.length - suffix.length,
+    // suffix.data, suffix.length)` — the length precheck guards both the
+    // subtraction and the compare over the trailing `suffix.length` bytes.
+    str_.len() >= suffix.len() && str_equal(&str_[str_.len() - suffix.len()..], suffix)
 }
 
 // ufbx.c:4984-4993 `ufbxi_remove_prefix_len`
@@ -340,10 +332,12 @@ pub(crate) unsafe fn remove_prefix_len(
     prefix_len: usize,
 ) -> bool {
     let prefix_str = String::new_c(prefix, prefix_len);
-    // SAFETY: the caller vouches `str_` addresses a valid `String` and `prefix`
-    // is readable for `prefix_len` bytes; `*str_` and `prefix_str` are the two
-    // valid `String` runs `starts_with` requires.
-    if unsafe { starts_with(*str_, prefix_str) } {
+    // SAFETY: the caller vouches `str_` addresses a valid `String` whose
+    // `data`/`length` describe one readable run, and that `prefix` is readable
+    // for `prefix_len` bytes; both byte borrows end with the call.
+    if starts_with(unsafe { (*str_).as_bytes() }, unsafe {
+        prefix_str.as_bytes()
+    }) {
         // SAFETY: `starts_with` just confirmed `str_->length >= prefix_len`, so
         // `str_->data + prefix_len` stays within the run and the shortened
         // length is non-negative.
@@ -364,10 +358,12 @@ pub(crate) unsafe fn remove_suffix_len(
     suffix_len: usize,
 ) -> bool {
     let suffix_str = String::new_c(suffix, suffix_len);
-    // SAFETY: the caller vouches `str_` addresses a valid `String` and `suffix`
-    // is readable for `suffix_len` bytes; `*str_` and `suffix_str` are the two
-    // valid `String` runs `ends_with` requires.
-    if unsafe { ends_with(*str_, suffix_str) } {
+    // SAFETY: the caller vouches `str_` addresses a valid `String` whose
+    // `data`/`length` describe one readable run, and that `suffix` is readable
+    // for `suffix_len` bytes; both byte borrows end with the call.
+    if ends_with(unsafe { (*str_).as_bytes() }, unsafe {
+        suffix_str.as_bytes()
+    }) {
         // SAFETY: `ends_with` just confirmed `str_->length >= suffix_len`, so
         // the shortened length is non-negative.
         unsafe { (*str_).length -= suffix_len };
@@ -2228,10 +2224,10 @@ mod tests {
             let c = str_c(b"Model\0".as_ptr());
             assert_eq!(c.length, 5);
 
-            assert!(starts_with(s(b"Lcl Rotation"), s(b"Lcl ")));
-            assert!(!starts_with(s(b"Lcl"), s(b"Lcl ")));
-            assert!(ends_with(s(b"NormalsW"), s(b"W")));
-            assert!(!ends_with(s(b"W"), s(b"sW")));
+            assert!(starts_with(b"Lcl Rotation", b"Lcl "));
+            assert!(!starts_with(b"Lcl", b"Lcl "));
+            assert!(ends_with(b"NormalsW", b"W"));
+            assert!(!ends_with(b"W", b"sW"));
 
             let mut t = s(b"d|X");
             assert!(remove_prefix_len(&mut t, b"d|".as_ptr(), 2));
