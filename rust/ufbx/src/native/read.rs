@@ -9369,15 +9369,27 @@ pub(crate) fn read_root(uc: &Context) -> Result<(), Fail> {
 // ufbx.c:15938-15943 `typedef struct { const char *prop_name; ufbx_prop_type prop_type; const char *node_name; const char *node_fmt; } ufbxi_legacy_prop;`
 #[repr(C)]
 pub(crate) struct LegacyProp {
-    pub prop_name: *const u8,
-    pub prop_type: PropType,
-    pub node_name: *const u8,
-    pub node_fmt: *const u8,
+    prop_name: *const u8,
+    prop_type: PropType,
+    node_name: *const u8,
+    node_fmt: *const u8,
 }
-// The tables below are immutable and their `const char *` members reference
-// immutable statics/string literals, so sharing is sound (same rationale as
-// `ScaleHelperProp`).
+// Type invariant: every instance is an entry of one of the immutable tables
+// below; `prop_name`, `node_name`, and `node_fmt` name NUL-terminated immutable
+// statics, and `prop_name` remains live for every scene property that stores it.
+// The pointer fields are private so safe code outside this module cannot create
+// an entry that violates the invariant. Sharing therefore follows the same
+// rationale as `ScaleHelperProp`.
 unsafe impl Sync for LegacyProp {}
+
+impl LegacyProp {
+    #[inline(always)]
+    fn format(&self) -> &[u8] {
+        // SAFETY: the type invariant makes `node_fmt` an immutable
+        // NUL-terminated string.
+        unsafe { slice_from_ptr(self.node_fmt, strlen(self.node_fmt)) }
+    }
+}
 
 // C: `ufbxi_arraycount(ufbxi_legacy_light_props)`
 const LEGACY_LIGHT_PROPS_COUNT: usize = 7;
@@ -9563,53 +9575,27 @@ static LEGACY_MATERIAL_PROPS: [LegacyProp; LEGACY_MATERIAL_PROPS_COUNT] = [
 // C returns `int` 0/1 without ever touching `uc->error` (callers do
 // `if (!ufbxi_read_legacy_prop(...)) continue;`), so this is a predicate, not
 // a `Result` — same shape as `ufbxi_get_val_at`.
-/// # Safety
-///
-/// `legacy_prop.node_fmt` points at a NUL-terminated format string — a
-/// contract `&LegacyProp` cannot carry, since the field is a bare
-/// `*const u8`.
 #[inline(never)]
 #[must_use]
-pub(crate) unsafe fn read_legacy_prop(
-    node: &NodeView,
-    prop: &PropView,
-    legacy_prop: &LegacyProp,
-) -> bool {
+pub(crate) fn read_legacy_prop(node: &NodeView, prop: &PropView, legacy_prop: &LegacyProp) -> bool {
     let mut value_ix: usize = 0;
     let mut flags: u32 = 0;
 
-    // C-parity: `prop->value_real_arr` / `prop->value_real` are the first
-    // members of `ufbx_prop`'s value union, which `generated.rs` collapses to
-    // `value_vec4` — the four-`ufbx_real` union arm the C code indexes as
-    // `value_real_arr`.
-    let value_real_arr: *mut Real = prop.value_vec4_raw() as *mut Real;
-
-    let fmt: *const u8 = legacy_prop.node_fmt;
-    let mut fmt_ix: usize = 0;
-    // SAFETY: `fmt` is a NUL-terminated format literal from the legacy-prop
-    // table, and the loop stops at that terminator, so `fmt_ix` stays in bounds.
-    while unsafe { *fmt.add(fmt_ix) } != 0 {
-        // SAFETY: as above — `fmt_ix` addresses the non-NUL byte just tested.
-        let c: u8 = unsafe { *fmt.add(fmt_ix) };
+    for (fmt_ix, &c) in legacy_prop.format().iter().enumerate() {
         match c {
             b'L' => {
                 ufbx_assert!(value_ix == 0);
                 if let Some(got) = get_val_at::<i64>(node, fmt_ix) {
-                    // SAFETY: `value_int_raw()` addresses the viewed prop's own live `int64_t` field.
-                    unsafe {
-                        *prop.value_int_raw() = got;
-                    }
+                    prop.set_value_int(got);
                 } else {
                     return false;
                 }
-                // SAFETY: `value_real_arr` spans the prop's four-`ufbx_real` union
-                // arm, so offsets 0..3 are in bounds.
-                unsafe {
-                    *value_real_arr.add(0) = prop.value_int() as Real;
-                    *value_real_arr.add(1) = 0.0;
-                    *value_real_arr.add(2) = 0.0;
-                    *value_real_arr.add(3) = 0.0;
-                }
+                prop.set_value_vec4(Vec4 {
+                    x: prop.value_int() as Real,
+                    y: 0.0,
+                    z: 0.0,
+                    w: 0.0,
+                });
                 prop.set_value_str(EMPTY_STRING.0);
                 prop.set_value_blob(EMPTY_BLOB.0);
                 flags |= PropFlags::VALUE_INT.raw();
@@ -9618,29 +9604,36 @@ pub(crate) unsafe fn read_legacy_prop(
             b'R' => {
                 ufbx_assert!(value_ix < 4);
                 if let Some(got) = get_val_at::<AsReal>(node, fmt_ix) {
-                    // SAFETY: `value_real_arr` spans the prop's four-`ufbx_real` union arm and
-                    // `value_ix` reaches at most 2 here (the longest legacy `node_fmt` is
-                    // `b"RRR\0"`).
-                    unsafe {
-                        *value_real_arr.add(value_ix) = got.0;
+                    // The first component initializes the whole collapsed
+                    // union arm; later components preserve the values written
+                    // by preceding format characters.
+                    let mut value = if value_ix == 0 {
+                        Vec4 {
+                            x: 0.0,
+                            y: 0.0,
+                            z: 0.0,
+                            w: 0.0,
+                        }
+                    } else {
+                        prop.value_vec4()
+                    };
+                    match value_ix {
+                        0 => value.x = got.0,
+                        1 => value.y = got.0,
+                        2 => value.z = got.0,
+                        3 => value.w = got.0,
+                        _ => ufbxi_unreachable!("Invalid legacy property value index"),
                     }
+                    if value_ix == 0 {
+                        // C: `ufbxi_f64_to_i64(prop->value_real)` — `ufbx_real`
+                        // argument promoted to the `double` parameter.
+                        prop.set_value_int(f64_to_i64(as_f64!(value.x)));
+                        prop.set_value_str(EMPTY_STRING.0);
+                        prop.set_value_blob(EMPTY_BLOB.0);
+                    }
+                    prop.set_value_vec4(value);
                 } else {
                     return false;
-                }
-                if value_ix == 0 {
-                    // C: `ufbxi_f64_to_i64(prop->value_real)` — `ufbx_real`
-                    // argument promoted to the `double` parameter.
-                    // SAFETY: `value_real_arr` spans the prop's four-`ufbx_real`
-                    // union arm, so offsets 0..3 are in bounds, and offset 0 was
-                    // just written by the fetch above.
-                    unsafe {
-                        prop.set_value_int(f64_to_i64(as_f64!(*value_real_arr.add(0))));
-                        *value_real_arr.add(1) = 0.0;
-                        *value_real_arr.add(2) = 0.0;
-                        *value_real_arr.add(3) = 0.0;
-                    }
-                    prop.set_value_str(EMPTY_STRING.0);
-                    prop.set_value_blob(EMPTY_BLOB.0);
                 }
                 flags &= !(PropFlags::VALUE_REAL.raw()
                     | PropFlags::VALUE_VEC2.raw()
@@ -9652,10 +9645,7 @@ pub(crate) unsafe fn read_legacy_prop(
             b'S' => {
                 ufbx_assert!(value_ix == 0);
                 if let Some(got) = get_val_at::<Checked<String>>(node, fmt_ix) {
-                    // SAFETY: `value_str_raw()` addresses the viewed prop's own live `ufbx_string` field.
-                    unsafe {
-                        *prop.value_str_raw() = got.0;
-                    }
+                    prop.set_value_str(got.0);
                 } else {
                     return false;
                 }
@@ -9668,14 +9658,12 @@ pub(crate) unsafe fn read_legacy_prop(
                 } else {
                     prop.set_value_blob(EMPTY_BLOB.0);
                 }
-                // SAFETY: `value_real_arr` spans the prop's four-`ufbx_real` union
-                // arm, so offsets 0..3 are in bounds.
-                unsafe {
-                    *value_real_arr.add(0) = 0.0;
-                    *value_real_arr.add(1) = 0.0;
-                    *value_real_arr.add(2) = 0.0;
-                    *value_real_arr.add(3) = 0.0;
-                }
+                prop.set_value_vec4(Vec4 {
+                    x: 0.0,
+                    y: 0.0,
+                    z: 0.0,
+                    w: 0.0,
+                });
                 prop.set_value_int(0);
                 flags |= PropFlags::VALUE_STR.raw();
                 value_ix += 1;
@@ -9685,7 +9673,6 @@ pub(crate) unsafe fn read_legacy_prop(
                 ufbxi_unreachable!("Unhandled legacy fmt");
             }
         }
-        fmt_ix += 1;
     }
 
     prop.set_flags(PropFlags::from_raw(flags));
@@ -9696,47 +9683,34 @@ pub(crate) unsafe fn read_legacy_prop(
 // ufbx.c:16052-16072 `ufbxi_read_legacy_props`
 #[inline(never)]
 #[must_use]
-pub(crate) unsafe fn read_legacy_props(
+pub(crate) fn read_legacy_props(
     node: &NodeView,
-    props: *mut Prop,
-    legacy_props: *const LegacyProp,
-    num_legacy: usize,
+    props: &mut [Prop],
+    legacy_props: &[LegacyProp],
 ) -> usize {
+    assert!(props.len() >= legacy_props.len());
     let mut num_props: usize = 0;
-    for legacy_ix in 0..num_legacy {
-        // SAFETY: `legacy_props` points at `num_legacy` entries (fn contract) and
-        // `legacy_ix < num_legacy` bounds the step.
-        let legacy_prop: *const LegacyProp = unsafe { legacy_props.add(legacy_ix) };
-        // SAFETY: `props` has room for `num_legacy` props (fn contract) and
-        // `num_props <= legacy_ix < num_legacy`, since it grows by at most one per
-        // iteration.
-        let prop: *mut Prop = unsafe { props.add(num_props) };
-
-        // SAFETY: `legacy_prop` is the in-bounds table entry computed above, whose
-        // `node_name` is a NUL-terminated literal.
-        let n: &NodeView = match unsafe { find_child_strcmp(node, (*legacy_prop).node_name) } {
+    for legacy_prop in legacy_props {
+        // SAFETY: `LegacyProp`'s invariant makes `node_name` a NUL-terminated
+        // immutable string.
+        let n: &NodeView = match unsafe { find_child_strcmp(node, legacy_prop.node_name) } {
             Some(n) => n,
             None => continue,
         };
-        // SAFETY: `prop` is the in-bounds destination slot computed above —
-        // write-capable provenance into the caller's `ufbx_prop` scratch run —
-        // and `legacy_prop` the in-bounds table entry, whose `node_fmt` is a
-        // NUL-terminated literal.
-        if !unsafe { read_legacy_prop(n, PropView::from_ptr(prop), &*legacy_prop) } {
+        let prop = PropView::from_mut(&mut props[num_props]);
+        if !read_legacy_prop(n, prop, legacy_prop) {
             continue;
         }
 
-        // SAFETY: `prop` is the in-bounds destination slot and `legacy_prop` the
-        // in-bounds table entry, whose `prop_name` is a NUL-terminated literal so
-        // `strlen` walks to its terminator and the `name` written from it spans
-        // `length` readable bytes for the key hash.
-        unsafe {
-            (*prop).name.data = (*legacy_prop).prop_name;
-            (*prop).name.length = strlen((*legacy_prop).prop_name);
-            (*prop)._internal_key = get_name_key((*prop).name.as_bytes());
-            (*prop).flags = PropFlags::from_raw(0);
-            (*prop).type_ = (*legacy_prop).prop_type;
-        }
+        // SAFETY: `LegacyProp`'s invariant makes `prop_name` NUL-terminated and
+        // live for the resulting scene property.
+        let name = String::new_c(legacy_prop.prop_name, unsafe {
+            strlen(legacy_prop.prop_name)
+        });
+        prop.set_name(name);
+        prop.set_internal_key(get_name_key(prop.name_view().bytes()));
+        prop.set_flags(PropFlags::from_raw(0));
+        prop.set_type(legacy_prop.prop_type);
         num_props += 1;
     }
 
@@ -9773,16 +9747,7 @@ pub(crate) unsafe fn read_legacy_material(
     // SAFETY: `ufbx_prop` is a C aggregate of pointer/length pairs, scalars and
     // enum tags, for which the all-zero bit pattern is a valid value.
     let mut tmp_props: [Prop; LEGACY_MATERIAL_PROPS_COUNT] = unsafe { core::mem::zeroed() };
-    // SAFETY: `tmp_props` has exactly `LEGACY_MATERIAL_PROPS_COUNT` slots, which
-    // is also the entry count of the `LEGACY_MATERIAL_PROPS` table passed here.
-    let num_props: usize = unsafe {
-        read_legacy_props(
-            node,
-            tmp_props.as_mut_ptr(),
-            LEGACY_MATERIAL_PROPS.as_ptr(),
-            LEGACY_MATERIAL_PROPS_COUNT,
-        )
-    };
+    let num_props: usize = read_legacy_props(node, &mut tmp_props, &LEGACY_MATERIAL_PROPS);
 
     // SAFETY: `material` is the fresh non-null element pushed above.
     unsafe {
@@ -9914,16 +9879,7 @@ pub(crate) fn read_legacy_light(
     // SAFETY: `ufbx_prop` is a C aggregate of pointer/length pairs, scalars and
     // enum tags, for which the all-zero bit pattern is a valid value.
     let mut tmp_props: [Prop; LEGACY_LIGHT_PROPS_COUNT] = unsafe { core::mem::zeroed() };
-    // SAFETY: `tmp_props` has exactly `LEGACY_LIGHT_PROPS_COUNT` slots, which is
-    // also the entry count of the `LEGACY_LIGHT_PROPS` table passed here.
-    let num_props: usize = unsafe {
-        read_legacy_props(
-            node,
-            tmp_props.as_mut_ptr(),
-            LEGACY_LIGHT_PROPS.as_ptr(),
-            LEGACY_LIGHT_PROPS_COUNT,
-        )
-    };
+    let num_props: usize = read_legacy_props(node, &mut tmp_props, &LEGACY_LIGHT_PROPS);
 
     // SAFETY: `light` is the fresh non-null element pushed above.
     unsafe {
@@ -9958,16 +9914,7 @@ pub(crate) fn read_legacy_camera(
     // SAFETY: `ufbx_prop` is a C aggregate of pointer/length pairs, scalars and
     // enum tags, for which the all-zero bit pattern is a valid value.
     let mut tmp_props: [Prop; LEGACY_CAMERA_PROPS_COUNT] = unsafe { core::mem::zeroed() };
-    // SAFETY: `tmp_props` has exactly `LEGACY_CAMERA_PROPS_COUNT` slots, which is
-    // also the entry count of the `LEGACY_CAMERA_PROPS` table passed here.
-    let num_props: usize = unsafe {
-        read_legacy_props(
-            node,
-            tmp_props.as_mut_ptr(),
-            LEGACY_CAMERA_PROPS.as_ptr(),
-            LEGACY_CAMERA_PROPS_COUNT,
-        )
-    };
+    let num_props: usize = read_legacy_props(node, &mut tmp_props, &LEGACY_CAMERA_PROPS);
 
     // SAFETY: `camera` is the fresh non-null element pushed above.
     unsafe {
@@ -10007,16 +9954,7 @@ pub(crate) fn read_legacy_limb_node(
     // SAFETY: the name is a NUL-terminated literal.
     let prop_node = unsafe { find_child_strcmp(node, b"Properties\0".as_ptr()) };
     if let Some(prop_node) = prop_node {
-        // SAFETY: `tmp_props` has exactly `LEGACY_BONE_PROPS_COUNT` slots, which
-        // is also the entry count of the `LEGACY_BONE_PROPS` table passed here.
-        num_props = unsafe {
-            read_legacy_props(
-                prop_node,
-                tmp_props.as_mut_ptr(),
-                LEGACY_BONE_PROPS.as_ptr(),
-                LEGACY_BONE_PROPS_COUNT,
-            )
-        };
+        num_props = read_legacy_props(prop_node, &mut tmp_props, &LEGACY_BONE_PROPS);
     }
 
     // SAFETY: `bone` is the fresh non-null element pushed above.
