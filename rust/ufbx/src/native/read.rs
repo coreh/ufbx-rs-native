@@ -5329,29 +5329,20 @@ impl MatrixView {
 }
 
 // ufbx.c:13957-13963 `ufbxi_read_transform_matrix`
-///
-/// # Safety
-/// `data` must point at a run of at least 16 `ufbx_real` — the 4x4
-/// column-major transform its callers check the array size for before calling.
-/// A run length is not carried by the parameter types.
 #[inline(never)]
-pub(crate) unsafe fn read_transform_matrix(m: &MatrixView, data: *mut Real) {
-    // SAFETY: `data` points at a run of at least 16 reals (fn contract), so
-    // every index read below is in bounds.
-    unsafe {
-        m.set_m00(*data.add(0));
-        m.set_m10(*data.add(1));
-        m.set_m20(*data.add(2));
-        m.set_m01(*data.add(4));
-        m.set_m11(*data.add(5));
-        m.set_m21(*data.add(6));
-        m.set_m02(*data.add(8));
-        m.set_m12(*data.add(9));
-        m.set_m22(*data.add(10));
-        m.set_m03(*data.add(12));
-        m.set_m13(*data.add(13));
-        m.set_m23(*data.add(14));
-    }
+pub(crate) fn read_transform_matrix(m: &MatrixView, data: &[Real; 16]) {
+    m.set_m00(data[0]);
+    m.set_m10(data[1]);
+    m.set_m20(data[2]);
+    m.set_m01(data[4]);
+    m.set_m11(data[5]);
+    m.set_m21(data[6]);
+    m.set_m02(data[8]);
+    m.set_m12(data[9]);
+    m.set_m22(data[10]);
+    m.set_m03(data[12]);
+    m.set_m13(data[13]);
+    m.set_m23(data[14]);
 }
 
 // ufbx.c:13965-13977 `ufbxi_read_bone`
@@ -5529,11 +5520,11 @@ pub(crate) fn read_skin_cluster(
         unsafe {
             read_transform_matrix(
                 View::<Matrix>::from_ptr(&raw mut (*cluster).mesh_node_to_bone),
-                (*transform).data as *mut Real,
+                &*((*transform).data as *const [Real; 16]),
             );
             read_transform_matrix(
                 View::<Matrix>::from_ptr(&raw mut (*cluster).bind_to_world),
-                (*transform_link).data as *mut Real,
+                &*((*transform_link).data as *const [Real; 16]),
             );
         }
     }
@@ -6752,7 +6743,7 @@ pub(crate) fn read_pose(
         unsafe {
             read_transform_matrix(
                 View::<Matrix>::from_ptr(&raw mut (*tmp_pose).bone_to_world),
-                (*matrix).data as *mut Real,
+                &*((*matrix).data as *const [Real; 16]),
             )
         };
     }
@@ -9849,11 +9840,11 @@ pub(crate) unsafe fn read_legacy_link(
         unsafe {
             read_transform_matrix(
                 View::<Matrix>::from_ptr(&raw mut (*cluster).mesh_node_to_bone),
-                (*transform).data as *mut Real,
+                &*((*transform).data as *const [Real; 16]),
             );
             read_transform_matrix(
                 View::<Matrix>::from_ptr(&raw mut (*cluster).bind_to_world),
-                (*transform_link).data as *mut Real,
+                &*((*transform_link).data as *const [Real; 16]),
             );
         }
     }

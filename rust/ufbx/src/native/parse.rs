@@ -36,7 +36,7 @@ use crate::generated::{
 use crate::native::allocator::{grow_array, Allocator};
 use crate::native::buf::{buf_clear, buf_free, pop, push_size_zero, Buf, BufView};
 use crate::native::error::{
-    c_strcmp, memchr, memcmp, strcmp, strncmp, ufbxi_check, ufbxi_check_msg, ufbxi_check_return,
+    c_strcmp, memcmp, strcmp, strncmp, ufbxi_check, ufbxi_check_msg, ufbxi_check_return,
     ufbxi_fail, Fail, EMPTY_CHAR,
 };
 use crate::native::hash::{hash_uptr, Map, PtrId};
@@ -54,7 +54,7 @@ use crate::native::view::{
 };
 use crate::native::view::{Mode, SliceViewIter, View};
 use crate::native::warnings::Warnings;
-use crate::prelude::{Blob, Real, Ref, ScalarView, String};
+use crate::prelude::{Blob, Real, Ref, ScalarView, String, StringView};
 
 // ufbx.h:744 `UFBX_ENUM_TYPE(ufbx_element_type, UFBX_ELEMENT_TYPE, UFBX_ELEMENT_METADATA_OBJECT);`
 // expanding via ufbx.h:235-236 to `enum { UFBX_ELEMENT_TYPE_COUNT = UFBX_ELEMENT_METADATA_OBJECT + 1 }`.
@@ -6123,48 +6123,34 @@ pub(crate) fn retain_toplevel_child(uc: &Context, child: &NodeView) -> Result<()
 // -- General parsing (ufbx.c:10855-11407)
 
 // ufbx.c:10857-10879 `ufbxi_next_line`
-///
-/// # Safety
-/// `buf.data`/`buf.length` must describe a readable byte span (the same vouch
-/// `String::as_bytes` takes) — the span is scanned here and the sub-span handed
-/// to `line` is read by the space trimming.
 #[inline(never)]
-pub(crate) unsafe fn next_line(line: &mut String, buf: &mut String, skip_space: bool) -> bool {
-    if buf.length == 0 {
+pub(crate) fn next_line(line: &StringView, buf: &StringView, skip_space: bool) -> bool {
+    if buf.length() == 0 {
         return false;
     }
-    // SAFETY: `buf.data`/`buf.length` describe a readable byte span (fn
-    // contract), which is `memchr`'s contract.
-    let newline: *const u8 = unsafe { memchr(buf.data, b'\n', buf.length) };
-    let length: usize = if !newline.is_null() {
-        // `newline` points inside `buf`'s span, so the byte offset from
-        // `buf.data` is non-negative and in range.
-        to_size(newline as isize - buf.data as isize) + 1
-    } else {
-        buf.length
-    };
+    let buf_bytes = buf.bytes();
+    let length = buf_bytes
+        .iter()
+        .position(|&c| c == b'\n')
+        .map_or(buf_bytes.len(), |newline| newline + 1);
 
-    line.data = buf.data;
-    line.length = length;
-    // SAFETY: `length` is at most `buf.length` (per the memchr result above),
-    // so the offset stays within `buf`'s span or one past its end.
-    buf.data = unsafe { buf.data.add(length) };
-    buf.length -= length;
+    line.set_data(buf_bytes.as_ptr());
+    line.set_length(length);
+    buf.set_data(buf_bytes[length..].as_ptr());
+    buf.set_length(buf_bytes.len() - length);
 
     if skip_space {
-        // SAFETY: `line` spans a readable byte range (a sub-span of `buf`); the
-        // `length > 0` guard keeps `*line.data` inside it, and advancing
-        // `data`/shrinking `length` preserves the span.
-        while line.length > 0 && is_space(unsafe { *line.data }) {
-            // SAFETY: advancing by one stays inside the span, per the guard.
-            line.data = unsafe { line.data.add(1) };
-            line.length -= 1;
+        let line_bytes = line.bytes();
+        let mut begin = 0;
+        while begin < line_bytes.len() && is_space(line_bytes[begin]) {
+            begin += 1;
         }
-        // SAFETY: `line` spans a readable byte range; `length > 0` keeps the
-        // trailing byte `data.add(length - 1)` inside it.
-        while line.length > 0 && is_space(unsafe { *line.data.add(line.length - 1) }) {
-            line.length -= 1;
+        let mut end = line_bytes.len();
+        while begin < end && is_space(line_bytes[end - 1]) {
+            end -= 1;
         }
+        line.set_data(line_bytes[begin..].as_ptr());
+        line.set_length(end - begin);
     }
 
     true
@@ -6568,6 +6554,8 @@ pub(crate) unsafe fn is_format(data: *const u8, size: usize, format: FileFormat)
     // `ufbxi_next_line` before any read.
     let mut line: String = String::new_c(core::ptr::null(), 0);
     let mut buf: String = String::new_c(data, size);
+    let line = StringView::from_mut(&mut line);
+    let buf = StringView::from_mut(&mut buf);
 
     if format == FileFormat::Fbx {
         // SAFETY: guarded by `size >= BINARY_MAGIC_SIZE`, so `data` and the
@@ -6579,46 +6567,37 @@ pub(crate) unsafe fn is_format(data: *const u8, size: usize, format: FileFormat)
             return true;
         }
 
-        // SAFETY: `buf` spans `[data, data+size)`, a readable byte range —
-        // `next_line`'s contract.
-        while unsafe { next_line(&mut line, &mut buf, true) } {
-            // SAFETY: `line` spans a readable byte run inside `[data, data+size)`
-            // (`next_line`'s output) and the pattern literal is NUL-terminated —
-            // `String::as_bytes`' and `r#match`'s contracts.
+        while next_line(line, buf, true) {
+            // SAFETY: the pattern literal is NUL-terminated — `r#match`'s
+            // format-pointer contract.
             if unsafe {
                 r#match(
-                    line.as_bytes(),
+                    line.bytes(),
                     b";\\s*FBX\\s*\\d+\\.\\d+\\.\\d+\\s*project\\s+file\0".as_ptr(),
                 )
             } {
                 return true;
             }
-            // SAFETY: as above.
-            if unsafe { r#match(line.as_bytes(), b"FBXHeaderExtension:.*\0".as_ptr()) } {
+            // SAFETY: the pattern literal is NUL-terminated.
+            if unsafe { r#match(line.bytes(), b"FBXHeaderExtension:.*\0".as_ptr()) } {
                 return true;
             }
         }
     } else if format == FileFormat::Obj {
-        // SAFETY: `buf` spans `[data, data+size)`, a readable byte range —
-        // `next_line`'s contract.
-        while unsafe { next_line(&mut line, &mut buf, true) } {
+        while next_line(line, buf, true) {
             let pattern: *const u8 = b"(vn?\\s+\\F|vt)\\s+\\F\\s+\\F.*|f\\s+[\\-/0-9]+\\s+[\\-/0-9]+\\s*[\\-/0-9]+.*|(usemtl|mtllib)\\s+\\S.*\0".as_ptr();
-            // SAFETY: `line` spans a readable byte run inside `[data, data+size)`
-            // (`next_line`'s output) and `pattern` is NUL-terminated —
-            // `String::as_bytes`' and `r#match`'s contracts.
-            if unsafe { r#match(line.as_bytes(), pattern) } {
+            // SAFETY: `pattern` is NUL-terminated — `r#match`'s
+            // format-pointer contract.
+            if unsafe { r#match(line.bytes(), pattern) } {
                 return true;
             }
         }
     } else if format == FileFormat::Mtl {
-        // SAFETY: `buf` spans `[data, data+size)`, a readable byte range —
-        // `next_line`'s contract.
-        while unsafe { next_line(&mut line, &mut buf, true) } {
+        while next_line(line, buf, true) {
             let pattern: *const u8 = b"newmtl\\s+\\S.*\0".as_ptr();
-            // SAFETY: `line` spans a readable byte run inside `[data, data+size)`
-            // (`next_line`'s output) and `pattern` is NUL-terminated —
-            // `String::as_bytes`' and `r#match`'s contracts.
-            if unsafe { r#match(line.as_bytes(), pattern) } {
+            // SAFETY: `pattern` is NUL-terminated — `r#match`'s
+            // format-pointer contract.
+            if unsafe { r#match(line.bytes(), pattern) } {
                 return true;
             }
         }
@@ -7790,6 +7769,23 @@ pub(crate) fn load_maps(uc: &Context) -> Result<(), Fail> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_next_line_views() {
+        let input = b" \tfirst \r\n\n second";
+        let mut line = String::new_c(core::ptr::null(), 0);
+        let mut buf = String::new_c(input.as_ptr(), input.len());
+        let line = StringView::from_mut(&mut line);
+        let buf = StringView::from_mut(&mut buf);
+
+        assert!(next_line(line, buf, true));
+        assert_eq!(line.bytes(), b"first");
+        assert!(next_line(line, buf, true));
+        assert_eq!(line.bytes(), b"");
+        assert!(next_line(line, buf, true));
+        assert_eq!(line.bytes(), b"second");
+        assert!(!next_line(line, buf, true));
+    }
 
     // The C static_asserts (ufbx.c:6242/6250) are mirrored as const asserts
     // above; these runtime tests additionally pin the header-trick round trip

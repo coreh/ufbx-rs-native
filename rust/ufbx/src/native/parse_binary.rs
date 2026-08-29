@@ -788,19 +788,10 @@ pub(crate) fn push_array_data(
 
 // ufbx.c:8897-8902 `ufbxi_postprocess_bool_array`
 #[inline(never)]
-pub(crate) unsafe fn postprocess_bool_array(data: *mut u8, size: usize) {
+pub(crate) fn postprocess_bool_array(data: &mut [u8]) {
     // C: `ufbxi_for(char, b, (char*)data, size)`
-    let mut b: *mut u8 = data;
-    // SAFETY: `data` addresses `size` bytes (caller contract), so the one-past-end
-    // pointer is valid to form.
-    let b_end: *mut u8 = unsafe { data.add(size) };
-    while b != b_end {
-        // SAFETY: `b != b_end` keeps `b` inside the `size`-byte `data` region, so
-        // the read-modify-write and the step to the next byte are in bounds.
-        unsafe {
-            *b = (*b != 0) as u8;
-            b = b.add(1);
-        }
+    for b in data {
+        *b = (*b != 0) as u8;
     }
 }
 
@@ -897,8 +888,11 @@ pub(crate) unsafe extern "C" fn deflate_task_fn(task: *mut Task) -> bool {
 
     // SAFETY: `t` is the live `DeflateTask`; read its array element type.
     if unsafe { (*t).arr_type } == b'b' {
-        // SAFETY: `t`'s `dst_data` holds `array_size` bytes for a bool array.
-        unsafe { postprocess_bool_array((*t).dst_data as *mut u8, (*t).array_size) };
+        // SAFETY: `t`'s `dst_data` holds `array_size` initialized, exclusively
+        // writable bytes for this bool-array task.
+        let data =
+            unsafe { core::slice::from_raw_parts_mut((*t).dst_data as *mut u8, (*t).array_size) };
+        postprocess_bool_array(data);
     }
 
     true
@@ -1432,8 +1426,10 @@ fn binary_parse_node_rec(
         // Post-process boolean arrays
         if !deferred && arr_info.type_ == b'b' {
             // SAFETY: `arr` is the live `ValueArray`; its `data`/`size` describe
-            // the just-filled bool run to normalize.
-            unsafe { postprocess_bool_array((*arr).data as *mut u8, (*arr).size) };
+            // the just-filled, exclusively writable bool run to normalize.
+            let data =
+                unsafe { core::slice::from_raw_parts_mut((*arr).data as *mut u8, (*arr).size) };
+            postprocess_bool_array(data);
         }
     } else {
         // Parse up to UFBXI_MAX_NON_ARRAY_VALUES as plain values
