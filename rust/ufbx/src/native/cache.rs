@@ -50,9 +50,9 @@ use crate::native::string_pool::{
     StringPool,
 };
 use crate::native::view::SliceViewIter;
+use crate::native::view::{view_project, view_read, view_write, Mut, Run, View};
 #[cfg(feature = "geometry-cache")]
-use crate::native::view::{view_raw_const, view_raw_mut, Const, Run};
-use crate::native::view::{view_read, view_write, Mut, View};
+use crate::native::view::{view_raw_const, view_raw_mut, Const};
 use crate::native::warnings::ufbxi_warnf;
 #[cfg(feature = "geometry-cache")]
 use crate::native::xml::{
@@ -2339,12 +2339,12 @@ pub(crate) enum ExternalFileType {
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub(crate) struct ExternalFile {
-    pub type_: ExternalFileType,
-    pub filename: String,
-    pub absolute_filename: String,
-    pub index: usize,
-    pub data: *mut c_void,
-    pub data_size: usize,
+    type_: ExternalFileType,
+    filename: String,
+    absolute_filename: String,
+    index: usize,
+    data: *mut c_void,
+    data_size: usize,
 }
 
 // Reinterpret-in-place VIEW over one `ufbxi_external_file` record inside the
@@ -2362,12 +2362,44 @@ pub(crate) type ExternalFileView = View<ExternalFile>;
 
 impl ExternalFileView {
     #[inline(always)]
+    pub(crate) fn type_(&self) -> ExternalFileType {
+        view_read!(self, type_)
+    }
+    #[inline(always)]
     pub(crate) fn filename(&self) -> String {
         view_read!(self, filename)
     }
     #[inline(always)]
+    pub(crate) fn filename_view(&self) -> &View<String> {
+        view_project!(self, filename)
+    }
+    #[inline(always)]
     pub(crate) fn absolute_filename(&self) -> String {
         view_read!(self, absolute_filename)
+    }
+    #[inline(always)]
+    pub(crate) fn index(&self) -> usize {
+        view_read!(self, index)
+    }
+    #[inline(always)]
+    pub(crate) fn data(&self) -> *mut c_void {
+        view_read!(self, data)
+    }
+    #[inline(always)]
+    pub(crate) fn set_type(&self, type_: ExternalFileType) {
+        view_write!(self, type_, type_)
+    }
+    #[inline(always)]
+    pub(crate) fn set_filename(&self, filename: String) {
+        view_write!(self, filename, filename)
+    }
+    #[inline(always)]
+    pub(crate) fn set_absolute_filename(&self, absolute_filename: String) {
+        view_write!(self, absolute_filename, absolute_filename)
+    }
+    #[inline(always)]
+    pub(crate) fn set_index(&self, index: usize) {
+        view_write!(self, index, index)
     }
     #[inline(always)]
     pub(crate) fn set_data(&self, data: *mut c_void) {
@@ -2382,22 +2414,24 @@ pub(crate) unsafe extern "C" fn less_external_file(
     vb: *const c_void,
 ) -> bool {
     let _ = user;
-    let a: *const ExternalFile = va as *const ExternalFile;
-    let b: *const ExternalFile = vb as *const ExternalFile;
-    // SAFETY (every deref of `a`/`b` below): the sort's comparator contract is
-    // that `va`/`vb` address live elements of the array being sorted, which the
-    // external-file sort instantiates with `ExternalFile`. `str_cmp` in turn
-    // requires two valid `String` runs, which those elements' interned
-    // `filename` fields are.
-    if unsafe { (*a).type_ != (*b).type_ } {
-        return unsafe { (*a).type_ < (*b).type_ };
+    // SAFETY: the sort's comparator contract makes `va`/`vb` live elements of
+    // the initialized `ExternalFile` run being sorted; its construction
+    // invariant makes both filenames interned strings.
+    let (a, b) = unsafe {
+        (
+            ExternalFileView::from_ptr(va as *mut ExternalFile),
+            ExternalFileView::from_ptr(vb as *mut ExternalFile),
+        )
+    };
+    if a.type_() != b.type_() {
+        return a.type_() < b.type_();
     }
-    let cmp: i32 = unsafe { str_cmp((*a).filename.as_bytes(), (*b).filename.as_bytes()) };
+    let cmp: i32 = str_cmp(a.filename_view().bytes(), b.filename_view().bytes());
     if cmp != 0 {
         return cmp < 0;
     }
-    if unsafe { (*a).index != (*b).index } {
-        return unsafe { (*a).index < (*b).index };
+    if a.index() != b.index() {
+        return a.index() < b.index();
     }
     false
 }
@@ -2508,38 +2542,44 @@ pub(crate) fn load_external_cache(uc: &Context, file: &ExternalFileView) -> Resu
 
 // ufbx.c:24869-24876 `ufbxi_find_external_file`
 #[inline(never)]
-pub(crate) unsafe fn find_external_file(
-    files: *mut ExternalFile,
-    num_files: usize,
+pub(crate) fn find_external_file<'a>(
+    files: Run<'a, ExternalFile>,
     type_: ExternalFileType,
-    name: *const u8,
-) -> *mut ExternalFile {
+    name: &[u8],
+) -> Option<&'a ExternalFileView> {
     let mut ix: usize = usize::MAX;
-    // SAFETY (every deref in the two predicates): the search hands each
-    // predicate a pointer to an element of the `files` run, so the deref is in
-    // bounds; `strcmp` compares that element's NUL-terminated interned
-    // filename against the caller's NUL-terminated `name`.
     let less = |a: *const ExternalFile| {
-        if type_ != unsafe { (*a).type_ } {
-            type_ < unsafe { (*a).type_ }
+        // SAFETY: the search only hands the predicate elements of `files`.
+        let a = unsafe { ExternalFileView::from_ptr(a.cast_mut()) };
+        if type_ != a.type_() {
+            type_ < a.type_()
         } else {
-            unsafe { crate::native::error::strcmp((*a).filename.data, name) < 0 }
+            str_cmp(a.filename_view().bytes(), name) < 0
         }
     };
-    let equal =
-        |a: *const ExternalFile| unsafe { (*a).type_ == type_ && (*a).filename.data == name };
-    // SAFETY: the caller's contract is that `files` addresses `num_files` live
-    // `ExternalFile`s sorted by the same key the predicates test — what the
-    // binary search requires.
+    let equal = |a: *const ExternalFile| {
+        // SAFETY: the search only hands the predicate elements of `files`.
+        let a = unsafe { ExternalFileView::from_ptr(a.cast_mut()) };
+        a.type_() == type_ && a.filename().data == name.as_ptr()
+    };
+    // SAFETY: `files` carries the initialized run sorted by
+    // `less_external_file`; both predicates mint only in-bounds elements, and
+    // the search keeps every probe inside the run.
     unsafe {
-        macro_lower_bound_eq::<ExternalFile>(32, &raw mut ix, files, 0, num_files, less, equal);
+        macro_lower_bound_eq::<ExternalFile>(
+            32,
+            &raw mut ix,
+            files.as_mut_ptr(),
+            0,
+            files.len(),
+            less,
+            equal,
+        );
     }
     if ix != usize::MAX {
-        // SAFETY: `ix < num_files` whenever the search set it, so this is an
-        // element of the caller's run.
-        unsafe { files.add(ix) }
+        Some(files.at(ix))
     } else {
-        core::ptr::null_mut()
+        None
     }
 }
 
@@ -2563,12 +2603,13 @@ pub(crate) fn load_external_files(uc: &Context) -> Result<(), Fail> {
             if (*cache).filename.length > 0 {
                 let file: *mut ExternalFile = uc.tmp_stack_view().push_zero(1);
                 ufbxi_check!(uc, !file.is_null(), "file");
+                let file = ExternalFileView::from_ptr(file);
                 // C: `file->index = num_files++;`
-                (*file).index = num_files;
+                file.set_index(num_files);
                 num_files += 1;
-                (*file).type_ = ExternalFileType::GeometryCache;
-                (*file).filename = (*cache).filename;
-                (*file).absolute_filename = (*cache).absolute_filename;
+                file.set_type(ExternalFileType::GeometryCache);
+                file.set_filename((*cache).filename);
+                file.set_absolute_filename((*cache).absolute_filename);
             }
             p_cache = p_cache.add(1);
         }
@@ -2577,14 +2618,18 @@ pub(crate) fn load_external_files(uc: &Context) -> Result<(), Fail> {
     // Sort and load the external files
     // Pops the `num_files` entries pushed above from uc's tmp stack into
     // uc's own tmp buffer.
-    let files: *mut ExternalFile = uc.tmp_view().push_pop(uc.tmp_stack_view(), num_files);
-    ufbxi_check!(uc, !files.is_null(), "files");
+    let files_ptr: *mut ExternalFile = uc.tmp_view().push_pop(uc.tmp_stack_view(), num_files);
+    ufbxi_check!(uc, !files_ptr.is_null(), "files");
+    // SAFETY: `files_ptr` is the fresh non-null `num_files`-element push-pop
+    // result. Every record was initialized above from interned filenames, so
+    // its `ExternalFileView` invariant also holds throughout this run.
+    let files = unsafe { Run::from_raw_parts(files_ptr, num_files) };
     // SAFETY: sorts the fresh non-null run in place with the matching
     // element size.
     unsafe {
         unstable_sort(
-            files as *mut c_void,
-            num_files,
+            files.as_mut_ptr() as *mut c_void,
+            files.len(),
             size_of::<ExternalFile>(),
             less_external_file,
             core::ptr::null_mut(),
@@ -2594,36 +2639,22 @@ pub(crate) fn load_external_files(uc: &Context) -> Result<(), Fail> {
     let mut prev_type: ExternalFileType = ExternalFileType::GeometryCache;
     let mut prev_name: *const u8 = core::ptr::null();
     // C: `ufbxi_for(ufbxi_external_file, file, files, num_files)`
-    // SAFETY: walking the fresh `num_files`-element run materialized above;
-    // `load_external_cache` receives an in-bounds element of it.
-    unsafe {
-        let mut file: *mut ExternalFile = files;
-        let file_end: *mut ExternalFile = add_ptr(file, num_files);
-        while file != file_end {
-            if (*file).filename.data == prev_name && (*file).type_ == prev_type {
-                file = file.add(1);
-                continue;
-            }
-            if (*file).type_ == ExternalFileType::GeometryCache {
-                // SAFETY: `file` is an in-bounds element of the fresh
-                // `num_files` run materialized above in uc's own tmp buffer —
-                // live, unmoved and write-capable arena memory. Its `filename`
-                // and `absolute_filename` are interned string-pool strings,
-                // NUL-terminated at `length`, which is the `ExternalFileView`
-                // mint invariant `load_external_cache` reads them under.
-                load_external_cache(uc, ExternalFileView::from_ptr(file))?;
-            }
-            prev_name = (*file).filename.data;
-            prev_type = (*file).type_;
-            file = file.add(1);
+    for file in files.iter() {
+        if file.filename().data == prev_name && file.type_() == prev_type {
+            continue;
         }
+        if file.type_() == ExternalFileType::GeometryCache {
+            load_external_cache(uc, file)?;
+        }
+        prev_name = file.filename().data;
+        prev_type = file.type_();
     }
 
     // Patch the loaded files
     // C: `ufbxi_for_ptr_list(ufbx_cache_file, p_cache, uc->scene.cache_files)`
-    // SAFETY: same stored `cache_files` run as above; `find_external_file`
-    // searches the `num_files` run materialized above; `(*file).data` is
-    // null-checked before the `Ref` wrap.
+    // SAFETY: same stored `cache_files` run as above. Each non-null external
+    // data pointer was produced by `load_external_cache` and remains retained
+    // by the scene before it is wrapped as a `Ref`.
     unsafe {
         let mut p_cache: *mut *mut CacheFile =
             uc.scene_view().cache_files_view().data() as *mut *mut CacheFile;
@@ -2631,14 +2662,14 @@ pub(crate) fn load_external_files(uc: &Context) -> Result<(), Fail> {
             add_ptr(p_cache, uc.scene_view().cache_files_view().count());
         while p_cache != p_cache_end {
             let cache: *mut CacheFile = *p_cache;
-            let file: *mut ExternalFile = find_external_file(
+            let cache = View::<CacheFile>::from_ptr(cache);
+            let file = find_external_file(
                 files,
-                num_files,
                 ExternalFileType::GeometryCache,
-                (*cache).filename.data,
+                cache.filename_view().bytes(),
             );
-            if !file.is_null() && !(*file).data.is_null() {
-                (*cache).external_cache = Some(Ref::from_ptr((*file).data as *mut GeometryCache));
+            if let Some(file) = file.filter(|file| !file.data().is_null()) {
+                cache.set_external_cache(Some(Ref::from_ptr(file.data() as *mut GeometryCache)));
             }
             p_cache = p_cache.add(1);
         }
