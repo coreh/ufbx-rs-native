@@ -101,6 +101,8 @@ use crate::native::platform::{
 };
 #[cfg(feature = "baking")]
 use crate::native::platform::{macro_stable_sort, ufbxi_unreachable};
+#[cfg(feature = "scene-eval")]
+use crate::native::read::opt_ref;
 use crate::native::read::{
     init_file_paths, open_file, read_legacy_root, read_root, ref_ptr, supports_version,
     SYNTHETIC_ID_START,
@@ -119,7 +121,7 @@ use crate::native::string_pool::{
     map_cmp_string, push_string_place_str, str_equal, str_less, string_pool_temp_free, STRINGS,
 };
 use crate::native::thread::{thread_pool_free, thread_pool_init, THREAD_GROUP_COUNT};
-#[cfg(feature = "baking")]
+#[cfg(any(feature = "baking", feature = "scene-eval"))]
 use crate::native::view::Run;
 use crate::native::view::SliceViewIter;
 use crate::native::view::{
@@ -3123,28 +3125,23 @@ pub(crate) unsafe fn translate_element_list(
 }
 
 // ufbx.c:26089-26094 `ufbxi_translate_maps`
+// Stays `unsafe fn`: `Run` carries the initialized map slots, but not the
+// relational invariant that every stored texture belongs to `ec`'s source
+// scene, which is what `translate_element` requires.
 #[cfg(feature = "scene-eval")]
 #[inline(never)]
-pub(crate) unsafe fn translate_maps(ec: &EvalContext, maps: *mut MaterialMap, count: usize) {
+pub(crate) unsafe fn translate_maps(ec: &EvalContext, maps: Run<'_, MaterialMap>) {
     // C: `ufbxi_nounroll ufbxi_for(ufbx_material_map, map, maps, count)`
-    let mut map: *mut MaterialMap = maps;
-    let map_end: *mut MaterialMap = add_ptr(maps, count);
-    while map != map_end {
-        // SAFETY: `map` walks the caller's `count`-element `ufbx_material_map`
-        // run and stops at `map_end`, so it addresses a live map; `texture` is
-        // that map's own `Option<Ref<Texture>>` field and the store writes it
-        // back in place. The texture it holds belongs to the source scene,
-        // which is `translate_element`'s contract.
+    for map in maps.iter() {
+        // SAFETY: each map's `texture` belongs to the source scene, which is
+        // `translate_element`'s contract; a non-null result names the matching
+        // destination-scene texture, which is `opt_ref`'s contract.
         unsafe {
-            *(&raw mut (*map).texture as *mut *mut Texture) = translate_element(
+            map.set_texture(opt_ref(translate_element(
                 ec,
-                ptr::read(&raw const (*map).texture).map_or(ptr::null_mut(), |r| r.ptr())
-                    as *mut c_void,
-            ) as *mut Texture;
+                map.texture().map_or(ptr::null_mut(), |r| r.ptr()) as *mut c_void,
+            ) as *mut Texture));
         }
-        // SAFETY: `map` is inside the run, so `map + 1` is at most one past its
-        // end.
-        map = unsafe { map.add(1) };
     }
 }
 
@@ -3748,19 +3745,23 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
         // union view; the generated struct keeps only the named branch, whose
         // base is the aggregate itself (layout pinned in `native::scene_process`).
         // SAFETY: each aggregate is `MATERIAL_FBX_MAP_COUNT` /
-        // `MATERIAL_PBR_MAP_COUNT` live `ufbx_material_map`s of the destination
+        // `MATERIAL_PBR_MAP_COUNT` live `MaterialMap`s of the destination
         // material, still naming source-scene textures — `translate_maps`'
         // contract.
         unsafe {
             translate_maps(
                 ec,
-                material.fbx_raw() as *mut MaterialMap,
-                MATERIAL_FBX_MAP_COUNT,
+                Run::from_raw_parts(
+                    material.fbx_raw() as *mut MaterialMap,
+                    MATERIAL_FBX_MAP_COUNT,
+                ),
             );
             translate_maps(
                 ec,
-                material.pbr_raw() as *mut MaterialMap,
-                MATERIAL_PBR_MAP_COUNT,
+                Run::from_raw_parts(
+                    material.pbr_raw() as *mut MaterialMap,
+                    MATERIAL_PBR_MAP_COUNT,
+                ),
             );
         }
 
@@ -6137,11 +6138,9 @@ static COMPLEX_ROTATION_SOURCES: BakePropNameTable<4> = BakePropNameTable([
 #[cfg(feature = "baking")]
 #[inline(never)]
 #[must_use]
-pub(crate) unsafe fn in_list(items: *const *const u8, count: usize, item: *const u8) -> bool {
-    for i in 0..count {
-        // SAFETY: this `unsafe fn` requires `items` to address `count` readable
-        // string pointers, and `i < count`.
-        if unsafe { *items.add(i) } == item {
+pub(crate) fn in_list(items: &[*const u8], item: *const u8) -> bool {
+    for &candidate in items {
+        if candidate == item {
             return true;
         }
     }
@@ -7036,15 +7035,7 @@ pub(crate) unsafe fn bake_node_imp(
         // C: `ufbxi_for(ufbxi_bake_prop, prop, props, count)`
         for prop in props.iter() {
             // Literally any transform related property can affect complex translation
-            // SAFETY: `TRANSFORM_PROPS` is a `'static` array of interned string
-            // pointers, so its base addresses exactly `len()` readable entries.
-            if unsafe {
-                in_list(
-                    TRANSFORM_PROPS.0.as_ptr(),
-                    TRANSFORM_PROPS.0.len(),
-                    prop.prop_name(),
-                )
-            } {
+            if in_list(&TRANSFORM_PROPS.0, prop.prop_name()) {
                 let resample_linear: bool =
                     resample_translation || prop.prop_name() != sp::Lcl_Translation.as_ptr();
                 let key_flag: u32 = if prop.prop_name() == sp::Lcl_Translation.as_ptr() {
@@ -7086,15 +7077,7 @@ pub(crate) unsafe fn bake_node_imp(
     // Rotation
     if complex_rotation {
         for prop in props.iter() {
-            // SAFETY: `COMPLEX_ROTATION_SOURCES` is a `'static` array of interned
-            // string pointers, so its base addresses exactly `len()` entries.
-            if unsafe {
-                in_list(
-                    COMPLEX_ROTATION_SOURCES.0.as_ptr(),
-                    COMPLEX_ROTATION_SOURCES.0.len(),
-                    prop.prop_name(),
-                )
-            } {
+            if in_list(&COMPLEX_ROTATION_SOURCES.0, prop.prop_name()) {
                 let resample_linear: bool = !bc.opts_view().no_resample_rotation()
                     || prop.prop_name() != sp::Lcl_Rotation.as_ptr();
                 let key_flag: u32 = if prop.prop_name() == sp::Lcl_Rotation.as_ptr() {
@@ -7705,15 +7688,7 @@ pub(crate) unsafe fn bake_element(
         // Don't bake transform related props for nodes unless specifically requested
         if element.type_() as u32 == ElementType::Node as u32
             && !bc.opts_view().bake_transform_props()
-            // SAFETY: `TRANSFORM_PROPS` is a `'static` array of interned string
-            // pointers, so its base addresses exactly `len()` readable entries.
-            && unsafe {
-                in_list(
-                    TRANSFORM_PROPS.0.as_ptr(),
-                    TRANSFORM_PROPS.0.len(),
-                    prop_name,
-                )
-            }
+            && in_list(&TRANSFORM_PROPS.0, prop_name)
         {
             begin = end;
             continue;

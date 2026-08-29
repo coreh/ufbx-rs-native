@@ -13235,13 +13235,11 @@ pub(crate) static POW10_TARGETS: [Real; 19] = [
 
 // ufbx.c:23889-23901 `ufbxi_round_if_near`
 #[inline(never)]
-pub(crate) unsafe fn round_if_near(targets: *const Real, num_targets: usize, value: Real) -> Real {
-    for i in 0..num_targets {
+pub(crate) fn round_if_near(targets: &[Real], value: Real) -> Real {
+    for &target in targets {
         // C: `double target = targets[i];` — the real target promotes to
         // double, and the range test below compares `value` in double too.
-        // SAFETY: `targets` addresses `num_targets` initialized `ufbx_real`s (fn
-        // contract) and `i` is in `0..num_targets` (loop bound).
-        let target: f64 = as_f64!(unsafe { *targets.add(i) });
+        let target: f64 = as_f64!(target);
         let mut error: f64 = target * 9.5367431640625e-7;
         if error < 0.0 {
             error = -error;
@@ -13285,16 +13283,9 @@ pub(crate) fn update_scene_settings(settings_view: &SceneSettingsView) {
             &sp::CoordAxis,
             &sp::CoordAxisSign,
         );
-        (*settings).unit_meters = round_if_near(
-            POW10_TARGETS.as_ptr(),
-            POW10_TARGETS.len(),
-            unit_scale_factor * (0.01 as Real),
-        );
-        (*settings).original_unit_meters = round_if_near(
-            POW10_TARGETS.as_ptr(),
-            POW10_TARGETS.len(),
-            original_unit_scale_factor * (0.01 as Real),
-        );
+        (*settings).unit_meters = round_if_near(&POW10_TARGETS, unit_scale_factor * (0.01 as Real));
+        (*settings).original_unit_meters =
+            round_if_near(&POW10_TARGETS, original_unit_scale_factor * (0.01 as Real));
         // C: `settings->frames_per_second` is `double` — the `ufbxi_find_real`
         // result promotes on assignment.
         (*settings).frames_per_second = find_real(

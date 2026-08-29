@@ -2793,13 +2793,10 @@ pub(crate) fn scale_units(uc: &Context, mut target_meters: Real) -> Result<(), F
     if uc.scene_view().settings_view().unit_meters() <= 0.0f32 as Real {
         return Ok(());
     }
-    // SAFETY: scans the static `POW10_TARGETS` array with its own length.
-    target_meters =
-        unsafe { round_if_near(POW10_TARGETS.as_ptr(), POW10_TARGETS.len(), target_meters) };
+    target_meters = round_if_near(&POW10_TARGETS, target_meters);
 
     let mut ratio: Real = uc.scene_view().settings_view().unit_meters() / target_meters;
-    // SAFETY: scans the same static array with its own length.
-    ratio = unsafe { round_if_near(POW10_TARGETS.as_ptr(), POW10_TARGETS.len(), ratio) };
+    ratio = round_if_near(&POW10_TARGETS, ratio);
     if ratio == 1.0f32 as Real {
         return Ok(());
     }
