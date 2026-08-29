@@ -295,7 +295,8 @@ pub(crate) unsafe fn generate_indices(
             // SAFETY: `packed_vertex` addresses `packed_size` readable bytes,
             // all initialized — zeroed by the `write_bytes` above, with the
             // stream loop overwriting the non-padding ranges each iteration.
-            let hash: u32 = unsafe { hash_string(packed_vertex, packed_size) };
+            let hash: u32 =
+                hash_string(unsafe { crate::prelude::slice_from_ptr(packed_vertex, packed_size) });
             // SAFETY: the map's item size is the `packed_size` it was grown with,
             // and the key addresses `packed_size` readable bytes.
             let mut entry: *mut c_void = unsafe {

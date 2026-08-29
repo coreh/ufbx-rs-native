@@ -1562,10 +1562,10 @@ fn binary_parse_node_rec(
                     } else {
                         let mut non_ascii: bool = false;
                         // SAFETY: `str_` is the non-null `length`-byte run read
-                        // above; the hash helper scans exactly those bytes.
-                        let hash: u32 = unsafe {
-                            hash_string_check_ascii(str_, length as usize, &raw mut non_ascii)
-                        };
+                        // above, unwritten for the borrow — in particular it is
+                        // not the pool's own temp buffer, which the callee writes.
+                        let str_bytes = unsafe { slice_from_ptr(str_, length as usize) };
+                        let hash: u32 = hash_string_check_ascii(str_bytes, &mut non_ascii);
                         // SAFETY: `name` is the pooled node name; `is_raw_string`
                         // classifies value `i` under `parent_state`.
                         let raw: bool =
@@ -1577,11 +1577,7 @@ fn binary_parse_node_rec(
                             // `SanitizedString` slot — write-capable arena memory
                             // outliving the call.
                             unsafe { SanitizedStringView::from_ptr(&raw mut (*vals.add(i)).s) },
-                            // SAFETY: `str_` is the non-null `length`-byte run read
-                            // above, unwritten for the borrow — in particular it is
-                            // not the pool's own temp buffer, which the callee
-                            // writes.
-                            unsafe { slice_from_ptr(str_, length as usize) },
+                            str_bytes,
                             hash,
                             raw,
                         )?;

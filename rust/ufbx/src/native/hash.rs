@@ -13,7 +13,7 @@ use crate::native::allocator::{
 use crate::native::buf::{buf_free, push, Buf, BufView};
 use crate::native::error::{ufbxi_check_return_err, ufbxi_check_return_err_msg};
 use crate::native::platform::{
-    read_u32, ufbx_assert, ufbxi_maybe_null, ufbxi_regression_assert, MAP_MAX_SCAN,
+    ufbx_assert, ufbxi_maybe_null, ufbxi_regression_assert, MAP_MAX_SCAN,
 };
 use crate::native::view::{view_project, view_read, view_write};
 
@@ -30,43 +30,40 @@ pub(crate) struct PtrId {
 
 // ufbx.c:4704-4729 `ufbxi_hash_string`
 #[inline(never)]
-pub(crate) unsafe fn hash_string(mut str_: *const u8, mut length: usize) -> u32 {
+pub(crate) fn hash_string(str_: &[u8]) -> u32 {
+    let mut length = str_.len();
+    let mut offset = 0usize;
     let mut hash = length as u32;
     let seed = 0x9e3779b9u32;
     if length >= 4 {
         loop {
-            // SAFETY: loop invariant — `length >= 4` on entry (guard above and
-            // the `length -= 4` re-check), so 4 bytes are readable at `str_`,
-            // which stays within the caller's `length`-byte run.
-            let word = unsafe { read_u32(str_) };
+            let word = u32::from_le_bytes([
+                str_[offset],
+                str_[offset + 1],
+                str_[offset + 2],
+                str_[offset + 3],
+            ]);
             hash = ((hash << 5 | hash >> 27) ^ word).wrapping_mul(seed);
-            // SAFETY: loop invariant — `length >= 4` this iteration (guard
-            // above and the `length -= 4` re-check), so `str_ + 4` lands at or
-            // before the one-past-the-end of the caller's `length`-byte run.
-            str_ = unsafe { str_.add(4) };
+            offset += 4;
             length -= 4;
             if !(length >= 4) {
                 break;
             }
         }
 
-        // SAFETY: `str_ + length` is the run's tail; stepping back 4 bytes
-        // reads the last full word, wholly within the caller's run.
-        let word = unsafe { read_u32(str_.add(length).sub(4)) };
+        let tail = str_.len() - 4;
+        let word = u32::from_le_bytes([str_[tail], str_[tail + 1], str_[tail + 2], str_[tail + 3]]);
         hash = ((hash << 5 | hash >> 27) ^ word).wrapping_mul(seed);
     } else {
         let mut word = 0u32;
         if length >= 1 {
-            // SAFETY: `length >= 1`, so byte 0 of the run is readable.
-            word |= (unsafe { *str_.add(0) } as u32) << 0;
+            word |= (str_[0] as u32) << 0;
         }
         if length >= 2 {
-            // SAFETY: `length >= 2`, so byte 1 of the run is readable.
-            word |= (unsafe { *str_.add(1) } as u32) << 8;
+            word |= (str_[1] as u32) << 8;
         }
         if length >= 3 {
-            // SAFETY: `length >= 3`, so byte 2 of the run is readable.
-            word |= (unsafe { *str_.add(2) } as u32) << 16;
+            word |= (str_[2] as u32) << 16;
         }
         hash = ((hash << 5 | hash >> 27) ^ word).wrapping_mul(seed);
     }
@@ -79,11 +76,9 @@ pub(crate) unsafe fn hash_string(mut str_: *const u8, mut length: usize) -> u32 
 // ufbx.c:4732-4779 `ufbxi_hash_string_check_ascii`
 // NOTE: _Must_ match `ufbxi_hash_string()`
 #[inline(never)]
-pub(crate) unsafe fn hash_string_check_ascii(
-    mut str_: *const u8,
-    mut length: usize,
-    p_non_ascii: *mut bool,
-) -> u32 {
+pub(crate) fn hash_string_check_ascii(str_: &[u8], p_non_ascii: &mut bool) -> u32 {
+    let mut length = str_.len();
+    let mut offset = 0usize;
     let mut ascii_mask = 0u32;
     let mut zero_mask = 0u32;
 
@@ -93,27 +88,25 @@ pub(crate) unsafe fn hash_string_check_ascii(
     let seed = 0x9e3779b9u32;
     if length >= 4 {
         loop {
-            // SAFETY: loop invariant — `length >= 4` on entry (guard above and
-            // the `length -= 4` re-check), so 4 bytes are readable at `str_`,
-            // which stays within the caller's `length`-byte run.
-            let word = unsafe { read_u32(str_) };
+            let word = u32::from_le_bytes([
+                str_[offset],
+                str_[offset + 1],
+                str_[offset + 2],
+                str_[offset + 3],
+            ]);
             ascii_mask |= word;
             zero_mask |= 0x80808080u32.wrapping_sub(word);
 
             hash = ((hash << 5 | hash >> 27) ^ word).wrapping_mul(seed);
-            // SAFETY: loop invariant — `length >= 4` this iteration (guard
-            // above and the `length -= 4` re-check), so `str_ + 4` lands at or
-            // before the one-past-the-end of the caller's `length`-byte run.
-            str_ = unsafe { str_.add(4) };
+            offset += 4;
             length -= 4;
             if !(length >= 4) {
                 break;
             }
         }
 
-        // SAFETY: `str_ + length` is the run's tail; stepping back 4 bytes
-        // reads the last full word, wholly within the caller's run.
-        let word = unsafe { read_u32(str_.add(length).sub(4)) };
+        let tail = str_.len() - 4;
+        let word = u32::from_le_bytes([str_[tail], str_[tail + 1], str_[tail + 2], str_[tail + 3]]);
         ascii_mask |= word;
         zero_mask |= 0x80808080u32.wrapping_sub(word);
 
@@ -121,16 +114,13 @@ pub(crate) unsafe fn hash_string_check_ascii(
     } else {
         let mut word = 0u32;
         if length >= 1 {
-            // SAFETY: `length >= 1`, so byte 0 of the run is readable.
-            word |= (unsafe { *str_.add(0) } as u32) << 0;
+            word |= (str_[0] as u32) << 0;
         }
         if length >= 2 {
-            // SAFETY: `length >= 2`, so byte 1 of the run is readable.
-            word |= (unsafe { *str_.add(1) } as u32) << 8;
+            word |= (str_[1] as u32) << 8;
         }
         if length >= 3 {
-            // SAFETY: `length >= 3`, so byte 2 of the run is readable.
-            word |= (unsafe { *str_.add(2) } as u32) << 16;
+            word |= (str_[2] as u32) << 16;
         }
 
         ascii_mask |= word;
@@ -146,9 +136,7 @@ pub(crate) unsafe fn hash_string_check_ascii(
 
     // If any character has high bit set or is zero we're not ASCII
     if ((ascii_mask | zero_mask) & 0x80808080u32) != 0 {
-        // SAFETY: caller contract — `p_non_ascii` points at a live, writable
-        // `bool`.
-        unsafe { *p_non_ascii = true };
+        *p_non_ascii = true;
     }
 
     hash ^= hash >> 16;
@@ -198,12 +186,7 @@ pub(crate) fn hash_uptr(ptr: usize) -> u32 {
     #[cfg(not(any(target_pointer_width = "64", target_pointer_width = "32")))]
     {
         // C fallback: hash the pointer's bytes.
-        unsafe {
-            hash_string(
-                &ptr as *const usize as *const u8,
-                core::mem::size_of::<usize>(),
-            )
-        }
+        hash_string(&ptr.to_ne_bytes())
     }
 }
 
@@ -1239,15 +1222,12 @@ mod tests {
     use super::*;
 
     fn hs(b: &[u8]) -> u32 {
-        // SAFETY: pointer and length come from the same local slice `b`.
-        unsafe { hash_string(b.as_ptr(), b.len()) }
+        hash_string(b)
     }
 
     fn hsca(b: &[u8]) -> (u32, bool) {
         let mut non_ascii = false;
-        // SAFETY: pointer and length come from the same local slice `b`;
-        // `p_non_ascii` points at a live local.
-        let h = unsafe { hash_string_check_ascii(b.as_ptr(), b.len(), &mut non_ascii) };
+        let h = hash_string_check_ascii(b, &mut non_ascii);
         (h, non_ascii)
     }
 
@@ -1307,11 +1287,9 @@ mod tests {
     fn check_ascii_only_sets_flag() {
         // The C only ever writes `true`; a pre-set flag must survive an
         // all-ASCII string.
-        unsafe {
-            let mut non_ascii = true;
-            hash_string_check_ascii(b"abc".as_ptr(), 3, &mut non_ascii);
-            assert!(non_ascii);
-        }
+        let mut non_ascii = true;
+        hash_string_check_ascii(b"abc", &mut non_ascii);
+        assert!(non_ascii);
     }
 
     #[test]

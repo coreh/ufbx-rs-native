@@ -2012,10 +2012,11 @@ fn ascii_parse_node_rec(
                     }
                 } else {
                     let mut non_ascii: bool = false;
-                    // SAFETY: `str_` is readable for `length` bytes (the token
-                    // string); `non_ascii` is a local out-param.
-                    let hash: u32 =
-                        unsafe { hash_string_check_ascii(str_, length, &raw mut non_ascii) };
+                    // SAFETY: `str_` is the token's readable `length`-byte run,
+                    // unwritten for the borrow — in particular it is not the
+                    // pool's own temp buffer, which the callee writes.
+                    let str_bytes = unsafe { slice_from_ptr(str_, length) };
+                    let hash: u32 = hash_string_check_ascii(str_bytes, &mut non_ascii);
                     // SAFETY: `name` is the interned node name; `is_raw_string`
                     // matches it against known raw-string node fields.
                     let raw: bool = !non_ascii
@@ -2026,11 +2027,7 @@ fn ascii_parse_node_rec(
                         // projects its own `s` field — write-capable arena memory
                         // outliving the call — as the sanitize out-param.
                         unsafe { SanitizedStringView::from_ptr(&raw mut (*v).s) },
-                        // SAFETY: `str_` is readable for `length` bytes (the token
-                        // string) and unwritten for the borrow — in particular it
-                        // is not the pool's own temp buffer, which the callee
-                        // writes.
-                        unsafe { slice_from_ptr(str_, length) },
+                        str_bytes,
                         hash,
                         raw,
                     )?;

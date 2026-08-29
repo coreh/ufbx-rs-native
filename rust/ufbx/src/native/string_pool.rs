@@ -725,9 +725,7 @@ pub(crate) fn push_sanitized_string(
     // C's `length` parameter is the source slice's own length.
     let length = str_.len();
 
-    // SAFETY: `str_` is a shared slice, readable for its own length — the run
-    // `hash_string` hashes.
-    ufbxi_regression_assert!(hash == unsafe { hash_string(str_.as_ptr(), length) });
+    ufbxi_regression_assert!(hash == hash_string(str_));
 
     ufbxi_check_err!(
         pool.error_view(),
@@ -761,8 +759,7 @@ pub(crate) fn push_sanitized_string(
                 .raw_length()
                 .wrapping_add(sanitized.utf8_length())
                 .wrapping_add(1) as usize;
-            // SAFETY: `str_` is a shared slice, readable for its own length.
-            hash = unsafe { hash_string(str_.as_ptr(), length) };
+            hash = hash_string(str_);
         }
     }
 
@@ -829,13 +826,17 @@ pub(crate) unsafe fn push_string_imp(
 
     let mut hash: u32;
     if raw {
-        // SAFETY: the caller vouches `str_` is readable for `length` bytes.
-        hash = unsafe { hash_string(str_, length) };
+        // SAFETY: the caller vouches `str_` is readable for `length` bytes;
+        // the borrow lasts only for the hash scan.
+        hash = hash_string(unsafe { crate::prelude::slice_from_ptr(str_, length) });
     } else {
         let mut non_ascii = false;
-        // SAFETY: `str_` is readable for `length` bytes and `non_ascii` is an
-        // unaliased local out-param.
-        hash = unsafe { hash_string_check_ascii(str_, length, &raw mut non_ascii) };
+        // SAFETY: the caller vouches `str_` is readable for `length` bytes;
+        // the borrow lasts only for the hash scan.
+        hash = hash_string_check_ascii(
+            unsafe { crate::prelude::slice_from_ptr(str_, length) },
+            &mut non_ascii,
+        );
         if non_ascii {
             // SAFETY: `str_` is readable for `length` bytes.
             let valid_length = unsafe { utf8_valid_length(str_, length) };
@@ -866,9 +867,9 @@ pub(crate) unsafe fn push_string_imp(
                 }
                 str_ = sanitized.raw_data;
                 length = sanitized.raw_length as usize;
-                // SAFETY: `str_`/`length` are the sanitized run just produced,
-                // readable for `length` bytes.
-                hash = unsafe { hash_string(str_, length) };
+                // SAFETY: `str_`/`length` are the sanitized run just produced;
+                // the borrow lasts only for the hash scan.
+                hash = hash_string(unsafe { crate::prelude::slice_from_ptr(str_, length) });
                 // SAFETY: the caller vouches `p_out_length` addresses a live
                 // `usize` out-param.
                 unsafe { *p_out_length = length };
@@ -2032,7 +2033,7 @@ mod tests {
                 raw_length: 0,
                 utf8_length: 0,
             };
-            let hash = hash_string(b"Model".as_ptr(), 5);
+            let hash = hash_string(b"Model");
             assert_eq!(
                 push_sanitized_string(
                     pool,
@@ -2068,7 +2069,7 @@ mod tests {
 
             // Invalid UTF-8 with push_both: `raw\0utf8` packing.
             let inp = b"a\xffb";
-            let h = hash_string(inp.as_ptr(), 3);
+            let h = hash_string(inp);
             let mut san3 = SanitizedString {
                 raw_data: core::ptr::null(),
                 raw_length: 0,
