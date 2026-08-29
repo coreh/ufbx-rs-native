@@ -1155,16 +1155,14 @@ pub(crate) fn obj_parse_multi_indices(uc: &Context, window: usize) -> Result<(),
 // ufbx.c:17306-17324 `ufbxi_parse_hex`
 #[cfg(feature = "obj")]
 #[inline(never)]
-pub(crate) unsafe fn parse_hex(digits: *const u8, length: usize) -> u32 {
+pub(crate) fn parse_hex(digits: &[u8]) -> u32 {
     let mut value: u32 = 0;
 
-    for i in 0..length {
+    for &c in digits {
         // C: `char c = digits[i];` — `char` is signed on the oracle targets
         // (PORTING.md char-value rule). Every range tested below is entirely
         // below 0x80, so bytes >= 0x80 fall through to `v = 0` either way.
-        // SAFETY: caller contract — `digits` addresses `length` readable bytes,
-        // and `i < length`.
-        let c: i8 = unsafe { *(digits.add(i) as *const i8) };
+        let c: i8 = c as i8;
         let mut v: u32 = 0;
         if c >= b'0' as i8 && c <= b'9' as i8 {
             v = (c as i32 - b'0' as i32) as u32;
@@ -1215,6 +1213,9 @@ pub(crate) fn obj_parse_comment(uc: &Context) -> Result<(), Fail> {
 
         // SAFETY: `num_tokens >= 3`, so token 2 is in the stored token run.
         let mrgb: String = unsafe { *uc.obj().tokens().add(2) };
+        // SAFETY: the token is an interned OBJ input string, readable and
+        // unwritten for its stored length throughout this parse.
+        let mrgb_bytes = unsafe { mrgb.as_bytes() };
         // C: `for (size_t i = 0; i + 8 <= mrgb.length; i += 8)`
         let mut i: usize = 0;
         while i + 8 <= mrgb.length {
@@ -1228,13 +1229,11 @@ pub(crate) fn obj_parse_comment(uc: &Context) -> Result<(), Fail> {
                 !p_rgba.is_null() && !p_valid.is_null(),
                 "p_rgba && p_valid"
             );
-            // SAFETY: fills the fresh non-null runs pushed above exactly; the
-            // loop condition keeps the 8 hex digits read at `mrgb.data + i`
-            // inside the token's own span.
+            // SAFETY: fills the fresh non-null runs pushed above exactly.
             unsafe {
                 *p_valid = true;
 
-                let hex: u32 = parse_hex(mrgb.data.add(i), 8);
+                let hex: u32 = parse_hex(&mrgb_bytes[i..i + 8]);
                 *p_rgba.add(0) = ((hex >> 16) & 0xff) as Real / (255.0f32 as Real);
                 *p_rgba.add(1) = ((hex >> 8) & 0xff) as Real / (255.0f32 as Real);
                 *p_rgba.add(2) = ((hex >> 0) & 0xff) as Real / (255.0f32 as Real);

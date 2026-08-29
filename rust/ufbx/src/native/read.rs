@@ -10718,16 +10718,13 @@ pub(crate) fn read_legacy_root(uc: &Context) -> Result<(), Fail> {
 // ufbx.c:16487-16498 `ufbxi_trim_delimiters`
 #[inline(never)]
 #[must_use]
-pub(crate) unsafe fn trim_delimiters(uc: &Context, data: *const u8, length: usize) -> usize {
-    let mut length = length;
+pub(crate) fn trim_delimiters(uc: &Context, data: &[u8]) -> usize {
+    let mut length = data.len();
     while length > 0 {
         // C-parity: `char c = data[length - 1];` — `c` is only compared
         // against ASCII separators, so the signedness of C `char` is not
         // observable here (PORTING.md "char (value…)").
-        // SAFETY: `data` .. `data + length` is the caller's live byte run and
-        // the loop only reads at `length - 1` while `length > 0`, so the offset
-        // stays inside it.
-        let c: u8 = unsafe { *data.add(length - 1) };
+        let c: u8 = data[length - 1];
         let is_separator: bool = c == b'/' || c == uc.opts_view().path_separator();
         if is_separator {
             length -= 1;
@@ -10793,32 +10790,27 @@ pub(crate) fn init_file_paths(uc: &Context) -> Result<(), Fail> {
     uc.scene_view()
         .metadata_view()
         .relative_root_view()
-        // SAFETY: the scan reads uc's own metadata `filename`, interned just
-        // above, over exactly its own `length` bytes.
-        .set_length(unsafe {
-            trim_delimiters(
-                uc,
-                uc.scene_view().metadata_view().filename_view().data(),
-                uc.scene_view().metadata_view().filename_view().length(),
-            )
-        });
+        .set_length(trim_delimiters(
+            uc,
+            uc.scene_view().metadata_view().filename_view().bytes(),
+        ));
 
     uc.scene_view()
         .metadata_view()
         .raw_relative_root_view()
         .set_data(uc.scene_view().metadata_view().raw_filename_view().data());
+    // SAFETY: the metadata raw filename's blob pointer is readable for its
+    // stored size and the scan's shared borrow ends before any blob mutation.
+    let raw_filename = unsafe {
+        slice_from_ptr(
+            uc.scene_view().metadata_view().raw_filename_view().data(),
+            uc.scene_view().metadata_view().raw_filename_view().size(),
+        )
+    };
     uc.scene_view()
         .metadata_view()
         .raw_relative_root_view()
-        // SAFETY: the scan reads uc's own metadata `raw_filename`, interned
-        // just above, over exactly its own `size` bytes.
-        .set_size(unsafe {
-            trim_delimiters(
-                uc,
-                uc.scene_view().metadata_view().raw_filename_view().data(),
-                uc.scene_view().metadata_view().raw_filename_view().size(),
-            )
-        });
+        .set_size(trim_delimiters(uc, raw_filename));
 
     push_string_place_str(
         uc.string_pool_view(),
@@ -10895,18 +10887,11 @@ pub(crate) fn strblob_length<M: Mode>(strblob: &View<Strblob, M>, raw: bool) -> 
 // ufbx.c:16557-16565 `ufbxi_is_absolute_path`
 #[inline(never)]
 #[must_use]
-pub(crate) unsafe fn is_absolute_path(path: *const u8, length: usize) -> bool {
-    // SAFETY: `path` .. `path + length` is the caller's live byte run, and the
-    // `length` guards bound the index-0, index-1 and index-2 reads.
-    unsafe {
-        if length > 0 && (*path.add(0) == b'/' || *path.add(0) == b'\\') {
-            return true;
-        } else if length > 2
-            && *path.add(1) == b':'
-            && (*path.add(2) == b'\\' || *path.add(2) == b'/')
-        {
-            return true;
-        }
+pub(crate) fn is_absolute_path(path: &[u8]) -> bool {
+    if !path.is_empty() && (path[0] == b'/' || path[0] == b'\\') {
+        return true;
+    } else if path.len() > 2 && path[1] == b':' && (path[2] == b'\\' || path[2] == b'/') {
+        return true;
     }
     false
 }
@@ -10958,9 +10943,10 @@ pub(crate) fn resolve_relative_filename<M: Mode>(
             .length();
     }
 
-    // Retain absolute paths
-    // SAFETY: `src` .. `src + src_length` is the remaining source path run.
-    if unsafe { is_absolute_path(src, src_length) } {
+    // Retain absolute paths. The temporary shared slice ends with this test;
+    // later code may publish through `p_dst`, which can alias an input header.
+    // SAFETY: `src` addresses the remaining `src_length` source-path bytes.
+    if is_absolute_path(unsafe { slice_from_ptr(src, src_length) }) {
         prefix_length = 0;
     }
 
