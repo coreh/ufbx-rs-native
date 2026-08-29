@@ -119,6 +119,8 @@ use crate::native::string_pool::{
     map_cmp_string, push_string_place_str, str_equal, str_less, string_pool_temp_free, STRINGS,
 };
 use crate::native::thread::{thread_pool_free, thread_pool_init, THREAD_GROUP_COUNT};
+#[cfg(feature = "baking")]
+use crate::native::view::Run;
 use crate::native::view::SliceViewIter;
 use crate::native::view::{
     view_project, view_raw_const, view_raw_mut, view_raw_shared, view_read, view_read_shared,
@@ -5891,10 +5893,10 @@ pub(crate) struct BakeProp {
 
 // Rust-port infra (not a ufbx.c type): reinterpret-in-place VIEW over a
 // `BakeProp`. The C `ufbxi_for(ufbxi_bake_prop, prop, props, count)` loops walk a
-// contiguous `push_pop`-materialized `BakeProp` run; `SliceViewIter` walks that
-// `(base, count)` run yielding `&BakePropView`, replacing raw `prop.add(1)`
-// navigation with a safe contiguous iteration whose only `unsafe` is the
-// `from_raw_parts` run vouch.
+// contiguous `push_pop`-materialized `BakeProp` run; `Run<BakeProp>` carries
+// that pair through the baking pipeline and yields `&BakePropView`, replacing
+// raw `prop.add(1)` navigation with safe indexing, sub-runs, and iteration
+// after one root construction vouch.
 #[cfg(feature = "baking")]
 #[cfg(feature = "baking")]
 pub(crate) type BakePropView = crate::native::view::View<BakeProp>;
@@ -6933,8 +6935,7 @@ impl View<BakedQuat, Mut> {
 pub(crate) unsafe fn bake_node_imp(
     bc: &BakeContext,
     element_id: u32,
-    props: *mut BakeProp,
-    count: usize,
+    props: Run<'_, BakeProp>,
 ) -> Result<(), Fail> {
     ufbx_assert!(!bc.baked_nodes().is_null() && !bc.nodes_to_bake().is_null());
 
@@ -6970,9 +6971,7 @@ pub(crate) unsafe fn bake_node_imp(
             complex_translation = true;
         }
         // C: `ufbxi_for(ufbxi_bake_prop, bprop, props, count)`
-        // SAFETY: this `unsafe fn` requires `props` to address `count` live
-        // `ufbxi_bake_prop`s, which is what the iterator walks.
-        for bprop in unsafe { SliceViewIter::<BakeProp>::from_raw_parts(props, count) } {
+        for bprop in props.iter() {
             if bprop.prop_name() == name {
                 complex_translation = true;
             }
@@ -6981,8 +6980,7 @@ pub(crate) unsafe fn bake_node_imp(
 
     for i in 0..COMPLEX_ROTATION_PROPS.0.len() {
         let name: *const u8 = COMPLEX_ROTATION_PROPS.0[i];
-        // SAFETY: as above — `props` addresses `count` live `ufbxi_bake_prop`s.
-        for bprop in unsafe { SliceViewIter::<BakeProp>::from_raw_parts(props, count) } {
+        for bprop in props.iter() {
             if bprop.prop_name() == name {
                 complex_rotation = true;
             }
@@ -7060,9 +7058,7 @@ pub(crate) unsafe fn bake_node_imp(
 
     if complex_translation {
         // C: `ufbxi_for(ufbxi_bake_prop, prop, props, count)`
-        // SAFETY: `props` addresses `count` live `ufbxi_bake_prop`s — this
-        // `unsafe fn`'s contract.
-        for prop in unsafe { SliceViewIter::<BakeProp>::from_raw_parts(props, count) } {
+        for prop in props.iter() {
             // Literally any transform related property can affect complex translation
             // SAFETY: `TRANSFORM_PROPS` is a `'static` array of interned string
             // pointers, so its base addresses exactly `len()` readable entries.
@@ -7093,8 +7089,7 @@ pub(crate) unsafe fn bake_node_imp(
             }
         }
     } else {
-        // SAFETY: `props` addresses `count` live `ufbxi_bake_prop`s.
-        for prop in unsafe { SliceViewIter::<BakeProp>::from_raw_parts(props, count) } {
+        for prop in props.iter() {
             if prop.prop_name() == sp::Lcl_Translation.as_ptr() {
                 // SAFETY: `prop.anim_value()` is the live `ufbx_anim_value` this
                 // bake prop was collected from.
@@ -7114,8 +7109,7 @@ pub(crate) unsafe fn bake_node_imp(
 
     // Rotation
     if complex_rotation {
-        // SAFETY: `props` addresses `count` live `ufbxi_bake_prop`s.
-        for prop in unsafe { SliceViewIter::<BakeProp>::from_raw_parts(props, count) } {
+        for prop in props.iter() {
             // SAFETY: `COMPLEX_ROTATION_SOURCES` is a `'static` array of interned
             // string pointers, so its base addresses exactly `len()` entries.
             if unsafe {
@@ -7145,8 +7139,7 @@ pub(crate) unsafe fn bake_node_imp(
             }
         }
     } else {
-        // SAFETY: `props` addresses `count` live `ufbxi_bake_prop`s.
-        for prop in unsafe { SliceViewIter::<BakeProp>::from_raw_parts(props, count) } {
+        for prop in props.iter() {
             if prop.prop_name() == sp::Lcl_Rotation.as_ptr() {
                 // SAFETY: `prop.anim_value()` is the live `ufbx_anim_value` this
                 // bake prop was collected from.
@@ -7221,8 +7214,7 @@ pub(crate) unsafe fn bake_node_imp(
     }
 
     {
-        // SAFETY: `props` addresses `count` live `ufbxi_bake_prop`s.
-        for prop in unsafe { SliceViewIter::<BakeProp>::from_raw_parts(props, count) } {
+        for prop in props.iter() {
             if prop.prop_name() == sp::Lcl_Scaling.as_ptr() {
                 // SAFETY: `prop.anim_value()` is the live `ufbx_anim_value` this
                 // bake prop was collected from.
@@ -7567,13 +7559,11 @@ pub(crate) unsafe fn bake_node_imp(
 pub(crate) unsafe fn bake_node(
     bc: &BakeContext,
     element_id: u32,
-    props: *mut BakeProp,
-    count: usize,
+    props: Run<'_, BakeProp>,
 ) -> Result<(), Fail> {
-    // SAFETY: `element_id`, `props` and `count` are this `unsafe fn`'s own
-    // parameters, forwarded unchanged under the same contract `bake_node_imp`
-    // states — a scene element id and a `count`-element bake-prop run.
-    unsafe { bake_node_imp(bc, element_id, props, count) }?;
+    // SAFETY: `element_id` is this `unsafe fn`'s own scene-element parameter;
+    // `props` already carries the bake-prop run contract.
+    unsafe { bake_node_imp(bc, element_id, props) }?;
 
     // Baking a node may cause further nodes to be baked, so keep going
     // until all dependencies are baked.
@@ -7583,9 +7573,9 @@ pub(crate) unsafe fn bake_node(
         // `uint32_t` (the loop condition), and `child_id` is a live local slot
         // for the popped value.
         unsafe { pop::<u32>(bc.tmp_bake_stack_view(), 1, &raw mut child_id) };
-        // SAFETY: `child_id` was pushed as a scene element id by `bake_node_imp`,
-        // and an empty prop run is described by a null base with count zero.
-        unsafe { bake_node_imp(bc, child_id, ptr::null_mut(), 0) }?;
+        // SAFETY: `child_id` was pushed as a scene element id by
+        // `bake_node_imp`; this dependency has no explicit bake properties.
+        unsafe { bake_node_imp(bc, child_id, Run::empty()) }?;
     }
 
     Ok(())
@@ -7598,13 +7588,10 @@ pub(crate) unsafe fn bake_anim_prop(
     bc: &BakeContext,
     element: *mut Element,
     prop_name: *const u8,
-    props: *mut BakeProp,
-    count: usize,
+    props: Run<'_, BakeProp>,
 ) -> Result<(), Fail> {
     // C: `ufbxi_for(ufbxi_bake_prop, prop, props, count)`
-    // SAFETY: this `unsafe fn` requires `props` to address `count` live
-    // `ufbxi_bake_prop`s, which is what the iterator walks.
-    for prop in unsafe { SliceViewIter::<BakeProp>::from_raw_parts(props, count) } {
+    for prop in props.iter() {
         // SAFETY: `prop.anim_value()` is the live `ufbx_anim_value` this bake
         // prop was collected from.
         unsafe {
@@ -7712,8 +7699,7 @@ pub(crate) unsafe fn bake_anim_prop(
 pub(crate) unsafe fn bake_element(
     bc: &BakeContext,
     element_id: u32,
-    props: *mut BakeProp,
-    count: usize,
+    props: Run<'_, BakeProp>,
 ) -> Result<(), Fail> {
     // SAFETY: `bc.scene()` is the source `ufbx_scene` `bake_anim_imp` stored into
     // `bc`, live for the bake; this `unsafe fn` requires `element_id` to be one
@@ -7727,20 +7713,16 @@ pub(crate) unsafe fn bake_element(
     };
     if element.type_() as u32 == ElementType::Node as u32 && !bc.opts_view().skip_node_transforms()
     {
-        // SAFETY: `element_id`, `props` and `count` are this fn's own parameters,
-        // forwarded unchanged under the contract `bake_node` states.
-        unsafe { bake_node(bc, element_id, props, count) }?;
+        // SAFETY: `element_id` is this fn's own scene-element parameter;
+        // `props` already carries the bake-prop run contract.
+        unsafe { bake_node(bc, element_id, props) }?;
     }
 
     let mut begin: usize = 0;
-    while begin < count {
-        // SAFETY: this `unsafe fn` requires `props` to address `count` live
-        // `ufbxi_bake_prop`s, and `begin < count` (loop condition).
-        let prop_name: *const u8 = unsafe { (*props.add(begin)).prop_name };
+    while begin < props.len() {
+        let prop_name: *const u8 = props.at(begin).prop_name();
         let mut end: usize = begin + 1;
-        // SAFETY (this condition): `end < count` is checked first and `&&`
-        // short-circuits, so that slot is in bounds of the prop run.
-        while end < count && unsafe { (*props.add(end)).prop_name } == prop_name {
+        while end < props.len() && props.at(end).prop_name() == prop_name {
             end += 1;
         }
 
@@ -7762,9 +7744,16 @@ pub(crate) unsafe fn bake_element(
         }
 
         // SAFETY: `element` is the live scene element and `prop_name` is one of
-        // its interned NUL-terminated prop names; `begin < end <= count`, so
-        // `props + begin` addresses `end - begin` live props of the run.
-        unsafe { bake_anim_prop(bc, element.get(), prop_name, props.add(begin), end - begin) }?;
+        // its interned NUL-terminated property names. The bounded sub-run
+        // carries the former `props + begin, end - begin` contract.
+        unsafe {
+            bake_anim_prop(
+                bc,
+                element.get(),
+                prop_name,
+                props.subrun(begin, end - begin),
+            )
+        }?;
         begin = end;
     }
 
@@ -7909,18 +7898,23 @@ pub(crate) fn bake_anim(bc: &BakeContext) -> Result<(), Fail> {
     // Pops bc's bake-prop stack into bc's tmp buf; `num_props` is that stack's
     // own item count, so the pop is exact, and the sort is then over exactly
     // the popped run.
-    let props: *mut BakeProp = bc
+    let props_ptr: *mut BakeProp = bc
         .tmp_view()
         .push_pop::<BakeProp>(bc.tmp_bake_props_view(), num_props);
-    ufbxi_check_err!(bc.error_view(), !props.is_null(), "props");
+    ufbxi_check_err!(bc.error_view(), !props_ptr.is_null(), "props");
 
-    // SAFETY: `props` is the fresh non-null `num_props`-element run just
-    // checked; `bake_prop_less` compares two `BakeProp`s and takes no user
-    // data, so the null `user` is what it expects.
+    // SAFETY: `props_ptr` is the fresh non-null `num_props`-element run just
+    // checked, allocated in `bc.tmp` and stable for the remainder of the bake.
+    // Each slot was initialized while collecting the bake properties above.
+    let props: Run<'_, BakeProp> = unsafe { Run::from_raw_parts(props_ptr, num_props) };
+
+    // SAFETY: `bake_prop_less` compares two slots of `props` and takes no user
+    // data, so the null `user` is what it expects. `Mut` mode supplies the
+    // write-capable base required by the in-place sort.
     unsafe {
         unstable_sort(
-            props as *mut c_void,
-            num_props,
+            props.as_mut_ptr() as *mut c_void,
+            props.len(),
             size_of::<BakeProp>(),
             bake_prop_less,
             ptr::null_mut(),
@@ -7931,11 +7925,10 @@ pub(crate) fn bake_anim(bc: &BakeContext) -> Result<(), Fail> {
     if !bc.opts_view().ignore_layer_weight_animation() {
         let mut has_weight_times: bool = false;
         // C: `ufbxi_for(ufbxi_bake_prop, prop, props, num_props)`
-        // SAFETY: `props`/`num_props` is the sorted run above; each entry's
-        // `element_id` was copied from a live scene element, so it indexes the
-        // scene's own `elements` list.
+        // Each entry's `element_id` was copied from a live scene element, so it
+        // indexes the scene's own `elements` list.
         unsafe {
-            for prop in SliceViewIter::<BakeProp>::from_raw_parts(props, num_props) {
+            for prop in props.iter() {
                 if prop.prop_name() != sp::Weight.as_ptr() {
                     continue;
                 }
@@ -7981,19 +7974,16 @@ pub(crate) fn bake_anim(bc: &BakeContext) -> Result<(), Fail> {
     }
 
     let mut begin: usize = 0;
-    while begin < num_props {
-        // SAFETY: `begin < num_props` and the inner scan stops at
-        // `num_props`, so every read and the `props.add(begin)` sub-run handed
-        // to `bake_element` stay inside the `num_props`-element run.
-        unsafe {
-            let element_id: u32 = (*props.add(begin)).element_id;
-            let mut end: usize = begin + 1;
-            while end < num_props && (*props.add(end)).element_id == element_id {
-                end += 1;
-            }
-            bake_element(bc, element_id, props.add(begin), end - begin)?;
-            begin = end;
+    while begin < props.len() {
+        let element_id: u32 = props.at(begin).element_id();
+        let mut end: usize = begin + 1;
+        while end < props.len() && props.at(end).element_id() == element_id {
+            end += 1;
         }
+        // SAFETY: `element_id` came from a live scene element while collecting
+        // this run; the bounded sub-run carries the property-span contract.
+        unsafe { bake_element(bc, element_id, props.subrun(begin, end - begin)) }?;
+        begin = end;
     }
 
     let num_nodes: usize = bc.tmp_nodes_view().num_items();

@@ -20,11 +20,10 @@
 //! `&View<T>` can be formed over a `T` embedding not-yet-valid bytes.
 //!
 //! ufbx stores child/attrib/element/etc. runs as contiguous `push_pop` arena
-//! arrays walked in C by `ufbxi_for` (plain `ptr++`); [`SliceViewIter`] walks
-//! such a `(base, count)` run yielding `&View<T>`, with the only raw-pointer work
-//! — the in-bounds index and the per-element `*mut T -> &View<T>` bridge —
-//! localized to `from_raw_parts` (the run vouch) and `next`. It is a dumb
-//! contiguous walk —
+//! arrays walked in C by `ufbxi_for` (plain `ptr++`). [`Run`] carries such a
+//! `(base, count)` pair after one raw construction vouch and provides safe
+//! indexing, sub-runs, and iteration; [`SliceViewIter`] is its iterator and the
+//! legacy direct-construction surface. The iterator is a dumb contiguous walk —
 //! morally `slice::Iter` with a reinterpret on the yield — and knows nothing
 //! about the allocator: it is for contiguous `push_pop`-materialized runs ONLY.
 //! The allocator's own structures get their own walkers with the same shape —
@@ -34,7 +33,7 @@
 //! the whole-allocation pointer, since a view over a flexible-array-member
 //! struct covers the header bytes only — and the map re-hash walks
 //! its entry tables as plain slices. Neither is a `T`-array, which is why
-//! they are not `SliceViewIter`.
+//! they are neither `Run` nor `SliceViewIter`.
 
 use core::cell::UnsafeCell;
 use core::marker::PhantomData;
@@ -347,19 +346,129 @@ macro_rules! view_raw_const {
 }
 pub(crate) use view_raw_const;
 
-/// Safe iterator over a contiguous run of `T`, yielding `&View<T>`.
+/// Borrowed handle over a contiguous run of `T` slots.
+///
+/// This is the typed carrier for C's recurring `(data, count)` pair. Its raw
+/// constructor is the single vouch for the whole run; bounds-checked element
+/// access, iteration, and sub-runs are safe. Like [`View`], the mode records
+/// whether the pointer's provenance is write-capable ([`Mut`]) or merely
+/// readable and frozen ([`Const`]).
+// Run consumers are baking-gated; non-baking configurations retain the
+// shared infrastructure.
+#[cfg_attr(not(feature = "baking"), allow(dead_code))]
+pub(crate) struct Run<'a, T, M: Mode = Mut> {
+    base: *mut T,
+    count: usize,
+    _marker: PhantomData<&'a View<T, M>>,
+}
+
+impl<T, M: Mode> Copy for Run<'_, T, M> {}
+
+impl<T, M: Mode> Clone for Run<'_, T, M> {
+    #[inline(always)]
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+#[cfg_attr(not(feature = "baking"), allow(dead_code))]
+impl<'a, T, M: Mode> Run<'a, T, M> {
+    #[inline(always)]
+    pub(crate) fn len(self) -> usize {
+        self.count
+    }
+
+    /// Bounds-checked element view carrying the run's mode and lifetime.
+    #[inline(always)]
+    pub(crate) fn at(self, index: usize) -> &'a View<T, M> {
+        assert!(index < self.count);
+        // SAFETY: the constructor vouches for `count` contiguous slots and the
+        // assertion keeps `index` in that run. Its provenance is adequate for
+        // `M`, and the slot stays alive and unmoved for `'a`.
+        unsafe { View::mint(self.base.add(index)) }
+    }
+
+    /// Bounds-checked contiguous sub-run.
+    #[inline(always)]
+    pub(crate) fn subrun(self, begin: usize, count: usize) -> Self {
+        assert!(begin <= self.count);
+        assert!(count <= self.count - begin);
+        // Preserve null-with-zero without performing pointer arithmetic. For
+        // a non-empty parent the constructor vouches for the allocation, so
+        // `begin <= self.count` permits an in-bounds or one-past projection.
+        let base = if begin == 0 {
+            self.base
+        } else {
+            // SAFETY: checked above; `begin` is within or one past the run.
+            unsafe { self.base.add(begin) }
+        };
+        Self {
+            base,
+            count,
+            _marker: PhantomData,
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn iter(self) -> SliceViewIter<'a, T, M> {
+        SliceViewIter {
+            base: self.base,
+            count: self.count,
+            idx: 0,
+            _marker: PhantomData,
+        }
+    }
+}
+
+#[cfg_attr(not(feature = "baking"), allow(dead_code))]
+impl<'a, T> Run<'a, T, Mut> {
+    /// Vouch for one contiguous interior-mutable run.
+    ///
+    /// # Safety
+    /// `base` must point to `count` contiguous, allocated, write-capable `T`
+    /// slots that stay alive and unmoved for `'a`. The slots may be
+    /// uninitialized: reads retain the per-leaf initialization obligation of
+    /// [`View<T, Mut>`]. Null is allowed exactly when `count == 0`.
+    #[inline(always)]
+    pub(crate) unsafe fn from_raw_parts(base: *mut T, count: usize) -> Self {
+        debug_assert!(count == 0 || !base.is_null());
+        Self {
+            base,
+            count,
+            _marker: PhantomData,
+        }
+    }
+
+    /// Empty run with no allocation or provenance requirement.
+    #[inline(always)]
+    pub(crate) const fn empty() -> Run<'static, T, Mut> {
+        Run {
+            base: core::ptr::null_mut(),
+            count: 0,
+            _marker: PhantomData,
+        }
+    }
+
+    /// Raw write pointer to the first slot. For an empty run this may be null.
+    #[inline(always)]
+    pub(crate) fn as_mut_ptr(self) -> *mut T {
+        self.base
+    }
+}
+
+/// Safe iterator over a contiguous run of `T`, yielding `&View<T, M>`.
 ///
 /// A dumb contiguous walk — `slice::Iter` with a reinterpret on the yield — that
 /// knows nothing about the allocator. Construction (`from_raw_parts`) is the
 /// single `unsafe` boundary that vouches for the run; iteration is then fully safe.
-pub(crate) struct SliceViewIter<'a, T> {
+pub(crate) struct SliceViewIter<'a, T, M: Mode = Mut> {
     base: *mut T,
     count: usize,
     idx: usize,
-    _marker: PhantomData<&'a View<T>>,
+    _marker: PhantomData<&'a View<T, M>>,
 }
 
-impl<'a, T> SliceViewIter<'a, T> {
+impl<'a, T> SliceViewIter<'a, T, Mut> {
     /// # Safety
     /// `base` must point to `count` contiguous, allocated, write-capable `T`
     /// slots that stay alive and unmoved for `'a` — one arena allocation run
@@ -382,11 +491,11 @@ impl<'a, T> SliceViewIter<'a, T> {
     }
 }
 
-impl<'a, T> Iterator for SliceViewIter<'a, T> {
-    type Item = &'a View<T>;
+impl<'a, T, M: Mode> Iterator for SliceViewIter<'a, T, M> {
+    type Item = &'a View<T, M>;
 
     #[inline]
-    fn next(&mut self) -> Option<&'a View<T>> {
+    fn next(&mut self) -> Option<&'a View<T, M>> {
         if self.idx >= self.count {
             return None;
         }
@@ -396,6 +505,6 @@ impl<'a, T> Iterator for SliceViewIter<'a, T> {
         // `MaybeUninit` storage tolerates.
         let elem = unsafe { self.base.add(self.idx) };
         self.idx += 1;
-        Some(unsafe { View::<T>::from_ptr(elem) })
+        Some(unsafe { View::<T, M>::mint(elem) })
     }
 }

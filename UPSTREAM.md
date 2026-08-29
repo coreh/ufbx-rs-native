@@ -3,7 +3,8 @@
 ## State
 
 - Upstream: https://github.com/ufbx/ufbx
-- **Last fully ported upstream commit:** _(none yet — initial port in progress)_
+- **Last fully ported upstream commit:** `fcc5d6ba444cfd3eb80677dba5e37e493941abe5`
+  (the upstream baseline used for the complete initial native Rust port)
 - Rust fuzz-check table generation state: _(not yet generated)_
 
 ## Delta-port workflow (per upstream sync)
