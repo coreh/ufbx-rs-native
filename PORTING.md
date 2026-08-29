@@ -505,11 +505,14 @@ bind). The goal is not a zero unsafe count — it is that every residual
   `Run::from_raw_parts()` at the allocation/list boundary vouches for the
   entire stable run; `len()`, bounds-checked `at()`, `subrun()`, and `iter()`
   then carry its lifetime and mode without repeating pointer-arithmetic
-  obligations. `Mut` runs expose the base for in-place C sort helpers. A null
-  base is valid only for the safe zero-length `Run::empty()` form. Do not use a
-  run for skip-flagged buffers, linked allocations, or flexible-array payloads
-  whose provenance exceeds the header allocation; those retain their
-  allocator-specific carriers (`ChunkRef`, walkers, or raw contractual APIs).
+  obligations. `Run::from_list()` safely derives the carrier from a viewed
+  `List<T>` whose field invariant already establishes the run; raw allocation
+  results retain the explicit constructor vouch. `Mut` runs expose the base
+  for in-place C sort helpers. A null base is valid only for the safe
+  zero-length `Run::empty()` form. Do not use a run for skip-flagged buffers,
+  linked allocations, or flexible-array payloads whose provenance exceeds the
+  header allocation; those retain their allocator-specific carriers
+  (`ChunkRef`, walkers, or raw contractual APIs).
 - **Fn boundaries take borrows, not raw pointers**: `Option<&WarningsView>`
   over nullable `*mut`, `&K` keys, `FailStr` over `*const u8` fmt. A fn stays
   an honest `unsafe fn` when a raw-pointer PARAM is genuinely dereferenced

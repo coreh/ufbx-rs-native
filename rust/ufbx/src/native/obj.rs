@@ -80,7 +80,7 @@ use crate::native::string_pool::{push_string_place_blob, push_string_place_str, 
 #[cfg(feature = "obj")]
 use crate::native::view::{view_read, view_write};
 #[cfg(feature = "obj")]
-use crate::native::view::{Mut, SliceViewIter, View};
+use crate::native::view::{Mut, Run, SliceViewIter, View};
 #[cfg(feature = "obj")]
 use crate::native::warnings::ufbxi_warnf;
 #[cfg(feature = "obj")]
@@ -240,12 +240,11 @@ pub(crate) unsafe fn obj_pop_props(
     }
 
     if props.count > 1 {
-        // SAFETY: `props.data` is the fresh non-null run and `props.count` the
-        // item count it was popped with.
-        unsafe { sort_properties(uc, props.data as *mut Prop, props.count)? };
         // `props` is the local descriptor of the run just sorted, which the
         // dedup compacts in place.
-        deduplicate_properties(ListView::<Prop>::from_mut(&mut props));
+        let props_view = ListView::<Prop>::from_mut(&mut props);
+        sort_properties(uc, Run::from_list(props_view))?;
+        deduplicate_properties(props_view);
     }
 
     // C: `*dst = props;`

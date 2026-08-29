@@ -51,7 +51,7 @@ use crate::native::string_pool::{
 };
 use crate::native::view::SliceViewIter;
 #[cfg(feature = "geometry-cache")]
-use crate::native::view::{view_raw_const, view_raw_mut, Const};
+use crate::native::view::{view_raw_const, view_raw_mut, Const, Run};
 use crate::native::view::{view_read, view_write, Mut, View};
 use crate::native::warnings::ufbxi_warnf;
 #[cfg(feature = "geometry-cache")]
@@ -1304,10 +1304,9 @@ pub(crate) unsafe extern "C" fn tmp_channel_less(
 // ufbx.c:24301-24306 `ufbxi_cache_sort_tmp_channels`
 #[cfg(feature = "geometry-cache")]
 #[inline(never)]
-pub(crate) unsafe fn cache_sort_tmp_channels(
+pub(crate) fn cache_sort_tmp_channels(
     cc: &CacheContext,
-    channels: *mut CacheTmpChannel,
-    count: usize,
+    channels: Run<'_, CacheTmpChannel>,
 ) -> Result<(), Fail> {
     // SAFETY: the growth targets are `cc`'s own `tmp_arr` pointer/size pair,
     // grown through `cc`'s own temp allocator, minted from its live `ator_tmp`
@@ -1321,22 +1320,21 @@ pub(crate) unsafe fn cache_sort_tmp_channels(
                 AllocatorView::from_ptr(cc.ator_tmp()),
                 cc.tmp_arr_mut_ptr(),
                 cc.tmp_arr_size_mut_ptr(),
-                count.wrapping_mul(size_of::<CacheTmpChannel>())
+                channels.len().wrapping_mul(size_of::<CacheTmpChannel>())
             )
         },
         "ufbxi_grow_array_size((cc->ator_tmp), sizeof(**(&cc->tmp_arr)), (&cc->tmp_arr), (&cc->tmp_arr_size), (count * sizeof(ufbxi_cache_tmp_channel)))"
     );
-    // SAFETY: the caller's contract is that `channels` addresses `count` live
-    // `CacheTmpChannel`s; the scratch buffer is `cc.tmp_arr`, just grown to
-    // `count * size_of::<CacheTmpChannel>()` bytes, and the element size /
-    // comparator match that type.
+    // SAFETY: `channels` carries a live `CacheTmpChannel` run; the scratch
+    // buffer is `cc.tmp_arr`, just grown to the run's byte size, and the
+    // element size / comparator match that type.
     unsafe {
         stable_sort(
             size_of::<CacheTmpChannel>(),
             16,
-            channels as *mut c_void,
+            channels.as_mut_ptr() as *mut c_void,
             cc.tmp_arr() as *mut c_void,
-            count,
+            channels.len(),
             tmp_channel_less,
             core::ptr::null_mut(),
         );
@@ -1500,9 +1498,10 @@ pub(crate) fn cache_load_xml_imp(cc: &CacheContext, doc: &XmlDocumentView) -> Re
         }
     }
 
-    // SAFETY: sorting cc's own `channels` run of `num_channels` entries
-    // (populated above / empty when no Channels tag).
-    unsafe { cache_sort_tmp_channels(cc, cc.channels(), cc.num_channels())? };
+    // SAFETY: cc's `channels` pointer addresses the `num_channels` entries
+    // populated above (or is null with zero entries when no Channels tag).
+    let channels = unsafe { Run::from_raw_parts(cc.channels(), cc.num_channels()) };
+    cache_sort_tmp_channels(cc, channels)?;
     Ok(())
 }
 
@@ -1827,10 +1826,9 @@ pub(crate) unsafe extern "C" fn cmp_cache_frame_less(
 // ufbx.c:24554-24559 `ufbxi_cache_sort_frames`
 #[cfg(feature = "geometry-cache")]
 #[inline(never)]
-pub(crate) unsafe fn cache_sort_frames(
+pub(crate) fn cache_sort_frames(
     cc: &CacheContext,
-    frames: *mut CacheFrame,
-    count: usize,
+    frames: Run<'_, CacheFrame>,
 ) -> Result<(), Fail> {
     // SAFETY: the growth targets are `cc`'s own `tmp_arr` pointer/size pair,
     // grown through `cc`'s own temp allocator, minted from its live `ator_tmp`
@@ -1844,22 +1842,21 @@ pub(crate) unsafe fn cache_sort_frames(
                 AllocatorView::from_ptr(cc.ator_tmp()),
                 cc.tmp_arr_mut_ptr(),
                 cc.tmp_arr_size_mut_ptr(),
-                count.wrapping_mul(size_of::<CacheFrame>())
+                frames.len().wrapping_mul(size_of::<CacheFrame>())
             )
         },
         "ufbxi_grow_array_size((cc->ator_tmp), sizeof(**(&cc->tmp_arr)), (&cc->tmp_arr), (&cc->tmp_arr_size), (count * sizeof(ufbx_cache_frame)))"
     );
-    // SAFETY: the caller's contract is that `frames` addresses `count` live
-    // `CacheFrame`s; the scratch buffer is `cc.tmp_arr`, just grown to
-    // `count * size_of::<CacheFrame>()` bytes, and the element size /
+    // SAFETY: `frames` carries a live `CacheFrame` run; the scratch buffer is
+    // `cc.tmp_arr`, just grown to the run's byte size, and the element size /
     // comparator match that type.
     unsafe {
         stable_sort(
             size_of::<CacheFrame>(),
             16,
-            frames as *mut c_void,
+            frames.as_mut_ptr() as *mut c_void,
             cc.tmp_arr() as *mut c_void,
-            count,
+            frames.len(),
             cmp_cache_frame_less,
             core::ptr::null_mut(),
         );
@@ -2069,16 +2066,7 @@ pub(crate) unsafe fn cache_load_imp(
         "cc->cache.frames.data"
     );
 
-    // SAFETY: the frames run was just pushed into the result buf and checked
-    // non-null, and `count` is the item count that push used — so the pointer
-    // addresses exactly `count` live `CacheFrame`s.
-    unsafe {
-        cache_sort_frames(
-            cc,
-            cc.cache_view().frames_view().data() as *mut CacheFrame,
-            cc.cache_view().frames_view().count(),
-        )?;
-    }
+    cache_sort_frames(cc, Run::from_list(cc.cache_view().frames_view()))?;
     cache_setup_channels(cc)?;
 
     // Must be last allocation!

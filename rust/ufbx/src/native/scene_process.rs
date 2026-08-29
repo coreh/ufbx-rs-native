@@ -253,7 +253,8 @@ use crate::native::string_pool::{
     self as sp, add3, concat_str_cmp, min3, neg3, normalize3, str_cmp, str_less, sub3, ONE_VEC3,
 };
 use crate::native::view::{
-    view_project, view_read, view_read_shared, view_write, Const, Mode, Mut, SliceViewIter, View,
+    view_project, view_read, view_read_shared, view_write, Const, Mode, Mut, Run, SliceViewIter,
+    View,
 };
 use crate::native::warnings::ufbxi_warnf_tag;
 use crate::prelude::as_f64;
@@ -1135,8 +1136,9 @@ pub(crate) fn pre_finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
                         (*node).element.props.props.count = new_prop_count;
                         sort_properties(
                             uc,
-                            (*node).element.props.props.data as *mut Prop,
-                            (*node).element.props.props.count,
+                            Run::from_list(ListView::<Prop>::from_ptr(
+                                &raw mut (*node).element.props.props,
+                            )),
                         )?;
                         // SAFETY: `node` is the live scene node whose property
                         // list was just published above; the projection

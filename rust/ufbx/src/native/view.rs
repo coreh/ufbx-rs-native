@@ -353,8 +353,8 @@ pub(crate) use view_raw_const;
 /// access, iteration, and sub-runs are safe. Like [`View`], the mode records
 /// whether the pointer's provenance is write-capable ([`Mut`]) or merely
 /// readable and frozen ([`Const`]).
-// Run consumers are baking-gated; non-baking configurations retain the
-// shared infrastructure.
+// Some Run consumers are feature-gated; reduced configurations retain the
+// shared carrier and operations used by their enabled subsystems.
 #[cfg_attr(not(feature = "baking"), allow(dead_code))]
 pub(crate) struct Run<'a, T, M: Mode = Mut> {
     base: *mut T,
@@ -373,6 +373,20 @@ impl<T, M: Mode> Clone for Run<'_, T, M> {
 
 #[cfg_attr(not(feature = "baking"), allow(dead_code))]
 impl<'a, T, M: Mode> Run<'a, T, M> {
+    /// Derive a run from a viewed `List<T>` field.
+    ///
+    /// Safe because the viewed-list invariant already vouches that its stored
+    /// `(data, count)` pair describes a contiguous stable run, and the view's
+    /// mode records whether that stored pointer may be used for writes.
+    #[inline(always)]
+    pub(crate) fn from_list(list: &'a View<crate::prelude::List<T>, M>) -> Self {
+        Self {
+            base: list.data() as *mut T,
+            count: list.count(),
+            _marker: PhantomData,
+        }
+    }
+
     #[inline(always)]
     pub(crate) fn len(self) -> usize {
         self.count

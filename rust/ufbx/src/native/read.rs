@@ -141,7 +141,7 @@ use crate::native::thread::{
     thread_pool_wait_group, THREAD_GROUP_COUNT,
 };
 use crate::native::view::{view_project, view_raw_mut, view_read, view_read_shared, view_write};
-use crate::native::view::{Mode, Mut, SliceViewIter, View};
+use crate::native::view::{Mode, Mut, Run, SliceViewIter, View};
 use crate::native::warnings::ufbxi_warnf;
 use crate::prelude::as_f64;
 use crate::prelude::{
@@ -383,11 +383,7 @@ pub(crate) fn prop_less<M: Mode>(a: &View<Prop, M>, b: &View<Prop, M>) -> bool {
 
 // ufbx.c:11878-11883 `ufbxi_sort_properties`
 #[inline(never)]
-pub(crate) unsafe fn sort_properties(
-    uc: &Context,
-    props: *mut Prop,
-    count: usize,
-) -> Result<(), Fail> {
+pub(crate) fn sort_properties(uc: &Context, props: Run<'_, Prop>) -> Result<(), Fail> {
     ufbxi_check!(
         uc,
         // SAFETY: the allocator, data pointer and size slots are uc's own
@@ -398,17 +394,22 @@ pub(crate) unsafe fn sort_properties(
                 uc.ator_tmp_view(),
                 uc.tmp_arr_mut_ptr(),
                 uc.tmp_arr_size_mut_ptr(),
-                count.wrapping_mul(size_of::<Prop>()),
+                props.len().wrapping_mul(size_of::<Prop>()),
             )
         },
         "ufbxi_grow_array_size((&uc->ator_tmp), sizeof(**(&uc->tmp_arr)), (&uc->tmp_arr), (&uc->tmp_arr_size), (count * sizeof(ufbx_prop)))"
     );
-    // SAFETY: `props` spans `count` live `ufbx_prop` values (fn contract) and
-    // `uc.tmp_arr()` was just grown to `count * size_of::<Prop>()` bytes of
-    // scratch, so both the input run and the merge buffer are in bounds; the
-    // comparator only ever sees elements of that run.
+    // SAFETY: `props` carries a live `Prop` run and `uc.tmp_arr()` was just
+    // grown to the run's byte size, so both the input run and merge buffer are
+    // in bounds; the comparator only ever sees elements of that run.
     unsafe {
-        macro_stable_sort_views::<Prop>(32, props, uc.tmp_arr() as *mut Prop, count, prop_less)
+        macro_stable_sort_views::<Prop>(
+            32,
+            props.as_mut_ptr(),
+            uc.tmp_arr() as *mut Prop,
+            props.len(),
+            prop_less,
+        )
     };
     Ok(())
 }
@@ -501,9 +502,10 @@ pub(crate) fn read_properties(
         i += 1;
     }
 
-    // SAFETY: `props.data` spans `props.count` live `ufbx_prop` values, just
-    // filled in by the loop above — `sort_properties`' contract.
-    unsafe { sort_properties(uc, props.props_data(), props.props_count()) }?;
+    // SAFETY: `props.data` spans `props.count` live `Prop` values filled by the
+    // loop above.
+    let prop_run = unsafe { Run::from_raw_parts(props.props_data(), props.props_count()) };
+    sort_properties(uc, prop_run)?;
     deduplicate_properties(props.props_view());
 
     Ok(())
@@ -2853,11 +2855,7 @@ pub(crate) unsafe extern "C" fn color_set_less(
 
 // ufbx.c:12976-12981 `ufbxi_sort_uv_sets`
 #[inline(never)]
-pub(crate) unsafe fn sort_uv_sets(
-    uc: &Context,
-    sets: *mut UvSet,
-    count: usize,
-) -> Result<(), Fail> {
+pub(crate) fn sort_uv_sets(uc: &Context, sets: Run<'_, UvSet>) -> Result<(), Fail> {
     ufbxi_check!(
         uc,
         // SAFETY: the allocator, data pointer and size slots are uc's own
@@ -2868,22 +2866,21 @@ pub(crate) unsafe fn sort_uv_sets(
                 uc.ator_tmp_view(),
                 uc.tmp_arr_mut_ptr(),
                 uc.tmp_arr_size_mut_ptr(),
-                count * size_of::<UvSet>(),
+                sets.len() * size_of::<UvSet>(),
             )
         },
         "ufbxi_grow_array_size((&uc->ator_tmp), sizeof(**(&uc->tmp_arr)), (&uc->tmp_arr), (&uc->tmp_arr_size), (count * sizeof(ufbx_uv_set)))"
     );
-    // SAFETY: `sets` spans `count` live `ufbx_uv_set` values (fn contract) and
-    // `uc.tmp_arr()` was just grown to `count * size_of::<UvSet>()` bytes of
-    // scratch, so both the input run and the merge buffer are in bounds;
-    // `uv_set_less` is the comparator for that element type.
+    // SAFETY: `sets` carries a live `UvSet` run and `uc.tmp_arr()` was just
+    // grown to the run's byte size, so both the input run and merge buffer are
+    // in bounds; `uv_set_less` is the comparator for that element type.
     unsafe {
         stable_sort(
             size_of::<UvSet>(),
             32,
-            sets as *mut c_void,
+            sets.as_mut_ptr() as *mut c_void,
             uc.tmp_arr() as *mut c_void,
-            count,
+            sets.len(),
             uv_set_less,
             core::ptr::null_mut(),
         )
@@ -2893,11 +2890,7 @@ pub(crate) unsafe fn sort_uv_sets(
 
 // ufbx.c:12983-12988 `ufbxi_sort_color_sets`
 #[inline(never)]
-pub(crate) unsafe fn sort_color_sets(
-    uc: &Context,
-    sets: *mut ColorSet,
-    count: usize,
-) -> Result<(), Fail> {
+pub(crate) fn sort_color_sets(uc: &Context, sets: Run<'_, ColorSet>) -> Result<(), Fail> {
     ufbxi_check!(
         uc,
         // SAFETY: the allocator, data pointer and size slots are uc's own
@@ -2908,22 +2901,21 @@ pub(crate) unsafe fn sort_color_sets(
                 uc.ator_tmp_view(),
                 uc.tmp_arr_mut_ptr(),
                 uc.tmp_arr_size_mut_ptr(),
-                count * size_of::<ColorSet>(),
+                sets.len() * size_of::<ColorSet>(),
             )
         },
         "ufbxi_grow_array_size((&uc->ator_tmp), sizeof(**(&uc->tmp_arr)), (&uc->tmp_arr), (&uc->tmp_arr_size), (count * sizeof(ufbx_color_set)))"
     );
-    // SAFETY: `sets` spans `count` live `ufbx_color_set` values (fn contract)
-    // and `uc.tmp_arr()` was just grown to `count * size_of::<ColorSet>()`
-    // bytes of scratch, so both the input run and the merge buffer are in
-    // bounds; `color_set_less` is the comparator for that element type.
+    // SAFETY: `sets` carries a live `ColorSet` run and `uc.tmp_arr()` was just
+    // grown to the run's byte size, so both the input run and merge buffer are
+    // in bounds; `color_set_less` is the comparator for that element type.
     unsafe {
         stable_sort(
             size_of::<ColorSet>(),
             32,
-            sets as *mut c_void,
+            sets.as_mut_ptr() as *mut c_void,
             uc.tmp_arr() as *mut c_void,
-            count,
+            sets.len(),
             color_set_less,
             core::ptr::null_mut(),
         )
@@ -2958,11 +2950,7 @@ pub(crate) unsafe extern "C" fn blend_offset_less(
 
 // ufbx.c:13003-13008 `ufbxi_sort_blend_offsets`
 #[inline(never)]
-pub(crate) unsafe fn sort_blend_offsets(
-    uc: &Context,
-    offsets: *mut BlendOffset,
-    count: usize,
-) -> Result<(), Fail> {
+pub(crate) fn sort_blend_offsets(uc: &Context, offsets: Run<'_, BlendOffset>) -> Result<(), Fail> {
     ufbxi_check!(
         uc,
         // SAFETY: the allocator, data pointer and size slots are uc's own
@@ -2973,23 +2961,21 @@ pub(crate) unsafe fn sort_blend_offsets(
                 uc.ator_tmp_view(),
                 uc.tmp_arr_mut_ptr(),
                 uc.tmp_arr_size_mut_ptr(),
-                count * size_of::<BlendOffset>(),
+                offsets.len() * size_of::<BlendOffset>(),
             )
         },
         "ufbxi_grow_array_size((&uc->ator_tmp), sizeof(**(&uc->tmp_arr)), (&uc->tmp_arr), (&uc->tmp_arr_size), (count * sizeof(ufbxi_blend_offset)))"
     );
-    // SAFETY: `offsets` spans `count` live `ufbxi_blend_offset` values (fn
-    // contract) and `uc.tmp_arr()` was just grown to
-    // `count * size_of::<BlendOffset>()` bytes of scratch, so both the input
-    // run and the merge buffer are in bounds; `blend_offset_less` is the
-    // comparator for that element type.
+    // SAFETY: `offsets` carries a live `BlendOffset` run and `uc.tmp_arr()` was
+    // just grown to the run's byte size, so both the input run and merge
+    // buffer are in bounds; `blend_offset_less` is its comparator.
     unsafe {
         stable_sort(
             size_of::<BlendOffset>(),
             16,
-            offsets as *mut c_void,
+            offsets.as_mut_ptr() as *mut c_void,
             uc.tmp_arr() as *mut c_void,
-            count,
+            offsets.len(),
             blend_offset_less,
             core::ptr::null_mut(),
         )
@@ -3114,9 +3100,10 @@ pub(crate) fn read_shape(
             }
         }
 
-        // SAFETY: `offsets` spans `num_offsets` live `ufbxi_blend_offset`
-        // values, just filled in by the loop above.
-        unsafe { sort_blend_offsets(uc, offsets, num_offsets) }?;
+        // SAFETY: `offsets` spans the `num_offsets` live `BlendOffset` values
+        // filled by the loop above.
+        let offset_run = unsafe { Run::from_raw_parts(offsets, num_offsets) };
+        sort_blend_offsets(uc, offset_run)?;
 
         for i in 0..num_offsets {
             // SAFETY: as the fill loop — `i < num_offsets` bounds both the
@@ -4904,16 +4891,8 @@ pub(crate) fn read_mesh(uc: &Context, node: &NodeView, info: &ElementInfoView) -
     }
 
     // Sort UV and color sets by set index
-    // SAFETY: `uv_sets`/`color_sets` span `count` live `ufbx_uv_set` /
-    // `ufbx_color_set` values — the two sorts' contract.
-    unsafe {
-        sort_uv_sets(uc, mesh.uv_sets().data as *mut UvSet, mesh.uv_sets().count)?;
-        sort_color_sets(
-            uc,
-            mesh.color_sets().data as *mut ColorSet,
-            mesh.color_sets().count,
-        )?;
-    }
+    sort_uv_sets(uc, Run::from_list(mesh.uv_sets_view()))?;
+    sort_color_sets(uc, Run::from_list(mesh.color_sets_view()))?;
 
     if num_textures > 0 {
         // `element.element_id` is the mesh's own id — the element
@@ -6801,10 +6780,9 @@ pub(crate) fn read_pose(
 
 // ufbx.c:14689-14695 `ufbxi_sort_shader_prop_bindings`
 #[inline(never)]
-pub(crate) unsafe fn sort_shader_prop_bindings(
+pub(crate) fn sort_shader_prop_bindings(
     uc: &Context,
-    bindings: *mut ShaderPropBinding,
-    count: usize,
+    bindings: Run<'_, ShaderPropBinding>,
 ) -> Result<(), Fail> {
     // SAFETY: the allocator, data pointer and size slots are uc's own
     // `ator_tmp`/`tmp_arr`/`tmp_arr_size` fields, reached through its views —
@@ -6816,7 +6794,9 @@ pub(crate) unsafe fn sort_shader_prop_bindings(
                 uc.ator_tmp_view(),
                 uc.tmp_arr_mut_ptr(),
                 uc.tmp_arr_size_mut_ptr(),
-                count.wrapping_mul(size_of::<ShaderPropBinding>()),
+                bindings
+                    .len()
+                    .wrapping_mul(size_of::<ShaderPropBinding>()),
             )
         },
         // C-parity: `ufbxi_check`'s `cond` is not preceded by `#`/`##` in its own
@@ -6824,17 +6804,16 @@ pub(crate) unsafe fn sort_shader_prop_bindings(
         // `ufbxi_cond_str` stringifies it (C11 6.10.3.1). Verbatim post-expansion text.
         "ufbxi_grow_array_size((&uc->ator_tmp), sizeof(**(&uc->tmp_arr)), (&uc->tmp_arr), (&uc->tmp_arr_size), (count * sizeof(ufbx_shader_prop_binding)))"
     );
-    // SAFETY: `bindings` spans `count` live `ufbx_shader_prop_binding` values (fn
-    // contract) and `uc.tmp_arr()` was just grown to
-    // `count * size_of::<ShaderPropBinding>()` bytes of scratch, so both the
-    // input run and the merge buffer are in bounds; the comparator only ever
-    // sees elements of that run, whose `shader_prop` fields are interned strings.
+    // SAFETY: `bindings` carries a live `ShaderPropBinding` run and
+    // `uc.tmp_arr()` was just grown to the run's byte size, so both the input
+    // run and merge buffer are in bounds; the comparator only sees elements
+    // whose `shader_prop` fields are interned strings.
     unsafe {
         macro_stable_sort::<ShaderPropBinding>(
             32,
-            bindings,
+            bindings.as_mut_ptr(),
             uc.tmp_arr() as *mut ShaderPropBinding,
-            count,
+            bindings.len(),
             |a, b| sp::str_less((*a).shader_prop.as_bytes(), (*b).shader_prop.as_bytes()),
         )
     };
@@ -6914,16 +6893,10 @@ pub(crate) fn read_binding_table(
         "bindings->prop_bindings.data"
     );
 
-    // SAFETY: `bindings` is the fresh non-null element and its `prop_bindings`
-    // list is the non-null result-owned run of `count` live bindings set just
-    // above, which is what `sort_shader_prop_bindings` requires.
-    unsafe {
-        sort_shader_prop_bindings(
-            uc,
-            (*bindings).prop_bindings.data as *mut ShaderPropBinding,
-            (*bindings).prop_bindings.count,
-        )
-    }?;
+    // SAFETY: `bindings` is the fresh non-null element checked above and stays
+    // live in the result arena; its list was initialized immediately above.
+    let bindings_view = unsafe { View::<ShaderBinding>::from_ptr(bindings) };
+    sort_shader_prop_bindings(uc, Run::from_list(bindings_view.prop_bindings_view()))?;
 
     Ok(())
 }
@@ -9171,7 +9144,7 @@ pub(crate) fn read_legacy_settings(uc: &Context, node: &NodeView) -> Result<(), 
                 );
             }
 
-            sort_properties(uc, new_props, new_count)?;
+            sort_properties(uc, Run::from_raw_parts(new_props, new_count))?;
             (*props.props_raw()).data = new_props;
             (*props.props_raw()).count = new_count;
             deduplicate_properties(props.props_view());
