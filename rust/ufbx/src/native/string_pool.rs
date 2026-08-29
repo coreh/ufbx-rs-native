@@ -236,25 +236,77 @@ pub(crate) unsafe fn str_c(str_: *const u8) -> String {
     String::new_c(str_, unsafe { strlen(str_) })
 }
 
+// Rust-port infrastructure: borrowed Rust callers supply byte slices directly.
+// The C ABI bridge retains its `ufbx_string[]` representation behind one unsafe
+// construction vouch.
+#[derive(Clone, Copy)]
+pub(crate) struct ConcatParts<'a>(ConcatPartsSource<'a>);
+
+#[derive(Clone, Copy)]
+enum ConcatPartsSource<'a> {
+    Borrowed(&'a [&'a [u8]]),
+    Strings(&'a [String]),
+}
+
+impl<'a> ConcatParts<'a> {
+    #[inline(always)]
+    pub(crate) fn borrowed(parts: &'a [&'a [u8]]) -> Self {
+        Self(ConcatPartsSource::Borrowed(parts))
+    }
+
+    /// # Safety
+    /// Every `String` in `parts` must describe a byte run readable for `'a`.
+    /// A `usize::MAX` length is the C-string sentinel, requiring a readable
+    /// NUL-terminated run.
+    #[inline(always)]
+    pub(crate) unsafe fn from_strings(parts: &'a [String]) -> Self {
+        Self(ConcatPartsSource::Strings(parts))
+    }
+
+    #[inline(always)]
+    fn iter(self) -> ConcatPartIter<'a> {
+        match self.0 {
+            ConcatPartsSource::Borrowed(parts) => ConcatPartIter::Borrowed(parts.iter()),
+            ConcatPartsSource::Strings(parts) => ConcatPartIter::Strings(parts.iter()),
+        }
+    }
+}
+
+enum ConcatPartIter<'a> {
+    Borrowed(core::slice::Iter<'a, &'a [u8]>),
+    Strings(core::slice::Iter<'a, String>),
+}
+
+impl<'a> Iterator for ConcatPartIter<'a> {
+    type Item = &'a [u8];
+
+    #[inline(always)]
+    fn next(&mut self) -> Option<Self::Item> {
+        match self {
+            Self::Borrowed(parts) => parts.next().copied(),
+            Self::Strings(parts) => parts.next().map(|part| {
+                // SAFETY: `ConcatParts::from_strings` vouches for the readable
+                // run, including the NUL terminator used by the sentinel case.
+                let length = if part.length == usize::MAX {
+                    unsafe { strlen(part.data) }
+                } else {
+                    part.length
+                };
+                unsafe { crate::prelude::slice_from_ptr(part.data, length) }
+            }),
+        }
+    }
+}
+
 // ufbx.c:4946-4958 `ufbxi_get_concat_key`
 #[inline(never)]
-pub(crate) unsafe fn get_concat_key(parts: &[String]) -> u32 {
+pub(crate) fn get_concat_key(parts: ConcatParts<'_>) -> u32 {
     let mut key: u32 = 0;
     let mut shift: u32 = 32;
     // C: `ufbxi_for(const ufbx_string, part, parts, num_parts)`
-    for part in parts {
-        // SAFETY: each part's `data` is readable for its `length` bytes (fn
-        // contract); when its length is the C-string sentinel, `strlen` reads
-        // the NUL-terminated run `part->data` points at instead.
-        let bytes: &[u8] = unsafe {
-            if part.length != usize::MAX {
-                part.as_bytes()
-            } else {
-                crate::prelude::slice_from_ptr(part.data, strlen(part.data))
-            }
-        };
+    for part in parts.iter() {
         // C: `key |= (uint32_t)(uint8_t)part->data[i] << shift;`
-        for &b in bytes {
+        for &b in part {
             shift -= 8;
             key |= (b as u32) << shift;
             if shift == 0 {
@@ -269,24 +321,12 @@ pub(crate) unsafe fn get_concat_key(parts: &[String]) -> u32 {
 // The `memcmp` leg is sign-mapped to -1/0/1 (slice `cmp` over unsigned bytes ==
 // `memcmp` ordering); every caller and the C code use only the sign.
 #[inline(never)]
-pub(crate) unsafe fn concat_str_cmp(ref_: String, parts: &[String]) -> i32 {
-    // SAFETY: the caller vouches `ref_` is a valid `String`, whose `data` is
-    // readable for `length` bytes.
-    let mut rest: &[u8] = unsafe { ref_.as_bytes() };
+pub(crate) fn concat_str_cmp(ref_: &[u8], parts: ConcatParts<'_>) -> i32 {
+    let mut rest = ref_;
     // C: `ufbxi_for(const ufbx_string, part, parts, num_parts)`
-    for part in parts {
-        // SAFETY: each part's `data` is readable for its `length` bytes (fn
-        // contract); when its length is the C-string sentinel, `strlen` reads
-        // the NUL-terminated run `part->data` points at instead.
-        let bytes: &[u8] = unsafe {
-            if part.length != usize::MAX {
-                part.as_bytes()
-            } else {
-                crate::prelude::slice_from_ptr(part.data, strlen(part.data))
-            }
-        };
-        let to_cmp = min_sz(rest.len(), bytes.len());
-        let cmp = match rest[..to_cmp].cmp(&bytes[..to_cmp]) {
+    for part in parts.iter() {
+        let to_cmp = min_sz(rest.len(), part.len());
+        let cmp = match rest[..to_cmp].cmp(&part[..to_cmp]) {
             core::cmp::Ordering::Less => -1,
             core::cmp::Ordering::Equal => 0,
             core::cmp::Ordering::Greater => 1,
@@ -294,7 +334,7 @@ pub(crate) unsafe fn concat_str_cmp(ref_: String, parts: &[String]) -> i32 {
         if cmp != 0 {
             return cmp;
         }
-        if to_cmp != bytes.len() {
+        if to_cmp != part.len() {
             return -1;
         }
         rest = &rest[to_cmp..];
@@ -2216,26 +2256,26 @@ mod tests {
 
     #[test]
     fn test_concat_key_and_cmp() {
-        unsafe {
-            // Key packs the first 4 bytes big-endian across parts.
-            let parts = [s(b"ab"), s(b"cd")];
-            assert_eq!(get_concat_key(&parts), 0x61626364);
-            // SIZE_MAX length -> strlen(data) (C-string part).
-            let parts2 = [String::new_c(b"abcd\0".as_ptr(), usize::MAX)];
-            assert_eq!(get_concat_key(&parts2), 0x61626364);
-            let short = [s(b"a")];
-            assert_eq!(get_concat_key(&short), 0x61000000);
+        // Key packs the first 4 bytes big-endian across parts.
+        let parts: [&[u8]; 2] = [b"ab", b"cd"];
+        assert_eq!(get_concat_key(ConcatParts::borrowed(&parts)), 0x61626364);
+        let single: [&[u8]; 1] = [b"abcd"];
+        assert_eq!(get_concat_key(ConcatParts::borrowed(&single)), 0x61626364);
+        let short: [&[u8]; 1] = [b"a"];
+        assert_eq!(get_concat_key(ConcatParts::borrowed(&short)), 0x61000000);
 
-            let ref_ = s(b"abcd");
-            assert_eq!(concat_str_cmp(ref_, &parts), 0);
-            let parts3 = [s(b"ab"), s(b"ce")];
-            assert!(concat_str_cmp(ref_, &parts3) < 0);
-            // Ref shorter than concat -> -1; longer -> +1.
-            let ref_short = s(b"abc");
-            assert_eq!(concat_str_cmp(ref_short, &parts), -1);
-            let ref_long = s(b"abcde");
-            assert_eq!(concat_str_cmp(ref_long, &parts), 1);
-        }
+        // The C ABI carrier preserves the SIZE_MAX C-string sentinel.
+        let raw = [String::new_c(b"abcd\0".as_ptr(), usize::MAX)];
+        let raw_parts = unsafe { ConcatParts::from_strings(&raw) };
+        assert_eq!(get_concat_key(raw_parts), 0x61626364);
+        assert_eq!(concat_str_cmp(b"abcd", raw_parts), 0);
+
+        assert_eq!(concat_str_cmp(b"abcd", ConcatParts::borrowed(&parts)), 0);
+        let parts3: [&[u8]; 2] = [b"ab", b"ce"];
+        assert!(concat_str_cmp(b"abcd", ConcatParts::borrowed(&parts3)) < 0);
+        // Ref shorter than concat -> -1; longer -> +1.
+        assert_eq!(concat_str_cmp(b"abc", ConcatParts::borrowed(&parts)), -1);
+        assert_eq!(concat_str_cmp(b"abcde", ConcatParts::borrowed(&parts)), 1);
     }
 
     #[test]

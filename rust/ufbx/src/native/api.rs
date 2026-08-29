@@ -144,7 +144,7 @@ use crate::native::scene_process::{
 use crate::native::string_pool as sp;
 use crate::native::string_pool::{
     add3, concat_str_cmp, cross3, get_concat_key, length3, lerp3, mul3, normalize3, safe_string,
-    str_equal, str_less, sub3, DEG_TO_RAD_DOUBLE, DPI, ONE_VEC3, RAD_TO_DEG_DOUBLE,
+    str_equal, str_less, sub3, ConcatParts, DEG_TO_RAD_DOUBLE, DPI, ONE_VEC3, RAD_TO_DEG_DOUBLE,
 };
 // `ufbxi_dot3` is only reached from the `#if UFBXI_FEATURE_TRIANGULATION` arm of
 // `ufbx_catch_triangulate_face`.
@@ -1016,24 +1016,19 @@ pub(crate) fn find_blob_len<M: Mode>(props: &View<Props, M>, name: &[u8], def: B
 // ufbx.c:30712-30728 `ufbx_find_prop_concat`
 // Kept here because `ufbxi_update_constraint`
 // (ufbx.c:23416, `native::scene_process`) calls it.
-pub(crate) unsafe fn find_prop_concat<'a, M: Mode>(
+pub(crate) fn find_prop_concat<'a, M: Mode>(
     props: &'a View<Props, M>,
-    parts: &[String],
+    parts: ConcatParts<'_>,
 ) -> Option<&'a View<Prop, M>> {
-    // SAFETY: each part's `data` is readable for its `length` bytes — the
-    // key-part contract of this `unsafe fn`.
-    let key: u32 = unsafe { get_concat_key(parts) };
+    let key: u32 = get_concat_key(parts);
 
     let mut props: Option<&'a View<Props, M>> = Some(props);
     while let Some(cur) = props {
         let run = cur.props_view();
-        // SAFETY (both inner ops): each part's `data` is readable for its
-        // `length` bytes — the key-part contract of this `unsafe fn`, forwarded
-        // to `cmp_prop_less_concat`/`concat_str_cmp`.
         if let Some(index) = run.lower_bound_eq(
             2,
-            |a| unsafe { cmp_prop_less_concat(a, parts, key) },
-            |a| a._internal_key() == key && unsafe { concat_str_cmp(a.name(), parts) } == 0,
+            |a| cmp_prop_less_concat(a, parts, key),
+            |a| a._internal_key() == key && concat_str_cmp(a.name_view().bytes(), parts) == 0,
         ) {
             return Some(run.at(index));
         }

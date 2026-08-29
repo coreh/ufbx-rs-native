@@ -250,7 +250,8 @@ use crate::native::read::{
     SENTINEL_INDEX_CONSECUTIVE, SENTINEL_INDEX_ZERO,
 };
 use crate::native::string_pool::{
-    self as sp, add3, concat_str_cmp, min3, neg3, normalize3, str_cmp, str_less, sub3, ONE_VEC3,
+    self as sp, add3, concat_str_cmp, min3, neg3, normalize3, str_cmp, str_less, sub3, ConcatParts,
+    ONE_VEC3,
 };
 use crate::native::view::{
     view_project, view_read, view_read_shared, view_write, Const, Mode, Mut, Run, SliceViewIter,
@@ -1385,17 +1386,15 @@ pub(crate) fn cmp_prop_less_ref<M: crate::native::view::Mode>(
 
 // ufbx.c:18578-18582 `ufbxi_cmp_prop_less_concat`
 #[inline(always)]
-pub(crate) unsafe fn cmp_prop_less_concat<M: crate::native::view::Mode>(
+pub(crate) fn cmp_prop_less_concat<M: crate::native::view::Mode>(
     a: &crate::native::view::View<Prop, M>,
-    parts: &[String],
+    parts: ConcatParts<'_>,
     key: u32,
 ) -> bool {
     if a._internal_key() != key {
         return a._internal_key() < key;
     }
-    // SAFETY: each part's `data` is readable for its `length` bytes — the
-    // key-part contract forwarded from this fn's own.
-    unsafe { concat_str_cmp(a.name(), parts) < 0 }
+    concat_str_cmp(a.name_view().bytes(), parts) < 0
 }
 
 // ufbx.c:18584-18590 `ufbxi_sort_name_elements`
@@ -12245,20 +12244,20 @@ pub(crate) fn update_constraint(constraint_view: &ConstraintView) {
             let mut prop: Option<&PropView>; // ufbxi_uninit
                                              // C: `ufbx_string parts[2];` (ufbxi_uninit) — both entries are
                                              // written before every lookup.
-            let mut parts: [String; 2] = [node.element().name(), sp::str_c(b".Weight\0".as_ptr())];
-            prop = find_prop_concat(props, &parts);
+            let mut parts: [&[u8]; 2] = [node.element().name_view().bytes(), b".Weight"];
+            prop = find_prop_concat(props, ConcatParts::borrowed(&parts));
             // C: `prop->value_real` — the `ufbx_prop` value union's first real.
             (*target).weight = prop.map_or(weight_scale, |p| p.value_vec4().x) / weight_scale;
 
             if constraint_type == ConstraintType::Parent {
-                parts[1] = sp::str_c(b".Offset T\0".as_ptr());
-                prop = find_prop_concat(props, &parts);
+                parts[1] = b".Offset T";
+                prop = find_prop_concat(props, ConcatParts::borrowed(&parts));
                 let t: Vec3 = prop.map_or(ZERO_VEC3, PropView::value_vec3);
-                parts[1] = sp::str_c(b".Offset R\0".as_ptr());
-                prop = find_prop_concat(props, &parts);
+                parts[1] = b".Offset R";
+                prop = find_prop_concat(props, ConcatParts::borrowed(&parts));
                 let r: Vec3 = prop.map_or(ZERO_VEC3, PropView::value_vec3);
-                parts[1] = sp::str_c(b".Offset S\0".as_ptr());
-                prop = find_prop_concat(props, &parts);
+                parts[1] = b".Offset S";
+                prop = find_prop_concat(props, ConcatParts::borrowed(&parts));
                 let s: Vec3 = prop.map_or(ONE_VEC3, PropView::value_vec3);
 
                 (*target).transform.translation = t;

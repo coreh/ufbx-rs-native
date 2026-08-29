@@ -652,13 +652,14 @@ pub unsafe extern "C" fn ufbx_find_prop_concat(
     }
     // SAFETY: an ABI shim; the source pointer is bridged to a read-only
     // `View<_, Const>` (sound for any readable provenance) and the caller's
-    // `parts`/`num_parts` key-array contract becomes the slice mint.
+    // `parts`/`num_parts` key-array contract becomes one `ConcatParts` vouch.
     match unsafe {
+        let parts = crate::prelude::slice_from_ptr(parts, num_parts);
         crate::native::api::find_prop_concat(
         crate::native::view::View::<crate::generated::Props, crate::native::view::Const>::from_ptr(
             props,
         ),
-        crate::prelude::slice_from_ptr(parts, num_parts),
+        crate::native::string_pool::ConcatParts::from_strings(parts),
     )
     } {
         Some(prop) => prop.as_ptr() as *mut crate::generated::Prop,
