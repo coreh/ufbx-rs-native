@@ -195,11 +195,7 @@ impl ObjMeshView {
 // ufbx.c:16777-16805 `ufbxi_obj_pop_props`
 #[cfg(feature = "obj")]
 #[inline(never)]
-pub(crate) unsafe fn obj_pop_props(
-    uc: &Context,
-    dst: *mut List<Prop>,
-    count: usize,
-) -> Result<(), Fail> {
+pub(crate) fn obj_pop_props(uc: &Context, dst: &ListView<Prop>, count: usize) -> Result<(), Fail> {
     // C: `ufbx_prop_list props; // ufbxi_uninit`
     // SAFETY: `List<Prop>` is plain C data whose all-zero bit pattern is the
     // valid `{ 0 }` initializer.
@@ -210,13 +206,10 @@ pub(crate) unsafe fn obj_pop_props(
         .push_pop::<Prop>(uc.obj().tmp_props_view(), count);
     ufbxi_check!(uc, !props.data.is_null(), "props.data");
 
+    let props_view = ListView::<Prop>::from_mut(&mut props);
+    let prop_run = Run::from_list(props_view);
     // C: `ufbxi_for_list(ufbx_prop, prop, props)`
-    // SAFETY: `props.data` is the fresh non-null run popped above, holding
-    // `props.count` contiguous `Prop` on uc's result arena (write-capable
-    // provenance), so the whole walk stays inside that one allocation.
-    let prop_run =
-        unsafe { SliceViewIter::<Prop>::from_raw_parts(props.data as *mut Prop, props.count) };
-    for prop in prop_run {
+    for prop in prop_run.iter() {
         prop.set_internal_key(get_name_key(prop.name_view().bytes()));
 
         let mut value_str: String = prop.value_str();
@@ -239,17 +232,16 @@ pub(crate) unsafe fn obj_pop_props(
         }
     }
 
-    if props.count > 1 {
+    if prop_run.len() > 1 {
         // `props` is the local descriptor of the run just sorted, which the
         // dedup compacts in place.
-        let props_view = ListView::<Prop>::from_mut(&mut props);
-        sort_properties(uc, Run::from_list(props_view))?;
+        sort_properties(uc, prop_run)?;
         deduplicate_properties(props_view);
     }
 
     // C: `*dst = props;`
-    // SAFETY: caller contract — `dst` is a writable `List<Prop>` out-param.
-    unsafe { core::ptr::write(dst, props) };
+    dst.set_data(props_view.data());
+    dst.set_count(props_view.count());
     Ok(())
 }
 
@@ -353,8 +345,7 @@ pub(crate) fn obj_flush_mesh(uc: &Context) -> Result<(), Fail> {
     let fbx_mesh: &View<Mesh> = unsafe { View::<Mesh>::from_ptr(mesh.fbx_mesh()) };
 
     let num_props: usize = uc.obj().tmp_props_view().num_items();
-    // SAFETY: the mesh element's own prop list is an unaliased destination.
-    unsafe { obj_pop_props(uc, fbx_mesh.element().props().props_raw(), num_props)? };
+    obj_pop_props(uc, fbx_mesh.element().props().props_view(), num_props)?;
 
     let num_groups: usize = uc.obj().tmp_face_group_infos_view().num_items();
     // Pops the obj parser's own `tmp_face_group_infos` arena into uc's result
@@ -2080,9 +2071,7 @@ pub(crate) fn obj_flush_material(uc: &Context) -> Result<(), Fail> {
     let material: &MaterialView = unsafe { MaterialView::from_ptr(material) };
 
     let num_props: usize = uc.obj().tmp_props_view().num_items();
-    // SAFETY: the material element's own prop list is the unaliased
-    // destination.
-    unsafe { obj_pop_props(uc, material.props_view().props_raw(), num_props)? };
+    obj_pop_props(uc, material.props_view().props_view(), num_props)?;
 
     Ok(())
 }
@@ -2316,7 +2305,14 @@ pub(crate) fn obj_parse_mtl_map(uc: &Context, prefix_len: usize) -> Result<(), F
         (*texture).relative_filename = tex_str;
         (*texture).raw_relative_filename = tex_raw;
 
-        obj_pop_props(uc, &raw mut (*texture).element.props.props, num_props)?;
+        obj_pop_props(
+            uc,
+            View::<Texture>::from_ptr(texture)
+                .element()
+                .props()
+                .props_view(),
+            num_props,
+        )?;
     }
 
     // SAFETY: `num_tokens >= 2` past the guard above, so token 0 is in the
