@@ -1400,10 +1400,9 @@ pub(crate) unsafe fn cmp_prop_less_concat<M: crate::native::view::Mode>(
 
 // ufbx.c:18584-18590 `ufbxi_sort_name_elements`
 #[inline(never)]
-pub(crate) unsafe fn sort_name_elements(
+pub(crate) fn sort_name_elements(
     uc: &Context,
-    name_elems: *mut NameElement,
-    count: usize,
+    name_elems: Run<'_, NameElement>,
 ) -> Result<(), Fail> {
     ufbxi_check!(
         uc,
@@ -1414,21 +1413,21 @@ pub(crate) unsafe fn sort_name_elements(
                 uc.ator_tmp_view(),
                 uc.tmp_arr_mut_ptr(),
                 uc.tmp_arr_size_mut_ptr(),
-                count.wrapping_mul(size_of::<NameElement>()),
+                name_elems.len().wrapping_mul(size_of::<NameElement>()),
             )
         },
         "ufbxi_grow_array_size((&uc->ator_tmp), sizeof(**(&uc->tmp_arr)), (&uc->tmp_arr), (&uc->tmp_arr_size), (count * sizeof(ufbx_name_element)))"
     );
-    // SAFETY: `name_elems` addresses `count` initialized `NameElement`s (fn
-    // contract) and `tmp_arr` was just grown to `count * size_of::<NameElement>()`
-    // bytes, so the two disjoint runs `macro_stable_sort` needs are in place; it
-    // hands the comparator pointers to live elements of those runs.
+    // SAFETY: `name_elems` carries an initialized `NameElement` run and
+    // `tmp_arr` was just grown to its byte size, so the two disjoint runs
+    // `macro_stable_sort` needs are in place; it hands the comparator pointers
+    // to live elements of those runs.
     unsafe {
         macro_stable_sort_views::<NameElement>(
             32,
-            name_elems,
+            name_elems.as_mut_ptr(),
             uc.tmp_arr() as *mut NameElement,
-            count,
+            name_elems.len(),
             cmp_name_element_less,
         )
     };
@@ -1531,10 +1530,9 @@ pub(crate) fn cmp_tmp_material_texture_less<M: Mode>(
 
 // ufbx.c:18627-18633 `ufbxi_sort_tmp_material_textures`
 #[inline(never)]
-pub(crate) unsafe fn sort_tmp_material_textures(
+pub(crate) fn sort_tmp_material_textures(
     uc: &Context,
-    mat_texs: *mut TmpMaterialTexture,
-    count: usize,
+    mat_texs: Run<'_, TmpMaterialTexture>,
 ) -> Result<(), Fail> {
     ufbxi_check!(
         uc,
@@ -1545,22 +1543,23 @@ pub(crate) unsafe fn sort_tmp_material_textures(
                 uc.ator_tmp_view(),
                 uc.tmp_arr_mut_ptr(),
                 uc.tmp_arr_size_mut_ptr(),
-                count.wrapping_mul(size_of::<TmpMaterialTexture>()),
+                mat_texs
+                    .len()
+                    .wrapping_mul(size_of::<TmpMaterialTexture>()),
             )
         },
         "ufbxi_grow_array_size((&uc->ator_tmp), sizeof(**(&uc->tmp_arr)), (&uc->tmp_arr), (&uc->tmp_arr_size), (count * sizeof(ufbxi_tmp_material_texture)))"
     );
-    // SAFETY: `mat_texs` addresses `count` initialized `TmpMaterialTexture`s (fn
-    // contract) and `tmp_arr` was just grown to
-    // `count * size_of::<TmpMaterialTexture>()` bytes, so the two disjoint runs
-    // `macro_stable_sort` needs are in place; it hands the comparator pointers to
-    // live elements of those runs.
+    // SAFETY: `mat_texs` carries an initialized `TmpMaterialTexture` run and
+    // `tmp_arr` was just grown to its byte size, so the two disjoint runs
+    // `macro_stable_sort` needs are in place; it hands the comparator pointers
+    // to live elements of those runs.
     unsafe {
         macro_stable_sort_views::<TmpMaterialTexture>(
             32,
-            mat_texs,
+            mat_texs.as_mut_ptr(),
             uc.tmp_arr() as *mut TmpMaterialTexture,
-            count,
+            mat_texs.len(),
             cmp_tmp_material_texture_less,
         )
     };
@@ -3236,11 +3235,7 @@ pub(crate) fn cmp_anim_prop_less<M: crate::native::view::Mode>(
 
 // ufbx.c:19301-19306 `ufbxi_sort_anim_props`
 #[inline(never)]
-pub(crate) unsafe fn sort_anim_props(
-    uc: &Context,
-    aprops: *mut AnimProp,
-    count: usize,
-) -> Result<(), Fail> {
+pub(crate) fn sort_anim_props(uc: &Context, aprops: Run<'_, AnimProp>) -> Result<(), Fail> {
     ufbxi_check!(
         uc,
         // SAFETY: the three pointers are `uc`'s own live `ator_tmp` and the
@@ -3250,21 +3245,21 @@ pub(crate) unsafe fn sort_anim_props(
                 uc.ator_tmp_view(),
                 uc.tmp_arr_mut_ptr(),
                 uc.tmp_arr_size_mut_ptr(),
-                count.wrapping_mul(size_of::<AnimProp>()),
+                aprops.len().wrapping_mul(size_of::<AnimProp>()),
             )
         },
         "ufbxi_grow_array_size((&uc->ator_tmp), sizeof(**(&uc->tmp_arr)), (&uc->tmp_arr), (&uc->tmp_arr_size), (count * sizeof(ufbx_anim_prop)))"
     );
-    // SAFETY: `aprops` addresses `count` initialized `AnimProp`s (fn contract)
-    // and `tmp_arr` was just grown to `count * size_of::<AnimProp>()` bytes, so
-    // the two disjoint runs `macro_stable_sort` needs are in place; it hands the
-    // comparator pointers to live elements of those runs.
+    // SAFETY: `aprops` carries an initialized `AnimProp` run and `tmp_arr` was
+    // just grown to its byte size, so the two disjoint runs
+    // `macro_stable_sort` needs are in place; it hands the comparator pointers
+    // to live elements of those runs.
     unsafe {
         macro_stable_sort_views::<AnimProp>(
             32,
-            aprops,
+            aprops.as_mut_ptr(),
             uc.tmp_arr() as *mut AnimProp,
-            count,
+            aprops.len(),
             cmp_anim_prop_less,
         )
     };
@@ -3289,10 +3284,9 @@ pub(crate) unsafe extern "C" fn material_texture_less(
 
 // ufbx.c:19315-19320 `ufbxi_sort_material_textures`
 #[inline(never)]
-pub(crate) unsafe fn sort_material_textures(
+pub(crate) fn sort_material_textures(
     uc: &Context,
-    textures: *mut MaterialTexture,
-    count: usize,
+    textures: Run<'_, MaterialTexture>,
 ) -> Result<(), Fail> {
     ufbxi_check!(
         uc,
@@ -3303,23 +3297,24 @@ pub(crate) unsafe fn sort_material_textures(
                 uc.ator_tmp_view(),
                 uc.tmp_arr_mut_ptr(),
                 uc.tmp_arr_size_mut_ptr(),
-                count.wrapping_mul(size_of::<MaterialTexture>()),
+                textures
+                    .len()
+                    .wrapping_mul(size_of::<MaterialTexture>()),
             )
         },
         "ufbxi_grow_array_size((&uc->ator_tmp), sizeof(**(&uc->tmp_arr)), (&uc->tmp_arr), (&uc->tmp_arr_size), (count * sizeof(ufbx_material_texture)))"
     );
-    // SAFETY: `textures` addresses `count` initialized `MaterialTexture`s (fn
-    // contract) and `tmp_arr` was just grown to
-    // `count * size_of::<MaterialTexture>()` bytes, so both runs hold `count`
-    // items of the element size passed here; `material_texture_less` is the
-    // matching comparator and ignores its `user` argument.
+    // SAFETY: `textures` carries an initialized `MaterialTexture` run and
+    // `tmp_arr` was just grown to its byte size, so both runs hold the element
+    // count passed here; `material_texture_less` is the matching comparator
+    // and ignores its `user` argument.
     unsafe {
         stable_sort(
             size_of::<MaterialTexture>(),
             32,
-            textures as *mut c_void,
+            textures.as_mut_ptr() as *mut c_void,
             uc.tmp_arr() as *mut c_void,
-            count,
+            textures.len(),
             material_texture_less,
             ptr::null_mut(),
         )
@@ -3484,10 +3479,9 @@ pub(crate) unsafe extern "C" fn blend_keyframe_less(
 
 // ufbx.c:19365-19370 `ufbxi_sort_blend_keyframes`
 #[inline(never)]
-pub(crate) unsafe fn sort_blend_keyframes(
+pub(crate) fn sort_blend_keyframes(
     uc: &Context,
-    keyframes: *mut BlendKeyframe,
-    count: usize,
+    keyframes: Run<'_, BlendKeyframe>,
 ) -> Result<(), Fail> {
     ufbxi_check!(
         uc,
@@ -3498,23 +3492,24 @@ pub(crate) unsafe fn sort_blend_keyframes(
                 uc.ator_tmp_view(),
                 uc.tmp_arr_mut_ptr(),
                 uc.tmp_arr_size_mut_ptr(),
-                count.wrapping_mul(size_of::<BlendKeyframe>()),
+                keyframes
+                    .len()
+                    .wrapping_mul(size_of::<BlendKeyframe>()),
             )
         },
         "ufbxi_grow_array_size((&uc->ator_tmp), sizeof(**(&uc->tmp_arr)), (&uc->tmp_arr), (&uc->tmp_arr_size), (count * sizeof(ufbx_blend_keyframe)))"
     );
-    // SAFETY: `keyframes` addresses `count` initialized `BlendKeyframe`s (fn
-    // contract) and `tmp_arr` was just grown to
-    // `count * size_of::<BlendKeyframe>()` bytes, so both runs hold `count` items
-    // of the element size passed here; `blend_keyframe_less` is the matching
-    // comparator and ignores its `user` argument.
+    // SAFETY: `keyframes` carries an initialized `BlendKeyframe` run and
+    // `tmp_arr` was just grown to its byte size, so both runs hold the element
+    // count passed here; `blend_keyframe_less` is the matching comparator and
+    // ignores its `user` argument.
     unsafe {
         stable_sort(
             size_of::<BlendKeyframe>(),
             32,
-            keyframes as *mut c_void,
+            keyframes.as_mut_ptr() as *mut c_void,
             uc.tmp_arr() as *mut c_void,
-            count,
+            keyframes.len(),
             blend_keyframe_less,
             ptr::null_mut(),
         )
@@ -7802,11 +7797,7 @@ pub(crate) unsafe extern "C" fn file_content_less(
 
 // ufbx.c:21459-21464 `ufbxi_sort_file_contents`
 #[inline(never)]
-pub(crate) unsafe fn sort_file_contents(
-    uc: &Context,
-    content: *mut FileContent,
-    count: usize,
-) -> Result<(), Fail> {
+pub(crate) fn sort_file_contents(uc: &Context, content: Run<'_, FileContent>) -> Result<(), Fail> {
     ufbxi_check!(
         uc,
         // SAFETY: the three `uc` accessors hand out `uc`'s own tmp allocator and
@@ -7816,22 +7807,21 @@ pub(crate) unsafe fn sort_file_contents(
                 uc.ator_tmp_view(),
                 uc.tmp_arr_mut_ptr(),
                 uc.tmp_arr_size_mut_ptr(),
-                count.wrapping_mul(size_of::<FileContent>()),
+                content.len().wrapping_mul(size_of::<FileContent>()),
             )
         },
         "ufbxi_grow_array_size((&uc->ator_tmp), sizeof(**(&uc->tmp_arr)), (&uc->tmp_arr), (&uc->tmp_arr_size), (count * sizeof(ufbxi_file_content)))"
     );
-    // SAFETY: `content` addresses `count` live, initialized `ufbxi_file_content`s
-    // (fn contract) and the grow above sized `uc`'s tmp array to hold `count` of
-    // them as the sort's scratch buffer; `file_content_less` is the matching
-    // comparator and takes no user data.
+    // SAFETY: `content` carries a live, initialized `FileContent` run and the
+    // grow sized `uc`'s tmp array to the run's byte size; `file_content_less`
+    // is the matching comparator and takes no user data.
     unsafe {
         stable_sort(
             size_of::<FileContent>(),
             32,
-            content as *mut c_void,
+            content.as_mut_ptr() as *mut c_void,
             uc.tmp_arr() as *mut c_void,
-            count,
+            content.len(),
             file_content_less,
             ptr::null_mut(),
         )
@@ -7992,15 +7982,15 @@ pub(crate) fn resolve_file_content<'a>(uc: &'a Context) -> Result<(), Fail> {
     uc.set_num_file_content(uc.tmp_stack_view().num_items() - initial_stack);
     // Pops the `num_file_content` entries pushed by the loops above from uc's
     // tmp stack into uc's tmp buffer.
-    // SAFETY: sorts that fresh non-null run with its own length.
-    unsafe {
-        uc.set_file_content(
-            uc.tmp_view()
-                .push_pop::<FileContent>(uc.tmp_stack_view(), uc.num_file_content()),
-        );
-        ufbxi_check!(uc, !uc.file_content().is_null(), "uc->file_content");
-        sort_file_contents(uc, uc.file_content(), uc.num_file_content())?;
-    }
+    uc.set_file_content(
+        uc.tmp_view()
+            .push_pop::<FileContent>(uc.tmp_stack_view(), uc.num_file_content()),
+    );
+    ufbxi_check!(uc, !uc.file_content().is_null(), "uc->file_content");
+    // SAFETY: `file_content` is the fresh non-null `num_file_content`-element
+    // push-pop result checked immediately above.
+    let file_content = unsafe { Run::from_raw_parts(uc.file_content(), uc.num_file_content()) };
+    sort_file_contents(uc, file_content)?;
 
     // SAFETY: walks the stored `videos` element-pointer run of the uc-owned scene
     // (`count` entries), minting views over each video's own filename/content
@@ -8499,19 +8489,15 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
     let element_refs: &[Ref<Element>] =
         unsafe { slice_from_ptr(uc.scene_view().elements_view().data(), num_elements) };
     // C writes `&uc->scene.elements_by_name.data[i]`; the destination run is
-    // derived from the list base, which the check above proved non-null.
-    let name_elems: *mut NameElement =
-        uc.scene_view().elements_by_name_view().data() as *mut NameElement;
+    // the viewed list allocated and checked above.
+    let name_elems = Run::from_list(uc.scene_view().elements_by_name_view());
 
     for i in 0..num_elements {
         let elem: Ref<Element> = element_refs[i];
         // SAFETY: the slot names a live element header in the arena element blob
         // (see above), so it anchors an `ElementView`.
         let elem_view: &ElementView = unsafe { ElementView::from_ptr(elem.ptr()) };
-        // SAFETY: the `elements_by_name` run was pushed with `num_elements` slots
-        // and checked non-null above, so `i < num_elements` stays inside it.
-        let name_elem: &View<NameElement> =
-            unsafe { View::<NameElement>::from_ptr(name_elems.add(i)) };
+        let name_elem: &View<NameElement> = name_elems.at(i);
 
         name_elem.set_name(elem_view.name());
         name_elem.set_type(elem_view.type_());
@@ -8519,15 +8505,7 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
         name_elem.set_element(elem);
     }
 
-    // SAFETY: the `elements_by_name` run is non-null and `num_elements` entries
-    // long, all initialized by the loop above.
-    unsafe {
-        sort_name_elements(
-            uc,
-            uc.scene_view().elements_by_name_view().data() as *mut NameElement,
-            num_elements,
-        )
-    }?;
+    sort_name_elements(uc, name_elems)?;
 
     // Setup node children arrays and attribute pointers/lists
     // C: `ufbxi_for_ptr_list(ufbx_node, p_node, uc->scene.nodes)`
@@ -9243,15 +9221,7 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
             }
         }
 
-        // SAFETY: the channel's `keyframes` run holds `count` initialized
-        // keyframes (the fetch above).
-        unsafe {
-            sort_blend_keyframes(
-                uc,
-                keyframes.data() as *mut BlendKeyframe,
-                keyframes.count(),
-            )
-        }?;
+        sort_blend_keyframes(uc, Run::from_list(keyframes))?;
 
         if keyframes.count() > 0 {
             // C: `channel->target_shape = ...[count - 1].shape` — the run is
@@ -9776,15 +9746,7 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
             "layer->anim_props.data"
         );
         layer.anim_props_view().set_count(num_anim_props);
-        // SAFETY: the layer's own `anim_props` run is non-null (checked above)
-        // and holds `count` initialized props followed by the terminator.
-        unsafe {
-            sort_anim_props(
-                uc,
-                layer.anim_props_view().data() as *mut AnimProp,
-                layer.anim_props_view().count(),
-            )
-        }?;
+        sort_anim_props(uc, Run::from_list(layer.anim_props_view()))?;
     }
 
     // C: `ufbxi_for_ptr_list(ufbx_anim_value, p_value, uc->scene.anim_values)`
@@ -10118,19 +10080,12 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
             ufbxi_check!(uc, !mat_texs.is_null(), "mat_texs");
             // SAFETY: `mat_texs` is the non-null popped run holding the
             // `num_material_textures` entries pushed above plus the sentinel.
-            unsafe { sort_tmp_material_textures(uc, mat_texs, num_material_textures) }?;
+            let mat_texs = unsafe { Run::from_raw_parts(mat_texs, num_material_textures + 1) };
+            sort_tmp_material_textures(uc, mat_texs.subrun(0, num_material_textures))?;
 
             // C: `ufbxi_tmp_material_texture mat_tex = mat_texs[i];` over the
             // sorted run.
-            // SAFETY: `mat_texs` is the non-null (checked above) `push_pop`
-            // -materialized run of `num_material_textures + 1` contiguous,
-            // initialized entries, live in `uc`'s tmp buffer for this walk.
-            let mat_tex_iter = unsafe {
-                SliceViewIter::<TmpMaterialTexture>::from_raw_parts(
-                    mat_texs,
-                    num_material_textures + 1,
-                )
-            };
+            let mat_tex_iter = mat_texs.iter();
             // SAFETY: `textures_storage` is a live local that
             // `ufbxi_fetch_dst_elements` wrote in full above, so it heads a
             // valid `ufbx_texture_list` reached through write-capable
@@ -10337,15 +10292,7 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
     for material_ix in 0..scene_materials.count() {
         let material: &MaterialView = scene_materials.at(material_ix);
 
-        // SAFETY: the viewed material's `textures` `data`/`count` describe its own
-        // run of `count` initialized `ufbx_material_texture`s.
-        unsafe {
-            sort_material_textures(
-                uc,
-                material.textures_view().data() as *mut MaterialTexture,
-                material.textures_view().count(),
-            )
-        }?;
+        sort_material_textures(uc, Run::from_list(material.textures_view()))?;
         fetch_maps(uc.scene_view(), material);
 
         // Fetch `ufbx_material_texture.shader_prop` names
