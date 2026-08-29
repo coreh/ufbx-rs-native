@@ -1512,10 +1512,10 @@ pub(crate) unsafe fn init_dynamic_huff(dc: &DeflateContext, trees: *mut Trees) -
 // branch (ufbx.c:2746-2790) on little-endian targets and the plain loop
 // otherwise — the SSE branch is intentionally not ported.
 #[inline(never)]
-pub(crate) unsafe fn adler32(data: *const c_void, size: usize) -> u32 {
+pub(crate) fn adler32(data: &[u8]) -> u32 {
     let mut a: FastUint = 1;
     let mut b: FastUint = 0;
-    let mut p = data as *const u8;
+    let mut p = 0usize;
 
     // Adler-32 consists of two running sums modulo 65521. As an optimization
     // we can accumulate N sums before applying the modulo, where N depends on
@@ -1526,7 +1526,7 @@ pub(crate) unsafe fn adler32(data: *const c_void, size: usize) -> u32 {
         5552
     };
 
-    let mut size_left = size as FastUint;
+    let mut size_left = data.len() as FastUint;
     while size_left > 0 {
         let num = if size_left <= num_before_wrap {
             size_left
@@ -1534,33 +1534,24 @@ pub(crate) unsafe fn adler32(data: *const c_void, size: usize) -> u32 {
             num_before_wrap
         };
         size_left -= num;
-        // SAFETY: `num <= size_left <= remaining bytes` of the caller's
-        // `size`-byte `data` run, so `p + num` is at most one past its end.
-        let end = unsafe { p.add(num as usize) };
+        let end = p + num as usize;
 
         // Align to 16 bytes
-        while p != end && !is_aligned(p, 16) {
-            // SAFETY: `p != end`, so `p` addresses a readable byte of the run.
-            a += unsafe { *p } as FastUint;
+        while p != end && !is_aligned(data[p..].as_ptr(), 16) {
+            a += data[p] as FastUint;
             b += a;
-            // SAFETY: `p != end`, so advancing by one stays within the run bound.
-            p = unsafe { p.add(1) };
+            p += 1;
         }
 
         // ufbx.c:2746-2790 `#elif UFBX_LITTLE_ENDIAN` scalar SWAR branch
         #[cfg(target_endian = "little")]
         {
             loop {
-                // SAFETY: `p` and `end` bracket the current run (`p <= end`), so
-                // `offset_from` is in bounds.
-                let chunk_size =
-                    min_sz(to_size(unsafe { end.offset_from(p) }), 256 * 8 / 4) & !0xfusize;
+                let chunk_size = min_sz(end - p, 256 * 8 / 4) & !0xfusize;
                 if chunk_size == 0 {
                     break;
                 }
-                // SAFETY: `chunk_size <= end - p`, so `p + chunk_size` is at most
-                // `end`, one past the run.
-                let chunk_end = unsafe { p.add(chunk_size) };
+                let chunk_end = p + chunk_size;
 
                 let mut s1_lo: u64 = 0;
                 let mut s1_hi: u64 = 0;
@@ -1571,12 +1562,27 @@ pub(crate) unsafe fn adler32(data: *const c_void, size: usize) -> u32 {
 
                 while p != chunk_end {
                     // C: `*(const uint64_t*)p` — `p` is 16-aligned here;
-                    // little-endian native load == `read_u64`.
-                    // SAFETY: `chunk_end` is `chunk_size`-aligned to 16 and `p !=
-                    // chunk_end`, so 16 bytes from `p` (`p` and `p + 8`) are
-                    // within the run.
-                    let d0 = unsafe { read_u64(p) };
-                    let d1 = unsafe { read_u64(p.add(8)) };
+                    // little-endian native load == `from_le_bytes`.
+                    let d0 = u64::from_le_bytes([
+                        data[p],
+                        data[p + 1],
+                        data[p + 2],
+                        data[p + 3],
+                        data[p + 4],
+                        data[p + 5],
+                        data[p + 6],
+                        data[p + 7],
+                    ]);
+                    let d1 = u64::from_le_bytes([
+                        data[p + 8],
+                        data[p + 9],
+                        data[p + 10],
+                        data[p + 11],
+                        data[p + 12],
+                        data[p + 13],
+                        data[p + 14],
+                        data[p + 15],
+                    ]);
 
                     tmp = s1_lo + s1_hi;
                     s1_lo += d0 & mask8;
@@ -1587,9 +1593,7 @@ pub(crate) unsafe fn adler32(data: *const c_void, size: usize) -> u32 {
                     s1_hi += (d1 >> 8) & mask8;
 
                     s2 += (tmp & mask16) + ((tmp >> 16) & mask16);
-                    // SAFETY: the loop consumes 16 bytes per step up to
-                    // `chunk_end`, so this advance stays within the run.
-                    p = unsafe { p.add(16) };
+                    p += 16;
                 }
 
                 let mut s1 = s1_lo + s1_hi;
@@ -1613,11 +1617,9 @@ pub(crate) unsafe fn adler32(data: *const c_void, size: usize) -> u32 {
         }
 
         while p != end {
-            // SAFETY: `p != end`, so `p` addresses a readable byte of the run.
-            a += unsafe { *p } as FastUint;
+            a += data[p] as FastUint;
             b += a;
-            // SAFETY: `p != end`, so advancing by one stays within the run bound.
-            p = unsafe { p.add(1) };
+            p += 1;
         }
 
         a %= 65521;
@@ -2416,15 +2418,16 @@ pub(crate) unsafe fn inflate(
             let mut ref_ = bits as u32;
             ref_ = (ref_ >> 24) | ((ref_ >> 8) & 0xff00) | ((ref_ << 8) & 0xff0000) | (ref_ << 24);
 
-            // SAFETY: `out_begin`/`out_ptr` bracket the bytes decoded so far
-            // (same buffer), so `offset_from` is in bounds and `adler32` reads
-            // exactly those bytes.
-            let checksum = unsafe {
-                adler32(
-                    dc.out_begin() as *const c_void,
+            // SAFETY: `out_begin`/`out_ptr` bracket the initialized bytes
+            // decoded so far in one buffer; the temporary slice spans exactly
+            // that prefix and is not retained.
+            let output = unsafe {
+                crate::prelude::slice_from_ptr(
+                    dc.out_begin(),
                     to_size(dc.out_ptr().offset_from(dc.out_begin())),
                 )
             };
+            let checksum = adler32(output);
             if ref_ != checksum {
                 return -9;
             }
@@ -2437,3 +2440,46 @@ pub(crate) unsafe fn inflate(
 }
 
 // ufbx.c:3278 `#endif // !defined(ufbx_inflate)` — END of the DEFLATE section.
+
+#[cfg(test)]
+mod tests {
+    use super::adler32;
+
+    fn scalar_adler32(data: &[u8]) -> u32 {
+        let mut a = 1u64;
+        let mut b = 0u64;
+        for &byte in data {
+            a = (a + byte as u64) % 65521;
+            b = (b + a) % 65521;
+        }
+        ((b << 16) | a) as u32
+    }
+
+    #[test]
+    fn adler32_known_values() {
+        assert_eq!(adler32(b""), 0x00000001);
+        assert_eq!(adler32(b"hello"), 0x062c0215);
+        assert_eq!(adler32(b"Wikipedia"), 0x11e60398);
+    }
+
+    #[test]
+    fn adler32_matches_scalar_across_alignment_and_chunks() {
+        let data: Vec<u8> = (0..9000)
+            .map(|i| ((i * 37 + i / 7 + 11) & 0xff) as u8)
+            .collect();
+        let lengths = [
+            0usize, 1, 7, 15, 16, 17, 31, 32, 127, 128, 255, 256, 511, 512, 513, 1024, 4097, 8193,
+        ];
+
+        for offset in 0..16 {
+            for &length in &lengths {
+                let bytes = &data[offset..offset + length];
+                assert_eq!(
+                    adler32(bytes),
+                    scalar_adler32(bytes),
+                    "offset={offset} length={length}"
+                );
+            }
+        }
+    }
+}
