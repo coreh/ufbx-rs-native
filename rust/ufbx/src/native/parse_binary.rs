@@ -43,8 +43,7 @@ use crate::native::parse::{
 };
 use crate::native::platform::{
     f64_to_i32, f64_to_i64, min32, read_f32, read_f64, read_i16, read_i32, read_i64, read_u32,
-    read_u64, read_u8, ufbx_assert, ufbxi_dev_assert, ufbxi_unreachable,
-    MIN_THREADED_DEFLATE_BYTES,
+    read_u64, ufbx_assert, ufbxi_dev_assert, ufbxi_unreachable, MIN_THREADED_DEFLATE_BYTES,
 };
 use crate::native::string_pool::{
     push_sanitized_string, push_string, push_string_place_str, SanitizedStringView,
@@ -110,12 +109,7 @@ macro_rules! ufbxi_cast_f64_to_i64 {
 // C: `ufbxi_nodiscard static ufbxi_noinline char *` — returns NULL on failure.
 #[inline(never)]
 #[must_use]
-pub(crate) unsafe fn swap_endian(
-    uc: &Context,
-    src: *const c_void,
-    count: usize,
-    elem_size: usize,
-) -> *mut u8 {
+pub(crate) fn swap_endian(uc: &Context, src: &[u8], count: usize, elem_size: usize) -> *mut u8 {
     ufbxi_dev_assert!(elem_size > 1);
     let total_size = count.wrapping_mul(elem_size);
     ufbxi_check_return!(
@@ -144,61 +138,46 @@ pub(crate) unsafe fn swap_endian(
         );
     }
     let dst: *mut u8 = uc.swap_arr();
-    let mut d: *mut u8 = dst;
+    if total_size == 0 || dst.is_null() {
+        return dst;
+    }
+    ufbx_assert!(src.len() >= total_size);
+    let src = &src[..total_size];
+    // SAFETY: `dst` is the non-null context-owned swap buffer, grown above to
+    // at least `total_size` bytes; it is exclusively written for this call.
+    let dst_bytes = unsafe { core::slice::from_raw_parts_mut(dst, total_size) };
 
-    let mut s: *const u8 = src as *const u8;
     match elem_size {
         2 => {
             // C: `ufbxi_nounroll` — optimizer pragma, no Rust analogue.
-            for _i in 0..count {
-                // SAFETY: the loop runs `count` iterations touching 2 bytes each,
-                // so `d` stays inside `dst` (the freshly grown `swap_arr`, at
-                // least `count * 2` bytes) and `s` inside the caller's
-                // `count * 2`-byte `src`.
-                unsafe {
-                    *d.add(0) = *s.add(1);
-                    *d.add(1) = *s.add(0);
-                    d = d.add(2);
-                    s = s.add(2);
-                }
+            for i in 0..count {
+                let base = i * 2;
+                dst_bytes[base] = src[base + 1];
+                dst_bytes[base + 1] = src[base];
             }
         }
         4 => {
             // C: `ufbxi_nounroll` — optimizer pragma, no Rust analogue.
-            for _i in 0..count {
-                // SAFETY: the loop runs `count` iterations touching 4 bytes each,
-                // so `d` stays inside `dst` (the freshly grown `swap_arr`, at
-                // least `count * 4` bytes) and `s` inside the caller's
-                // `count * 4`-byte `src`.
-                unsafe {
-                    *d.add(0) = *s.add(3);
-                    *d.add(1) = *s.add(2);
-                    *d.add(2) = *s.add(1);
-                    *d.add(3) = *s.add(0);
-                    d = d.add(4);
-                    s = s.add(4);
-                }
+            for i in 0..count {
+                let base = i * 4;
+                dst_bytes[base] = src[base + 3];
+                dst_bytes[base + 1] = src[base + 2];
+                dst_bytes[base + 2] = src[base + 1];
+                dst_bytes[base + 3] = src[base];
             }
         }
         8 => {
             // C: `ufbxi_nounroll` — optimizer pragma, no Rust analogue.
-            for _i in 0..count {
-                // SAFETY: the loop runs `count` iterations touching 8 bytes each,
-                // so `d` stays inside `dst` (the freshly grown `swap_arr`, at
-                // least `count * 8` bytes) and `s` inside the caller's
-                // `count * 8`-byte `src`.
-                unsafe {
-                    *d.add(0) = *s.add(7);
-                    *d.add(1) = *s.add(6);
-                    *d.add(2) = *s.add(5);
-                    *d.add(3) = *s.add(4);
-                    *d.add(4) = *s.add(3);
-                    *d.add(5) = *s.add(2);
-                    *d.add(6) = *s.add(1);
-                    *d.add(7) = *s.add(0);
-                    d = d.add(8);
-                    s = s.add(8);
-                }
+            for i in 0..count {
+                let base = i * 8;
+                dst_bytes[base] = src[base + 7];
+                dst_bytes[base + 1] = src[base + 6];
+                dst_bytes[base + 2] = src[base + 5];
+                dst_bytes[base + 3] = src[base + 4];
+                dst_bytes[base + 4] = src[base + 3];
+                dst_bytes[base + 5] = src[base + 2];
+                dst_bytes[base + 6] = src[base + 1];
+                dst_bytes[base + 7] = src[base];
             }
         }
         _ => {
@@ -213,20 +192,11 @@ pub(crate) unsafe fn swap_endian(
 // ufbx.c:8648-8655 `ufbxi_swap_endian_array`
 #[inline(never)]
 #[must_use]
-pub(crate) unsafe fn swap_endian_array(
-    uc: &Context,
-    src: *const c_void,
-    count: usize,
-    type_: u8,
-) -> *const u8 {
-    // SAFETY: forwards the caller's contract — `src` addresses `count`
-    // elements of the size selected by `type_` — to `swap_endian`.
-    unsafe {
-        match type_ {
-            b'i' | b'f' => swap_endian(uc, src, count, 4),
-            b'l' | b'd' => swap_endian(uc, src, count, 8),
-            _ => src as *const u8,
-        }
+pub(crate) fn swap_endian_array(uc: &Context, src: &[u8], count: usize, type_: u8) -> *const u8 {
+    match type_ {
+        b'i' | b'f' => swap_endian(uc, src, count, 4),
+        b'l' | b'd' => swap_endian(uc, src, count, 8),
+        _ => src.as_ptr(),
     }
 }
 
@@ -234,19 +204,14 @@ pub(crate) unsafe fn swap_endian_array(
 // ufbx.c:8658-8668 `ufbxi_swap_endian_value`
 #[inline(never)]
 #[must_use]
-pub(crate) unsafe fn swap_endian_value(uc: &Context, src: *const c_void, type_: u8) -> *const u8 {
-    // SAFETY: each arm forwards to `swap_endian` a `src` the caller
-    // guarantees addresses at least the `count * elem_size` bytes named by
-    // the constants below (the value's header words for its `type_`).
-    unsafe {
-        match type_ {
-            b'Y' => swap_endian(uc, src, 1, 2),
-            b'I' | b'F' => swap_endian(uc, src, 1, 4),
-            b'L' | b'D' => swap_endian(uc, src, 1, 8),
-            b'S' | b'R' => swap_endian(uc, src, 1, 4),
-            b'i' | b'l' | b'f' | b'd' | b'b' => swap_endian(uc, src, 3, 4),
-            _ => src as *const u8,
-        }
+pub(crate) fn swap_endian_value(uc: &Context, src: &[u8], type_: u8) -> *const u8 {
+    match type_ {
+        b'Y' => swap_endian(uc, src, 1, 2),
+        b'I' | b'F' => swap_endian(uc, src, 1, 4),
+        b'L' | b'D' => swap_endian(uc, src, 1, 8),
+        b'S' | b'R' => swap_endian(uc, src, 1, 4),
+        b'i' | b'l' | b'f' | b'd' | b'b' => swap_endian(uc, src, 3, 4),
+        _ => src.as_ptr(),
     }
 }
 
@@ -278,10 +243,19 @@ pub(crate) unsafe fn binary_convert_array(
                     != unsafe { (*maybe_uc).local_big_endian }
         );
         // SAFETY: `maybe_uc` is the live context asserted above; `from_ptr`
-        // reborrows it and `swap_endian_array` byte-swaps `size` `src_type`
-        // elements of the caller's `src` into `uc`'s owned `swap_arr`.
+        // reborrows it, and the caller's `src` holds `size` `src_type`
+        // elements. The bounded span is consumed immediately by the endian
+        // copy into `uc`'s owned `swap_arr`.
         src = unsafe {
-            swap_endian_array(Context::from_ptr(maybe_uc), src, size, src_type) as *const c_void
+            swap_endian_array(
+                Context::from_ptr(maybe_uc),
+                slice_from_ptr(
+                    src as *const u8,
+                    size.wrapping_mul(array_type_size(src_type)),
+                ),
+                size,
+                src_type,
+            ) as *const c_void
         };
         ufbxi_check_err!(
             // SAFETY: `maybe_uc` is the live context asserted above; `&raw mut`
@@ -308,10 +282,19 @@ pub(crate) unsafe fn binary_convert_array(
     // (caller contract), so reading `file_big_endian` is valid.
     if !maybe_uc.is_null() && unsafe { (*maybe_uc).file_big_endian } {
         // SAFETY: `maybe_uc` is the live, big-endian context just checked;
-        // `from_ptr` reborrows it and `swap_endian_array` byte-swaps `size`
-        // `src_type` elements of `src` into `uc`'s owned `swap_arr`.
+        // `from_ptr` reborrows it, and the caller's `src` holds `size`
+        // `src_type` elements. The bounded span is consumed immediately by
+        // the endian copy into `uc`'s owned `swap_arr`.
         src = unsafe {
-            swap_endian_array(Context::from_ptr(maybe_uc), src, size, src_type) as *const c_void
+            swap_endian_array(
+                Context::from_ptr(maybe_uc),
+                slice_from_ptr(
+                    src as *const u8,
+                    size.wrapping_mul(array_type_size(src_type)),
+                ),
+                size,
+                src_type,
+            ) as *const c_void
         };
         ufbxi_check_err!(
             // SAFETY: `maybe_uc` is the live context just checked; `&raw mut`
@@ -562,19 +545,18 @@ pub(crate) unsafe fn binary_parse_multivalue_array(
         for _i in 0..size {
             val = peek_bytes(uc, 13);
             ufbxi_check!(uc, !val.is_null(), "val");
-            // SAFETY: `val` is the non-null head of the 13-byte peek window, so
-            // reading its type byte and stepping one byte past it stay in bounds.
-            let type_: u8 = unsafe { *val };
-            val = unsafe { val.add(1) };
+            // SAFETY: the non-null `peek_bytes` result is the requested
+            // 13-byte parser window.
+            let val_bytes = unsafe { slice_from_ptr(val, 13) };
+            let type_: u8 = val_bytes[0];
+            val = val_bytes[1..].as_ptr();
             ufbxi_check!(
                 uc,
                 type_ == b'S' || type_ == b'R',
                 "type == 'S' || type == 'R'"
             );
             if file_big_endian {
-                // SAFETY: `val` points into the peeked window; `swap_endian_value`
-                // swaps the header words for `type_` into `uc`'s owned buffer.
-                val = unsafe { swap_endian_value(uc, val as *const c_void, type_) };
+                val = swap_endian_value(uc, &val_bytes[1..], type_);
                 ufbxi_check!(uc, !val.is_null(), "val");
             }
             // SAFETY: `val` addresses the 4-byte length word within the peeked
@@ -671,10 +653,11 @@ pub(crate) unsafe fn binary_parse_multivalue_array(
             while i < size {
                 val = peek_bytes(uc, 13);
                 ufbxi_check!(uc, !val.is_null(), "val");
-                let type_: u8 = *val;
-                val = val.add(1);
+                let val_bytes = slice_from_ptr(val, 13);
+                let type_: u8 = val_bytes[0];
+                val = val_bytes[1..].as_ptr();
                 if file_big_endian {
-                    val = swap_endian_value(uc, val as *const c_void, type_);
+                    val = swap_endian_value(uc, &val_bytes[1..], type_);
                     ufbxi_check!(uc, !val.is_null(), "val");
                 }
                 match type_ {
@@ -953,13 +936,14 @@ fn binary_parse_node_rec(
     let name_len: u8;
     let header_size: usize = if uc.version() >= 7500 { 25 } else { 13 };
     let header: *const u8 = read_bytes(uc, header_size);
-    let mut header_words: *const u8 = header;
     ufbxi_check!(uc, !header.is_null(), "header");
+    // SAFETY: the non-null `read_bytes` result is the requested `header_size`
+    // byte run in the parser buffer.
+    let header_bytes = unsafe { slice_from_ptr(header, header_size) };
+    let mut header_words: *const u8 = header_bytes.as_ptr();
     if uc.version() >= 7500 {
         if uc.file_big_endian() {
-            // SAFETY: `header_words` addresses the 25-byte header just read;
-            // `swap_endian` byte-swaps its three 8-byte words into `uc`'s buffer.
-            header_words = unsafe { swap_endian(uc, header_words as *const c_void, 3, 8) };
+            header_words = swap_endian(uc, &header_bytes[..24], 3, 8);
             ufbxi_check!(uc, !header_words.is_null(), "header_words");
         }
         // SAFETY: `header_words` addresses three 8-byte words at offsets 0/8/16
@@ -969,12 +953,10 @@ fn binary_parse_node_rec(
         end_offset = unsafe { read_u64(header_words.add(0)) };
         num_values64 = unsafe { read_u64(header_words.add(8)) };
         values_len = unsafe { read_u64(header_words.add(16)) };
-        name_len = unsafe { read_u8(header.add(24)) };
+        name_len = header_bytes[24];
     } else {
         if uc.file_big_endian() {
-            // SAFETY: `header_words` addresses the 13-byte header just read;
-            // `swap_endian` byte-swaps its three 4-byte words into `uc`'s buffer.
-            header_words = unsafe { swap_endian(uc, header_words as *const c_void, 3, 4) };
+            header_words = swap_endian(uc, &header_bytes[..12], 3, 4);
             ufbxi_check!(uc, !header_words.is_null(), "header_words");
         }
         // SAFETY: `header_words` addresses three 4-byte words at offsets 0/4/8
@@ -984,7 +966,7 @@ fn binary_parse_node_rec(
         end_offset = unsafe { read_u32(header_words.add(0)) } as u64;
         num_values64 = unsafe { read_u32(header_words.add(4)) } as u64;
         values_len = unsafe { read_u32(header_words.add(8)) } as u64;
-        name_len = unsafe { read_u8(header.add(12)) };
+        name_len = header_bytes[12];
     }
 
     ufbxi_check!(
@@ -1071,13 +1053,14 @@ fn binary_parse_node_rec(
         // ahead safely as valid FBX files must end in a 13/25 byte NULL record.
         let data: *const u8 = peek_bytes(uc, 13);
         ufbxi_check!(uc, !data.is_null(), "data");
+        // SAFETY: the non-null `peek_bytes` result is the requested 13-byte
+        // parser window.
+        let data_bytes = unsafe { slice_from_ptr(data, 13) };
 
         // Check if the data type is one of the explicit array types (post-7000).
         // Otherwise we form the array by concatenating all the normal values of the
         // node (pre-7000)
-        // SAFETY: `data` is the non-null head of the 13-byte peek window; read
-        // its first (type) byte.
-        let mut c: u8 = unsafe { *data.add(0) };
+        let mut c: u8 = data_bytes[0];
 
         // HACK: Override the "type" if either the array is empty or we want to
         // specifically ignore the contents.
@@ -1091,20 +1074,14 @@ fn binary_parse_node_rec(
         let mut deferred: bool = false;
 
         if c == b'c' || c == b'b' || c == b'i' || c == b'l' || c == b'f' || c == b'd' {
-            // SAFETY: `data` is the 13-byte peek window; the three 4-byte array
-            // header words begin one byte past its type byte.
-            let mut arr_words: *const u8 = unsafe { data.add(1) };
+            let mut arr_words: *const u8 = data_bytes[1..].as_ptr();
             if uc.file_big_endian() {
-                // SAFETY: `arr_words` addresses the three 4-byte header words in
-                // the peeked window; `swap_endian` byte-swaps them into `uc`'s
-                // buffer.
-                arr_words = unsafe { swap_endian(uc, arr_words as *const c_void, 3, 4) };
+                arr_words = swap_endian(uc, &data_bytes[1..], 3, 4);
                 ufbxi_check!(uc, !arr_words.is_null(), "arr_words");
             }
 
             // Parse the array header from the prefix we already peeked above.
-            // SAFETY: `data` is the peek window; read its type byte.
-            let mut src_type: u8 = unsafe { *data.add(0) };
+            let mut src_type: u8 = data_bytes[0];
             // SAFETY: `arr_words` addresses the three 4-byte header words (size,
             // encoding, encoded_size) at offsets 0/4/8 within the peeked (and,
             // for big-endian, swapped) window.
@@ -1447,17 +1424,13 @@ fn binary_parse_node_rec(
             // up to 13 bytes safely here.
             let data: *const u8 = peek_bytes(uc, 13);
             ufbxi_check!(uc, !data.is_null(), "data");
-
-            // SAFETY: `data` is the non-null head of the 13-byte peek window; the
-            // value payload begins one byte past its type byte.
-            let mut value: *const u8 = unsafe { data.add(1) };
-
-            // SAFETY: `data` is the peek window; read its type byte.
-            let type_: u8 = unsafe { *data.add(0) };
+            // SAFETY: the non-null `peek_bytes` result is the requested
+            // 13-byte parser window.
+            let data_bytes = unsafe { slice_from_ptr(data, 13) };
+            let mut value: *const u8 = data_bytes[1..].as_ptr();
+            let type_: u8 = data_bytes[0];
             if uc.file_big_endian() {
-                // SAFETY: `value` points into the peeked window; `swap_endian_value`
-                // swaps the header words for `type_` into `uc`'s owned buffer.
-                value = unsafe { swap_endian_value(uc, value as *const c_void, type_) };
+                value = swap_endian_value(uc, &data_bytes[1..], type_);
                 ufbxi_check!(uc, !value.is_null(), "value");
             }
 
@@ -1678,3 +1651,53 @@ pub(crate) const BINARY_HEADER_SIZE: usize = 27;
 // C-parity: the C array is 23 bytes (22 magic bytes + the implicit NUL); only
 // the first `UFBXI_BINARY_MAGIC_SIZE` bytes are ever compared.
 pub(crate) static BINARY_MAGIC: [u8; 23] = *b"Kaydara FBX Binary  \x00\x1a\x00";
+
+#[cfg(test)]
+mod tests {
+    use super::{swap_endian, swap_endian_array, swap_endian_value};
+    use crate::native::allocator::{free, init_ator, AllocatorView, NO_ATOR_OPTS};
+    use crate::native::parse::{Context, InnerContext};
+
+    #[test]
+    fn endian_helpers_reverse_element_bytes() {
+        let mut uc: std::boxed::Box<InnerContext> =
+            unsafe { std::boxed::Box::new_zeroed().assume_init() };
+
+        unsafe {
+            init_ator(
+                &raw mut uc.error,
+                AllocatorView::from_ptr(&raw mut uc.ator_tmp),
+                NO_ATOR_OPTS,
+                c"test",
+            );
+            let context = Context::from_ptr(&raw mut *uc);
+            let src: [u8; 24] = core::array::from_fn(|i| i as u8);
+
+            let swapped = swap_endian(context, &src[..6], 3, 2);
+            assert_eq!(
+                crate::prelude::slice_from_ptr(swapped, 6),
+                [1, 0, 3, 2, 5, 4]
+            );
+
+            let swapped = swap_endian_array(context, &src[..12], 3, b'i');
+            assert_eq!(
+                crate::prelude::slice_from_ptr(swapped, 12),
+                [3, 2, 1, 0, 7, 6, 5, 4, 11, 10, 9, 8]
+            );
+
+            let swapped = swap_endian_value(context, &src, b'D');
+            assert_eq!(
+                crate::prelude::slice_from_ptr(swapped, 8),
+                [7, 6, 5, 4, 3, 2, 1, 0]
+            );
+
+            assert_eq!(
+                swap_endian_array(context, &src, src.len(), b'c'),
+                src.as_ptr()
+            );
+            assert_eq!(swap_endian_value(context, &src, b'C'), src.as_ptr());
+
+            free(Some(context.ator_tmp_view()), uc.swap_arr, uc.swap_arr_size);
+        }
+    }
+}

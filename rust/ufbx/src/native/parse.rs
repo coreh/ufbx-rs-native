@@ -6724,28 +6724,22 @@ pub(crate) fn determine_format(uc: &Context) -> Result<(), Fail> {
 pub(crate) fn begin_parse(uc: &Context) -> Result<(), Fail> {
     let header: *const u8 = crate::native::io::peek_bytes(uc, BINARY_HEADER_SIZE);
     ufbxi_check!(uc, !header.is_null(), "header");
+    // SAFETY: the non-null `peek_bytes` result is the requested
+    // `BINARY_HEADER_SIZE`-byte buffered window.
+    let header_bytes = unsafe { crate::prelude::slice_from_ptr(header, BINARY_HEADER_SIZE) };
 
     // If the file starts with the binary magic parse it as binary, otherwise
     // treat it as an ASCII file.
-    // SAFETY: a non-null `peek_bytes` result is readable for the requested
-    // `BINARY_HEADER_SIZE` bytes, and `BINARY_MAGIC_SIZE <= BINARY_HEADER_SIZE`.
-    if unsafe { memcmp(header, BINARY_MAGIC.as_ptr(), BINARY_MAGIC_SIZE) } == 0 {
+    if header_bytes[..BINARY_MAGIC_SIZE] == BINARY_MAGIC[..BINARY_MAGIC_SIZE] {
         // The byte after the magic indicates endianness
-        // SAFETY: the header window is `BINARY_HEADER_SIZE` bytes and the magic
-        // plus the endian byte plus the 4-byte version word fit within it.
-        let endian: u8 = unsafe { *header.add(BINARY_MAGIC_SIZE + 0) };
+        let endian: u8 = header_bytes[BINARY_MAGIC_SIZE];
         uc.set_file_big_endian(endian != 0);
 
         // Read the version directly from the header
-        // SAFETY: as above — this is the 4-byte version word inside the header
-        // window.
-        let mut version_word: *const u8 = unsafe { header.add(BINARY_MAGIC_SIZE + 1) };
+        let version_bytes = &header_bytes[BINARY_MAGIC_SIZE + 1..BINARY_HEADER_SIZE];
+        let mut version_word: *const u8 = version_bytes.as_ptr();
         if uc.file_big_endian() {
-            // SAFETY: `version_word` addresses 4 readable header bytes, which
-            // is what the `(count=1, elem_size=4)` swap is told to read.
-            version_word = unsafe {
-                crate::native::parse_binary::swap_endian(uc, version_word as *const c_void, 1, 4)
-            };
+            version_word = crate::native::parse_binary::swap_endian(uc, version_bytes, 1, 4);
             ufbxi_check!(uc, !version_word.is_null(), "version_word");
         }
         // SAFETY: `version_word` is 4 readable bytes — either the header slice
