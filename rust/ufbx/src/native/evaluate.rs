@@ -5268,17 +5268,6 @@ impl BakeTimeListView {
     pub(crate) fn set_data(&self, data: *mut BakeTime) {
         view_write!(self, data, data)
     }
-    /// Safe indexed element view over the run this list header describes — the
-    /// internal-list sibling of `View<List<T>, M>::at`.
-    #[inline(always)]
-    pub(crate) fn at(&self, index: usize) -> &BakeTimeView {
-        assert!(index < self.count());
-        // SAFETY: `index` is in bounds of the list's own count (checked
-        // above), so `data + index` addresses a live element of the
-        // contiguous run the header describes; the stored `data` pointer
-        // carries that run's own write-capable provenance.
-        unsafe { View::mint(self.data().add(index)) }
-    }
 }
 
 // Typed interior-mutable VIEW over one `BakeTime` element of such a run
@@ -6162,11 +6151,7 @@ pub(crate) unsafe fn in_list(items: *const *const u8, count: usize, item: *const
 // ufbx.c:26840-26845 `ufbxi_sort_bake_times`
 #[cfg(feature = "baking")]
 #[inline(never)]
-pub(crate) unsafe fn sort_bake_times(
-    bc: &BakeContext,
-    times: *mut BakeTime,
-    count: usize,
-) -> Result<(), Fail> {
+pub(crate) fn sort_bake_times(bc: &BakeContext, times: Run<'_, BakeTime>) -> Result<(), Fail> {
     // C: `ufbxi_grow_array(&bc->ator_tmp, &bc->tmp_arr, &bc->tmp_arr_size, count * sizeof(ufbxi_bake_time))`
     // — `bc->tmp_arr` is `char*`, so the element size is 1 and the count is in
     // bytes (PORTING.md "Sorting & searching": this paired grow is the
@@ -6181,20 +6166,23 @@ pub(crate) unsafe fn sort_bake_times(
                 bc.ator_tmp_view(),
                 bc.tmp_arr_mut_ptr(),
                 bc.tmp_arr_size_mut_ptr(),
-                count.wrapping_mul(size_of::<BakeTime>()),
+                times.len().wrapping_mul(size_of::<BakeTime>()),
             )
         },
         "ufbxi_grow_array_size((&bc->ator_tmp), sizeof(**(&bc->tmp_arr)), (&bc->tmp_arr), (&bc->tmp_arr_size), (count * sizeof(ufbxi_bake_time)))"
     );
-    // SAFETY: this `unsafe fn` requires `times` to address `count` writable
-    // `ufbxi_bake_time`s, and the grow above sized `bc.tmp_arr()` to hold that
-    // many as the disjoint scratch run `macro_stable_sort` needs. The comparator
-    // is handed pointers to two live elements of that run or its scratch, so its
-    // derefs — covered by this same block — are in bounds.
+    // SAFETY: `times` carries the live writable input run, and the grow above
+    // sized `bc.tmp_arr()` to hold the same number as the disjoint scratch run
+    // `macro_stable_sort` needs. The comparator is handed pointers to two live
+    // elements of that run or its scratch, so its derefs are in bounds.
     unsafe {
-        macro_stable_sort::<BakeTime>(32, times, bc.tmp_arr() as *mut BakeTime, count, |a, b| {
-            cmp_bake_time(*a, *b) < 0
-        })
+        macro_stable_sort::<BakeTime>(
+            32,
+            times.as_mut_ptr(),
+            bc.tmp_arr() as *mut BakeTime,
+            times.len(),
+            |a, b| cmp_bake_time(*a, *b) < 0,
+        )
     };
     Ok(())
 }
@@ -6233,36 +6221,25 @@ pub(crate) fn finalize_bake_times(bc: &BakeContext, p_dst: &mut BakeTimeList) ->
     }
 
     let mut num_times: usize = bc.tmp_times_view().num_items();
-    let times: *mut BakeTime = bc
+    let times_ptr: *mut BakeTime = bc
         .tmp_prop_view()
         .push_pop::<BakeTime>(bc.tmp_times_view(), num_times);
-    ufbxi_check_err!(bc.error_view(), !times.is_null(), "times");
+    ufbxi_check_err!(bc.error_view(), !times_ptr.is_null(), "times");
 
-    // SAFETY: `times` is the non-null (checked) `num_times`-element
-    // `ufbxi_bake_time` run just popped into `bc.tmp_prop`, which is what
-    // `sort_bake_times` requires.
-    unsafe { sort_bake_times(bc, times, num_times) }?;
-
-    // The run is contiguous (`push_pop`-materialized) and stays put for the
-    // rest of the function, so C's `times[i]` indexing runs through a list
-    // header over it. The header keeps the FULL run length: the passes below
-    // shrink `num_times`, while every index they form stays inside the run.
-    let mut times_run: BakeTimeList = BakeTimeList {
-        data: times,
-        count: num_times,
-    };
-    // `times_run` is a local, initialized `ufbxi_bake_time_list` header
-    // describing the non-null run vouched above; nothing touches it outside
-    // the view for the rest of this body.
-    let times_view: &BakeTimeListView = View::<BakeTimeList, Mut>::from_mut(&mut times_run);
+    // SAFETY: `times_ptr` is the non-null (checked), initialized `num_times`
+    // element run just popped into `bc.tmp_prop`; that buffer keeps it stable
+    // for the rest of this function. The run retains its full allocation
+    // length while the passes below shrink the logical `num_times` prefix.
+    let times: Run<'_, BakeTime> = unsafe { Run::from_raw_parts(times_ptr, num_times) };
+    sort_bake_times(bc, times)?;
 
     // Deduplicate times
     if num_times > 0 {
         let mut dst: usize = 0;
-        let mut prev: BakeTime = times_view.at(0).value();
+        let mut prev: BakeTime = times.at(0).value();
         let mut src: usize = 1;
         while src < num_times {
-            let mut next: BakeTime = times_view.at(src).value();
+            let mut next: BakeTime = times.at(src).value();
             // Merge keys with the same time and step flags `(0x1, 0x2)`
             if next.time == prev.time {
                 if ((next.flags ^ prev.flags) & 0x3) == 0 {
@@ -6277,12 +6254,12 @@ pub(crate) fn finalize_bake_times(bc: &BakeContext, p_dst: &mut BakeTimeList) ->
                 }
             }
 
-            times_view.at(dst).set_value(prev);
+            times.at(dst).set_value(prev);
             dst += 1;
             prev = next;
             src += 1;
         }
-        times_view.at(dst).set_value(prev);
+        times.at(dst).set_value(prev);
         dst += 1;
         num_times = dst;
     }
@@ -6297,23 +6274,23 @@ pub(crate) fn finalize_bake_times(bc: &BakeContext, p_dst: &mut BakeTimeList) ->
 
         let mut dst: usize = 0;
         for src in 0..num_times {
-            let cur: BakeTime = times_view.at(src).value();
+            let cur: BakeTime = times.at(src).value();
             let mut delta: f64 = math::INFINITY;
 
             let mut keep: bool = true;
             if (cur.flags & keep_flags) == 0 {
                 if dst > 0 {
-                    delta = cur.time - times_view.at(dst - 1).time();
+                    delta = cur.time - times.at(dst - 1).time();
                 }
                 if src + 1 < num_times {
-                    delta = math::fmin(delta, times_view.at(src + 1).time() - cur.time);
+                    delta = math::fmin(delta, times.at(src + 1).time() - cur.time);
                 }
                 if delta < min_dist {
                     keep = false;
                 }
             }
             if keep {
-                times_view.at(dst).set_value(cur);
+                times.at(dst).set_value(cur);
                 dst += 1;
             }
         }
@@ -6331,25 +6308,24 @@ pub(crate) fn finalize_bake_times(bc: &BakeContext, p_dst: &mut BakeTimeList) ->
 
         // Pre-expand constant keyframes
         for i in 0..num_times {
-            if (times_view.at(i).flags()
+            if (times.at(i).flags()
                 & (BakedKeyFlags::STEP_LEFT.raw() | BakedKeyFlags::STEP_RIGHT.raw()))
                 != 0
             {
-                let sign: f64 = if (times_view.at(i).flags() & BakedKeyFlags::STEP_LEFT.raw()) != 0
-                {
+                let sign: f64 = if (times.at(i).flags() & BakedKeyFlags::STEP_LEFT.raw()) != 0 {
                     -1.0
                 } else {
                     1.0
                 };
-                let mut time: f64 = times_view.at(i).time() + sign * max_interval;
+                let mut time: f64 = times.at(i).time() + sign * max_interval;
                 if i > 0 {
-                    time = math::fmax(time, times_view.at(i - 1).time());
+                    time = math::fmax(time, times.at(i - 1).time());
                 }
                 if i + 1 < num_times {
-                    time = math::fmin(time, times_view.at(i + 1).time());
+                    time = math::fmin(time, times.at(i + 1).time());
                 }
-                times_view.at(i).set_time(time);
-                times_view.at(i).set_flags(BakedKeyFlags::REDUCED.raw());
+                times.at(i).set_time(time);
+                times.at(i).set_flags(BakedKeyFlags::REDUCED.raw());
             }
         }
 
@@ -6359,7 +6335,7 @@ pub(crate) fn finalize_bake_times(bc: &BakeContext, p_dst: &mut BakeTimeList) ->
             flags: 0,
         };
         while src < num_times {
-            let src_time: BakeTime = times_view.at(src).value();
+            let src_time: BakeTime = times.at(src).value();
             src += 1;
 
             let start_src: usize = src;
@@ -6370,7 +6346,7 @@ pub(crate) fn finalize_bake_times(bc: &BakeContext, p_dst: &mut BakeTimeList) ->
             };
             next_time.time = math::ceil(src_time.time * sample_rate - epsilon) / sample_rate;
             next_time.flags = BakedKeyFlags::REDUCED.raw();
-            while src < num_times && times_view.at(src).time() <= next_time.time + epsilon {
+            while src < num_times && times.at(src).time() <= next_time.time + epsilon {
                 src += 1;
             }
 
@@ -6380,8 +6356,8 @@ pub(crate) fn finalize_bake_times(bc: &BakeContext, p_dst: &mut BakeTimeList) ->
                 prev_time = src_time;
             }
 
-            if dst == 0 || prev_time.time > times_view.at(dst - 1).time() {
-                times_view.at(dst).set_value(prev_time);
+            if dst == 0 || prev_time.time > times.at(dst - 1).time() {
+                times.at(dst).set_value(prev_time);
                 dst += 1;
             }
         }
@@ -6390,15 +6366,15 @@ pub(crate) fn finalize_bake_times(bc: &BakeContext, p_dst: &mut BakeTimeList) ->
     }
 
     if num_times > 0 {
-        if times_view.at(0).time() < bc.time_min() {
-            bc.set_time_min(times_view.at(0).time());
+        if times.at(0).time() < bc.time_min() {
+            bc.set_time_min(times.at(0).time());
         }
-        if times_view.at(num_times - 1).time() > bc.time_max() {
-            bc.set_time_max(times_view.at(num_times - 1).time());
+        if times.at(num_times - 1).time() > bc.time_max() {
+            bc.set_time_max(times.at(num_times - 1).time());
         }
     }
 
-    p_dst.data = times;
+    p_dst.data = times.as_mut_ptr();
     p_dst.count = num_times;
 
     Ok(())
