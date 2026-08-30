@@ -3814,93 +3814,88 @@ pub(crate) fn get_blend_shape_offset_index<M: Mode>(
 
 // ufbx.c:32035-32040 `ufbx_get_blend_shape_vertex_offset`
 #[inline(never)]
+pub(crate) fn get_blend_shape_vertex_offset_view<M: Mode>(
+    shape: Option<&View<BlendShape, M>>,
+    vertex: usize,
+) -> Vec3 {
+    let index: u32 = get_blend_shape_offset_index(shape, vertex);
+    if index == NO_INDEX {
+        return ZERO_VEC3;
+    }
+    // A non-`NO_INDEX` result is `< num_offsets`; a valid `BlendShape` stores
+    // the corresponding initialized offset in its parallel position list.
+    shape
+        .expect("a matched blend-shape offset requires a shape")
+        .position_offsets_view()
+        .copy_at(index as usize)
+}
+
+// Raw adapter for the generated Rust wrapper and C ABI shim.
+#[inline(always)]
 pub(crate) unsafe fn get_blend_shape_vertex_offset(
     shape: *const BlendShape,
     vertex: usize,
 ) -> Vec3 {
-    // SAFETY: `shape` is this `unsafe fn`'s own param — null or a live
-    // `BlendShape` per its contract — so a non-null pointer roots a read-only
-    // `View<_, Const>` for the offset-index lookup (the `None` arm carries C's
-    // null case).
-    let index: u32 = unsafe {
-        get_blend_shape_offset_index(
-            if shape.is_null() {
-                None
-            } else {
-                Some(View::<BlendShape, Const>::from_ptr(shape))
-            },
-            vertex,
-        )
+    // SAFETY: this adapter's raw contract makes `shape` null or a live,
+    // initialized `BlendShape`, readable and frozen for this call.
+    let shape = if shape.is_null() {
+        None
+    } else {
+        Some(unsafe { View::<BlendShape, Const>::from_ptr(shape) })
     };
-    if index == NO_INDEX {
-        return ZERO_VEC3;
-    }
-    // SAFETY: a non-`NO_INDEX` result is `< num_offsets`, so
-    // `position_offsets.data.add(index)` addresses a live `Vec3` offset of the
-    // live `BlendShape` behind `shape`.
-    unsafe { *(*shape).position_offsets.data.add(index as usize) }
+    get_blend_shape_vertex_offset_view(shape, vertex)
 }
 
 // ufbx.c:32042-32060 `ufbx_get_blend_vertex_offset`
 #[inline(never)]
-pub(crate) unsafe fn get_blend_vertex_offset(blend: *const BlendDeformer, vertex: usize) -> Vec3 {
-    ufbx_assert!(!blend.is_null());
-    if blend.is_null() {
+pub(crate) fn get_blend_vertex_offset_view<M: Mode>(
+    blend: Option<&View<BlendDeformer, M>>,
+    vertex: usize,
+) -> Vec3 {
+    ufbx_assert!(blend.is_some());
+    let Some(blend) = blend else {
         return ZERO_VEC3;
-    }
+    };
 
     let mut offset: Vec3 = ZERO_VEC3;
 
     // C: `ufbxi_for_ptr_list(ufbx_blend_channel, p_chan, blend->channels)`
-    // SAFETY: `blend` is non-null here (checked above) and points at a live
-    // `BlendDeformer` per this fn's contract; `channels.data`/`.count` are its
-    // own list fields, so `add_ptr` yields the one-past-end pointer.
-    let mut p_chan: *mut *mut BlendChannel =
-        unsafe { (*blend).channels.data } as *mut *mut BlendChannel;
-    // SAFETY: same live `BlendDeformer`, reading its own `channels.count`.
-    let p_chan_end: *mut *mut BlendChannel = unsafe { add_ptr(p_chan, (*blend).channels.count) };
-    while p_chan != p_chan_end {
-        // SAFETY: `p_chan` is in `[data, end)` of the channel pointer list, so it
-        // addresses a live `*mut BlendChannel` element.
-        let chan: *mut BlendChannel = unsafe { *p_chan };
+    let channels = blend.channels_view();
+    for chan_ix in 0..channels.count() {
+        let chan = channels.at(chan_ix);
         // C: `ufbxi_for_list(ufbx_blend_keyframe, key, chan->keyframes)` —
         // indexed here because the body `continue`s (the C `for` advances the
         // iterator in its increment clause).
-        // SAFETY: `chan` is a live `BlendChannel`; reading its own
-        // `keyframes.count`.
-        for key_ix in 0..unsafe { (*chan).keyframes.count } {
-            // SAFETY: same live `BlendChannel`; `key_ix < keyframes.count`, so
-            // `keyframes.data.add(key_ix)` addresses a live `BlendKeyframe`.
-            let key: *mut BlendKeyframe =
-                unsafe { ((*chan).keyframes.data as *mut BlendKeyframe).add(key_ix) };
-            // SAFETY: `key` is a live `BlendKeyframe`; reading its own
-            // `effective_weight` field.
-            if unsafe { (*key).effective_weight } == 0.0 {
+        let keyframes = chan.keyframes_view();
+        for key_ix in 0..keyframes.count() {
+            let key = keyframes.at(key_ix);
+            if key.effective_weight() == 0.0 {
                 continue;
             }
 
-            // SAFETY: same live `BlendKeyframe`; its own `shape` ref is read out
-            // by value (`Ref` is `Copy`) and fed to
-            // `get_blend_shape_vertex_offset` as the bare C pointer.
-            let key_offset: Vec3 = unsafe {
-                get_blend_shape_vertex_offset(
-                    core::ptr::read(&raw const (*key).shape).ptr(),
-                    vertex,
-                )
-            };
-            // SAFETY: same live `BlendKeyframe`; reading its own
-            // `effective_weight` field.
-            // SAFETY: `offset` is a live, initialized stack `ufbx_vec3` (C takes
-            // its address the same way); `key` is the same live `BlendKeyframe`,
-            // reading its own `effective_weight` field.
-            unsafe { add_weighted_vec3(&raw mut offset, key_offset, (*key).effective_weight) };
+            let key_offset: Vec3 =
+                get_blend_shape_vertex_offset_view(Some(key.shape_view()), vertex);
+            // SAFETY: `offset` is a live initialized stack `Vec3`; the helper
+            // updates only that value, using the key weight read at the same
+            // point as C after the shape lookup.
+            unsafe { add_weighted_vec3(&raw mut offset, key_offset, key.effective_weight()) };
         }
-        // SAFETY: `p_chan` is before `p_chan_end`, so stepping one element stays
-        // within the channel pointer list (up to one-past-end).
-        p_chan = unsafe { p_chan.add(1) };
     }
 
     offset
+}
+
+// Raw adapter for the generated Rust wrapper and C ABI shim.
+#[inline(always)]
+pub(crate) unsafe fn get_blend_vertex_offset(blend: *const BlendDeformer, vertex: usize) -> Vec3 {
+    // SAFETY: this adapter's raw contract makes `blend` null or a live,
+    // initialized `BlendDeformer`, readable and frozen for this call.
+    let blend = if blend.is_null() {
+        None
+    } else {
+        Some(unsafe { View::<BlendDeformer, Const>::from_ptr(blend) })
+    };
+    get_blend_vertex_offset_view(blend, vertex)
 }
 
 // ufbx.c:32062-32081 `ufbx_add_blend_shape_vertex_offsets`
@@ -8651,8 +8646,8 @@ mod tests {
             assert_eq!(get_blend_shape_offset_index(Some(view), 2), NO_INDEX);
             assert_eq!(get_blend_shape_offset_index(Some(view), 8), NO_INDEX);
 
-            assert_eq!(get_blend_shape_vertex_offset(shape, 3).y, 2.0);
-            let zero = get_blend_shape_vertex_offset(shape, 2);
+            assert_eq!(get_blend_shape_vertex_offset_view(Some(view), 3).y, 2.0);
+            let zero = get_blend_shape_vertex_offset_view(Some(view), 2);
             assert_eq!((zero.x, zero.y, zero.z), (0.0, 0.0, 0.0));
         }
     }

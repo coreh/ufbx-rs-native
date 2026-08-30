@@ -792,6 +792,32 @@ pub(crate) struct Template {
     pub props: Props,
 }
 
+// A published template is a fully initialized entry of `Context::templates`;
+// these leaves are the search surface used to attach its stored property table.
+impl<M: Mode> View<Template, M> {
+    #[inline(always)]
+    pub(crate) fn type_(&self) -> *const u8 {
+        view_read_shared!(self, type_)
+    }
+
+    #[inline(always)]
+    pub(crate) fn sub_type_view(&self) -> &View<String, M> {
+        view_project!(self, sub_type)
+    }
+
+    #[inline(always)]
+    pub(crate) fn props_view(&self) -> &View<Props, M> {
+        view_project!(self, props)
+    }
+}
+
+impl View<Template> {
+    #[inline(always)]
+    pub(crate) fn props_raw(&self) -> *mut Props {
+        view_raw_mut!(self, props)
+    }
+}
+
 // ufbx.c:6299-6303 `ufbxi_fbx_id_entry`
 #[repr(C)]
 #[derive(Clone, Copy)]

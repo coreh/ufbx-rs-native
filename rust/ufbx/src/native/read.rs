@@ -942,39 +942,30 @@ pub(crate) fn read_definitions(uc: &Context) -> Result<(), Fail> {
 pub(crate) fn find_template(uc: &Context, name: &[u8], sub_type: &[u8]) -> *mut Props {
     // TODO: Binary search
     // C: `ufbxi_for(ufbxi_template, tmpl, uc->templates, uc->num_templates)`
-    let mut tmpl = uc.templates();
-    let tmpl_end = add_ptr(tmpl, uc.num_templates());
-    while tmpl != tmpl_end {
-        // SAFETY: `tmpl` walks `uc.templates()..+ uc.num_templates()`, uc's own
-        // result-buffer run of live `ufbxi_template` values.
-        if unsafe { (*tmpl).type_ } == name.as_ptr() {
+    // SAFETY: `read_definitions` publishes `templates` as a contiguous,
+    // initialized result-buffer run; its stored pointer is write-capable, which
+    // the successful raw `Props` result must retain.
+    let templates = unsafe { Run::from_raw_parts(uc.templates(), uc.num_templates()) };
+    for tmpl in templates.iter() {
+        if tmpl.type_() == name.as_ptr() {
             // Check that sub_type matches unless the type is Material, Model, AnimationStack, AnimationLayer.
             // Those match to all sub-types.
-            // SAFETY: as above — `tmpl` addresses a live template.
-            if unsafe {
-                (*tmpl).type_ != sp::Material.as_ptr()
-                    && (*tmpl).type_ != sp::Model.as_ptr()
-                    && (*tmpl).type_ != sp::AnimationStack.as_ptr()
-                    && (*tmpl).type_ != sp::AnimationLayer.as_ptr()
-            } {
-                // SAFETY: as above.
-                if unsafe { (*tmpl).sub_type.data } != sub_type.as_ptr() {
+            if tmpl.type_() != sp::Material.as_ptr()
+                && tmpl.type_() != sp::Model.as_ptr()
+                && tmpl.type_() != sp::AnimationStack.as_ptr()
+                && tmpl.type_() != sp::AnimationLayer.as_ptr()
+            {
+                if tmpl.sub_type_view().data() != sub_type.as_ptr() {
                     return core::ptr::null_mut();
                 }
             }
 
-            // SAFETY: as above.
-            if unsafe { (*tmpl).props.props.count } > 0 {
-                // SAFETY: as above; the projection borrows the template's own
-                // `props` field, which lives as long as uc's result buffer.
-                return unsafe { &raw mut (*tmpl).props };
+            if tmpl.props_view().props_view().count() > 0 {
+                return tmpl.props_raw();
             } else {
                 return core::ptr::null_mut();
             }
         }
-        // SAFETY: `tmpl` is before `tmpl_end`, so the advance lands at most one
-        // past the template run's end.
-        tmpl = unsafe { tmpl.add(1) };
     }
     core::ptr::null_mut()
 }
