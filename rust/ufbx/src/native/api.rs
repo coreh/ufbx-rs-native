@@ -5108,45 +5108,21 @@ pub(crate) fn catch_get_weighted_face_normal<M: Mode>(
     }
 }
 
-// ufbx.c:32534-32578 `ufbx_catch_generate_normal_mapping`
-// C-parity: this one is declared WITHOUT `ufbx_abi` in ufbx.c (the `ufbx.h`
-// declaration carries it) — no behavioral difference here.
-pub(crate) unsafe fn catch_generate_normal_mapping<M: Mode>(
-    mut panic: Option<&mut Panic>,
+fn generate_normal_mapping_run<M: Mode>(
     mesh: &View<Mesh, M>,
-    topo: *const TopoEdge,
-    num_topo: usize,
-    normal_indices: *mut u32,
-    num_normal_indices: usize,
+    topo: Run<'_, TopoEdge, Const>,
+    normal_indices: Run<'_, u32>,
     assume_smooth: bool,
 ) -> usize {
     let mut next_index: u32 = 0;
-    if ufbxi_panicf!(
-        panic,
-        num_normal_indices >= mesh.num_indices(),
-        "Expected at least mesh.num_indices (%zu), got %zu",
-        mesh.num_indices(),
-        num_normal_indices,
-    ) {
-        return 0;
-    }
-
-    // SAFETY: `topo`/`num_topo` describe the caller's initialized read-only
-    // topology run, distinct from the writable `normal_indices` output and
-    // remaining live and frozen for this call.
-    let topo_view = unsafe { Run::<TopoEdge, Const>::from_const_raw_parts(topo, num_topo) };
 
     for i in 0..mesh.num_indices() {
-        // SAFETY: `i < mesh.num_indices <= num_normal_indices` (guarded above),
-        // so `normal_indices.add(i)` addresses a caller-reserved slot.
-        unsafe { *normal_indices.add(i) = NO_INDEX };
+        normal_indices.write_at(i, NO_INDEX);
     }
 
     // Walk around vertices and merge around smooth edges
     for vi in 0..mesh.num_vertices() {
-        // SAFETY: `vi < mesh.num_vertices`, so `vertex_first_index.data.add(vi)`
-        // addresses a live element of the mesh's own list.
-        let original_start: u32 = unsafe { *mesh.vertex_first_index().data.add(vi) };
+        let original_start: u32 = mesh.vertex_first_index_view().copy_at(vi);
         if original_start == NO_INDEX {
             continue;
         }
@@ -5154,8 +5130,8 @@ pub(crate) unsafe fn catch_generate_normal_mapping<M: Mode>(
         let mut cur: u32 = start;
 
         loop {
-            let prev = catch_topo_next_vertex_edge_run(None, topo_view, cur);
-            if !is_edge_smooth(mesh, topo_view, cur, assume_smooth) {
+            let prev = catch_topo_next_vertex_edge_run(None, topo, cur);
+            if !is_edge_smooth(mesh, topo, cur, assume_smooth) {
                 start = cur;
             }
             if prev == NO_INDEX {
@@ -5169,38 +5145,69 @@ pub(crate) unsafe fn catch_generate_normal_mapping<M: Mode>(
         }
 
         // C: `normal_indices[start] = next_index++;`
-        // SAFETY: `start` is an index within the mesh's index range, so
-        // `normal_indices.add(start)` addresses a caller-reserved slot.
-        unsafe { *normal_indices.add(start as usize) = next_index };
+        normal_indices.write_at(start as usize, next_index);
         next_index = next_index.wrapping_add(1);
         let mut next: u32 = start;
         loop {
-            next = catch_topo_prev_vertex_edge_run(None, topo_view, next);
+            next = catch_topo_prev_vertex_edge_run(None, topo, next);
             if next == NO_INDEX || next == start {
                 break;
             }
 
-            if !is_edge_smooth(mesh, topo_view, next, assume_smooth) {
+            if !is_edge_smooth(mesh, topo, next, assume_smooth) {
                 next_index = next_index.wrapping_add(1);
             }
-            // SAFETY: `next` is an index within the mesh's index range.
-            unsafe { *normal_indices.add(next as usize) = next_index.wrapping_sub(1) };
+            normal_indices.write_at(next as usize, next_index.wrapping_sub(1));
         }
     }
 
     // Assign non-manifold indices
     for i in 0..mesh.num_indices() {
-        // SAFETY: `i < mesh.num_indices`, so `normal_indices.add(i)` addresses a
-        // caller-reserved slot.
-        if unsafe { *normal_indices.add(i) } == NO_INDEX {
+        // SAFETY: the first loop initialized the whole mesh-index prefix to
+        // `NO_INDEX`, subsequent writes preserve initialization, and `i` is
+        // bounded by that run.
+        if unsafe { normal_indices.at(i).as_ptr().read() } == NO_INDEX {
             // C: `normal_indices[i] = next_index++;`
-            // SAFETY: as above.
-            unsafe { *normal_indices.add(i) = next_index };
+            normal_indices.write_at(i, next_index);
             next_index = next_index.wrapping_add(1);
         }
     }
 
     next_index as usize
+}
+
+// ufbx.c:32534-32578 `ufbx_catch_generate_normal_mapping`
+// C-parity: this one is declared WITHOUT `ufbx_abi` in ufbx.c (the `ufbx.h`
+// declaration carries it) — no behavioral difference here.
+pub(crate) unsafe fn catch_generate_normal_mapping<M: Mode>(
+    mut panic: Option<&mut Panic>,
+    mesh: &View<Mesh, M>,
+    topo: *const TopoEdge,
+    num_topo: usize,
+    normal_indices: *mut u32,
+    num_normal_indices: usize,
+    assume_smooth: bool,
+) -> usize {
+    if ufbxi_panicf!(
+        panic,
+        num_normal_indices >= mesh.num_indices(),
+        "Expected at least mesh.num_indices (%zu), got %zu",
+        mesh.num_indices(),
+        num_normal_indices,
+    ) {
+        return 0;
+    }
+
+    // SAFETY: the caller vouches that `topo` is an initialized frozen input
+    // run and the guarded mesh-index prefix of `normal_indices` is a
+    // write-capable output run.
+    let (topo, normal_indices) = unsafe {
+        (
+            Run::<TopoEdge, Const>::from_const_raw_parts(topo, num_topo),
+            Run::<u32>::from_raw_parts(normal_indices, mesh.num_indices()),
+        )
+    };
+    generate_normal_mapping_run(mesh, topo, normal_indices, assume_smooth)
 }
 
 // ufbx.c:32580-32583 `ufbx_generate_normal_mapping`
@@ -5228,6 +5235,57 @@ pub(crate) unsafe fn generate_normal_mapping(
     }
 }
 
+fn compute_normals_run<M: Mode>(
+    mut panic: Option<&mut Panic>,
+    mesh: &View<Mesh, M>,
+    positions: &View<VertexVec3, M>,
+    normal_indices: Run<'_, u32, Const>,
+    normals: Run<'_, Vec3>,
+) {
+    // SAFETY: the bounded output capability vouches for `normals.len()`
+    // write-capable slots; all-zero bytes are a valid `Vec3` value.
+    if normals.len() != 0 {
+        unsafe {
+            core::ptr::write_bytes(
+                normals.as_mut_ptr() as *mut u8,
+                0,
+                size_of::<Vec3>().wrapping_mul(normals.len()),
+            );
+        }
+    }
+
+    for fi in 0..mesh.num_faces() {
+        let face: Face = mesh.faces_view().copy_at(fi);
+        let normal: Vec3 = catch_get_weighted_face_normal(None, positions, face);
+        for ix in 0..face.num_indices as usize {
+            let index: u32 = normal_indices.copy_at((face.index_begin as usize).wrapping_add(ix));
+
+            if ufbxi_panicf!(
+                panic,
+                (index as usize) < normals.len(),
+                "Normal index (%u) out of bounds (%zu) at %zu",
+                index,
+                normals.len(),
+                ix,
+            ) {
+                return;
+            }
+
+            let n = normals.at(index as usize);
+            n.set_vec3(add3(n.vec3(), normal));
+        }
+    }
+
+    for normal in normals.iter() {
+        let len: Real = length3(normal.vec3());
+        if len > 0.0 {
+            normal.set_x(normal.x() / len);
+            normal.set_y(normal.y() / len);
+            normal.set_z(normal.z() / len);
+        }
+    }
+}
+
 // ufbx.c:32585-32612 `ufbx_catch_compute_normals`
 pub(crate) unsafe fn catch_compute_normals<M: Mode>(
     mut panic: Option<&mut Panic>,
@@ -5248,60 +5306,16 @@ pub(crate) unsafe fn catch_compute_normals<M: Mode>(
         return;
     }
 
-    // SAFETY: `normals` addresses `num_normals` caller-reserved `Vec3` slots;
-    // the write zero-fills exactly that byte extent.
-    unsafe {
-        core::ptr::write_bytes(
-            normals as *mut u8,
-            0,
-            size_of::<Vec3>().wrapping_mul(num_normals),
-        );
-    }
-
-    for fi in 0..mesh.num_faces() {
-        // SAFETY: `fi < mesh.num_faces`, so `faces.data.add(fi)` addresses a live
-        // `Face` in the mesh's own list.
-        let face: Face = unsafe { *mesh.faces().data.add(fi) };
-        let normal: Vec3 = catch_get_weighted_face_normal(None, positions, face);
-        for ix in 0..face.num_indices as usize {
-            // SAFETY: the face's index range lies within `mesh.num_indices <=
-            // num_normal_indices` (guarded above), so `normal_indices.add(..)`
-            // addresses a caller-reserved slot.
-            let index: u32 =
-                unsafe { *normal_indices.add((face.index_begin as usize).wrapping_add(ix)) };
-
-            if ufbxi_panicf!(
-                panic,
-                (index as usize) < num_normals,
-                "Normal index (%u) out of bounds (%zu) at %zu",
-                index,
-                num_normals,
-                ix,
-            ) {
-                return;
-            }
-
-            // SAFETY: `index < num_normals` (guarded just above), so
-            // `normals.add(index)` addresses a caller-reserved `Vec3` slot.
-            let n: *mut Vec3 = unsafe { normals.add(index as usize) };
-            // SAFETY: `n` is the live `Vec3` slot resolved above.
-            unsafe { *n = add3(*n, normal) };
-        }
-    }
-
-    for i in 0..num_normals {
-        // SAFETY: `i < num_normals`, so `normals.add(i)` addresses a
-        // caller-reserved `Vec3` slot.
-        let len: Real = unsafe { length3(*normals.add(i)) };
-        if len > 0.0 {
-            // SAFETY: as above.
-            unsafe {
-                (*normals.add(i)).x /= len;
-                (*normals.add(i)).y /= len;
-                (*normals.add(i)).z /= len;
-            }
-        }
-    }
+    // SAFETY: the caller vouches that `normal_indices` is an initialized
+    // frozen input run for the guarded mesh-index prefix and `normals` is a
+    // write-capable output run.
+    let (normal_indices, normals) = unsafe {
+        (
+            Run::<u32, Const>::from_const_raw_parts(normal_indices, mesh.num_indices()),
+            Run::<Vec3>::from_raw_parts(normals, num_normals),
+        )
+    };
+    compute_normals_run(panic, mesh, positions, normal_indices, normals);
 }
 
 // ufbx.c:32614-32617 `ufbx_compute_normals`

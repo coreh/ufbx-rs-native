@@ -624,13 +624,11 @@ pub(crate) fn tessellate_nurbs_curve_imp(
         !indices.is_null() && !vertices.is_null() && !segments.is_null(),
         "indices && vertices && segments"
     );
-    let spans_data = curve_view.basis().spans_view().data();
-    // SAFETY: the frozen curve view keeps the earlier `num_spans` header value
-    // paired with `spans_data`. Each successful push checked its own byte size,
-    // and the combined check above establishes all three fresh allocations.
-    let (spans, indices_write, vertices_write, segments_write) = unsafe {
+    let spans = Run::from_list(curve_view.basis().spans_view());
+    // SAFETY: each successful push checked its own byte size, and the combined
+    // check above establishes all three fresh allocations.
+    let (indices_write, vertices_write, segments_write) = unsafe {
         (
-            Run::<Real, Const>::from_const_raw_parts(spans_data, num_spans),
             Run::<u32>::from_raw_parts(indices, num_indices),
             Run::<Vec3>::from_raw_parts(vertices, num_vertices),
             Run::<LineSegment>::from_raw_parts(segments, 1),
@@ -882,11 +880,7 @@ pub(crate) fn tessellate_nurbs_surface_imp(
             let ix_v: usize = span_v * sub_v + split_v;
             ufbx_assert!(ix_v < indices_v);
 
-            let spans_v_data = surface_view.basis_v().spans_view().data();
-            // SAFETY: the frozen surface view pairs the basis-V span pointer
-            // with the previously read `spans_v` count for this live input.
-            let spans_v_read =
-                unsafe { Run::<Real, Const>::from_const_raw_parts(spans_v_data, spans_v) };
+            let spans_v_read = Run::from_list(surface_view.basis_v().spans_view());
             let mut v = spans_v_read.copy_at(span_v);
             if split_v > 0 {
                 let t: Real = split_v as Real / splits_v as Real;
@@ -903,11 +897,7 @@ pub(crate) fn tessellate_nurbs_surface_imp(
                     let ix_u: usize = span_u * sub_u + split_u;
                     ufbx_assert!(ix_u < indices_u);
 
-                    let spans_u_data = surface_view.basis_u().spans_view().data();
-                    // SAFETY: the frozen surface view pairs the basis-U span
-                    // pointer with the previously read `spans_u` count.
-                    let spans_u_read =
-                        unsafe { Run::<Real, Const>::from_const_raw_parts(spans_u_data, spans_u) };
+                    let spans_u_read = Run::from_list(surface_view.basis_u().spans_view());
                     let mut u = spans_u_read.copy_at(span_u);
                     if split_u > 0 {
                         let t: Real = split_u as Real / splits_u as Real;

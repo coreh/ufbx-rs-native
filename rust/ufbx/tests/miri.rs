@@ -882,8 +882,8 @@ fn public_anim_eval_from_shared_refs() {
 }
 
 /// Mesh geometry helpers from shared refs: indexed vertex-attribute getters,
-/// face normals, and topology edge navigation plus normal-mapping generation
-/// over a caller-provided topology buffer.
+/// face normals, topology edge navigation, normal mapping/accumulation, and
+/// bounds rejection over caller-provided buffers.
 #[test]
 fn public_mesh_helpers_from_shared_refs() {
     let root = load("maya_cube_7500_binary.fbx");
@@ -913,7 +913,50 @@ fn public_mesh_helpers_from_shared_refs() {
     acc += ufbx::topo_next_vertex_edge(&topo, 0) as f64;
     acc += ufbx::topo_prev_vertex_edge(&topo, 0) as f64;
     let mut normal_indices = vec![0u32; mesh.num_indices];
-    acc += ufbx::generate_normal_mapping(mesh, &topo, &mut normal_indices, false) as f64;
+    let num_normals = ufbx::generate_normal_mapping(mesh, &topo, &mut normal_indices, false);
+    acc += num_normals as f64;
+
+    let mut short_mapping = vec![0x1234_5678; mesh.num_indices - 1];
+    let short_mapping_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        ufbx::generate_normal_mapping(mesh, &topo, &mut short_mapping, false);
+    }));
+    assert!(short_mapping_result.is_err());
+    assert!(short_mapping.iter().all(|&index| index == 0x1234_5678));
+
+    let mut normals = vec![ufbx::Vec3::default(); num_normals];
+    ufbx::compute_normals(mesh, &mesh.vertex_position, &normal_indices, &mut normals);
+    for normal in &normals {
+        acc += normal.x as f64 + normal.y as f64 + normal.z as f64;
+    }
+
+    let mut untouched_normals = vec![
+        ufbx::Vec3 {
+            x: 1.0,
+            y: 2.0,
+            z: 3.0,
+        };
+        num_normals
+    ];
+    let short_normals_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        ufbx::compute_normals(
+            mesh,
+            &mesh.vertex_position,
+            &normal_indices[..mesh.num_indices - 1],
+            &mut untouched_normals,
+        );
+    }));
+    assert!(short_normals_result.is_err());
+    assert!(untouched_normals
+        .iter()
+        .all(|normal| normal.x == 1.0 && normal.y == 2.0 && normal.z == 3.0));
+
+    // Every mapped normal index must address the caller-provided output run.
+    let invalid_indices = vec![num_normals as u32; mesh.num_indices];
+    let invalid_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let mut output = vec![ufbx::Vec3::default(); num_normals];
+        ufbx::compute_normals(mesh, &mesh.vertex_position, &invalid_indices, &mut output);
+    }));
+    assert!(invalid_result.is_err());
 
     assert!(acc.is_finite());
 }
