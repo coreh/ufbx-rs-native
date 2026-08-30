@@ -55,8 +55,8 @@ use crate::native::parse::{
     ARRAY_FLAG_RESULT, ARRAY_FLAG_TMP_BUF, MAX_NODE_DEPTH, MAX_NON_ARRAY_VALUES,
 };
 use crate::native::platform::{
-    add_ptr, f64_to_i32, f64_to_i64, max_sz, min32, sub_ptr, to_size, ufbx_assert,
-    ufbxi_dev_assert, MIN_THREADED_ASCII_VALUES,
+    add_ptr, f64_to_i32, f64_to_i64, max_sz, min32, to_size, ufbx_assert, ufbxi_dev_assert,
+    MIN_THREADED_ASCII_VALUES,
 };
 use crate::native::string_pool::{
     push_sanitized_string, push_string, push_string_place_str, SanitizedStringView,
@@ -1564,115 +1564,90 @@ pub(crate) fn ascii_read_float_array(
 // port as plain `while`s.
 #[inline(never)]
 pub(crate) fn setup_base64(uc: &Context) -> Result<(), Fail> {
-    let table: *mut u8 = uc.tmp_view().push::<u8>(256);
-    ufbxi_check!(uc, !table.is_null(), "table");
-    uc.set_base64_table(table);
+    let table_ptr: *mut u8 = uc.tmp_view().push::<u8>(256);
+    ufbxi_check!(uc, !table_ptr.is_null(), "table");
+    uc.set_base64_table(table_ptr);
 
-    // SAFETY: `table` is the freshly pushed 256-byte run checked non-null
-    // above; every index written below is a `u8` value, hence `< 256`.
-    unsafe {
-        core::ptr::write_bytes(table, 0x80, 256);
-        let mut c: u8 = b'A';
-        while c <= b'Z' {
-            *table.add(c as usize) = (c as i32 - b'A' as i32) as u8;
-            c += 1;
-        }
-        let mut c: u8 = b'a';
-        while c <= b'z' {
-            *table.add(c as usize) = (26 + (c as i32 - b'a' as i32)) as u8;
-            c += 1;
-        }
-        let mut c: u8 = b'0';
-        while c <= b'9' {
-            *table.add(c as usize) = (52 + (c as i32 - b'0' as i32)) as u8;
-            c += 1;
-        }
-        *table.add(b'+' as usize) = 62;
-        *table.add(b'/' as usize) = 63;
-        *table.add(b'=' as usize) = 0x40;
+    // SAFETY: `table_ptr` is the freshly pushed 256-byte run checked non-null.
+    let table = unsafe { core::slice::from_raw_parts_mut(table_ptr, 256) };
+    table.fill(0x80);
+    let mut c: u8 = b'A';
+    while c <= b'Z' {
+        table[c as usize] = (c as i32 - b'A' as i32) as u8;
+        c += 1;
     }
+    let mut c: u8 = b'a';
+    while c <= b'z' {
+        table[c as usize] = (26 + (c as i32 - b'a' as i32)) as u8;
+        c += 1;
+    }
+    let mut c: u8 = b'0';
+    while c <= b'9' {
+        table[c as usize] = (52 + (c as i32 - b'0' as i32)) as u8;
+        c += 1;
+    }
+    table[b'+' as usize] = 62;
+    table[b'/' as usize] = 63;
+    table[b'=' as usize] = 0x40;
 
     Ok(())
 }
 
 // ufbx.c:10241-10282 `ufbxi_decode_base64`
-///
-/// # Safety
-/// `src` must be readable for `src_length` bytes, unmoved and unwritten for the
-/// call (a raw run: the pointer and its length are separate parameters, so no
-/// type carries the relation). `p_result`'s `data` must address a writable
-/// output buffer of at least `src_length / 4 * 3 + 3` bytes — the capacity the
-/// caller sizes and pushes (ufbx.c:10412-10414); the decode writes 3 bytes per
-/// 4 input bytes.
+// Rust port: the C `p_result->length` out-field is returned; `src` and `dst`
+// carry the paired pointer/count runs in their types.
 #[inline(never)]
-pub(crate) unsafe fn decode_base64(
+pub(crate) fn decode_base64(
     uc: &Context,
-    p_result: &StringView,
-    src: *const u8,
-    src_length: usize,
+    dst: &mut [u8],
+    src: &[u8],
     p_failed: &mut bool,
-) -> Result<(), Fail> {
+) -> Result<usize, Fail> {
     if uc.base64_table().is_null() {
         setup_base64(uc)?;
     }
 
-    let table: *mut u8 = uc.base64_table();
+    // SAFETY: `setup_base64` initializes the context's persistent 256-byte
+    // lookup table before this point.
+    let table = unsafe { slice_from_ptr(uc.base64_table(), 256) };
     let mut error_mask: u32 = 0;
     let mut pad_error: u32 = 0;
 
-    // `p_result`'s `data` field is the freshly pushed output buffer sized for
-    // the decode (fn contract).
-    let mut p: *mut u8 = p_result.data() as *mut u8;
+    let mut dst_len: usize = 0;
     let mut i: usize = 0;
-    while i + 4 <= src_length {
-        // SAFETY: `i + 4 <= src_length`, so `src + i + 0..3` are readable source
-        // bytes; each byte value is `< 256`, in bounds for the 256-entry `table`.
-        let (a, b, c, d) = unsafe {
-            (
-                *table.add(*src.add(i + 0) as usize) as u32,
-                *table.add(*src.add(i + 1) as usize) as u32,
-                *table.add(*src.add(i + 2) as usize) as u32,
-                *table.add(*src.add(i + 3) as usize) as u32,
-            )
-        };
+    while i + 4 <= src.len() {
+        let a = table[src[i + 0] as usize] as u32;
+        let b = table[src[i + 1] as usize] as u32;
+        let c = table[src[i + 2] as usize] as u32;
+        let d = table[src[i + 3] as usize] as u32;
         pad_error = error_mask;
         error_mask |= a | b | c | d;
 
-        // SAFETY: the output buffer holds 3 bytes per 4 input bytes; this
-        // iteration writes 3 and advances `p` by 3, staying within its capacity.
-        unsafe {
-            *p.add(0) = (a << 2 | b >> 4) as u8;
-            *p.add(1) = (b << 4 | c >> 2) as u8;
-            *p.add(2) = (c << 6 | d) as u8;
-            p = p.add(3);
-        }
+        dst[dst_len + 0] = (a << 2 | b >> 4) as u8;
+        dst[dst_len + 1] = (b << 4 | c >> 2) as u8;
+        dst[dst_len + 2] = (c << 6 | d) as u8;
+        dst_len += 3;
 
         i += 4;
     }
 
-    if src_length >= 4 {
-        // SAFETY: `src_length >= 4`, so `src + src_length - 4` addresses the last
-        // 4-byte input group, all readable.
-        let end: *const u8 = unsafe { src.add(src_length - 4) };
+    if src.len() >= 4 {
+        let end = &src[src.len() - 4..];
         let mut padding: u32 = 0;
-        // SAFETY: `end` is the last input group's base, so `end + 0..3` are the
-        // four readable trailing bytes.
-        unsafe {
-            padding |= if *end.add(0) == b'=' { 0x8 } else { 0x0 };
-            padding |= if *end.add(1) == b'=' { 0x4 } else { 0x0 };
-            padding |= if *end.add(2) == b'=' { 0x2 } else { 0x0 };
-            padding |= if *end.add(3) == b'=' { 0x1 } else { 0x0 };
-        }
+        padding |= if end[0] == b'=' { 0x8 } else { 0x0 };
+        padding |= if end[1] == b'=' { 0x4 } else { 0x0 };
+        padding |= if end[2] == b'=' { 0x2 } else { 0x0 };
+        padding |= if end[3] == b'=' { 0x1 } else { 0x0 };
         if padding <= 0x1 {
-            p = sub_ptr(p, padding as usize); // "xxx=" or "xxxx"
+            dst_len -= padding as usize; // "xxx=" or "xxxx"
         } else if padding == 0x3 {
-            p = sub_ptr(p, 2); // "xx=="
+            dst_len -= 2; // "xx=="
         } else {
             pad_error |= 0x40; // anything else
         }
     }
 
-    if ((error_mask & 0x80) != 0 || (pad_error & 0x40) != 0 || src_length % 4 != 0) && !*p_failed {
+    if ((error_mask & 0x80) != 0 || (pad_error & 0x40) != 0 || src.len() % 4 != 0) && !*p_failed {
         ufbxi_check!(
             uc,
             ufbxi_warnf!(
@@ -1686,10 +1661,7 @@ pub(crate) unsafe fn decode_base64(
         *p_failed = true;
     }
 
-    // `p` advanced from `p_result->data` within the output buffer, so their
-    // difference is the decoded byte count, stored back into its `length`.
-    p_result.set_length(to_size(p as isize - p_result.data() as isize));
-    Ok(())
+    Ok(dst_len)
 }
 
 // Recursion limited by check at the start
@@ -1929,31 +1901,25 @@ fn ascii_parse_node_rec(
                             tmp_buf
                         };
                         // SAFETY: `tok` addresses `ua`'s live `prev_token`; reads
-                        // its `str_len`.
-                        let capacity: usize = unsafe { (*tok).str_len } / 4 * 3 + 3;
-                        // SAFETY: `v` is the freshly pushed, non-null `String` slot;
-                        // writes its `data` to the freshly pushed output buffer.
-                        unsafe {
-                            (*v).data = buf.push::<u8>(capacity);
-                        }
-                        // SAFETY: `v` is the live pushed slot; reads back its `data`.
-                        ufbxi_check!(uc, !unsafe { (*v).data }.is_null(), "v->data");
-                        // SAFETY: `v` is the live pushed `String` slot (the base64
-                        // out-param), write-capable arena provenance from the tmp
-                        // stack and unmoved for the call, and its `data` addresses
-                        // the freshly pushed `capacity`-byte output buffer; `tok`'s
-                        // `str_data`/`str_len` are its readable base64 bytes.
-                        unsafe {
-                            decode_base64(
-                                uc,
-                                StringView::from_ptr(v),
-                                (*tok).str_data,
-                                (*tok).str_len,
-                                &mut arr_error,
-                            )?;
-                        }
-                        // SAFETY: `v` is the live pushed slot; reads back its length.
-                        ufbx_assert!(unsafe { (*v).length } <= capacity);
+                        // its base64 source pair.
+                        let (src_data, src_len) = unsafe { ((*tok).str_data, (*tok).str_len) };
+                        let capacity: usize = src_len / 4 * 3 + 3;
+                        let data = buf.push::<u8>(capacity);
+                        ufbxi_check!(uc, !data.is_null(), "v->data");
+                        // SAFETY: the token pair is a readable base64 run and
+                        // `data` is the distinct, freshly pushed `capacity`-byte
+                        // output run.
+                        let (src, dst) = unsafe {
+                            (
+                                slice_from_ptr(src_data, src_len),
+                                core::slice::from_raw_parts_mut(data, capacity),
+                            )
+                        };
+                        let length = decode_base64(uc, dst, src, &mut arr_error)?;
+                        // SAFETY: `v` is the freshly pushed `String` slot; this
+                        // writes its complete value after the decode length is known.
+                        unsafe { core::ptr::write(v, String::new_c(data, length)) };
+                        ufbx_assert!(length <= capacity);
                     } else {
                         // SAFETY: `v` is the freshly pushed, non-null `String` slot;
                         // writes its `data`/`length` from `tok`'s live `prev_token`
