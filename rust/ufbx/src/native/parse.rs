@@ -189,6 +189,16 @@ impl NodeView {
     pub(crate) fn children(&self) -> *mut Node {
         view_read!(self, children)
     }
+    /// Walk the node's materialized child run.
+    #[inline(always)]
+    pub(crate) fn children_iter(&self) -> SliceViewIter<'_, Node> {
+        // Preserve C field-read order: `children` before `num_children`.
+        let children = self.children();
+        let num_children = self.num_children() as usize;
+        // SAFETY: the NodeView mint invariant carries the stable contiguous
+        // `children`/`num_children` run materialized by `push_pop`.
+        unsafe { SliceViewIter::from_raw_parts(children, num_children) }
+    }
     #[inline(always)]
     pub(crate) fn vals(&self) -> *mut Value {
         // SAFETY: reading the `vals` arm of the `content` union of a valid arena
@@ -4126,10 +4136,7 @@ pub(crate) fn array_type_size(type_: u8) -> usize {
 #[inline(never)]
 pub(crate) fn find_child<'a>(node: &'a NodeView, name: *const u8) -> Option<&'a NodeView> {
     // C: `ufbxi_for(ufbxi_node, c, node->children, node->num_children)`
-    // SAFETY: `children`/`num_children` describe a contiguous arena run (built via
-    // `push_pop`), valid and stable for `node`'s lifetime `'a`.
-    let children: SliceViewIter<'a, Node> =
-        unsafe { SliceViewIter::from_raw_parts(node.children(), node.num_children() as usize) };
+    let children: SliceViewIter<'a, Node> = node.children_iter();
     for c in children {
         if c.name() == name {
             return Some(c);
@@ -4570,10 +4577,7 @@ pub(crate) unsafe fn find_child_strcmp<'a>(
     // leading byte is readable.
     let leading: u8 = unsafe { *name.add(0) };
     // C: `ufbxi_for(ufbxi_node, c, node->children, node->num_children)`
-    // SAFETY: `children`/`num_children` describe a contiguous arena run (built via
-    // `push_pop`), valid and stable for `node`'s lifetime `'a`.
-    let children: SliceViewIter<'a, Node> =
-        unsafe { SliceViewIter::from_raw_parts(node.children(), node.num_children() as usize) };
+    let children: SliceViewIter<'a, Node> = node.children_iter();
     for c in children {
         // SAFETY: `c.name()` is a NUL-terminated interned name; its leading byte
         // is readable.

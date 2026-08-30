@@ -5989,36 +5989,18 @@ pub(crate) unsafe fn sample_geometry_cache_vec3(
 // find family.
 impl<M: Mode> View<DomNode, M> {
     #[inline(always)]
-    pub(crate) fn children_data(&self) -> *mut *mut DomNode {
-        // SAFETY: reading the `children.data` run pointer (stored value; the
-        // `RefList` payload is a flat array of `ufbx_dom_node*`).
-        unsafe { (*self.as_ptr()).children.data as *mut *mut DomNode }
-    }
-    #[inline(always)]
-    pub(crate) fn children_count(&self) -> usize {
-        // SAFETY: reading the `children.count` field of a valid arena `DomNode`.
-        unsafe { (*self.as_ptr()).children.count }
-    }
-    #[inline(always)]
     pub(crate) fn values_count(&self) -> usize {
-        // SAFETY: reading the `values.count` field of a valid arena `DomNode`.
-        unsafe { (*self.as_ptr()).values.count }
+        self.values_view().count()
     }
     /// First entry of `values`, viewed with the same lifetime and mode as
     /// `self`; `None` when the node has no values.
     #[inline(always)]
     pub(crate) fn first_value(&self) -> Option<&View<DomValue, M>> {
-        if self.values_count() == 0 {
+        let values = self.values_view();
+        if values.count() == 0 {
             return None;
         }
-        // SAFETY: `values.data` points at `values.count >= 1` arena `DomValue`s
-        // (scene-construction invariant); the STORED pointer carries the
-        // arena's write provenance — adequate for either mode.
-        unsafe {
-            Some(View::<DomValue, M>::mint(
-                (*self.as_ptr()).values.data as *mut DomValue,
-            ))
-        }
+        Some(values.at(0))
     }
 }
 
@@ -6038,28 +6020,19 @@ impl<M: Mode> View<DomValue, M> {
 }
 
 // ufbx.c:32957-32964 `ufbx_dom_find_len`
-pub(crate) unsafe fn dom_find_len<'a, M: Mode>(
+pub(crate) fn dom_find_len<'a, M: Mode>(
     parent: &'a View<DomNode, M>,
     name: &[u8],
 ) -> Option<&'a View<DomNode, M>> {
     // C: `ufbxi_for_ptr_list(ufbx_dom_node, p_child, parent->children)` — the
-    // `RefList` payload is a flat array of `ufbx_dom_node*`.
-    let mut p_child: *mut *mut DomNode = parent.children_data();
-    // SAFETY: `children_data()`/`children_count()` are the node's own list base
-    // and length, so `.add(count)` yields the one-past-end pointer.
-    let p_child_end: *mut *mut DomNode = unsafe { p_child.add(parent.children_count()) };
-    while p_child != p_child_end {
-        // Mode-generic mint from the STORED child pointer (arena write
-        // provenance), correlated to `parent`'s borrow.
-        // SAFETY: `p_child` is in `[data, end)` of the child pointer list, so it
-        // addresses a live `*mut DomNode` pointer.
-        let child: &View<DomNode, M> = unsafe { View::<DomNode, M>::mint(*p_child) };
+    // `RefListView::at()` follows the stored pointers in the same order and
+    // carries the parent's mode and lifetime through each child projection.
+    let children = parent.children_view();
+    for index in 0..children.count() {
+        let child = children.at(index);
         if str_equal(child.name_view().bytes(), name) {
             return Some(child);
         }
-        // SAFETY: `p_child` is before `p_child_end`, so stepping one element
-        // stays within the child pointer list (up to the one-past-end bound).
-        p_child = unsafe { p_child.add(1) };
     }
     None
 }

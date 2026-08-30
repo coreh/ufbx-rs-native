@@ -1204,6 +1204,13 @@ fn public_dom_walkers_from_shared_refs() {
             }
         }
     }
+    let leaf = objects
+        .children
+        .iter()
+        .map(|child| child.as_ref())
+        .find(|child| child.children.is_empty())
+        .expect("Objects contains a DOM leaf");
+    assert!(ufbx::dom_find(leaf, "__missing_dom_child__").is_none());
     assert!(acc.is_finite());
 }
 

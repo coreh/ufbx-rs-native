@@ -3164,10 +3164,7 @@ pub(crate) fn read_synthetic_blend_shapes(
     let mut deformer_fbx_id: u64 = 0;
 
     // C: `ufbxi_for (ufbxi_node, n, node->children, node->num_children)`
-    // SAFETY: `children`/`num_children` describe a contiguous arena run (built via
-    // `push_pop`), valid and stable for `node`'s borrow.
-    let children =
-        unsafe { SliceViewIter::from_raw_parts(node.children(), node.num_children() as usize) };
+    let children = node.children_iter();
     for n in children {
         if n.name() != sp::Shape.as_ptr() {
             continue;
@@ -4156,9 +4153,7 @@ pub(crate) fn read_mesh(uc: &Context, node: &NodeView, info: &ElementInfoView) -
     let mut num_bitangents: usize = 0;
     let mut num_tangents: usize = 0;
     // C: `ufbxi_for (ufbxi_node, n, node->children, node->num_children)`
-    // SAFETY: contiguous push_pop child run, valid for `node`'s borrow.
-    for n in unsafe { SliceViewIter::from_raw_parts(node.children(), node.num_children() as usize) }
-    {
+    for n in node.children_iter() {
         if n.name() == sp::LayerElementUV.as_ptr() {
             num_uv += 1;
         }
@@ -4196,9 +4191,7 @@ pub(crate) fn read_mesh(uc: &Context, node: &NodeView, info: &ElementInfoView) -
     let mut num_bitangents_read: usize = 0;
     let mut num_tangents_read: usize = 0;
     // C: `ufbxi_for (ufbxi_node, n, node->children, node->num_children)`
-    // SAFETY: contiguous push_pop child run, valid for `node`'s borrow.
-    for n in unsafe { SliceViewIter::from_raw_parts(node.children(), node.num_children() as usize) }
-    {
+    for n in node.children_iter() {
         // SAFETY: `n.name()` is a NUL-terminated interned parse-tree name, so
         // its first byte is readable.
         if unsafe { *n.name().add(0) } != b'L' {
@@ -4786,9 +4779,7 @@ pub(crate) fn read_mesh(uc: &Context, node: &NodeView, info: &ElementInfoView) -
 
     // Connect bitangents/tangents to UV sets
     // C: `ufbxi_for (ufbxi_node, n, node->children, node->num_children)`
-    // SAFETY: contiguous push_pop child run, valid for `node`'s borrow.
-    for n in unsafe { SliceViewIter::from_raw_parts(node.children(), node.num_children() as usize) }
-    {
+    for n in node.children_iter() {
         if n.name() != sp::Layer.as_ptr() {
             continue;
         }
@@ -4797,8 +4788,7 @@ pub(crate) fn read_mesh(uc: &Context, node: &NodeView, info: &ElementInfoView) -
         let mut tangent_layer: Option<&View<TangentLayer>> = None;
 
         // C: `ufbxi_for (ufbxi_node, c, n->children, n->num_children)`
-        // SAFETY: contiguous push_pop child run, valid for `n`'s borrow.
-        for c in unsafe { SliceViewIter::from_raw_parts(n.children(), n.num_children() as usize) } {
+        for c in n.children_iter() {
             if c.name() != sp::LayerElement.as_ptr() {
                 continue;
             }
@@ -6694,9 +6684,7 @@ pub(crate) fn read_pose(
 
     let mut num_bones: usize = 0;
     // C: `ufbxi_for(ufbxi_node, n, node->children, node->num_children)`
-    // SAFETY: contiguous push_pop child run, valid for `node`'s borrow.
-    for n in unsafe { SliceViewIter::from_raw_parts(node.children(), node.num_children() as usize) }
-    {
+    for n in node.children_iter() {
         if n.name() != sp::PoseNode.as_ptr() {
             continue;
         }
@@ -6830,9 +6818,7 @@ pub(crate) fn read_binding_table(
 
     let mut num_entries: usize = 0;
     // C: `ufbxi_for (ufbxi_node, n, node->children, node->num_children)`
-    // SAFETY: contiguous push_pop child run, valid for `node`'s borrow.
-    for n in unsafe { SliceViewIter::from_raw_parts(node.children(), node.num_children() as usize) }
-    {
+    for n in node.children_iter() {
         if n.name() != sp::Entry.as_ptr() {
             continue;
         }
@@ -8668,10 +8654,7 @@ unsafe fn read_take_prop_channel_rec(
         // new: Model: { Channel: "Lcl Translation" { Channel "X": { ... } } }
 
         // C: `ufbxi_for(ufbxi_node, child, node->children, node->num_children)`
-        // SAFETY: contiguous push_pop child run, valid for `node`'s borrow.
-        for child in
-            unsafe { SliceViewIter::from_raw_parts(node.children(), node.num_children() as usize) }
-        {
+        for child in node.children_iter() {
             if child.name() != sp::Channel.as_ptr() {
                 continue;
             }
@@ -8738,10 +8721,7 @@ unsafe fn read_take_prop_channel_rec(
         } else {
             // Channel is a compound of multiple curves
             // C: `ufbxi_for(ufbxi_node, child, node->children, node->num_children)`
-            // SAFETY: contiguous push_pop child run, valid for `node`'s borrow.
-            for child in unsafe {
-                SliceViewIter::from_raw_parts(node.children(), node.num_children() as usize)
-            } {
+            for child in node.children_iter() {
                 if child.name() != sp::Channel.as_ptr() {
                     continue;
                 }
@@ -8847,10 +8827,7 @@ pub(crate) fn read_take_object(
 
     // Add all suitable Channels as animated properties
     // C: `ufbxi_for(ufbxi_node, child, node->children, node->num_children)`
-    // SAFETY: contiguous push_pop child run, valid for `node`'s borrow.
-    for child in
-        unsafe { SliceViewIter::from_raw_parts(node.children(), node.num_children() as usize) }
-    {
+    for child in node.children_iter() {
         // C: `ufbx_string name;` — written by the `ufbxi_get_val1` guard below.
         // SAFETY: all-zero is a valid `ufbx_string`; `child` is a NodeView from
         // `node`'s own child run and `name` is an unaliased local of exactly
@@ -9005,10 +8982,7 @@ pub(crate) fn read_take(uc: &Context, node: &NodeView) -> Result<(), Fail> {
 
     // Read all properties of objects included in the take
     // C: `ufbxi_for(ufbxi_node, child, node->children, node->num_children)`
-    // SAFETY: contiguous push_pop child run, valid for `node`'s borrow.
-    for child in
-        unsafe { SliceViewIter::from_raw_parts(node.children(), node.num_children() as usize) }
-    {
+    for child in node.children_iter() {
         // TODO: Do some object types have another name?
         if child.name() != sp::Model.as_ptr() {
             continue;
@@ -10238,10 +10212,7 @@ pub(crate) fn read_legacy_mesh(
 
     // Materials, Skin Clusters
     // C: `ufbxi_for(ufbxi_node, child, node->children, node->num_children)`
-    // SAFETY: contiguous push_pop child run, valid for `node`'s borrow.
-    for child in
-        unsafe { SliceViewIter::from_raw_parts(node.children(), node.num_children() as usize) }
-    {
+    for child in node.children_iter() {
         if child.name() == sp::Material.as_ptr() {
             let mut fbx_id: u64 = 0;
             // C: `ufbx_string type_and_name, type, name;` — `type`/`name` are
@@ -10327,10 +10298,7 @@ pub(crate) fn read_legacy_media(uc: &Context, node: &NodeView) -> Result<(), Fai
     let videos = find_child(node, sp::Video.as_ptr());
     if let Some(videos) = videos {
         // C: `ufbxi_for(ufbxi_node, child, videos->children, videos->num_children)`
-        // SAFETY: contiguous push_pop child run, valid for `videos`'s borrow.
-        for child in unsafe {
-            SliceViewIter::from_raw_parts(videos.children(), videos.num_children() as usize)
-        } {
+        for child in videos.children_iter() {
             // SAFETY: all-zero is a valid `ufbxi_element_info`; `child` is a
             // NodeView from `videos`'s own child run, `video_info` is an
             // unaliased local — write-capable provenance, live and unmoved
@@ -10481,10 +10449,7 @@ pub(crate) fn read_legacy_model(uc: &Context, node: &NodeView) -> Result<(), Fai
 
     // Non-take animation channels
     // C: `ufbxi_for(ufbxi_node, child, node->children, node->num_children)`
-    // SAFETY: contiguous push_pop child run, valid for `node`'s borrow.
-    for child in
-        unsafe { SliceViewIter::from_raw_parts(node.children(), node.num_children() as usize) }
-    {
+    for child in node.children_iter() {
         if child.name() == sp::Channel.as_ptr() {
             // C: `ufbx_string channel_name;` — written by the guard below.
             // SAFETY: all-zero is a valid `ufbx_string`; `child` is a NodeView
@@ -11046,40 +11011,23 @@ macro_rules! ufbxi_patch_zero {
 }
 
 // ufbx.c:16676-16689 `ufbxi_update_vertex_first_index`
-pub(crate) unsafe fn update_vertex_first_index(mesh: &View<Mesh>) {
+pub(crate) fn update_vertex_first_index(mesh: &View<Mesh>) {
     // C: `ufbxi_for_list(uint32_t, p_vx_ix, mesh->vertex_first_index)`
-    // `vertex_first_index` is the mesh's `count`-long run.
-    let mut p_vx_ix = mesh.vertex_first_index().data as *mut u32;
-    let p_vx_ix_end = add_ptr(p_vx_ix, mesh.vertex_first_index().count);
-    while p_vx_ix != p_vx_ix_end {
-        // SAFETY: `p_vx_ix` is inside that run, short of `p_vx_ix_end`.
-        unsafe {
-            *p_vx_ix = NO_INDEX;
-        }
-        // SAFETY: `p_vx_ix` is before `p_vx_ix_end`, so the advance lands at
-        // most one past the run's end.
-        p_vx_ix = unsafe { p_vx_ix.add(1) };
+    let vertex_first_index = Run::from_list(mesh.vertex_first_index_view());
+    let mut vx_ix: usize = 0;
+    while vx_ix < vertex_first_index.len() {
+        vertex_first_index.write_at(vx_ix, NO_INDEX);
+        vx_ix += 1;
     }
 
+    // The fill above initializes the complete run before this lookup phase
+    // reads any destination slot through the list's initialized read surface.
     let num_vertices: u32 = mesh.num_vertices() as u32;
     let mut ix: usize = 0;
     while ix < mesh.num_indices() {
-        // SAFETY: `vertex_indices` is the mesh's `num_indices`-long index run
-        // and `ix < num_indices` bounds the read.
-        let vx: u32 = unsafe { *mesh.vertex_indices().data.add(ix) };
-        if vx < num_vertices
-            // SAFETY: every caller establishes `vertex_first_index.count ==
-            // num_vertices` (set by `process_indices`, or by `finalize_mesh`'s
-            // count==0 branch) before this runs, so `vx < num_vertices` bounds
-            // the read.
-            && unsafe { *(mesh.vertex_first_index().data as *mut u32).add(vx as usize) }
-                == NO_INDEX
-        {
-            // SAFETY: as above — `vx < num_vertices` bounds the write in the
-            // `vertex_first_index` run.
-            unsafe {
-                *(mesh.vertex_first_index().data as *mut u32).add(vx as usize) = ix as u32;
-            }
+        let vx: u32 = mesh.vertex_indices_view().copy_at(ix);
+        if vx < num_vertices && mesh.vertex_first_index_view().copy_at(vx as usize) == NO_INDEX {
+            vertex_first_index.write_at(vx as usize, ix as u32);
         }
         ix += 1;
     }
@@ -11165,12 +11113,7 @@ pub(crate) fn finalize_mesh(
             !mesh.vertex_first_index().data.is_null(),
             "mesh->vertex_first_index.data"
         );
-        // SAFETY: the mesh's `vertex_first_index` is the non-null
-        // `num_vertices`-long run pushed just above — the count contract
-        // `update_vertex_first_index` rests on.
-        unsafe {
-            update_vertex_first_index(mesh);
-        }
+        update_vertex_first_index(mesh);
     }
 
     if mesh.uv_sets().count == 0 && mesh.vertex_uv().exists() {

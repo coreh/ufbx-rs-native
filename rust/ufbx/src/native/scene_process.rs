@@ -6944,11 +6944,7 @@ pub(crate) unsafe fn flip_winding(uc: &Context, mesh: &View<Mesh>) -> Result<(),
         unsafe { flip_attrib_winding(uc, mesh, mesh.skinned_normal().indices_view(), false) }?;
     }
 
-    // SAFETY: every mesh reaching `modify_geometry` had `vertex_first_index`
-    // sized to `num_vertices` — by `process_indices` on the FBX/legacy read
-    // path, or by `finalize_mesh` on the OBJ path — the count contract
-    // `update_vertex_first_index` rests on.
-    unsafe { update_vertex_first_index(mesh) };
+    update_vertex_first_index(mesh);
 
     // Mapping from old index values to flipped ones, reserve index -1
     // (aka `UFBX_NO_INDEX`) for itself.
