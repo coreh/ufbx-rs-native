@@ -5098,6 +5098,11 @@ pub(crate) unsafe fn catch_generate_normal_mapping<M: Mode>(
         return 0;
     }
 
+    // SAFETY: `topo`/`num_topo` describe the caller's initialized read-only
+    // topology run, distinct from the writable `normal_indices` output and
+    // remaining live and frozen for this call.
+    let topo_view = unsafe { Run::<TopoEdge, Const>::from_const_raw_parts(topo, num_topo) };
+
     for i in 0..mesh.num_indices() {
         // SAFETY: `i < mesh.num_indices <= num_normal_indices` (guarded above),
         // so `normal_indices.add(i)` addresses a caller-reserved slot.
@@ -5119,9 +5124,7 @@ pub(crate) unsafe fn catch_generate_normal_mapping<M: Mode>(
             // SAFETY: `topo`/`num_topo` are this fn's raw-pointer contract,
             // forwarded unchanged to the topology walkers.
             let prev: u32 = unsafe { topo_next_vertex_edge(topo, num_topo, cur) };
-            // SAFETY: same `topo`/`num_topo` raw-pointer contract, forwarded to
-            // the smooth-edge predicate along with this fn's mesh view.
-            if !unsafe { is_edge_smooth(mesh, topo, num_topo, cur, assume_smooth) } {
+            if !is_edge_smooth(mesh, topo_view, cur, assume_smooth) {
                 start = cur;
             }
             if prev == NO_INDEX {
@@ -5147,9 +5150,7 @@ pub(crate) unsafe fn catch_generate_normal_mapping<M: Mode>(
                 break;
             }
 
-            // SAFETY: same `topo`/`num_topo` raw-pointer contract, forwarded to
-            // the smooth-edge predicate along with this fn's mesh view.
-            if !unsafe { is_edge_smooth(mesh, topo, num_topo, next, assume_smooth) } {
+            if !is_edge_smooth(mesh, topo_view, next, assume_smooth) {
                 next_index = next_index.wrapping_add(1);
             }
             // SAFETY: `next` is an index within the mesh's index range.

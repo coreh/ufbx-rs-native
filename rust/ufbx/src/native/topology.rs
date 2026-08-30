@@ -32,7 +32,7 @@ use crate::native::platform::{math, max_real, min_real, stable_sort, ufbxi_ignor
 use crate::native::string_pool::{distsq2, dot3, length3, mul3, slow_normalized_cross3};
 #[cfg(feature = "triangulation")]
 use crate::native::view::{view_raw_mut, view_read};
-use crate::native::view::{view_read_shared, view_write, Mode, Run, View};
+use crate::native::view::{view_read_shared, view_write, Const, Mode, Run, View};
 #[cfg(feature = "triangulation")]
 use crate::prelude::as_f64;
 #[cfg(feature = "triangulation")]
@@ -1083,6 +1083,18 @@ impl<M: Mode> View<TopoEdge, M> {
         view_read_shared!(self, prev)
     }
     #[inline(always)]
+    pub(crate) fn twin(&self) -> u32 {
+        view_read_shared!(self, twin)
+    }
+    #[inline(always)]
+    pub(crate) fn face(&self) -> u32 {
+        view_read_shared!(self, face)
+    }
+    #[inline(always)]
+    pub(crate) fn edge(&self) -> u32 {
+        view_read_shared!(self, edge)
+    }
+    #[inline(always)]
     pub(crate) fn flags(&self) -> TopoFlags {
         view_read_shared!(self, flags)
     }
@@ -1309,79 +1321,55 @@ pub(crate) unsafe fn compute_topology<M: Mode>(mesh: &View<Mesh, M>, topo: Run<'
 }
 
 // ufbx.c:28786-28819 `ufbxi_is_edge_smooth`
-pub(crate) unsafe fn is_edge_smooth<M: Mode>(
+pub(crate) fn is_edge_smooth<M: Mode>(
     mesh: &View<Mesh, M>,
-    topo: *const TopoEdge,
-    num_topo: usize,
+    topo: Run<'_, TopoEdge, Const>,
     index: u32,
     assume_smooth: bool,
 ) -> bool {
+    let num_topo = topo.len();
     // C: `ufbxi_ignore(num_topo);`
     let _ = num_topo;
     ufbx_assert!((index as usize) < num_topo);
-    if !mesh.edge_smoothing().data.is_null() {
-        // SAFETY: `index < num_topo` (asserted), so `topo.add(index)` is a live
-        // `TopoEdge`.
-        let edge: u32 = unsafe { (*topo.add(index as usize)).edge };
-        // SAFETY: this branch has non-null `edge_smoothing`, which holds one
-        // entry per edge; `edge` (guarded `!= NO_INDEX`) is a valid edge index.
-        if edge != NO_INDEX && unsafe { *mesh.edge_smoothing().data.add(edge as usize) } {
+    if !mesh.edge_smoothing_view().data().is_null() {
+        let edge = topo.at(index as usize).edge();
+        if edge != NO_INDEX && mesh.edge_smoothing_view().copy_at(edge as usize) {
             return true;
         }
     }
 
-    if !mesh.face_smoothing().data.is_null() {
-        // SAFETY: `index < num_topo`, so `topo.add(index)` is a live `TopoEdge`
-        // whose `face` is a valid index into the non-null per-face
-        // `face_smoothing` array.
-        if unsafe {
-            *mesh
-                .face_smoothing()
-                .data
-                .add((*topo.add(index as usize)).face as usize)
-        } {
+    if !mesh.face_smoothing_view().data().is_null() {
+        if mesh
+            .face_smoothing_view()
+            .copy_at(topo.at(index as usize).face() as usize)
+        {
             return true;
         }
-        // SAFETY: `index < num_topo`, so `topo.add(index)` is a live `TopoEdge`.
-        let twin: u32 = unsafe { (*topo.add(index as usize)).twin };
+        let twin = topo.at(index as usize).twin();
         if twin != NO_INDEX {
-            // SAFETY: a non-`NO_INDEX` `twin` is a valid `topo` index, so
-            // `topo.add(twin)` is live and its `face` indexes the non-null
-            // per-face `face_smoothing` array.
-            if unsafe {
-                *mesh
-                    .face_smoothing()
-                    .data
-                    .add((*topo.add(twin as usize)).face as usize)
-            } {
+            if mesh
+                .face_smoothing_view()
+                .copy_at(topo.at(twin as usize).face() as usize)
+            {
                 return true;
             }
         }
     }
 
-    if mesh.edge_smoothing().data.is_null()
-        && mesh.face_smoothing().data.is_null()
+    if mesh.edge_smoothing_view().data().is_null()
+        && mesh.face_smoothing_view().data().is_null()
         && mesh.vertex_normal().exists()
     {
-        // SAFETY: `index < num_topo`, so `topo.add(index)` is a live `TopoEdge`.
-        let twin: u32 = unsafe { (*topo.add(index as usize)).twin };
+        let twin = topo.at(index as usize).twin();
         if twin != NO_INDEX && mesh.vertex_normal().exists() {
             ufbx_assert!((twin as usize) < num_topo);
             let a0: Vec3 = get_vertex_vec3(mesh.vertex_normal(), index as usize);
-            // SAFETY: `index < num_topo`, so `topo.add(index)` is a live
-            // `TopoEdge`; its `next` is the attribute index being read.
-            let a1: Vec3 =
-                get_vertex_vec3(
-                    mesh.vertex_normal(),
-                    unsafe { (*topo.add(index as usize)).next } as usize,
-                );
-            // SAFETY: `twin < num_topo` (asserted), so `topo.add(twin)` is a live
-            // `TopoEdge`; its `next` is the attribute index being read.
+            let a1: Vec3 = get_vertex_vec3(
+                mesh.vertex_normal(),
+                topo.at(index as usize).next() as usize,
+            );
             let b0: Vec3 =
-                get_vertex_vec3(
-                    mesh.vertex_normal(),
-                    unsafe { (*topo.add(twin as usize)).next } as usize,
-                );
+                get_vertex_vec3(mesh.vertex_normal(), topo.at(twin as usize).next() as usize);
             let b1: Vec3 = get_vertex_vec3(mesh.vertex_normal(), twin as usize);
             if a0.x == b0.x && a0.y == b0.y && a0.z == b0.z {
                 return true;

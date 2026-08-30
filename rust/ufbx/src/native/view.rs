@@ -470,6 +470,24 @@ impl<'a, T> Run<'a, T, Mut> {
     }
 }
 
+impl<'a, T> Run<'a, T, Const> {
+    /// Vouch for one contiguous initialized read-only run.
+    ///
+    /// # Safety
+    /// `base` must point to `count` contiguous, initialized, readable `T`
+    /// elements that stay alive, unmoved, and frozen for `'a`. Null is allowed
+    /// exactly when `count == 0`.
+    #[inline(always)]
+    pub(crate) unsafe fn from_const_raw_parts(base: *const T, count: usize) -> Self {
+        debug_assert!(count == 0 || !base.is_null());
+        Self {
+            base: base.cast_mut(),
+            count,
+            _marker: PhantomData,
+        }
+    }
+}
+
 /// Safe iterator over a contiguous run of `T`, yielding `&View<T, M>`.
 ///
 /// A dumb contiguous walk — `slice::Iter` with a reinterpret on the yield — that
