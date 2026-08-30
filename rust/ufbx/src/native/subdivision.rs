@@ -1091,24 +1091,38 @@ pub(crate) fn subdivide_layer(
     ufbxi_check_err!(sc.error_view(), !edge_indices.is_null(), "edge_indices");
 
     let mut num_edge_values: usize = 0;
-    // C: `for (uint32_t ix = 0; ix < (uint32_t)mesh->num_indices; ix++)` — the
-    // bound is truncated to `uint32_t` here (unlike the edge-point loop below).
-    let mut ix: u32 = 0;
-    while ix < mesh.num_indices() as u32 {
-        let twin = topo_view.at(ix as usize).twin();
-        // SAFETY: every stored index in this topology neighborhood addresses a
-        // live `stride`-byte value in the input buffer.
-        if twin < ix && !unsafe { is_edge_split(input, input_indices, topo_view, ix) } {
-            // SAFETY: `edge_indices` holds `num_indices` live slots; `ix` and
-            // `twin < ix` are both in-range corner indices.
-            unsafe { *edge_indices.add(ix as usize) = *edge_indices.add(twin as usize) };
-        } else {
-            // SAFETY: `ix < num_indices` is an in-range slot of `edge_indices`.
-            unsafe { *edge_indices.add(ix as usize) = num_edge_values as u32 };
-            num_edge_values += 1;
+    {
+        // SAFETY: the checked result-arena push owns `num_indices` stable,
+        // write-capable slots. This phase progressively initializes them.
+        let edge_indices_write =
+            unsafe { Run::<u32>::from_raw_parts(edge_indices, mesh.num_indices()) };
+        // C: `for (uint32_t ix = 0; ix < (uint32_t)mesh->num_indices; ix++)` — the
+        // bound is truncated to `uint32_t` here (unlike the edge-point loop below).
+        let mut ix: u32 = 0;
+        while ix < mesh.num_indices() as u32 {
+            let twin = topo_view.at(ix as usize).twin();
+            // SAFETY: every stored index in this topology neighborhood addresses a
+            // live `stride`-byte value in the input buffer.
+            if twin < ix && !unsafe { is_edge_split(input, input_indices, topo_view, ix) } {
+                // SAFETY: `twin < ix`, so the sequential loop initialized this
+                // checked slot before the current write.
+                let twin_index = unsafe { *edge_indices_write.subrun(twin as usize, 1).as_ptr() };
+                edge_indices_write.write_at(ix as usize, twin_index);
+            } else {
+                edge_indices_write.write_at(ix as usize, num_edge_values as u32);
+                num_edge_values += 1;
+            }
+            ix += 1;
         }
-        ix += 1;
     }
+    // C initializes exactly the u32-truncated prefix in the loop above. No
+    // later stage writes edge indices, so that prefix is frozen for checked
+    // reads. Checked reads stop at the initialized-prefix boundary.
+    let num_edge_indices = (mesh.num_indices() as u32) as usize;
+    // SAFETY: the sequential loop initialized this full prefix, which stays
+    // stable and frozen for the rest of layer subdivision.
+    let edge_indices_read =
+        unsafe { Run::<u32, Const>::from_const_raw_parts(edge_indices, num_edge_indices) };
 
     let stride: usize = input.stride();
     let num_initial_values: usize = num_edge_values
@@ -1129,6 +1143,11 @@ pub(crate) fn subdivide_layer(
 
     let vertex_indices: *mut u32 = sc.result_view().push::<u32>(mesh.num_indices());
     ufbxi_check_err!(sc.error_view(), !vertex_indices.is_null(), "vertex_indices");
+    // SAFETY: the checked result-arena push owns `num_indices` stable,
+    // write-capable slots. The sentinel pass initializes all of them before
+    // later guarded claims.
+    let vertex_indices_write =
+        unsafe { Run::<u32>::from_raw_parts(vertex_indices, mesh.num_indices()) };
 
     let min_inputs: usize = max_sz(32, mesh.max_face_triangles().wrapping_add(2));
     ufbxi_check_err!(
@@ -1191,9 +1210,7 @@ pub(crate) fn subdivide_layer(
     // C: `ufbxi_nounroll for (size_t i = 0; i < mesh->num_indices; i++)`
     let mut i: usize = 0;
     while i < mesh.num_indices() {
-        // SAFETY: `i < num_indices`, an in-range slot of the `num_indices`-sized
-        // `vertex_indices` push.
-        unsafe { *vertex_indices.add(i) = NO_INDEX };
+        vertex_indices_write.write_at(i, NO_INDEX);
         i += 1;
     }
 
@@ -1250,12 +1267,10 @@ pub(crate) fn subdivide_layer(
     // promoted to `size_t` for the comparison here (no truncation).
     let mut ix: u32 = 0;
     while (ix as usize) < mesh.num_indices() {
-        // SAFETY: `ix < num_indices` indexes the live `edge_indices` array;
-        // the stored edge-value index times `stride` stays within the edge
-        // segment of `values` that `edge_values` heads.
-        let dst: *mut u8 = unsafe {
-            edge_values.add((*edge_indices.add(ix as usize) as usize).wrapping_mul(stride))
-        };
+        let edge_index = edge_indices_read.copy_at(ix as usize);
+        // SAFETY: the stored edge-value index times `stride` stays within the
+        // edge segment of `values` that `edge_values` heads.
+        let dst: *mut u8 = unsafe { edge_values.add((edge_index as usize).wrapping_mul(stride)) };
 
         let topo_edge = topo_view.at(ix as usize);
         let twin = topo_edge.twin();
@@ -1521,13 +1536,12 @@ pub(crate) fn subdivide_layer(
 
             ufbxi_check_err!(
                 sc.error_view(),
-                // SAFETY: `start` is a valid vertex corner index into the live
-                // `num_indices`-sized `vertex_indices` array.
-                unsafe { *vertex_indices.add(start as usize) } == NO_INDEX,
+                // SAFETY: `start` is checked into the destination run, and the
+                // sentinel pass initialized every slot before guarded claims.
+                unsafe { *vertex_indices_write.subrun(start as usize, 1).as_ptr() } == NO_INDEX,
                 "vertex_indices[start] == UFBX_NO_INDEX"
             );
-            // SAFETY: `start` is an in-range corner slot of `vertex_indices`.
-            unsafe { *vertex_indices.add(start as usize) = value_index };
+            vertex_indices_write.write_at(start as usize, value_index);
 
             if start_split {
                 // We need to special case if the first edge is split as we have
@@ -1552,12 +1566,13 @@ pub(crate) fn subdivide_layer(
                     non_manifold |= cur_topo.flags().has_any(TopoFlags::NON_MANIFOLD);
                     ufbxi_check_err!(
                         sc.error_view(),
-                        // SAFETY: `cur` is an in-range corner slot of `vertex_indices`.
-                        unsafe { *vertex_indices.add(cur as usize) } == NO_INDEX,
+                        // SAFETY: `cur` is checked into the destination run, and
+                        // the sentinel pass initialized every slot before claims.
+                        unsafe { *vertex_indices_write.subrun(cur as usize, 1).as_ptr() }
+                            == NO_INDEX,
                         "vertex_indices[cur] == UFBX_NO_INDEX"
                     );
-                    // SAFETY: `cur` is an in-range corner slot of `vertex_indices`.
-                    unsafe { *vertex_indices.add(cur as usize) = value_index };
+                    vertex_indices_write.write_at(cur as usize, value_index);
 
                     // SAFETY: every stored index in this topology neighborhood
                     // addresses a live `stride`-byte value in the input buffer.
@@ -1782,13 +1797,13 @@ pub(crate) fn subdivide_layer(
     // Copy non-manifold vertex values as-is
     let mut old_ix: usize = 0;
     while old_ix < mesh.num_indices() {
-        // SAFETY: `old_ix < num_indices` is an in-range slot of `vertex_indices`.
-        let mut ix: u32 = unsafe { *vertex_indices.add(old_ix) };
+        // SAFETY: `old_ix` is checked into the run and the sentinel pass
+        // initialized every slot before any claims or this sweep.
+        let mut ix: u32 = unsafe { *vertex_indices_write.subrun(old_ix, 1).as_ptr() };
         if ix == NO_INDEX {
             ix = num_vertex_values as u32;
             num_vertex_values += 1;
-            // SAFETY: `old_ix` is an in-range slot of `vertex_indices`.
-            unsafe { *vertex_indices.add(old_ix) = ix };
+            vertex_indices_write.write_at(old_ix, ix);
             // SAFETY: `input`'s buffers are live; `indices[old_ix]` is an
             // in-range index into the value array whose `stride`-sized entry the
             // byte offset into `values` addresses.
@@ -1840,36 +1855,50 @@ pub(crate) fn subdivide_layer(
     output.set_num_values(num_values);
 
     if !input.ignore_indices() {
-        let new_indices: *mut u32 = sc
-            .result_view()
-            .push::<u32>(mesh.num_indices().wrapping_mul(4));
+        let num_new_indices = mesh.num_indices().wrapping_mul(4);
+        let new_indices: *mut u32 = sc.result_view().push::<u32>(num_new_indices);
         ufbxi_check_err!(sc.error_view(), !new_indices.is_null(), "new_indices");
+        // SAFETY: the non-manifold sweep completed the initialized, stable
+        // vertex-index run and no later stage writes it. The checked push owns
+        // `num_new_indices` stable, write-capable destination slots.
+        let (vertex_indices_read, new_indices_write) = unsafe {
+            (
+                Run::<u32, Const>::from_const_raw_parts(vertex_indices, mesh.num_indices()),
+                Run::<u32>::from_raw_parts(new_indices, num_new_indices),
+            )
+        };
 
         let face_start: u32 = 0;
         let edge_start: u32 = face_start.wrapping_add(mesh.num_faces() as u32);
         let vert_start: u32 = edge_start.wrapping_add(num_edge_values as u32);
-        let mut p_ix: *mut u32 = new_indices;
         let mut ix: usize = 0;
         while ix < mesh.num_indices() {
             let topo_edge = topo_view.at(ix);
+            let quad = ix.wrapping_mul(4);
+            new_indices_write.write_at(
+                quad,
+                vert_start.wrapping_add(vertex_indices_read.copy_at(ix)),
+            );
+            new_indices_write.write_at(
+                quad.wrapping_add(1),
+                edge_start.wrapping_add(edge_indices_read.copy_at(ix)),
+            );
+            new_indices_write.write_at(
+                quad.wrapping_add(2),
+                face_start.wrapping_add(topo_edge.face()),
+            );
+            // C reads `topo[ix].prev` for the fourth assignment, after the
+            // first three destination stores.
             let prev = topo_edge.prev() as usize;
             assert!(prev < mesh.num_indices());
-            // SAFETY: the loop runs `num_indices` iterations advancing `p_ix` by 4
-            // each time over the `num_indices*4`-element `new_indices` push, so
-            // `p_ix.add(0..=3)` stay in-bounds; `ix < num_indices` indexes the
-            // live `vertex_indices`/`edge_indices` arrays, and `prev` was
-            // checked above as an in-range `edge_indices` slot.
-            unsafe {
-                *p_ix.add(0) = vert_start.wrapping_add(*vertex_indices.add(ix));
-                *p_ix.add(1) = edge_start.wrapping_add(*edge_indices.add(ix));
-                *p_ix.add(2) = face_start.wrapping_add(topo_edge.face());
-                *p_ix.add(3) = edge_start.wrapping_add(*edge_indices.add(prev));
-                p_ix = p_ix.add(4);
-            }
+            new_indices_write.write_at(
+                quad.wrapping_add(3),
+                edge_start.wrapping_add(edge_indices_read.copy_at(prev)),
+            );
             ix += 1;
         }
         output.set_indices(new_indices);
-        output.set_num_indices(mesh.num_indices().wrapping_mul(4));
+        output.set_num_indices(num_new_indices);
     } else {
         output.set_indices(core::ptr::null_mut());
         output.set_num_indices(0);
