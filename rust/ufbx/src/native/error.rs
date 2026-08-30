@@ -445,9 +445,7 @@ pub(crate) fn fail_imp_err(
         let stack_size = err.stack_size();
         if (stack_size as usize) < ERROR_STACK_MAX_DEPTH {
             // C: `&err->stack[err->stack_size++]` — decomposed.
-            // SAFETY: `stack_frame_view` requires an in-bounds index, which the
-            // `< ERROR_STACK_MAX_DEPTH` check above establishes.
-            let frame = unsafe { err.stack_frame_view(stack_size as usize) };
+            let frame = err.stack_frame_view(stack_size as usize);
             err.set_stack_size(stack_size + 1);
             let description = frame.description_view();
             let function = frame.function_view();
@@ -1384,16 +1382,13 @@ impl ErrorView {
     }
     /// One frame of the error's own `stack` array, as a view (C:
     /// `&err->stack[index]`).
-    ///
-    /// # Safety
-    /// `index` must be `< ERROR_STACK_MAX_DEPTH` — the array extent, which the
-    /// leaf macros cannot bound because the place is a field *and* an index.
     #[inline(always)]
-    pub(crate) unsafe fn stack_frame_view(&self, index: usize) -> &ErrorFrameView {
+    pub(crate) fn stack_frame_view(&self, index: usize) -> &ErrorFrameView {
+        assert!(index < ERROR_STACK_MAX_DEPTH);
         // SAFETY: `stack` is an `[ErrorFrame; ERROR_STACK_MAX_DEPTH]` inside the
         // live, write-capable `Error` this view was minted over (the mint
-        // invariant), so the array projection plus an in-bounds `index` (fn
-        // contract above) addresses one live `ErrorFrame` slot in the same
+        // invariant), so the array projection plus the in-bounds `index`
+        // (asserted above) addresses one live `ErrorFrame` slot in the same
         // allocation.
         unsafe {
             ErrorFrameView::from_ptr(

@@ -4059,57 +4059,46 @@ pub(crate) unsafe fn evaluate_nurbs_basis(
         return usize::MAX;
     }
     // SAFETY: `basis` is non-null here (checked above) and points at a live
-    // `NurbsBasis` per this fn's contract; reading its own `order` field.
-    if unsafe { (*basis).order } == 0 {
+    // `NurbsBasis` per this fn's contract; the function does not mutate it
+    // while the read-only view is live.
+    let basis_view: &View<NurbsBasis, Const> =
+        unsafe { View::<NurbsBasis, Const>::from_ptr(basis) };
+    if basis_view.order() == 0 {
         return usize::MAX;
     }
-    // SAFETY: same live `NurbsBasis`; reading its own `valid` field.
-    if unsafe { !(*basis).valid } {
+    if !basis_view.valid() {
         return usize::MAX;
     }
 
-    // SAFETY: same live `NurbsBasis`; reading its own `order` field.
-    let degree: usize = (unsafe { (*basis).order } - 1) as usize;
+    let degree: usize = (basis_view.order() - 1) as usize;
     ufbx_assert!(degree >= 1);
 
     // Binary search for the knot span `[min_u, max_u]` where `min_u <= u < max_u`
     // C: `ufbx_real_list knots = basis->knot_vector;` — a by-value list copy;
-    // `List` is not `Copy`, so read through a pointer to the same data.
-    // SAFETY: same live `NurbsBasis`; the raw field address preserves C's
-    // address-of semantics without creating a Rust reference.
-    let knots: *const List<Real> = unsafe { &raw const (*basis).knot_vector };
-    // SAFETY: `knots` addresses the live basis's own knot-vector list header,
-    // which nothing writes while this read-only view is live.
-    let knots_view: &View<List<Real>, Const> =
-        unsafe { View::<List<Real>, Const>::from_ptr(knots) };
+    // `List` is not `Copy`, so borrow the contents of the viewed field.
+    let knots_view: &View<List<Real>, Const> = basis_view.knot_vector_view();
+    // SAFETY: the viewed list's stored pair is the basis's contiguous knot run
+    // and nothing writes it while this borrowed slice is live.
+    let knots_slice: &[Real] =
+        unsafe { crate::prelude::slice_from_ptr(knots_view.data(), knots_view.count()) };
     let mut knot: usize = usize::MAX;
 
-    // SAFETY: same live `NurbsBasis`; reading its own `t_min` field.
-    if u <= unsafe { (*basis).t_min } {
+    if u <= basis_view.t_min() {
         knot = degree;
-        // SAFETY: as above.
-        u = unsafe { (*basis).t_min };
-    } else if u >= unsafe { (*basis).t_max } {
-        // SAFETY: as above, reading its own `knot_vector.count` and `t_max`.
-        unsafe {
-            knot = (*basis)
-                .knot_vector
-                .count
-                .wrapping_sub(degree)
-                .wrapping_sub(2);
-            u = (*basis).t_max;
-        }
+        u = basis_view.t_min();
+    } else if u >= basis_view.t_max() {
+        knot = knots_slice.len().wrapping_sub(degree).wrapping_sub(2);
+        u = basis_view.t_max();
     } else {
-        // SAFETY: `knots` points at the basis's live knot-vector list;
-        // `(*knots).data`/`.count` are its own fields, and each closure derefs
-        // knot entries the search keeps within `[0, count-1)`.
+        // SAFETY: `knots_slice` is the basis's live knot run, and the search
+        // keeps each raw probe within `[0, len-1)`.
         unsafe {
             macro_lower_bound_eq::<Real>(
                 8,
                 &mut knot,
-                (*knots).data,
+                knots_slice.as_ptr(),
                 0,
-                (*knots).count.wrapping_sub(1),
+                knots_slice.len().wrapping_sub(1),
                 // C: `( a[1] <= u )`
                 |a| *a.add(1) <= u,
                 // C: `( a[0] <= u && u < a[1] )`
@@ -4129,8 +4118,7 @@ pub(crate) unsafe fn evaluate_nurbs_basis(
     if num_derivatives == 0 {
         derivatives = core::ptr::null_mut();
     }
-    // SAFETY: `basis` points at a live `NurbsBasis`; reading its own `order`.
-    if num_weights < unsafe { (*basis).order } as usize {
+    if num_weights < basis_view.order() as usize {
         return knot - degree;
     }
     if weights.is_null() {
@@ -4144,22 +4132,16 @@ pub(crate) unsafe fn evaluate_nurbs_basis(
     }
     for p in 1..=degree {
         let mut prev: Real = 0.0f32 as Real;
-        // SAFETY: the knot span stays within the basis's knot vector for
-        // `p <= degree` (the C algorithm's span window), discharging the
-        // knot-span obligation of `nurbs_weight`.
-        let mut g: Real = 1.0f32 as Real - unsafe { nurbs_weight(knots_view, knot - p + 1, p, u) };
+        let mut g: Real = 1.0f32 as Real - nurbs_weight(knots_slice, knot - p + 1, p, u);
         let mut dg: Real = 0.0f32 as Real;
         if !derivatives.is_null() && p == degree {
-            // SAFETY: as above.
-            dg = unsafe { nurbs_deriv(knots_view, knot - p + 1, p) };
+            dg = nurbs_deriv(knots_slice, knot - p + 1, p);
         }
 
         // C: `for (size_t i = p; i > 0; i--)`
         let mut i: usize = p;
         while i > 0 {
-            // SAFETY: the knot span stays within the basis's knot vector for
-            // `i <= p <= degree`, discharging the knot-span obligation.
-            let f: Real = unsafe { nurbs_weight(knots_view, knot - p + i, p, u) };
+            let f: Real = nurbs_weight(knots_slice, knot - p + i, p, u);
             // SAFETY: `weights` has `num_weights >= order > degree >= i` entries,
             // so `i - 1` is in bounds of the caller's weight buffer.
             let weight: Real = unsafe { *weights.add(i - 1) };
@@ -4169,9 +4151,7 @@ pub(crate) unsafe fn evaluate_nurbs_basis(
             }
 
             if !derivatives.is_null() && p == degree {
-                // SAFETY: as above, the knot span stays within the basis's
-                // knot vector.
-                let df: Real = unsafe { nurbs_deriv(knots_view, knot - p + i, p) };
+                let df: Real = nurbs_deriv(knots_slice, knot - p + i, p);
                 if i < num_derivatives {
                     // SAFETY: `derivatives` is non-null here with `num_derivatives`
                     // entries and `i < num_derivatives`, so `i` is in bounds.
