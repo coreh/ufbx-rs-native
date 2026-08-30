@@ -550,6 +550,79 @@ fn evaluate_and_bake_animation() {
     assert!(acc.is_finite());
 }
 
+/// Animated layer weights are evaluated through the layer's own anim-value
+/// reference before the layer is blended into each output property.
+#[test]
+fn bake_animated_layer_weight() {
+    let scene = load("maya_anim_layer_anim_7700_ascii.fbx");
+    assert!(scene
+        .anim_layers
+        .iter()
+        .any(|layer| layer.weight_is_animated && layer.blended));
+
+    let baked = ufbx::bake_anim(
+        &scene,
+        &scene.anim,
+        ufbx::BakeOpts {
+            resample_rate: 24.0,
+            ..Default::default()
+        },
+    )
+    .expect("bake_anim failed");
+    assert_eq!(baked.nodes.len(), 1);
+    assert_eq!(baked.nodes[0].translation_keys.len(), 25);
+    assert_eq!(baked.nodes[0].rotation_keys.len(), 25);
+    assert_eq!(baked.nodes[0].scale_keys.len(), 25);
+}
+
+/// Baking helper-node inherit modes follows parent, scale-helper and
+/// inherit-scale-node references while scheduling dependent sibling nodes.
+#[test]
+fn bake_scale_helpers() {
+    fn close(actual: ufbx::Real, expected: f32) {
+        let expected = expected as ufbx::Real;
+        assert!((actual - expected).abs() <= 0.00001f32 as ufbx::Real);
+    }
+
+    let name = "maya_scale_no_inherit_step_7700_ascii.fbx";
+    let data = read_data(name);
+    let scene = ufbx::load_memory(
+        &data,
+        LoadOpts {
+            inherit_mode_handling: ufbx::InheritModeHandling::HelperNodes,
+            ..Default::default()
+        },
+    )
+    .unwrap_or_else(|e| panic!("failed to load {}: {:?}", name, e));
+
+    let joint1 = scene.find_node("joint1").expect("missing joint1");
+    let helper = joint1.scale_helper.as_ref().expect("joint1 has no helper");
+    let joint2 = scene.find_node("joint2").expect("missing joint2");
+    let baked = ufbx::bake_anim(&scene, &scene.anim, Default::default()).expect("bake_anim failed");
+
+    let helper_keys = baked
+        .nodes
+        .iter()
+        .find(|node| node.typed_id == helper.element.typed_id)
+        .expect("helper was not baked")
+        .scale_keys
+        .as_ref();
+    let joint2_keys = baked
+        .nodes
+        .iter()
+        .find(|node| node.typed_id == joint2.element.typed_id)
+        .expect("joint2 was not baked")
+        .translation_keys
+        .as_ref();
+
+    assert_eq!(helper_keys.len(), 6);
+    close(helper_keys[0].value.x, 2.0);
+    close(helper_keys[5].value.x, 5.0);
+    assert_eq!(joint2_keys.len(), 6);
+    close(joint2_keys[0].value.x, 10.0);
+    close(joint2_keys[5].value.x, 25.0);
+}
+
 /// NURBS: basis evaluation and curve tessellation into a line curve.
 #[test]
 fn tessellate_nurbs_curve() {

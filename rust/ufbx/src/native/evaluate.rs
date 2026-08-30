@@ -24,13 +24,11 @@ use core::ffi::c_void;
 use core::mem::{size_of, MaybeUninit};
 use core::ptr;
 
-#[cfg(any(feature = "scene-eval", feature = "baking"))]
-use crate::generated::Node as UfbxNode;
 use crate::generated::{
-    Anim, AnimCurve, AnimLayer, AnimProp, AnimValue, BakedAnim, Connection, DomNode, Element,
-    Error, ErrorType, Extrapolation, ExtrapolationMode, FileFormat, IndexErrorHandling,
-    InflateRetain, Keyframe, OpenFileInfo, OpenFileType, Prop, PropFlags, PropOverride, PropType,
-    Quat, RawAnimOpts, RawGeometryCacheDataOpts, RawLoadOpts, RawOpenFileOpts, RawPropOverrideDesc,
+    Anim, AnimCurve, AnimLayer, AnimProp, BakedAnim, Connection, DomNode, Element, Error,
+    ErrorType, Extrapolation, ExtrapolationMode, FileFormat, IndexErrorHandling, InflateRetain,
+    Keyframe, OpenFileInfo, OpenFileType, Prop, PropFlags, PropOverride, PropType, Quat,
+    RawAnimOpts, RawGeometryCacheDataOpts, RawLoadOpts, RawOpenFileOpts, RawPropOverrideDesc,
     RawStream, RotationOrder, Scene, Tangent, TransformOverride, UnicodeErrorHandling, Vec3, Vec4,
     Warning, WarningType,
 };
@@ -41,6 +39,8 @@ use crate::generated::{
     NameElement, Pose, RawEvaluateOpts, SelectionNode, SelectionSet, Shader, ShaderTexture,
     ShaderTextureInput, SkinCluster, StereoCamera, Texture, TextureLayer, Video,
 };
+#[cfg(any(feature = "scene-eval", feature = "baking"))]
+use crate::generated::{AnimValue, Node as UfbxNode};
 #[cfg(feature = "baking")]
 use crate::generated::{
     BakeStepHandling, BakedElement, BakedKeyFlags, BakedNode, BakedProp, BakedQuat, BakedVec3,
@@ -286,10 +286,7 @@ pub(crate) fn evaluate_skinning(
                 let Some(channel) = p_cache.external_channel() else {
                     continue;
                 };
-                // SAFETY: a non-null `Ref` names a live scene-owned
-                // `ufbx_cache_channel`, whose stored pointer carries the
-                // scene arena's write-capable provenance.
-                let channel_view = unsafe { View::<CacheChannel>::from_ptr(channel.ptr()) };
+                let channel_view: &View<CacheChannel, Mut> = channel.view::<Mut>();
 
                 if (channel_view.interpretation() == CacheInterpretation::VertexPosition
                     || channel_view.interpretation() == CacheInterpretation::Points)
@@ -2003,13 +2000,8 @@ pub(crate) unsafe fn evaluate_props(
                 let weight_aprop_view: &View<AnimProp, Const> =
                     unsafe { View::<AnimProp, Const>::from_ptr(weight_aprop) };
                 // C: `weight = ufbx_evaluate_anim_value_real_flags(...) / (ufbx_real)100.0;`
-                // SAFETY: `anim_value` is the viewed prop's own non-null field
-                // and names a scene-owned `ufbx_anim_value` — live and unwritten
-                // during evaluation, the `Const` view mint's contract.
                 weight = evaluate_anim_value_real_flags(
-                    Some(unsafe {
-                        View::<AnimValue, Const>::from_ptr(weight_aprop_view.anim_value().ptr())
-                    }),
+                    Some(weight_aprop_view.anim_value().view::<Const>()),
                     time,
                     flags,
                 ) / (100.0 as Real);
@@ -2084,13 +2076,8 @@ pub(crate) unsafe fn evaluate_props(
             // This could be done by having `UFBX_PROP_FLAG_ANIMATION_EVALUATED`
             // that gets set for the first layer of animation that is applied.
             if aprop_view.prop_name_view().data() == prop.name().data {
-                // SAFETY: `anim_value` is the viewed prop's own non-null field
-                // and names a scene-owned `ufbx_anim_value` — live and unwritten
-                // during evaluation, the `Const` view mint's contract.
                 let v: Vec3 = evaluate_anim_value_vec3_flags(
-                    Some(unsafe {
-                        View::<AnimValue, Const>::from_ptr(aprop_view.anim_value().ptr())
-                    }),
+                    Some(aprop_view.anim_value().view::<Const>()),
                     time,
                     flags,
                 );
@@ -6988,22 +6975,14 @@ pub(crate) unsafe fn bake_node_imp(
     };
     // C: `node->parent`, the parent every later `node->parent->…` chain starts
     // from.
-    let parent: Option<&View<UfbxNode, Const>> = node.parent().map(|parent| {
-        // SAFETY: `parent` is the node's own parent ref — a live element of the
-        // same scene — read as bare pointer bits, never through `Ref::as_ref`.
-        unsafe { View::<UfbxNode, Const>::from_ptr(parent.ptr()) }
-    });
+    let parent: Option<&View<UfbxNode, Const>> = node.parent().map(|parent| parent.view::<Const>());
     // C: `!node->is_scale_helper && node->parent && node->parent->scale_helper`
     // — a short-circuit chain, so each load only happens once the preceding
     // test passes.
     let parent_scale_helper: Option<&View<UfbxNode, Const>> = if !node.is_scale_helper() {
         parent
             .and_then(|parent| parent.scale_helper())
-            .map(|scale_helper| {
-                // SAFETY: `scale_helper` is the parent's own node ref — a live
-                // element of the same scene — read as bare pointer bits.
-                unsafe { View::<UfbxNode, Const>::from_ptr(scale_helper.ptr()) }
-            })
+            .map(|scale_helper| scale_helper.view::<Const>())
     } else {
         None
     };
@@ -7134,17 +7113,9 @@ pub(crate) unsafe fn bake_node_imp(
     let inherit_helper: Option<&View<UfbxNode, Const>> = if node.is_scale_helper() {
         parent
             .and_then(|parent| parent.inherit_scale_node())
-            .map(|inherit_scale_node| {
-                // SAFETY: `inherit_scale_node` is the parent's own node ref — a
-                // live element of the same scene — read as bare pointer bits.
-                unsafe { View::<UfbxNode, Const>::from_ptr(inherit_scale_node.ptr()) }
-            })
+            .map(|inherit_scale_node| inherit_scale_node.view::<Const>())
             .and_then(|inherit_scale_node| inherit_scale_node.scale_helper())
-            .map(|scale_helper| {
-                // SAFETY: `scale_helper` is that node's own node ref — a live
-                // element of the same scene — read as bare pointer bits.
-                unsafe { View::<UfbxNode, Const>::from_ptr(scale_helper.ptr()) }
-            })
+            .map(|scale_helper| scale_helper.view::<Const>())
     } else {
         None
     };
@@ -7446,26 +7417,12 @@ pub(crate) unsafe fn bake_node_imp(
                 // term needs the pointer the earlier one produced.
                 let child_inherit_scale_helper: Option<&View<UfbxNode, Const>> = child
                     .inherit_scale_node()
-                    .map(|inherit_scale_node| {
-                        // SAFETY: `inherit_scale_node` is the child's own node
-                        // ref — a live element of the same scene — read as bare
-                        // pointer bits.
-                        unsafe { View::<UfbxNode, Const>::from_ptr(inherit_scale_node.ptr()) }
-                    })
+                    .map(|inherit_scale_node| inherit_scale_node.view::<Const>())
                     .and_then(|inherit_scale_node| inherit_scale_node.scale_helper())
-                    .map(|scale_helper| {
-                        // SAFETY: `scale_helper` is that node's own node ref — a
-                        // live element of the same scene — read as bare pointer
-                        // bits.
-                        unsafe { View::<UfbxNode, Const>::from_ptr(scale_helper.ptr()) }
-                    });
-                let child_scale_helper: Option<&View<UfbxNode, Const>> =
-                    child.scale_helper().map(|scale_helper| {
-                        // SAFETY: `scale_helper` is the child's own node ref — a
-                        // live element of the same scene — read as bare pointer
-                        // bits.
-                        unsafe { View::<UfbxNode, Const>::from_ptr(scale_helper.ptr()) }
-                    });
+                    .map(|scale_helper| scale_helper.view::<Const>());
+                let child_scale_helper: Option<&View<UfbxNode, Const>> = child
+                    .scale_helper()
+                    .map(|scale_helper| scale_helper.view::<Const>());
                 if let (Some(child_inherit_scale_helper), Some(child_scale_helper)) =
                     (child_inherit_scale_helper, child_scale_helper)
                 {
