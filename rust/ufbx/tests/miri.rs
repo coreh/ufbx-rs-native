@@ -3,12 +3,12 @@
 // run as ordinary tests.
 //
 // The corpus is chosen for FEATURE coverage, not file size: Miri's cost tracks
-// bytes inflated (a 740 KB DEFLATE-heavy scene costs ~30s; every file here is
-// under 80 KB and costs well under a second), while the paths worth checking —
-// NURBS tessellation, subdivision, skinning, animation evaluation and baking,
-// topology and index generation — are reachable from tiny scenes. Loading alone
-// is not enough: the post-load APIs allocate and walk their own buffers, so
-// each is exercised on a scene that actually has the relevant elements.
+// bytes inflated (a 740 KB DEFLATE-heavy scene costs ~30s), while the paths
+// worth checking — NURBS tessellation, subdivision, skinning, animation
+// evaluation and baking, topology and index generation — are reachable from
+// compact scenes. Loading alone is not enough: the post-load APIs allocate and
+// walk their own buffers, so each is exercised on a scene that actually has the
+// relevant elements.
 //
 // The loads go through `load_memory` rather than `load_file`: the default file
 // stream calls libc `fopen`, which Miri cannot emulate (`unsupported
@@ -176,6 +176,42 @@ fn load_legacy_6100_ascii() {
 #[test]
 fn load_attribute_zoo_6100_binary() {
     assert!(load_and_walk("maya_node_attribute_zoo_6100_binary.fbx").is_finite());
+}
+
+/// Shader-texture property prefixes are discovered from both explicit compound
+/// properties and legacy names, then interned with a trailing separator.
+#[test]
+fn load_shader_texture_prefixes() {
+    fn check_prefix(name: &str, expected: &str) {
+        let scene = load(name);
+        let mut num_prefixes = 0usize;
+        let mut found_expected = false;
+        for texture in &scene.textures {
+            if let Some(shader) = texture.shader.as_ref() {
+                let prefix: &str = shader.prop_prefix.as_ref();
+                if !prefix.is_empty() {
+                    assert!(prefix.len() > 1);
+                    assert!(prefix.ends_with('|'));
+                    found_expected |= prefix == expected;
+                    num_prefixes += 1;
+                }
+            }
+        }
+        assert!(num_prefixes > 0, "{} has no shader-texture prefixes", name);
+        assert!(found_expected, "{} is missing prefix {:?}", name, expected);
+    }
+
+    check_prefix(
+        "max_texture_mapping_6100_binary.fbx",
+        "3dsMax|ai_bump2d Parameters/Connections|",
+    );
+
+    // The OpenPBR ASCII fixture exercises the explicit Compound-property arm.
+    // Stacked Borrows rejects its ASCII parser path before scene finalization,
+    // so the ordinary integration corpus covers this arm while the legacy
+    // binary arm runs under both Miri models.
+    #[cfg(not(miri))]
+    check_prefix("max_openpbr_material_7700_ascii.fbx", "3dsMax|parameters|");
 }
 
 // -- Scene features exercised on load

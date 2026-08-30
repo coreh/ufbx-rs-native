@@ -5472,32 +5472,34 @@ pub(crate) unsafe fn generate_normals(uc: &Context, mesh: &View<Mesh>) -> Result
 }
 
 // ufbx.c:20405-20427 `ufbxi_push_prop_prefix`
-///
-/// # Safety
-/// `prefix` must be a valid `ufbx_string`: `data` readable for `length` bytes,
-/// unmoved and unwritten for the call.
 #[inline(never)]
-pub(crate) unsafe fn push_prop_prefix(
+pub(crate) fn push_prop_prefix<M: Mode>(
     uc: &Context,
     dst: &StringView,
-    mut prefix: String,
+    prefix_view: &View<String, M>,
 ) -> Result<(), Fail> {
+    // C receives `ufbx_string prefix` by value. The borrowed byte run supplies
+    // the same local `(data, length)` pair while keeping its read contract in
+    // the parameter type.
+    let prefix_bytes = prefix_view.bytes();
+    let mut prefix = String::new_c(prefix_view.data(), prefix_view.length());
     let mut stack_size: usize = 0;
-    // SAFETY: `prefix` is a `ufbx_string` whose `data` addresses `length`
-    // readable bytes (fn contract); the `length > 0` guard short-circuits ahead
-    // of the read, so `length - 1` is an in-bounds index.
-    if prefix.length > 0 && unsafe { *prefix.data.add(prefix.length - 1) } != b'|' {
+    if prefix.length > 0 && prefix_bytes[prefix.length - 1] != b'|' {
         stack_size = prefix.length.wrapping_add(1);
-        let copy: *mut u8 = uc.tmp_stack_view().push(stack_size);
-        ufbxi_check!(uc, !copy.is_null(), "copy");
-        // SAFETY: `copy` is the fresh non-null `prefix.length + 1`-byte push,
-        // disjoint from the caller's `prefix.data` span of `length` bytes.
-        unsafe { ptr::copy_nonoverlapping(prefix.data, copy, prefix.length) };
-        // SAFETY: the push holds `prefix.length + 1` bytes, so index
-        // `prefix.length` is its last one.
-        unsafe { *copy.add(prefix.length) = b'|' };
+        let copy_data: *mut u8 = uc.tmp_stack_view().push(stack_size);
+        ufbxi_check!(uc, !copy_data.is_null(), "copy");
+        // SAFETY: `copy_data` is the fresh non-null `stack_size`-byte push,
+        // disjoint from the borrowed `prefix` run. The constructor vouches for
+        // its exact capacity and the memcpy initializes its first `length`
+        // bytes before the final byte is written through the bounded run.
+        let copy = unsafe {
+            let copy = Run::<u8>::from_raw_parts(copy_data, stack_size);
+            ptr::copy_nonoverlapping(prefix_bytes.as_ptr(), copy.as_mut_ptr(), prefix.length);
+            copy
+        };
+        copy.write_at(prefix.length, b'|');
 
-        prefix.data = copy;
+        prefix.data = copy.as_ptr();
         prefix.length = prefix.length.wrapping_add(1);
     }
 
@@ -5561,11 +5563,7 @@ pub(crate) fn shader_texture_find_prefix(
                 continue;
             }
             if sp::ends_with(prop.name_view().bytes(), suffix) {
-                // SAFETY: the prop's viewed name is an interned live span and
-                // `push_prop_prefix` copies its `ufbx_string` value.
-                unsafe {
-                    push_prop_prefix(uc, shader.prop_prefix_view(), prop.name())?;
-                }
+                push_prop_prefix(uc, shader.prop_prefix_view(), prop.name_view())?;
                 return Ok(());
             }
         }
@@ -5590,15 +5588,12 @@ pub(crate) fn shader_texture_find_prefix(
             name = &name[..name.len() - 1];
 
             if sp::ends_with(name, suffix) {
-                // SAFETY: `name` is a prefix of the prop's interned span and
-                // `push_prop_prefix` copies the temporary `ufbx_string` value.
-                unsafe {
-                    push_prop_prefix(
-                        uc,
-                        shader.prop_prefix_view(),
-                        String::new_c(name.as_ptr(), name.len()),
-                    )?;
-                }
+                let prefix = String::new_c(name.as_ptr(), name.len());
+                push_prop_prefix(
+                    uc,
+                    shader.prop_prefix_view(),
+                    View::<String, Const>::from_ref(&prefix),
+                )?;
                 return Ok(());
             }
         }
