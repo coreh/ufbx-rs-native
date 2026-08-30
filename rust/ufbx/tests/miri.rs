@@ -308,8 +308,52 @@ fn tessellate_nurbs_curve() {
     let scene = load("maya_nurbs_curve_form_7700_binary.fbx");
     assert!(!scene.nurbs_curves.is_empty());
     let mut acc = 0.0f64;
+    let mut topology_mask = 0u8;
     for curve in &scene.nurbs_curves {
         let order = curve.basis.order as usize;
+        assert!(order > 1);
+        let degree = order - 1;
+        let knots: &[ufbx::Real] = curve.basis.knot_vector.as_ref();
+        assert!(knots.len() >= degree.wrapping_mul(2).wrapping_add(1));
+
+        let expected_wrap = match curve.basis.topology {
+            ufbx::NurbsTopology::Closed => {
+                topology_mask |= 1 << 2;
+                1
+            }
+            ufbx::NurbsTopology::Periodic => {
+                topology_mask |= 1 << 1;
+                curve.basis.order.wrapping_sub(1) as usize
+            }
+            ufbx::NurbsTopology::Open => {
+                topology_mask |= 1 << 0;
+                0
+            }
+        };
+        assert_eq!(curve.basis.num_wrap_control_points, expected_wrap);
+        assert_eq!(curve.basis.t_min.to_bits(), knots[degree].to_bits());
+        assert_eq!(
+            curve.basis.t_max.to_bits(),
+            knots[knots.len() - degree - 1].to_bits()
+        );
+
+        let mut expected_spans = Vec::new();
+        let mut prev = -(f64::INFINITY as ufbx::Real);
+        for &knot in &knots[degree..knots.len() - degree] {
+            if knot != prev {
+                expected_spans.push(knot);
+                prev = knot;
+            }
+        }
+        assert_eq!(curve.basis.spans.len(), expected_spans.len());
+        for (&actual, &expected) in curve.basis.spans.iter().zip(&expected_spans) {
+            assert_eq!(actual.to_bits(), expected.to_bits());
+        }
+        assert_eq!(
+            curve.basis.valid,
+            !knots.windows(2).any(|pair| pair[0] > pair[1])
+        );
+
         let sample_u = (curve.basis.t_min + curve.basis.t_max) * (0.5f32 as ufbx::Real);
         let sentinel = 1234.5f32 as ufbx::Real;
         let mut weights = vec![sentinel; order + 2];
@@ -375,6 +419,7 @@ fn tessellate_nurbs_curve() {
         check_line(curve, &line_sub3, 3);
         acc += line_sub3.control_points.len() as f64;
     }
+    assert_eq!(topology_mask, 0b111);
     assert!(acc.is_finite());
 }
 

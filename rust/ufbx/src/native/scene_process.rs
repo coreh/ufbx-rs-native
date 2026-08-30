@@ -5216,46 +5216,39 @@ pub(crate) fn finalize_nurbs_basis(uc: &Context, basis: &View<NurbsBasis>) -> Re
     if basis.order() > 1 {
         // `order > 1`, so the subtraction does not underflow.
         let degree: usize = (basis.order() - 1) as usize;
-        // C: `ufbx_real_list knots = basis->knot_vector;` — the by-value copy
-        // of the viewed basis' own knot-vector header.
-        let knots: List<Real> = basis.knot_vector();
-        if knots.count > 2 * degree {
-            // SAFETY: `knots` is the basis' own knot-vector span of `count`
-            // initialized reals (the viewed list invariant) and
-            // `degree < count`, so the first read is in bounds;
-            // `count > 2 * degree` makes `count - degree - 1 < count`.
-            unsafe {
-                basis.set_t_min(*knots.data.add(degree));
-                basis.set_t_max(*knots.data.add(knots.count - degree - 1));
-            }
+        // C: `ufbx_real_list knots = basis->knot_vector;` — the by-value header
+        // copy supplies the basis' initialized, stable knot-data pair.
+        let knots_list: List<Real> = basis.knot_vector();
+        let twice_degree = degree.wrapping_mul(2);
+        if knots_list.count >= twice_degree.wrapping_add(1) {
+            let knots = Run::from_list(View::<List<Real>, Const>::from_ref(&knots_list));
+            basis.set_t_min(knots.copy_at(degree));
+            basis.set_t_max(knots.copy_at(knots.len().wrapping_sub(degree).wrapping_sub(1)));
 
-            let max_spans: usize = knots.count - 2 * degree;
-            let spans: *mut Real = uc.result_view().push(max_spans);
-            ufbxi_check!(uc, !spans.is_null(), "spans");
+            let max_spans: usize = knots.len().wrapping_sub(twice_degree);
+            let spans_data: *mut Real = uc.result_view().push(max_spans);
+            ufbxi_check!(uc, !spans_data.is_null(), "spans");
+            // SAFETY: `spans_data` is the fresh non-null `max_spans`-element
+            // result-buffer push above, with write-capable stable storage.
+            let spans = unsafe { Run::<Real>::from_raw_parts(spans_data, max_spans) };
 
             let mut prev: Real = -math::INFINITY as Real;
             let mut num_spans: usize = 0;
             for i in 0..max_spans {
-                // SAFETY: `i < max_spans = count - 2 * degree`, so
-                // `degree + i < count` bounds the read inside the knot span.
-                let t: Real = unsafe { *knots.data.add(degree + i) };
+                let t: Real = knots.copy_at(degree.wrapping_add(i));
                 if t != prev {
-                    // SAFETY: `num_spans <= i < max_spans`, the length of the
-                    // fresh non-null `spans` push above.
-                    unsafe { *spans.add(num_spans) = t };
+                    spans.write_at(num_spans, t);
                     num_spans += 1;
                     prev = t;
                 }
             }
 
             // `spans` is the push above, holding `num_spans` initialized reals.
-            basis.spans_view().set_data(spans);
+            basis.spans_view().set_data(spans.as_ptr());
             basis.spans_view().set_count(num_spans);
             basis.set_valid(true);
-            for i in 1..knots.count {
-                // SAFETY: `1 <= i < count` bounds both reads inside the knot
-                // span of `count` initialized reals.
-                if unsafe { *knots.data.add(i - 1) > *knots.data.add(i) } {
+            for i in 1..knots.len() {
+                if knots.copy_at(i - 1) > knots.copy_at(i) {
                     basis.set_valid(false);
                     break;
                 }
