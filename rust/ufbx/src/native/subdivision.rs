@@ -1103,8 +1103,7 @@ pub(crate) fn subdivide_layer(
     // Face points
     let mut fi: usize = 0;
     while fi < mesh.num_faces() {
-        // SAFETY: `fi < num_faces`, in range for the live `faces` array.
-        let face: Face = unsafe { *mesh.faces().data.add(fi) };
+        let face = mesh.faces_view().copy_at(fi);
         // SAFETY: `fi < num_faces`, so `fi*stride` is within the `num_faces`
         // face-value segment at the head of `values`.
         let dst: *mut u8 = unsafe { face_values.add(fi.wrapping_mul(stride)) };
@@ -1756,17 +1755,19 @@ pub(crate) fn subdivide_layer(
         let mut p_ix: *mut u32 = new_indices;
         let mut ix: usize = 0;
         while ix < mesh.num_indices() {
+            let topo_edge = topo_view.at(ix);
+            let prev = topo_edge.prev() as usize;
+            assert!(prev < mesh.num_indices());
             // SAFETY: the loop runs `num_indices` iterations advancing `p_ix` by 4
             // each time over the `num_indices*4`-element `new_indices` push, so
             // `p_ix.add(0..=3)` stay in-bounds; `ix < num_indices` indexes the
-            // live `vertex_indices`/`edge_indices` arrays and `topo`, whose
-            // `.prev` sibling corner is also an in-range `edge_indices` slot.
+            // live `vertex_indices`/`edge_indices` arrays, and `prev` was
+            // checked above as an in-range `edge_indices` slot.
             unsafe {
                 *p_ix.add(0) = vert_start.wrapping_add(*vertex_indices.add(ix));
                 *p_ix.add(1) = edge_start.wrapping_add(*edge_indices.add(ix));
-                *p_ix.add(2) = face_start.wrapping_add((*topo.add(ix)).face);
-                *p_ix.add(3) =
-                    edge_start.wrapping_add(*edge_indices.add((*topo.add(ix)).prev as usize));
+                *p_ix.add(2) = face_start.wrapping_add(topo_edge.face());
+                *p_ix.add(3) = edge_start.wrapping_add(*edge_indices.add(prev));
                 p_ix = p_ix.add(4);
             }
             ix += 1;
@@ -2203,13 +2204,12 @@ pub(crate) fn subdivide_vertex_crease<M: Mode>(
 }
 
 // ufbx.c:29631-29925 `ufbxi_subdivide_mesh_level`
-// Stays `unsafe fn`: the mesh fields run through `MeshView`, but the residual
-// pointer arithmetic rests on index contracts carried by the *source mesh data*
-// rather than anything checkable here — `topo[edge.a]`, `faces[topo[..].face]`
-// and the per-face `face_material/smoothing/group/hole` writes at
-// `index_offset + ci` are all only in bounds because the input mesh is
-// internally consistent (`edge.a < num_indices`, face index ranges tiling
-// `num_indices`). The narrow blocks below cite that one shared obligation.
+// Stays `unsafe fn`: the mesh fields run through `MeshView`, but topology
+// construction and subdivision-weight propagation consume raw source runs
+// whose relational validity comes from the source mesh/subdivision data. The
+// per-face result writes at `index_offset + ci` likewise rely on the source
+// face ranges tiling `num_indices`; the narrow blocks below cite their local
+// obligations.
 #[cfg(feature = "subdivision")]
 #[inline(never)]
 pub(crate) unsafe fn subdivide_mesh_level(
@@ -2231,6 +2231,11 @@ pub(crate) unsafe fn subdivide_mesh_level(
     unsafe { compute_topology(mesh.as_ptr(), topo, mesh.num_indices()) };
     sc.set_topo(topo);
     sc.set_num_topo(mesh.num_indices());
+    // SAFETY: `compute_topology` initialized the full `num_indices`-element
+    // topology run above; tmp-arena storage is stable and the run is read-only
+    // for the remainder of this subdivision level.
+    let topo_view =
+        unsafe { Run::<TopoEdge, Const>::from_const_raw_parts(topo, mesh.num_indices()) };
 
     subdivide_attrib(
         sc,
@@ -2720,16 +2725,9 @@ pub(crate) unsafe fn subdivide_mesh_level(
         let mut di: usize = 0;
         let mut i: usize = 0;
         while i < mesh.num_edges() {
-            // SAFETY: `i < num_edges` indexes the live source `edges` array;
-            // `edge.a` is an in-range corner (source-mesh consistency), so
-            // `topo.add(edge.a)` is live and its `.face` indexes the live `faces`
-            // array; the two `di`/`di+1` targets sit within the `num_edges`-sized
-            // (2 per source edge) result `edges` push.
-            let edge: Edge = unsafe { *mesh.edges().data.add(i) };
-            // SAFETY: as above; `edge.a` is an in-range corner into `topo`.
-            let face_ix: u32 = unsafe { (*topo.add(edge.a as usize)).face };
-            // SAFETY: `face_ix` is an in-range face index into the live `faces`.
-            let face: Face = unsafe { *mesh.faces().data.add(face_ix as usize) };
+            let edge = mesh.edges_view().copy_at(i);
+            let face_ix = topo_view.at(edge.a as usize).face();
+            let face = mesh.faces_view().copy_at(face_ix as usize);
             let offset: u32 = edge.a.wrapping_sub(face.index_begin);
             let next: u32 = (offset.wrapping_add(1)) % face.num_indices;
 
@@ -2751,8 +2749,7 @@ pub(crate) unsafe fn subdivide_mesh_level(
             e1.set_b(b);
 
             if !mesh.edge_crease().data.is_null() {
-                // SAFETY: `i < num_edges` indexes the live source crease array.
-                let mut crease: Real = unsafe { *mesh.edge_crease().data.add(i) };
+                let mut crease = mesh.edge_crease_view().copy_at(i);
                 // C: `0.999f` is a `float` literal; `(ufbx_real)0.1` is not.
                 if crease < 0.999f32 as Real {
                     crease -= 0.1 as Real;
@@ -2769,24 +2766,20 @@ pub(crate) unsafe fn subdivide_mesh_level(
             }
 
             if !mesh.edge_smoothing().data.is_null() {
-                // SAFETY: `i` indexes the live source array; `di`/`di+1` are
-                // in-range result slots.
+                let smoothing = mesh.edge_smoothing_view().copy_at(i);
+                // SAFETY: `di`/`di+1` are in-range result slots.
                 unsafe {
-                    *(edge_smoothing.data() as *mut bool).add(di + 0) =
-                        *mesh.edge_smoothing().data.add(i);
-                    *(edge_smoothing.data() as *mut bool).add(di + 1) =
-                        *mesh.edge_smoothing().data.add(i);
+                    *(edge_smoothing.data() as *mut bool).add(di + 0) = smoothing;
+                    *(edge_smoothing.data() as *mut bool).add(di + 1) = smoothing;
                 }
             }
 
             if !mesh.edge_visibility().data.is_null() {
-                // SAFETY: `i` indexes the live source array; `di`/`di+1` are
-                // in-range result slots.
+                let visibility = mesh.edge_visibility_view().copy_at(i);
+                // SAFETY: `di`/`di+1` are in-range result slots.
                 unsafe {
-                    *(edge_visibility.data() as *mut bool).add(di + 0) =
-                        *mesh.edge_visibility().data.add(i);
-                    *(edge_visibility.data() as *mut bool).add(di + 1) =
-                        *mesh.edge_visibility().data.add(i);
+                    *(edge_visibility.data() as *mut bool).add(di + 0) = visibility;
+                    *(edge_visibility.data() as *mut bool).add(di + 1) = visibility;
                 }
             }
 
@@ -2896,13 +2889,11 @@ pub(crate) unsafe fn subdivide_mesh_level(
     let mut index_offset: usize = 0;
     let mut i: usize = 0;
     while i < mesh.num_faces() {
-        // SAFETY: `i < num_faces` indexes the live source `faces` array.
-        let face: Face = unsafe { *mesh.faces().data.add(i) };
+        let face = mesh.faces_view().copy_at(i);
 
         let mut mat: u32 = 0;
         if !mesh.face_material().data.is_null() {
-            // SAFETY: `i` indexes the live source `face_material` array.
-            mat = unsafe { *mesh.face_material().data.add(i) };
+            mat = mesh.face_material_view().copy_at(i);
             let mut ci: usize = 0;
             while ci < face.num_indices as usize {
                 // SAFETY: `index_offset + ci` addresses this face's contiguous
@@ -2917,8 +2908,7 @@ pub(crate) unsafe fn subdivide_mesh_level(
         // C: `mat` is otherwise unused (assigned and read only in the branch).
         let _ = mat;
         if !mesh.face_smoothing().data.is_null() {
-            // SAFETY: `i` indexes the live source `face_smoothing` array.
-            let flag: bool = unsafe { *mesh.face_smoothing().data.add(i) };
+            let flag = mesh.face_smoothing_view().copy_at(i);
             let mut ci: usize = 0;
             while ci < face.num_indices as usize {
                 // SAFETY: `index_offset + ci` is within this face's result run.
@@ -2929,8 +2919,7 @@ pub(crate) unsafe fn subdivide_mesh_level(
             }
         }
         if !mesh.face_group().data.is_null() {
-            // SAFETY: `i` indexes the live source `face_group` array.
-            let group: u32 = unsafe { *mesh.face_group().data.add(i) };
+            let group = mesh.face_group_view().copy_at(i);
             let mut ci: usize = 0;
             while ci < face.num_indices as usize {
                 // SAFETY: `index_offset + ci` is within this face's result run.
@@ -2941,8 +2930,7 @@ pub(crate) unsafe fn subdivide_mesh_level(
             }
         }
         if !mesh.face_hole().data.is_null() {
-            // SAFETY: `i` indexes the live source `face_hole` array.
-            let flag: bool = unsafe { *mesh.face_hole().data.add(i) };
+            let flag = mesh.face_hole_view().copy_at(i);
             let mut ci: usize = 0;
             while ci < face.num_indices as usize {
                 // SAFETY: `index_offset + ci` is within this face's result run.
