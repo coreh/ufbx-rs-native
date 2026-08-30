@@ -372,11 +372,24 @@ fn topology_triangulate_and_index_generation() {
         acc += edge.index as f64 + edge.next as f64;
     }
 
-    let mut indices = vec![0u32; mesh.max_face_triangles * 3];
+    let mut saw_five_gon = false;
+    let mut saw_larger_ngon = false;
     for face in &mesh.faces {
+        let expected_tris = face.num_indices.saturating_sub(2) as usize;
+        let mut indices = vec![0u32; expected_tris * 3];
         let tris = ufbx::triangulate_face(&mut indices, mesh, *face);
+        assert_eq!(tris as usize, expected_tris);
+        let face_begin = face.index_begin;
+        let face_end = face.index_begin + face.num_indices;
+        assert!(indices
+            .iter()
+            .all(|&index| index >= face_begin && index < face_end));
+        saw_five_gon |= face.num_indices == 5;
+        saw_larger_ngon |= face.num_indices >= 6;
         acc += tris as f64;
     }
+    assert!(saw_five_gon);
+    assert!(saw_larger_ngon);
 
     // Deduplicate a position stream back into an indexed mesh.
     let mut positions: Vec<ufbx::Vec3> = (0..mesh.num_indices)

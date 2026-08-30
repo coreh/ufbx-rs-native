@@ -445,6 +445,21 @@ impl<'a, T, M: Mode> Run<'a, T, M> {
 
 #[cfg_attr(not(feature = "baking"), allow(dead_code))]
 impl<'a, T> Run<'a, T, Mut> {
+    /// Borrow an exclusively held slice as a bounded interior-mutable run.
+    ///
+    /// The returned capability keeps the exclusive slice borrow active for
+    /// `'a`; individual slots may then be initialized or accessed through the
+    /// same `View<T, Mut>` surface as raw-backed native runs.
+    #[cfg_attr(not(feature = "triangulation"), allow(dead_code))]
+    #[inline(always)]
+    pub(crate) fn from_mut_slice(slice: &'a mut [T]) -> Self {
+        Self {
+            base: slice.as_mut_ptr(),
+            count: slice.len(),
+            _marker: PhantomData,
+        }
+    }
+
     /// Vouch for one contiguous interior-mutable run.
     ///
     /// # Safety

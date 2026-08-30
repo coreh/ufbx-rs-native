@@ -4697,17 +4697,17 @@ pub(crate) unsafe fn catch_triangulate_face<M: Mode>(
     ) {
         return 0;
     }
+    // SAFETY: the raw output contract supplies `num_indices` stable,
+    // write-capable slots. The capacity check above establishes the dense
+    // triangle-output prefix; the ngon path may also use the remainder as
+    // scratch before publishing that prefix.
+    let indices_write = unsafe { Run::<u32>::from_raw_parts(indices, num_indices) };
 
     if face.num_indices == 3 {
-        // Fast case: Already a triangle
-        // SAFETY: `num_indices >= required_indices` was guarded above (`>= 3` for
-        // a triangle), so `indices.add(0..=2)` address distinct caller-reserved
-        // slots.
-        unsafe {
-            *indices.add(0) = face.index_begin.wrapping_add(0);
-            *indices.add(1) = face.index_begin.wrapping_add(1);
-            *indices.add(2) = face.index_begin.wrapping_add(2);
-        }
+        // Fast case: Already a triangle.
+        indices_write.write_at(0, face.index_begin.wrapping_add(0));
+        indices_write.write_at(1, face.index_begin.wrapping_add(1));
+        indices_write.write_at(2, face.index_begin.wrapping_add(2));
         1
     } else if face.num_indices == 4 {
         // Quad: Split along the shortest axis unless a vertex crosses the axis
@@ -4750,26 +4750,20 @@ pub(crate) unsafe fn catch_triangulate_face<M: Mode>(
             split_a = dot_na >= dot_nb;
         }
 
-        // SAFETY: a quad needs `required_indices == 6` slots, guarded above, so
-        // `indices.add(0..=5)` address distinct caller-reserved slots.
         if split_a {
-            unsafe {
-                *indices.add(0) = i0;
-                *indices.add(1) = i1;
-                *indices.add(2) = i2;
-                *indices.add(3) = i2;
-                *indices.add(4) = i3;
-                *indices.add(5) = i0;
-            }
+            indices_write.write_at(0, i0);
+            indices_write.write_at(1, i1);
+            indices_write.write_at(2, i2);
+            indices_write.write_at(3, i2);
+            indices_write.write_at(4, i3);
+            indices_write.write_at(5, i0);
         } else {
-            unsafe {
-                *indices.add(0) = i1;
-                *indices.add(1) = i2;
-                *indices.add(2) = i3;
-                *indices.add(3) = i3;
-                *indices.add(4) = i0;
-                *indices.add(5) = i1;
-            }
+            indices_write.write_at(0, i1);
+            indices_write.write_at(1, i2);
+            indices_write.write_at(2, i3);
+            indices_write.write_at(3, i3);
+            indices_write.write_at(4, i0);
+            indices_write.write_at(5, i1);
         }
 
         2
@@ -4795,26 +4789,36 @@ pub(crate) unsafe fn catch_triangulate_face<M: Mode>(
             u32::MAX
         };
 
-        // SAFETY: an all-zero bit pattern is a valid `[u32; 12]`.
-        let mut local_indices: [u32; 12] = unsafe { core::mem::zeroed() }; // ufbxi_uninit
+        let mut local_indices = [0u32; 12]; // ufbxi_uninit
         if num_indices_u32 < 12 {
-            // SAFETY: `local_indices` has 12 slots for `triangulate_ngon` to fill.
-            let num_tris: u32 = unsafe {
-                crate::native::topology::triangulate_ngon(&nc, local_indices.as_mut_ptr(), 12)
+            let num_tris = {
+                let local_write = Run::from_mut_slice(&mut local_indices);
+                // SAFETY: `nc` carries the checked face and mesh attribute
+                // relation established above; the local run supplies the
+                // triangulator's exact 12-word scratch capacity.
+                unsafe { crate::native::topology::triangulate_ngon(&nc, local_write) }
             };
             // SAFETY: `triangulate_ngon` wrote `num_tris * 3` indices into
-            // `local_indices`, and `indices` has room for `required_indices`.
+            // `local_indices`; the checked destination subrun has the required
+            // output capacity, and the stack source is distinct.
+            let output_count = num_tris.wrapping_mul(3) as usize;
             unsafe {
                 core::ptr::copy_nonoverlapping(
                     local_indices.as_ptr(),
-                    indices,
-                    num_tris.wrapping_mul(3) as usize,
+                    indices_write.subrun(0, output_count).as_mut_ptr(),
+                    output_count,
                 );
             }
             num_tris
         } else {
-            // SAFETY: `indices` has space for `num_indices_u32` triangle indices.
-            unsafe { crate::native::topology::triangulate_ngon(&nc, indices, num_indices_u32) }
+            // SAFETY: `nc` carries the checked face and mesh attribute relation;
+            // the clamped prefix exactly matches C's `uint32_t` capacity.
+            unsafe {
+                crate::native::topology::triangulate_ngon(
+                    &nc,
+                    indices_write.subrun(0, num_indices_u32 as usize),
+                )
+            }
         }
     }
 }

@@ -38,6 +38,8 @@ use crate::prelude::as_f64;
 #[cfg(feature = "triangulation")]
 use crate::prelude::Real;
 use core::ffi::c_void;
+#[cfg(feature = "triangulation")]
+use core::mem::align_of;
 use core::mem::size_of;
 
 // -- KD tree (ufbx.c:28245-28470, `#if UFBXI_FEATURE_KD`)
@@ -472,9 +474,16 @@ unsafe fn kd_check_fast_rec(
 pub(crate) unsafe fn kd_check(nc: &NgonContext, points: &[Vec2], indices: &[u32]) -> bool {
     assert!(points.len() >= 3);
     assert!(indices.len() >= 3);
-    // SAFETY: `KdTriangle` is plain arithmetic/index scalars; an all-zero bit
-    // pattern is a valid value.
-    let mut tri: KdTriangle = unsafe { core::mem::zeroed() }; // ufbxi_uninit
+    let zero = Vec2 {
+        x: 0.0f32 as Real,
+        y: 0.0f32 as Real,
+    };
+    let mut tri = KdTriangle {
+        min_t: [0.0f32 as Real; 2],
+        max_t: [0.0f32 as Real; 2],
+        points: [zero; 3],
+        indices: [0; 3],
+    }; // ufbxi_uninit
 
     tri.points[0] = points[0];
     tri.points[1] = points[1];
@@ -715,14 +724,55 @@ pub(crate) fn ngon_tri_weight(points: &[Vec2]) -> Real {
     ) as Real
 }
 
+// The triangulator stores its circular adjacency as interleaved
+// `{ previous, next }` words in the tail of the caller's scratch run.
+#[cfg(feature = "triangulation")]
+#[repr(C)]
+struct NgonEdge {
+    prev: u32,
+    next: u32,
+}
+
+#[cfg(feature = "triangulation")]
+const _: () = {
+    assert!(size_of::<NgonEdge>() == 2 * size_of::<u32>());
+    assert!(align_of::<NgonEdge>() == align_of::<u32>());
+};
+
+#[cfg(feature = "triangulation")]
+impl<M: Mode> View<NgonEdge, M> {
+    #[inline(always)]
+    fn prev(&self) -> u32 {
+        view_read_shared!(self, prev)
+    }
+
+    #[inline(always)]
+    fn next(&self) -> u32 {
+        view_read_shared!(self, next)
+    }
+}
+
+#[cfg(feature = "triangulation")]
+impl View<NgonEdge> {
+    #[inline(always)]
+    fn set_prev(&self, prev: u32) {
+        view_write!(self, prev, prev)
+    }
+
+    #[inline(always)]
+    fn set_next(&self, next: u32) {
+        view_write!(self, next, next)
+    }
+}
+
 // ufbx.c:28489-28688 `ufbxi_triangulate_ngon`
+// Stays `unsafe fn`: the bounded run carries the output/scratch allocation,
+// but `nc.face` must still describe a valid range in `nc.positions`, and the
+// face-size arithmetic must remain in C's non-wrapping allocation domain.
 #[cfg(feature = "triangulation")]
 #[inline(never)]
-pub(crate) unsafe fn triangulate_ngon(
-    nc: &NgonContext,
-    indices: *mut u32,
-    num_indices: u32,
-) -> u32 {
+pub(crate) unsafe fn triangulate_ngon(nc: &NgonContext, indices: Run<'_, u32>) -> u32 {
+    assert!(indices.len() <= u32::MAX as usize);
     let face: Face = nc.face();
     ufbx_assert!(face.num_indices > 4);
 
@@ -741,29 +791,26 @@ pub(crate) unsafe fn triangulate_ngon(
         normal.z = 0.0;
     }
 
-    // SAFETY: `Vec3` is three `Real`s; an all-zero bit pattern is a valid value.
-    let mut axis: Vec3 = unsafe { core::mem::zeroed() }; // ufbxi_uninit
-    if normal.x * normal.x < 0.5 {
-        axis.x = 1.0;
-        axis.y = 0.0;
-        axis.z = 0.0;
+    let axis = if normal.x * normal.x < 0.5 {
+        Vec3 {
+            x: 1.0,
+            y: 0.0,
+            z: 0.0,
+        }
     } else {
-        axis.x = 0.0;
-        axis.y = 1.0;
-        axis.z = 0.0;
-    }
+        Vec3 {
+            x: 0.0,
+            y: 1.0,
+            z: 0.0,
+        }
+    };
     nc.axes_at(0).set(slow_normalized_cross3(&axis, &normal));
     nc.axes_at(1)
         .set(slow_normalized_cross3(&normal, &nc.axes_at(0).get()));
     nc.axes_at(2).set(normal);
 
-    let kd_indices: *mut u32 = indices;
+    let kd_indices = indices.as_mut_ptr();
     nc.set_kd_indices(kd_indices);
-
-    // SAFETY: the caller sizes `indices` for at least `num_indices` u32s with
-    // `num_indices >= face.num_indices * 2`, so `indices + face.num_indices`
-    // stays within that allocation.
-    let kd_tmp: *mut u32 = unsafe { indices.add(face.num_indices as usize) };
 
     // Collect all the reflex corners for intersection testing.
     let mut num_kd_indices: u32 = 0;
@@ -781,10 +828,9 @@ pub(crate) unsafe fn triangulate_ngon(
 
             if orient2d(a, b, c) <= 0.0 {
                 // C: `kd_indices[num_kd_indices++] = i;`
-                // SAFETY: at most one entry is pushed per corner, so
-                // `num_kd_indices < face.num_indices` slots of the `indices`
-                // scratch (aliased by `kd_indices`) stay in bounds.
-                unsafe { *kd_indices.add(num_kd_indices as usize) = i };
+                // At most one entry is pushed per corner, so the reflex prefix
+                // stays inside the bounded scratch run.
+                indices.write_at(num_kd_indices as usize, i);
                 num_kd_indices = num_kd_indices.wrapping_add(1);
             }
 
@@ -802,20 +848,29 @@ pub(crate) unsafe fn triangulate_ngon(
         0
     };
     ufbxi_ignore!(kd_slow_indices);
-    ufbx_assert!(kd_slow_indices.wrapping_add(face.num_indices.wrapping_mul(2)) <= num_indices);
+    let edge_words = (face.num_indices as usize)
+        .checked_mul(2)
+        .expect("ngon edge scratch size overflow");
+    let scratch_required = edge_words
+        .checked_add(kd_slow_indices as usize)
+        .expect("ngon scratch size overflow");
+    ufbx_assert!(scratch_required <= indices.len());
+    let kd_tmp = indices
+        .subrun(face.num_indices as usize, num_kd_indices as usize)
+        .as_mut_ptr();
     // SAFETY: `kd_indices` holds `num_kd_indices` live entries and `kd_tmp`
-    // is the matching scratch region `indices + face.num_indices`, both inside
-    // the caller's `indices` allocation.
+    // is the matching bounded scratch region beginning after the face-sized
+    // prefix.
     unsafe { kd_build(nc, kd_indices, kd_tmp, num_kd_indices, 0, 0, 0) };
 
     // C: `uint32_t *edges = indices + num_indices - face.num_indices * 2;`
-    // SAFETY: `num_indices >= face.num_indices * 2` (asserted above), so both
-    // `indices + num_indices` (one past the caller's allocation) and the
-    // `- 2*face.num_indices` back-off land inside that same allocation.
-    let edges: *mut u32 = unsafe {
-        indices
-            .add(num_indices as usize)
-            .sub(face.num_indices.wrapping_mul(2) as usize)
+    let edge_begin = indices.len() - edge_words;
+    let edge_storage = indices.subrun(edge_begin, edge_words);
+    // SAFETY: each `NgonEdge` is exactly the two consecutive `u32` words C
+    // assigns to a corner. The checked size and capacity assertion above cover
+    // exactly `face.num_indices` records in this tail.
+    let edges = unsafe {
+        Run::<NgonEdge>::from_raw_parts(edge_storage.as_mut_ptr().cast(), face.num_indices as usize)
     };
 
     // Initialize `edges` to be a connectivity structure where:
@@ -825,21 +880,17 @@ pub(crate) unsafe fn triangulate_ngon(
     {
         let mut i: u32 = 0;
         while i < face.num_indices {
-            // SAFETY: `i < face.num_indices`, so `2*i + {0,1}` index the
-            // `2*face.num_indices`-element `edges` region in bounds.
-            unsafe {
-                *edges.add(i.wrapping_mul(2).wrapping_add(0) as usize) = if i > 0 {
-                    i.wrapping_sub(1)
-                } else {
-                    face.num_indices.wrapping_sub(1)
-                };
-                *edges.add(i.wrapping_mul(2).wrapping_add(1) as usize) =
-                    if i.wrapping_add(1) < face.num_indices {
-                        i.wrapping_add(1)
-                    } else {
-                        0
-                    };
-            }
+            let edge = edges.at(i as usize);
+            edge.set_prev(if i > 0 {
+                i.wrapping_sub(1)
+            } else {
+                face.num_indices.wrapping_sub(1)
+            });
+            edge.set_next(if i.wrapping_add(1) < face.num_indices {
+                i.wrapping_add(1)
+            } else {
+                0
+            });
             i = i.wrapping_add(1);
         }
     }
@@ -853,10 +904,11 @@ pub(crate) unsafe fn triangulate_ngon(
     let mut indices_left: u32 = face.num_indices;
     {
         let mut point_indices: [u32; 4] = [0, 1, 2, 3];
-        // SAFETY: `[Real; 2]` is plain floats; an all-zero bit pattern is valid.
-        let mut weights: [Real; 2] = unsafe { core::mem::zeroed() }; // ufbxi_uninit
-                                                                     // SAFETY: `[Vec2; 4]` is plain floats; an all-zero bit pattern is valid.
-        let mut points: [Vec2; 4] = unsafe { core::mem::zeroed() }; // ufbxi_uninit
+        let mut weights = [0.0f32 as Real; 2]; // ufbxi_uninit
+        let mut points = [Vec2 {
+            x: 0.0f32 as Real,
+            y: 0.0f32 as Real,
+        }; 4]; // ufbxi_uninit
 
         let mut num_steps: u32 = 0;
         while indices_left > 3 {
@@ -896,17 +948,12 @@ pub(crate) unsafe fn triangulate_ngon(
                     let ib: u32 = point_indices[side.wrapping_add(1) as usize];
                     let ic: u32 = point_indices[side.wrapping_add(2) as usize];
 
-                    // Mark as clipped
-                    // SAFETY: `ib`/`ic`/`ia` are corner indices in
-                    // `[0, face.num_indices)`, so `2*idx + {0,1}` index the
-                    // `2*face.num_indices`-element `edges` region in bounds.
-                    unsafe {
-                        *edges.add(ib.wrapping_mul(2).wrapping_add(0) as usize) |= 0x80000000;
-                        *edges.add(ib.wrapping_mul(2).wrapping_add(1) as usize) |= 0x80000000;
-
-                        *edges.add(ic.wrapping_mul(2).wrapping_add(0) as usize) = ia;
-                        *edges.add(ia.wrapping_mul(2).wrapping_add(1) as usize) = ic;
-                    }
+                    // Mark as clipped.
+                    let edge_ib = edges.at(ib as usize);
+                    edge_ib.set_prev(edge_ib.prev() | 0x80000000);
+                    edge_ib.set_next(edge_ib.next() | 0x80000000);
+                    edges.at(ic as usize).set_prev(ia);
+                    edges.at(ia as usize).set_next(ic);
 
                     indices_left = indices_left.wrapping_sub(1);
 
@@ -915,18 +962,10 @@ pub(crate) unsafe fn triangulate_ngon(
 
                     if side == 1 {
                         point_indices[2] = point_indices[3];
-                        // SAFETY: `point_indices[3] < face.num_indices`, so
-                        // `2*idx + 1` indexes `edges` in bounds.
-                        point_indices[3] = unsafe {
-                            *edges.add(point_indices[3].wrapping_mul(2).wrapping_add(1) as usize)
-                        };
+                        point_indices[3] = edges.at(point_indices[3] as usize).next();
                     } else {
                         point_indices[1] = point_indices[0];
-                        // SAFETY: `point_indices[0] < face.num_indices`, so
-                        // `2*idx + 0` indexes `edges` in bounds.
-                        point_indices[0] = unsafe {
-                            *edges.add(point_indices[0].wrapping_mul(2).wrapping_add(0) as usize)
-                        };
+                        point_indices[0] = edges.at(point_indices[0] as usize).prev();
                     }
 
                     clipped = true;
@@ -942,10 +981,7 @@ pub(crate) unsafe fn triangulate_ngon(
             point_indices[0] = point_indices[1];
             point_indices[1] = point_indices[2];
             point_indices[2] = point_indices[3];
-            // SAFETY: `point_indices[3] < face.num_indices`, so `2*idx + 1`
-            // indexes the `2*face.num_indices`-element `edges` region in bounds.
-            point_indices[3] =
-                unsafe { *edges.add(point_indices[3].wrapping_mul(2).wrapping_add(1) as usize) };
+            point_indices[3] = edges.at(point_indices[3] as usize).next();
             num_steps = num_steps.wrapping_add(1);
 
             // If we have walked around the entire polygon it is irregular and
@@ -960,37 +996,24 @@ pub(crate) unsafe fn triangulate_ngon(
         // TODO: Could do something better here..
         let mut ix: u32 = point_indices[1];
         while indices_left > 3 {
-            // SAFETY: `ix` is a corner index in `[0, face.num_indices)`, so
-            // `2*ix + {0,1}` index the `2*face.num_indices`-element `edges` in
-            // bounds; the `prev`/`next` read back are themselves corner indices.
-            let (prev, next) = unsafe {
-                (
-                    *edges.add(ix.wrapping_mul(2).wrapping_add(0) as usize),
-                    *edges.add(ix.wrapping_mul(2).wrapping_add(1) as usize),
-                )
-            };
+            let edge = edges.at(ix as usize);
+            let prev = edge.prev();
+            let next = edge.next();
 
             // Mark as clipped
-            // SAFETY: `ix`/`prev`/`next` are corner indices in
-            // `[0, face.num_indices)`, so `2*idx + {0,1}` index `edges` in bounds.
-            unsafe {
-                *edges.add(ix.wrapping_mul(2).wrapping_add(0) as usize) |= 0x80000000;
-                *edges.add(ix.wrapping_mul(2).wrapping_add(1) as usize) |= 0x80000000;
-
-                *edges.add(prev.wrapping_mul(2).wrapping_add(1) as usize) = next;
-                *edges.add(next.wrapping_mul(2).wrapping_add(0) as usize) = prev;
-            }
+            edge.set_prev(edge.prev() | 0x80000000);
+            edge.set_next(edge.next() | 0x80000000);
+            edges.at(prev as usize).set_next(next);
+            edges.at(next as usize).set_prev(prev);
 
             indices_left = indices_left.wrapping_sub(1);
             ix = next;
         }
 
         // Now we have a single triangle left at `ix`.
-        // SAFETY: `ix < face.num_indices`, so `2*ix + {0,1}` index `edges` in bounds.
-        unsafe {
-            *edges.add(ix.wrapping_mul(2).wrapping_add(0) as usize) |= 0x80000000;
-            *edges.add(ix.wrapping_mul(2).wrapping_add(1) as usize) |= 0x80000000;
-        }
+        let edge = edges.at(ix as usize);
+        edge.set_prev(edge.prev() | 0x80000000);
+        edge.set_next(edge.next() | 0x80000000);
     }
 
     // Expand the adjacency information `edges` into proper triangles.
@@ -1000,45 +1023,33 @@ pub(crate) unsafe fn triangulate_ngon(
     let max_triangles: u32 = face.num_indices.wrapping_sub(2);
     let mut num_triangles: u32 = 0;
     let mut num_last_triangles: u32 = 0;
-    // SAFETY: `[u32; 12]` is plain ints; an all-zero bit pattern is valid.
-    let mut last_triangles: [u32; 4 * 3] = unsafe { core::mem::zeroed() }; // ufbxi_uninit
+    let mut last_triangles = [0u32; 4 * 3]; // ufbxi_uninit
 
     let index_begin: u32 = face.index_begin;
     let mut ix: u32 = 0;
     while ix < face.num_indices {
-        // SAFETY: `ix < face.num_indices`, so `2*ix + {0,1}` index the
-        // `2*face.num_indices`-element `edges` region in bounds.
-        let (prev, next) = unsafe {
-            (
-                *edges.add(ix.wrapping_mul(2).wrapping_add(0) as usize),
-                *edges.add(ix.wrapping_mul(2).wrapping_add(1) as usize),
-            )
-        };
+        let edge = edges.at(ix as usize);
+        let prev = edge.prev();
+        let next = edge.next();
         if (prev & 0x80000000) == 0 {
             ix = ix.wrapping_add(1);
             continue;
         }
 
-        // SAFETY: `num_triangles < max_triangles = face.num_indices - 2`, so
-        // `num_triangles * 3` stays within the caller's `indices` allocation.
-        let mut dst: *mut u32 = unsafe { indices.add(num_triangles.wrapping_mul(3) as usize) };
+        let triangle_begin = num_triangles.wrapping_mul(3) as usize;
         if num_triangles.wrapping_add(4) >= max_triangles {
-            // SAFETY: this arm runs at most 4 times, so `num_last_triangles < 4`
-            // and `num_last_triangles * 3 < 12`, in bounds for `last_triangles`.
-            dst = unsafe {
-                last_triangles
-                    .as_mut_ptr()
-                    .add(num_last_triangles.wrapping_mul(3) as usize)
-            };
+            let dst = num_last_triangles.wrapping_mul(3) as usize;
             num_last_triangles = num_last_triangles.wrapping_add(1);
-        }
-
-        // SAFETY: `dst` addresses 3 writable slots — either a triangle slot in
-        // `indices` or a `last_triangles` slot selected above.
-        unsafe {
-            *dst.add(0) = index_begin.wrapping_add(prev & 0x7fffffff);
-            *dst.add(1) = index_begin.wrapping_add(ix);
-            *dst.add(2) = index_begin.wrapping_add(next & 0x7fffffff);
+            last_triangles[dst] = index_begin.wrapping_add(prev & 0x7fffffff);
+            last_triangles[dst + 1] = index_begin.wrapping_add(ix);
+            last_triangles[dst + 2] = index_begin.wrapping_add(next & 0x7fffffff);
+        } else {
+            indices.write_at(triangle_begin, index_begin.wrapping_add(prev & 0x7fffffff));
+            indices.write_at(triangle_begin + 1, index_begin.wrapping_add(ix));
+            indices.write_at(
+                triangle_begin + 2,
+                index_begin.wrapping_add(next & 0x7fffffff),
+            );
         }
         num_triangles = num_triangles.wrapping_add(1);
         ix = ix.wrapping_add(1);
@@ -1050,15 +1061,15 @@ pub(crate) unsafe fn triangulate_ngon(
     // are copied to `indices + (max_triangles - num_last_triangles) * 3`, the
     // tail of the `max_triangles`-triangle output region in `indices`; source
     // (stack) and destination (caller buffer) are distinct objects.
+    let tail_begin = max_triangles
+        .wrapping_sub(num_last_triangles)
+        .wrapping_mul(3) as usize;
+    let tail_count = num_last_triangles.wrapping_mul(3) as usize;
     unsafe {
         core::ptr::copy_nonoverlapping(
             last_triangles.as_ptr(),
-            indices.add(
-                max_triangles
-                    .wrapping_sub(num_last_triangles)
-                    .wrapping_mul(3) as usize,
-            ),
-            num_last_triangles.wrapping_mul(3) as usize,
+            indices.subrun(tail_begin, tail_count).as_mut_ptr(),
+            tail_count,
         );
     }
 
