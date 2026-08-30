@@ -1470,11 +1470,7 @@ pub(crate) fn cmp_node_less<M: crate::native::view::Mode>(
 
 // ufbx.c:18612-18618 `ufbxi_sort_node_ptrs`
 #[inline(never)]
-pub(crate) unsafe fn sort_node_ptrs(
-    uc: &Context,
-    nodes: *mut *mut Node,
-    count: usize,
-) -> Result<(), Fail> {
+pub(crate) fn sort_node_ptrs(uc: &Context, nodes: Run<'_, Ref<Node>>) -> Result<(), Fail> {
     ufbxi_check!(
         uc,
         // SAFETY: the three pointers are `uc`'s own live `ator_tmp` and the
@@ -1484,22 +1480,22 @@ pub(crate) unsafe fn sort_node_ptrs(
                 uc.ator_tmp_view(),
                 uc.tmp_arr_mut_ptr(),
                 uc.tmp_arr_size_mut_ptr(),
-                count.wrapping_mul(size_of::<*mut Node>()),
+                nodes.len().wrapping_mul(size_of::<*mut Node>()),
             )
         },
         "ufbxi_grow_array_size((&uc->ator_tmp), sizeof(**(&uc->tmp_arr)), (&uc->tmp_arr), (&uc->tmp_arr_size), (count * sizeof(ufbx_node*)))"
     );
-    // SAFETY: `nodes` addresses `count` initialized node pointers (fn contract)
-    // and `tmp_arr` was just grown to `count * size_of::<*mut Node>()` bytes, so
-    // the two disjoint runs `macro_stable_sort` needs are in place; the
-    // comparator receives pointers into those runs, each holding a live `Node`
-    // pointer.
+    // SAFETY: `nodes` carries non-null references to live nodes and `tmp_arr` was
+    // just grown to `nodes.len() * size_of::<*mut Node>()` bytes, so the two
+    // disjoint runs `macro_stable_sort` needs are in place. `Ref<Node>` is
+    // transparent over the stored node pointer; the sort only copies those
+    // pointer values, and the comparator receives pointees from the two runs.
     unsafe {
         macro_stable_sort_ptr_views::<Node>(
             32,
-            nodes,
+            nodes.as_mut_ptr().cast::<*mut Node>(),
             uc.tmp_arr() as *mut *mut Node,
-            count,
+            nodes.len(),
             cmp_node_less,
         )
     };
@@ -1610,12 +1606,12 @@ pub(crate) fn cmp_connection_less<M: Mode>(
 
 // ufbx.c:18648-18653 `ufbxi_sort_connections`
 #[inline(never)]
-pub(crate) unsafe fn sort_connections(
+pub(crate) fn sort_connections(
     uc: &Context,
-    connections: *mut Connection,
-    count: usize,
+    connections: Run<'_, Connection>,
     index: usize,
 ) -> Result<(), Fail> {
+    ufbx_assert!(index < 2);
     ufbxi_check!(
         uc,
         // SAFETY: the three pointers are `uc`'s own live `ator_tmp` and the
@@ -1625,22 +1621,23 @@ pub(crate) unsafe fn sort_connections(
                 uc.ator_tmp_view(),
                 uc.tmp_arr_mut_ptr(),
                 uc.tmp_arr_size_mut_ptr(),
-                count.wrapping_mul(size_of::<Connection>()),
+                connections
+                    .len()
+                    .wrapping_mul(size_of::<Connection>()),
             )
         },
         "ufbxi_grow_array_size((&uc->ator_tmp), sizeof(**(&uc->tmp_arr)), (&uc->tmp_arr), (&uc->tmp_arr_size), (count * sizeof(ufbx_connection)))"
     );
-    // SAFETY: `connections` addresses `count` initialized `Connection`s (fn
-    // contract) and `tmp_arr` was just grown to `count * size_of::<Connection>()`
-    // bytes, so the two disjoint runs `macro_stable_sort` needs are in place; it
-    // hands the comparator pointers to live elements of those runs, and `index`
-    // is the caller's 0-or-1 field selector.
+    // SAFETY: `connections` carries the initialized `Connection` run and
+    // `tmp_arr` was just grown to its byte size, so the two disjoint runs
+    // `macro_stable_sort` needs are in place; it hands the comparator pointers to
+    // live elements of those runs, and `index` is asserted to be 0 or 1 above.
     unsafe {
         macro_stable_sort_views::<Connection>(
             32,
-            connections,
+            connections.as_mut_ptr(),
             uc.tmp_arr() as *mut Connection,
-            count,
+            connections.len(),
             |a, b| cmp_connection_less(a, b, index),
         )
     };
@@ -1858,35 +1855,30 @@ pub(crate) fn resolve_connections(uc: &Context) -> Result<(), Fail> {
     uc.scene_view()
         .connections_dst_view()
         .set_count(uc.scene_view().connections_src_view().count());
-    // SAFETY: copies the `connections_src` run just materialized in uc's own
-    // result buffer into a second run in that same buffer, then sorts both runs
-    // in place with their own counts.
-    unsafe {
-        uc.scene_view().connections_dst_view().set_data(
-            uc.result_view().push_copy_raw::<Connection>(
-                uc.scene_view().connections_src_view().count(),
-                uc.scene_view().connections_src_view().data(),
-            ),
-        );
-        ufbxi_check!(
-            uc,
-            !uc.scene_view().connections_dst_view().data().is_null(),
-            "uc->scene.connections_dst.data"
-        );
-
-        sort_connections(
-            uc,
-            uc.scene_view().connections_src_view().data() as *mut Connection,
+    // SAFETY: copies the initialized `connections_src` run just materialized in
+    // uc's own result buffer into a second run in that same stable buffer.
+    uc.scene_view().connections_dst_view().set_data(unsafe {
+        uc.result_view().push_copy_raw::<Connection>(
             uc.scene_view().connections_src_view().count(),
-            0,
-        )?;
-        sort_connections(
-            uc,
-            uc.scene_view().connections_dst_view().data() as *mut Connection,
-            uc.scene_view().connections_dst_view().count(),
-            1,
-        )?;
-    }
+            uc.scene_view().connections_src_view().data(),
+        )
+    });
+    ufbxi_check!(
+        uc,
+        !uc.scene_view().connections_dst_view().data().is_null(),
+        "uc->scene.connections_dst.data"
+    );
+
+    sort_connections(
+        uc,
+        Run::from_list(uc.scene_view().connections_src_view()),
+        0,
+    )?;
+    sort_connections(
+        uc,
+        Run::from_list(uc.scene_view().connections_dst_view()),
+        1,
+    )?;
 
     // We don't need the temporary connections at this point anymore
     buf_free(uc.tmp_connections_view());
@@ -2273,12 +2265,18 @@ pub(crate) fn linearize_nodes(uc: &Context) -> Result<(), Fail> {
         }
     }
 
-    // SAFETY: sorts the fresh `num_nodes`-element `node_ptrs` run, then re-indexes
-    // it; each `p_offset` is the fresh non-null result of a push onto uc's own
-    // typed-offset buffer, and `original_id` is that node's index into the
-    // equally sized `node_offsets` run.
+    // SAFETY: every slot of the fresh `num_nodes`-element `node_ptrs` run was
+    // filled above with a non-null, live arena node, so its transparent
+    // `Ref<Node>` representation may be vouched immediately for the sort. The
+    // remaining raw operations re-index that sorted run; each `p_offset` is the
+    // fresh non-null result of a push onto uc's own typed-offset buffer, and
+    // `original_id` is that node's index into the equally sized `node_offsets`
+    // run.
     unsafe {
-        sort_node_ptrs(uc, node_ptrs, num_nodes)?;
+        sort_node_ptrs(
+            uc,
+            Run::from_raw_parts(node_ptrs.cast::<Ref<Node>>(), num_nodes),
+        )?;
 
         for i in 0..num_nodes as u32 {
             let p_offset: *mut usize = uc

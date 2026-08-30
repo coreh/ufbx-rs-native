@@ -295,10 +295,7 @@ pub(crate) fn read_property(
     }
 
     if let Some(got) = get_val_at::<i64>(node, val_ix as usize) {
-        // SAFETY: `value_int_raw()` addresses the viewed prop's own live `int64_t` field.
-        unsafe {
-            *prop.value_int_raw() = got;
-        }
+        prop.set_value_int(got);
         flags |= PropFlags::VALUE_INT.raw();
     }
 
@@ -332,16 +329,10 @@ pub(crate) fn read_property(
     }
 
     if let Some(got) = get_val_at::<Checked<String>>(node, val_ix as usize) {
-        // SAFETY: `value_str_raw()` addresses the viewed prop's own live `ufbx_string` field.
-        unsafe {
-            *prop.value_str_raw() = got.0;
-        }
+        prop.set_value_str(got.0);
         if prop.value_str().length > 0 {
             if let Some(got) = get_val_at::<Blob>(node, val_ix as usize) {
-                // SAFETY: `value_blob_raw()` addresses the viewed prop's own live `ufbx_blob` field.
-                unsafe {
-                    *prop.value_blob_raw() = got;
-                }
+                prop.set_value_blob(got);
             }
         }
         flags |= PropFlags::VALUE_STR.raw();
@@ -352,11 +343,7 @@ pub(crate) fn read_property(
     // Very unlikely, seems to only exist in some "non standard" FBX files
     if node.num_children() > 0 {
         let binary = find_child(node, sp::BinaryData.as_ptr());
-        // SAFETY: `value_blob_raw()` is the viewed prop's own `value_blob`
-        // field, which is what `read_embedded_blob` writes — arena memory
-        // reached through a write-capable view, live and unmoved for the call.
-        let dst_blob: &BlobView = unsafe { BlobView::from_ptr(prop.value_blob_raw()) };
-        read_embedded_blob(uc, dst_blob, binary)?;
+        read_embedded_blob(uc, prop.value_blob_view(), binary)?;
         flags |= PropFlags::VALUE_BLOB.raw();
     }
 

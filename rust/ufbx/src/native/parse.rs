@@ -7287,40 +7287,29 @@ pub(crate) fn find_prop_with_key<'a, M: Mode>(
 ) -> Option<&'a View<Prop, M>> {
     let mut props: Option<&'a View<Props, M>> = Some(props);
     while let Some(cur) = props {
-        let prop_data: *mut Prop = cur.props_data();
+        let prop_list = cur.props_view();
         let mut begin: usize = 0;
-        let mut end: usize = cur.props_count();
+        let mut end: usize = prop_list.count();
         while end - begin >= 16 {
             let mid: usize = (begin + end) >> 1;
-            // SAFETY: `mid < end <= props_count`, so `prop_data.add(mid)` indexes a
-            // live `Prop` in `cur`'s run.
-            let p: *const Prop = unsafe { prop_data.add(mid) };
-            // SAFETY: `p` addresses a live `Prop`; read its `_internal_key`.
-            if unsafe { (*p)._internal_key } < key {
+            let p = prop_list.at(mid);
+            if p._internal_key() < key {
                 begin = mid + 1;
             } else {
                 end = mid;
             }
         }
 
-        end = cur.props_count();
+        end = prop_list.count();
         while begin < end {
-            // SAFETY: `begin < end <= props_count`, so `prop_data.add(begin)`
-            // indexes a live `Prop` in `cur`'s run.
-            let p: *const Prop = unsafe { prop_data.add(begin) };
-            // SAFETY: `p` addresses a live `Prop`; read its `_internal_key`.
-            if unsafe { (*p)._internal_key } > key {
+            let p = prop_list.at(begin);
+            if p._internal_key() > key {
                 break;
             }
-            // SAFETY: `p` addresses a live `Prop`; read its `name.data` and `flags`.
-            if unsafe { (*p).name.data } == name.as_ptr()
-                && (unsafe { (*p).flags.raw() } & PropFlags::NO_VALUE.raw()) == 0
+            if p.name_view().data() == name.as_ptr()
+                && (p.flags().raw() & PropFlags::NO_VALUE.raw()) == 0
             {
-                // Mode-generic mint from the STORED run pointer (`props_data()`
-                // value read) — adequate provenance for either mode.
-                // SAFETY: `p` addresses a live `Prop` in `cur`'s run, so minting a
-                // `View<Prop, M>` over it reinterprets it in place.
-                return Some(unsafe { View::<Prop, M>::mint(p as *mut Prop) });
+                return Some(p);
             }
             begin += 1;
         }
