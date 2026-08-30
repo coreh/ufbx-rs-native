@@ -81,6 +81,19 @@ impl<M: Mode> View<SubdivideInput, M> {
     }
 }
 
+#[cfg(feature = "subdivision")]
+impl View<SubdivideInput> {
+    #[inline(always)]
+    pub(crate) fn set_data(&self, data: *const c_void) {
+        view_write!(self, data, data)
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_weight(&self, weight: Real) {
+        view_write!(self, weight, weight)
+    }
+}
+
 // ufbx.c:28830 `typedef int ufbxi_subdivide_sum_fn(void *user, void *output,
 // const ufbxi_subdivide_input *inputs, size_t num_inputs);`
 // C passes function designators (`&ufbxi_subdivide_sum_vec3`) — fn pointers,
@@ -855,15 +868,17 @@ pub(crate) unsafe extern "C" fn subdivide_sum_vertex_weights(
 ) -> i32 {
     // SAFETY: the callback contract supplies a live `SubdivideContext` and
     // `num_inputs` initialized, aligned input records that stay stable and
-    // frozen through the walk.
-    let (sc, inputs) = unsafe {
-        (
-            &*(user as *const SubdivideContext),
-            Run::<SubdivideInput, Const>::from_const_raw_parts(inputs, num_inputs),
-        )
+    // frozen through the walk. This callback is registered only after the
+    // context's checked zero-push allocates one initialized accumulator per
+    // source vertex; tmp-arena allocations stay stable during the callback.
+    let (sc, inputs, vertex_weights) = unsafe {
+        let sc = &*(user as *const SubdivideContext);
+        let inputs = Run::<SubdivideInput, Const>::from_const_raw_parts(inputs, num_inputs);
+        let vertex_weights =
+            Run::<Real>::from_raw_parts(sc.tmp_vertex_weights(), sc.src_mesh_view().num_vertices());
+        (sc, inputs, vertex_weights)
     };
 
-    let vertex_weights: *mut Real = sc.tmp_vertex_weights();
     let tmp_weights: *mut SubdivisionWeight = sc.tmp_weights();
     let mut num_weights: usize = 0;
 
@@ -905,15 +920,11 @@ pub(crate) unsafe extern "C" fn subdivide_sum_vertex_weights(
             let vx: u32 = src_weight.index();
             ufbxi_dev_assert!((vx as usize) < sc.src_mesh_view().num_vertices());
 
-            // SAFETY: `vx` is `< num_vertices` by loaded-data consistency —
-            // the same invariant upstream relies on for both the
-            // source-vertex path (where `vx` is a vertex index) and the skin
-            // path (where it is a cluster index), dev-asserted above in
-            // dev/regression builds. `vertex_weights` (`tmp_vertex_weights`)
-            // holds one `Real` per source vertex, so `.add(vx)` is in-bounds.
-            let prev: Real = unsafe { *vertex_weights.add(vx as usize) };
-            // SAFETY: as above; in-bounds write to the accumulator slot.
-            unsafe { *vertex_weights.add(vx as usize) = prev + weight };
+            // SAFETY: the checked accumulator slot was initialized by the
+            // zero-push and stays initialized between updates. A malformed
+            // out-of-range `vx` is rejected by `subrun()` before this read.
+            let prev: Real = unsafe { *vertex_weights.subrun(vx as usize, 1).as_ptr() };
+            vertex_weights.write_at(vx as usize, prev + weight);
             if prev == 0.0 {
                 // SAFETY: at most one entry is pushed per distinct index, and
                 // the distinct indices of each path (source vertices or skin
@@ -928,18 +939,25 @@ pub(crate) unsafe extern "C" fn subdivide_sum_vertex_weights(
         input_ix += 1;
     }
 
+    // Every appended record has an initialized index leaf; weight leaves are
+    // initialized by the following loop. Distinct accepted indices are bounded
+    // by the active source-vertex or skin-cluster domain used to size the
+    // `tmp_weights` allocation.
+    // SAFETY: the callback accumulation above appended exactly `num_weights`
+    // dense entries within that stable, write-capable scratch allocation.
+    let tmp_weights_write =
+        unsafe { Run::<SubdivisionWeight>::from_raw_parts(tmp_weights, num_weights) };
+
     // C: `ufbxi_nounroll for (size_t i = 0; i != num_weights; i++)`
     let mut i: usize = 0;
     while i != num_weights {
-        // SAFETY: `i < num_weights` and `tmp_weights` holds `num_weights` live
-        // entries populated above, so `.add(i)` is in-bounds.
-        let vx: u32 = unsafe { (*tmp_weights.add(i)).index };
-        // SAFETY: `.add(i)` is in-bounds (as above); `vx` was recorded above as
-        // an index `< num_vertices`, so `vertex_weights.add(vx)` is in-bounds.
-        unsafe { (*tmp_weights.add(i)).weight = *vertex_weights.add(vx as usize) };
-        // SAFETY: `vx` is `< num_vertices`, so `.add(vx)` is in-bounds; the
-        // accumulator is reset to zero for reuse.
-        unsafe { *vertex_weights.add(vx as usize) = 0.0 };
+        let tmp_weight = tmp_weights_write.at(i);
+        let vx = tmp_weight.index();
+        // SAFETY: `vx` was accepted into the checked accumulator run above, and
+        // that initialized slot has not been reset yet.
+        let weight = unsafe { *vertex_weights.subrun(vx as usize, 1).as_ptr() };
+        tmp_weight.set_weight(weight);
+        vertex_weights.write_at(vx as usize, 0.0);
         i += 1;
     }
 
@@ -948,7 +966,7 @@ pub(crate) unsafe extern "C" fn subdivide_sum_vertex_weights(
     // comparator and the `null` user pointer is unused by it.
     unsafe {
         unstable_sort(
-            tmp_weights as *mut c_void,
+            tmp_weights_write.as_mut_ptr() as *mut c_void,
             num_weights,
             size_of::<SubdivisionWeight>(),
             subdivision_weight_less,
@@ -958,31 +976,31 @@ pub(crate) unsafe extern "C" fn subdivide_sum_vertex_weights(
 
     if sc.max_vertex_weights() != usize::MAX {
         num_weights = min_sz(sc.max_vertex_weights(), num_weights);
+        let retained_weights = tmp_weights_write.subrun(0, num_weights);
 
         // Normalize weights
         let mut prefix_weight: Real = 0.0;
         // C: `ufbxi_nounroll for (size_t i = 0; i != num_weights; i++)`
         let mut i: usize = 0;
         while i != num_weights {
-            // SAFETY: `i < num_weights` (post-clamp) and `tmp_weights` holds at
-            // least that many live entries, so `.add(i)` is in-bounds.
-            prefix_weight += unsafe { (*tmp_weights.add(i)).weight };
+            prefix_weight += retained_weights.at(i).weight();
             i += 1;
         }
         let mut i: usize = 0;
         while i != num_weights {
-            // SAFETY: `i < num_weights` and `.add(i)` is in-bounds (as above).
-            unsafe { (*tmp_weights.add(i)).weight /= prefix_weight };
+            let weight = retained_weights.at(i);
+            weight.set_weight(weight.weight() / prefix_weight);
             i += 1;
         }
     }
 
+    let retained_weights = tmp_weights_write.subrun(0, num_weights);
     sc.set_total_weights(sc.total_weights().wrapping_add(num_weights));
-    // SAFETY: `tmp_mut_ptr()` is `sc`'s own live scratch `Buf`; `tmp_weights`
-    // holds `num_weights` live `SubdivisionWeight` entries to copy from.
+    // SAFETY: `tmp_view()` is `sc`'s own live scratch `Buf`; `tmp_weights`
+    // holds the checked, fully initialized retained prefix to copy from.
     let weights: *mut SubdivisionWeight = unsafe {
         sc.tmp_view()
-            .push_copy_raw::<SubdivisionWeight>(num_weights, tmp_weights)
+            .push_copy_raw::<SubdivisionWeight>(num_weights, retained_weights.as_ptr())
     };
     // C: `ufbxi_check_err(&sc->error, weights);` — this function returns `int`,
     // so the C macro's `return 0` is a plain 0 here.
@@ -1233,6 +1251,11 @@ pub(crate) fn subdivide_layer(
         "ufbxi_grow_array_size((&sc->ator_tmp), sizeof(**(&sc->inputs)), (&sc->inputs), (&sc->inputs_cap), (min_inputs))"
     );
     let mut inputs: *mut SubdivideInput = sc.inputs();
+    // SAFETY: the successful grow owns a stable, write-capable prefix of
+    // `min_inputs` records until the first later grow in vertex processing.
+    // `min_inputs >= max_face_triangles+2` covers every face and
+    // `min_inputs >= 32` covers every edge callback.
+    let inputs_write = unsafe { Run::<SubdivideInput>::from_raw_parts(inputs, min_inputs) };
 
     // Assume initially unique per vertex, remove if not the case
     output.set_unique_per_vertex(true);
@@ -1293,16 +1316,16 @@ pub(crate) fn subdivide_layer(
         let mut ci: u32 = 0;
         while ci < face.num_indices {
             let ix: u32 = face.index_begin.wrapping_add(ci);
-            // SAFETY: `inputs` was grown to hold at least `max_face_triangles+2`
-            // and `>= 32` entries, so `ci < face.num_indices` indexes a live
-            // slot; the checked stored index addresses a live input value whose
-            // `stride`-sized entry the byte offset addresses.
-            unsafe {
-                (*inputs.add(ci as usize)).data = (input.values() as *const u8)
+            // SAFETY: the checked stored index addresses a live input value
+            // whose `stride`-sized entry the byte offset addresses.
+            let data = unsafe {
+                (input.values() as *const u8)
                     .add((input_indices.copy_at(ix as usize) as usize).wrapping_mul(stride))
-                    as *const c_void;
-                (*inputs.add(ci as usize)).weight = weight;
-            }
+                    as *const c_void
+            };
+            let input_slot = inputs_write.at(ci as usize);
+            input_slot.set_data(data);
+            input_slot.set_weight(weight);
             ci += 1;
         }
 
@@ -1315,7 +1338,7 @@ pub(crate) fn subdivide_layer(
                 sum_fn(
                     sum_user,
                     dst as *mut c_void,
-                    inputs,
+                    inputs_write.subrun(0, face.num_indices as usize).as_ptr(),
                     face.num_indices as usize,
                 )
             } != 0,
@@ -1386,39 +1409,51 @@ pub(crate) fn subdivide_layer(
                     stride,
                 )
                 .as_ptr();
-            // SAFETY: `inputs` holds at least 4 live slots (grown `>= 32`); the
-            // four `data`/`weight` fields are the sum-fn's inputs.
-            unsafe {
-                (*inputs.add(0)).data = v0 as *const c_void;
-                (*inputs.add(0)).weight = 0.25;
-                (*inputs.add(1)).data = v1 as *const c_void;
-                (*inputs.add(1)).weight = 0.25;
-                (*inputs.add(2)).data = f0 as *const c_void;
-                (*inputs.add(2)).weight = 0.25;
-                (*inputs.add(3)).data = f1 as *const c_void;
-                (*inputs.add(3)).weight = 0.25;
-            }
+            let input_slot = inputs_write.at(0);
+            input_slot.set_data(v0 as *const c_void);
+            input_slot.set_weight(0.25);
+            let input_slot = inputs_write.at(1);
+            input_slot.set_data(v1 as *const c_void);
+            input_slot.set_weight(0.25);
+            let input_slot = inputs_write.at(2);
+            input_slot.set_data(f0 as *const c_void);
+            input_slot.set_weight(0.25);
+            let input_slot = inputs_write.at(3);
+            input_slot.set_data(f1 as *const c_void);
+            input_slot.set_weight(0.25);
             ufbxi_check_err!(
                 sc.error_view(),
                 // SAFETY: `sum_fn`/`sum_user`/`dst` and the 4 inputs satisfy the
                 // summer callback contract.
-                unsafe { sum_fn(sum_user, dst as *mut c_void, inputs, 4) } != 0,
+                unsafe {
+                    sum_fn(
+                        sum_user,
+                        dst as *mut c_void,
+                        inputs_write.subrun(0, 4).as_ptr(),
+                        4,
+                    )
+                } != 0,
                 "sum_fn(sum_user, dst, inputs, 4)"
             );
         } else if crease >= 1.0 {
-            // SAFETY: `inputs` holds at least 2 live slots; these are the two
-            // sum-fn inputs.
-            unsafe {
-                (*inputs.add(0)).data = v0 as *const c_void;
-                (*inputs.add(0)).weight = 0.5;
-                (*inputs.add(1)).data = v1 as *const c_void;
-                (*inputs.add(1)).weight = 0.5;
-            }
+            let input_slot = inputs_write.at(0);
+            input_slot.set_data(v0 as *const c_void);
+            input_slot.set_weight(0.5);
+            let input_slot = inputs_write.at(1);
+            input_slot.set_data(v1 as *const c_void);
+            input_slot.set_weight(0.5);
             ufbxi_check_err!(
                 sc.error_view(),
                 // SAFETY: `sum_fn`/`sum_user`/`dst` and the 2 inputs satisfy the
                 // summer callback contract.
-                unsafe { sum_fn(sum_user, dst as *mut c_void, inputs, 2) } != 0,
+                unsafe {
+                    sum_fn(
+                        sum_user,
+                        dst as *mut c_void,
+                        inputs_write.subrun(0, 2).as_ptr(),
+                        2,
+                    )
+                } != 0,
                 "sum_fn(sum_user, dst, inputs, 2)"
             );
         } else if crease < 1.0 {
@@ -1434,28 +1469,40 @@ pub(crate) fn subdivide_layer(
             let w0: Real = 0.25 + 0.25 * crease;
             let w1: Real = 0.25 - 0.25 * crease;
 
-            // SAFETY: `inputs` holds at least 4 live slots; these are the sum-fn
-            // inputs.
-            unsafe {
-                (*inputs.add(0)).data = v0 as *const c_void;
-                (*inputs.add(0)).weight = w0;
-                (*inputs.add(1)).data = v1 as *const c_void;
-                (*inputs.add(1)).weight = w0;
-                (*inputs.add(2)).data = f0 as *const c_void;
-                (*inputs.add(2)).weight = w1;
-                (*inputs.add(3)).data = f1 as *const c_void;
-                (*inputs.add(3)).weight = w1;
-            }
+            let input_slot = inputs_write.at(0);
+            input_slot.set_data(v0 as *const c_void);
+            input_slot.set_weight(w0);
+            let input_slot = inputs_write.at(1);
+            input_slot.set_data(v1 as *const c_void);
+            input_slot.set_weight(w0);
+            let input_slot = inputs_write.at(2);
+            input_slot.set_data(f0 as *const c_void);
+            input_slot.set_weight(w1);
+            let input_slot = inputs_write.at(3);
+            input_slot.set_data(f1 as *const c_void);
+            input_slot.set_weight(w1);
             ufbxi_check_err!(
                 sc.error_view(),
                 // SAFETY: `sum_fn`/`sum_user`/`dst` and the 4 inputs satisfy the
                 // summer callback contract.
-                unsafe { sum_fn(sum_user, dst as *mut c_void, inputs, 4) } != 0,
+                unsafe {
+                    sum_fn(
+                        sum_user,
+                        dst as *mut c_void,
+                        inputs_write.subrun(0, 4).as_ptr(),
+                        4,
+                    )
+                } != 0,
                 "sum_fn(sum_user, dst, inputs, 4)"
             );
         }
         ix = ix.wrapping_add(1);
     }
+
+    // The bounded face/edge input epoch ends before vertex processing. Vertex
+    // grows may replace the allocation, and one upstream path deliberately
+    // retains the pre-grow local pointer, so the raw `inputs` carrier below is
+    // kept separate from `inputs_write`.
 
     // Vertex points
     let mut vi: usize = 0;
