@@ -54,7 +54,7 @@ use crate::native::io::refill;
 #[cfg(feature = "obj")]
 use crate::native::parse::{
     get_name_key, r#match, report_progress, Context, ElementInfo, FbxIdEntry, ObjAttrib,
-    ObjFastIndices, ObjGroupEntry, ObjMesh, OBJ_NUM_ATTRIBS, OBJ_NUM_ATTRIBS_EXT,
+    ObjGroupEntry, ObjMesh, OBJ_NUM_ATTRIBS, OBJ_NUM_ATTRIBS_EXT,
 };
 // The `#else`-branch stubs still take `&Context`.
 #[cfg(not(feature = "obj"))]
@@ -803,46 +803,25 @@ pub(crate) fn obj_parse_vertex(uc: &Context, attrib: ObjAttrib, offset: usize) -
 // ufbx.c:17110-17166 `ufbxi_obj_parse_index`
 #[cfg(feature = "obj")]
 #[inline(never)]
-/// # Safety
-///
-/// `s` holds a token span (possibly empty) at token index >= 1 within the line
-/// window `obj_tokenize` scanned, so `data .. data + length` is readable and so
-/// is the byte *at* `end`: `obj_tokenize` terminates every non-'#' token on a
-/// delimiter byte inside that window (in the worst case the '\n' sentinel
-/// `obj_read_line` appends), and a '#' token — the one kind that ends on an
-/// arbitrary byte — is only ever produced at index 0, so none reaches here.
-pub(crate) unsafe fn obj_parse_index(
+pub(crate) fn obj_parse_index<'a>(
     uc: &Context,
     mesh: &ObjMeshView,
-    s: &mut String,
+    s: &'a [u8],
     attrib: u32,
-) -> Result<(), Fail> {
-    // SAFETY: the span `s` describes is readable per the fn contract, so `end`
-    // is one past its last byte and still within the window. The `'/'` rebasing
-    // below only shrinks a span from the front, keeping the same `end`.
-    let (mut ptr, end) = (s.data, unsafe { s.data.add(s.length) });
+) -> Result<&'a [u8], Fail> {
+    let mut pos: usize = 0;
 
     let mut negative: bool = false;
-    // SAFETY: `ptr` is either inside the span or equal to `end`; both are
-    // readable per the window invariant above. (Callers do reach here with an
-    // empty span: `obj_parse_faces` runs all `OBJ_NUM_ATTRIBS` attributes over
-    // one token that this function rebases in place, so a position-only token
-    // like "3" is exhausted after the first attribute.) The byte at `end` is a
-    // delimiter, never `'-'`, so the advance below stays within the span.
-    if unsafe { *ptr } == b'-' {
+    if s.first() == Some(&b'-') {
         negative = true;
-        // SAFETY: the byte just read is `'-'`, so it is a span byte rather than
-        // the delimiter at `end`; advancing lands at most on `end`.
-        ptr = unsafe { ptr.add(1) };
+        pos += 1;
     }
 
     // As .obj indices are never zero we can detect missing indices
     // by simply not writing to it.
     let mut index: u64 = 0;
-    while ptr != end {
-        // SAFETY: `ptr != end` (loop condition), so it rests on a byte of the
-        // token span.
-        let c: u8 = unsafe { *ptr };
+    while pos != s.len() {
+        let c: u8 = s[pos];
         if c >= b'0' && c <= b'9' {
             ufbxi_check!(
                 uc,
@@ -851,12 +830,10 @@ pub(crate) unsafe fn obj_parse_index(
             );
             index = index * 10 + (c as i32 - b'0' as i32) as u64;
         } else if c == b'/' {
-            // SAFETY: `ptr != end` here, so advancing lands at most on `end`.
-            ptr = unsafe { ptr.add(1) };
+            pos += 1;
             break;
         }
-        // SAFETY: `ptr != end` here, so advancing lands at most on `end`.
-        ptr = unsafe { ptr.add(1) };
+        pos += 1;
     }
 
     if negative {
@@ -871,10 +848,8 @@ pub(crate) unsafe fn obj_parse_index(
         index = index.wrapping_sub(1);
     }
 
-    let fast_indices: *mut ObjFastIndices = uc.obj().fast_indices_mut_ptr(attrib as usize);
-    // SAFETY: `fast_indices` is the obj context's own per-attribute writer
-    // state, taken through its raw-ptr getter.
-    if unsafe { (*fast_indices).num_left } == 0 {
+    let fast_indices = uc.obj().fast_indices_at(attrib as usize);
+    if fast_indices.num_left() == 0 {
         let num_push: usize = 128;
         let dst: *mut u64 = uc
             .obj()
@@ -888,16 +863,12 @@ pub(crate) unsafe fn obj_parse_index(
     }
 
     // C: `*fast_indices->indices++ = index;`
-    // SAFETY: the writer state is the obj context's own (as above), and its
-    // `indices` cursor has `num_left > 0` slots of the reserved `tmp_indices`
-    // run ahead of it — the refill above restores that when it hits zero — so
-    // the store and the one-slot advance stay inside that run.
-    unsafe {
-        *(*fast_indices).indices = index;
-        (*fast_indices).indices = (*fast_indices).indices.add(1);
-    }
-    // SAFETY: the writer state is the obj context's own; `num_left > 0` here.
-    unsafe { (*fast_indices).num_left -= 1 };
+    let indices = fast_indices.indices();
+    // SAFETY: the writer's `indices` cursor has `num_left > 0` slots of its
+    // reserved run ahead of it; the refill above restores that at zero.
+    unsafe { *indices = index };
+    fast_indices.set_indices(indices.wrapping_add(1));
+    fast_indices.set_num_left(fast_indices.num_left() - 1);
 
     if index != u64::MAX {
         let a: usize = attrib as usize;
@@ -905,12 +876,7 @@ pub(crate) unsafe fn obj_parse_index(
         mesh.set_vertex_range_max(a, max64(mesh.vertex_range_max(a), index));
     }
 
-    // `ptr` rests inside `s`'s own span at or before `end`, so the rebased span
-    // is a suffix of the original.
-    s.data = ptr;
-    s.length = to_size(end as isize - ptr as isize);
-
-    Ok(())
+    Ok(&s[pos..])
 }
 
 // ufbx.c:17168-17296 `ufbxi_obj_parse_indices`
@@ -1115,16 +1081,11 @@ pub(crate) fn obj_parse_indices(
 
     for ix in 0..num_indices {
         // SAFETY: `token_begin + ix` is inside the caller's token window (its
-        // end is bounded by `num_tokens`), so it indexes the stored token run;
-        // `tok` is an unaliased local copy of such a token — a span at token
-        // index >= 1 within the line window, which is `obj_parse_index`'s
-        // contract — that the per-attribute parser advances, and `mesh` is the
-        // anchored current mesh.
-        unsafe {
-            let mut tok: String = *uc.obj().tokens().add(token_begin + ix);
-            for attrib in 0..OBJ_NUM_ATTRIBS as u32 {
-                obj_parse_index(uc, mesh, &mut tok, attrib)?;
-            }
+        // end is bounded by `num_tokens`), so it indexes a readable stored
+        // token span.
+        let mut tok = unsafe { (*uc.obj().tokens().add(token_begin + ix)).as_bytes() };
+        for attrib in 0..OBJ_NUM_ATTRIBS as u32 {
+            tok = obj_parse_index(uc, mesh, tok, attrib)?;
         }
     }
 

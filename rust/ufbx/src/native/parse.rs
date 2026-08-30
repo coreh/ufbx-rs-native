@@ -1387,16 +1387,16 @@ impl ObjContext {
     pub(crate) fn fast_indices_at(&self, i: usize) -> &ObjFastIndicesView {
         unsafe { &*(&raw mut (*self.get()).fast_indices[i] as *mut ObjFastIndicesView) }
     }
-    #[inline(always)]
-    pub(crate) fn fast_indices_mut_ptr(&self, i: usize) -> *mut ObjFastIndices {
-        unsafe { &raw mut (*self.get()).fast_indices[i] }
-    }
 }
 
 // Typed interior-mutable VIEW over `ObjFastIndices` (Copy, but subfields written).
 pub(crate) type ObjFastIndicesView = crate::native::view::View<ObjFastIndices>;
 
 impl ObjFastIndicesView {
+    #[inline(always)]
+    pub(crate) fn indices(&self) -> *mut u64 {
+        view_read!(self, indices)
+    }
     #[inline(always)]
     pub(crate) fn set_indices(&self, indices: *mut u64) {
         view_write!(self, indices, indices)
