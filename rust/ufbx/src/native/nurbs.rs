@@ -47,7 +47,7 @@ use crate::native::hash::Map;
 use crate::native::parse::{finish_imp, FinishedImp, ImpHandle, ImpHeader, MeshImp, SceneImp};
 use crate::native::parse::{ImpRecover, Refcount};
 #[cfg(feature = "tessellation")]
-use crate::native::platform::{add_ptr, ufbx_assert};
+use crate::native::platform::ufbx_assert;
 #[cfg(feature = "tessellation")]
 use crate::native::read::finalize_mesh;
 #[cfg(feature = "tessellation")]
@@ -67,6 +67,19 @@ use crate::prelude::Ref;
 // ufbx.c:64-66 `UFBXI_MAX_NURBS_ORDER` (top-of-file config constant, owned by
 // this section — only the NURBS evaluation entry points read it)
 pub(crate) const MAX_NURBS_ORDER: usize = 128;
+
+#[cfg(feature = "tessellation")]
+impl View<Vec2> {
+    #[inline(always)]
+    pub(crate) fn set_x(&self, value: Real) {
+        view_write!(self, x, value)
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_y(&self, value: Real) {
+        view_write!(self, y, value)
+    }
+}
 
 // ufbx.c:27771-27780 `ufbxi_nurbs_weight`
 // C copies `ufbx_real_list` by value at the call sites and passes `&knots`;
@@ -811,7 +824,7 @@ pub(crate) fn tessellate_nurbs_surface_imp(
 
     // The counts were just overflow-checked above.
     let position_ix: *mut u32 = tc.tmp_view().push::<u32>(num_indices);
-    let (mut positions, mut normals, mut uvs, mut tangents, mut bitangents): (
+    let (mut positions, mut normals, uvs, tangents, bitangents): (
         *mut Vec3,
         *mut Vec3,
         *mut Vec2,
@@ -830,26 +843,35 @@ pub(crate) fn tessellate_nurbs_surface_imp(
         "position_ix && uvs && tangents && bitangents"
     );
 
-    // C: `*positions++ = ufbx_zero_vec3;` (index 0 of each attribute array is a
-    // reserved zero element; the live data starts at the incremented pointer)
-    // SAFETY: each of the five arrays holds `num_indices + 1` elements, so
-    // element 0 exists and one past it is still in bounds. C-parity note: the
-    // check above only names four of the five pushes (ufbx.c:27991), but
-    // `positions`/`normals` are the same `Vec3 * (num_indices + 1)` request as
-    // the checked `tangents`/`bitangents`, so a failure that nulls them nulls
-    // those too.
-    unsafe {
+    // SAFETY: this retains C's implicit allocation obligation: `positions`
+    // and `normals` must be non-null here, although the first condition does
+    // not encode that and allocation failure is not sticky. This inherited
+    // boundary stays isolated pending a separate failure-order decision. The
+    // other four pointers are checked above.
+    let (position_ix_write, uvs_all, tangents_all, bitangents_all) = unsafe {
         *positions = ZERO_VEC3;
         positions = positions.add(1);
         *normals = ZERO_VEC3;
         normals = normals.add(1);
-        *uvs = ZERO_VEC2;
-        uvs = uvs.add(1);
-        *tangents = ZERO_VEC3;
-        tangents = tangents.add(1);
-        *bitangents = ZERO_VEC3;
-        bitangents = bitangents.add(1);
-    }
+        (
+            Run::<u32>::from_raw_parts(position_ix, num_indices),
+            Run::<Vec2>::from_raw_parts(uvs, num_indices + 1),
+            Run::<Vec3>::from_raw_parts(tangents, num_indices + 1),
+            Run::<Vec3>::from_raw_parts(bitangents, num_indices + 1),
+        )
+    };
+
+    // C: index 0 of each attribute array is a reserved zero element; the live
+    // sampled data starts at the incremented pointer.
+    uvs_all.write_at(0, ZERO_VEC2);
+    let uvs_write = uvs_all.subrun(1, num_indices);
+    let uvs = uvs_write.as_mut_ptr();
+    tangents_all.write_at(0, ZERO_VEC3);
+    let tangents_write = tangents_all.subrun(1, num_indices);
+    let tangents = tangents_write.as_mut_ptr();
+    bitangents_all.write_at(0, ZERO_VEC3);
+    let bitangents_write = bitangents_all.subrun(1, num_indices);
+    let bitangents = bitangents_write.as_mut_ptr();
 
     let mut num_positions: u32 = 0;
 
@@ -943,14 +965,13 @@ pub(crate) fn tessellate_nurbs_surface_imp(
                     for i in 0..num_neighbors {
                         let nb_ix: usize = neighbors[i];
                         ufbx_assert!(nb_ix < ix);
-                        // SAFETY: `nb_ix < ix < num_indices` (asserted above)
-                        // indexes an already-written slot of the
-                        // `num_indices`-element `position_ix` push, and every
-                        // value stored there is `< num_positions <=
-                        // num_indices`, which is in bounds of `positions`
-                        // (`num_indices + 1` elements, advanced by one).
+                        // SAFETY: raster order initialized the full `[0, ix)`
+                        // position-index prefix, `nb_ix < ix`, and `Run::at()`
+                        // bounds-checks the slot. The stored value is below
+                        // `num_positions`; `positions` remains the inherited
+                        // unchecked raw allocation boundary.
                         let (nb_pos_ix, nb_pos): (u32, Vec3) = unsafe {
-                            let nb_pos_ix = *position_ix.add(nb_ix);
+                            let nb_pos_ix = position_ix_write.at(nb_ix).as_ptr().read();
                             (nb_pos_ix, *positions.add(nb_pos_ix as usize))
                         };
                         let dx: Real = nb_pos.x - pos.x;
@@ -964,23 +985,21 @@ pub(crate) fn tessellate_nurbs_surface_imp(
                         }
                     }
 
-                    // SAFETY: `ix = ix_v * indices_u + ix_u < num_indices`
-                    // (both factors asserted in range above), so it indexes
-                    // the `num_indices`-element `position_ix` push and the
-                    // `num_indices` live slots of `uvs`/`tangents`/
-                    // `bitangents`. `pos_ix <= num_positions <= num_indices`
-                    // likewise stays inside `positions`.
+                    position_ix_write.write_at(ix, pos_ix);
+                    // SAFETY: `positions` is the inherited unchecked raw
+                    // allocation boundary above. Dense first-seen indices keep
+                    // `pos_ix == num_positions` within the requested capacity.
                     unsafe {
-                        *position_ix.add(ix) = pos_ix;
                         if pos_ix == num_positions {
                             *positions.add(pos_ix as usize) = pos;
                             num_positions = pos_ix + 1;
                         }
-                        (*uvs.add(ix)).x = original_u;
-                        (*uvs.add(ix)).y = original_v;
-                        *tangents.add(ix) = tangent_u;
-                        *bitangents.add(ix) = tangent_v;
                     }
+                    let uv = uvs_write.at(ix);
+                    uv.set_x(original_u);
+                    uv.set_y(original_v);
+                    tangents_write.write_at(ix, tangent_u);
+                    bitangents_write.write_at(ix, tangent_v);
                 }
             }
         }
@@ -1066,67 +1085,106 @@ pub(crate) fn tessellate_nurbs_surface_imp(
         "positions && normals"
     );
 
-    // SAFETY: `mesh` is tc's own output `Mesh` slot. The pointers stored into
-    // it are result-buffer pushes that outlive the mesh; raw field writes avoid
-    // creating an exclusive reference from the context pointer.
-    unsafe {
-        (*mesh).element.name.data = EMPTY_CHAR.as_ptr();
-        (*mesh).element.type_ = ElementType::Mesh;
-        (*mesh).element.typed_id = u32::MAX;
-        (*mesh).element.element_id = u32::MAX;
-
-        (*mesh).vertices.data = positions as *const Vec3;
-        (*mesh).vertices.count = num_positions as usize;
-        (*mesh).num_vertices = num_positions as usize;
-        (*mesh).vertex_indices.data = vertex_ix as *const u32;
-        (*mesh).vertex_indices.count = dst_index;
-
-        (*mesh).faces.data = faces as *const Face;
-        (*mesh).faces.count = num_faces;
-
-        (*mesh).vertex_position.exists = true;
-        (*mesh).vertex_position.values.data = positions as *const Vec3;
-        (*mesh).vertex_position.values.count = num_positions as usize;
-        (*mesh).vertex_position.indices.data = vertex_ix as *const u32;
-        (*mesh).vertex_position.indices.count = dst_index;
-        (*mesh).vertex_position.unique_per_vertex = true;
-
-        (*mesh).vertex_uv.exists = true;
-        (*mesh).vertex_uv.values.data = uvs as *const Vec2;
-        (*mesh).vertex_uv.values.count = dst_index;
-        (*mesh).vertex_uv.indices.data = attrib_ix as *const u32;
-        (*mesh).vertex_uv.indices.count = dst_index;
-
-        (*mesh).vertex_normal.exists = true;
-        (*mesh).vertex_normal.values.data = normals as *const Vec3;
-        (*mesh).vertex_normal.values.count = num_positions as usize;
-        (*mesh).vertex_normal.indices.data = vertex_ix as *const u32;
-        (*mesh).vertex_normal.indices.count = dst_index;
-
-        (*mesh).vertex_tangent.exists = true;
-        (*mesh).vertex_tangent.values.data = tangents as *const Vec3;
-        (*mesh).vertex_tangent.values.count = dst_index;
-        (*mesh).vertex_tangent.indices.data = attrib_ix as *const u32;
-        (*mesh).vertex_tangent.indices.count = dst_index;
-
-        (*mesh).vertex_bitangent.exists = true;
-        (*mesh).vertex_bitangent.values.data = bitangents as *const Vec3;
-        (*mesh).vertex_bitangent.values.count = dst_index;
-        (*mesh).vertex_bitangent.indices.data = attrib_ix as *const u32;
-        (*mesh).vertex_bitangent.indices.count = dst_index;
-
-        (*mesh).num_faces = num_faces;
-        (*mesh).num_triangles = num_triangles;
-        (*mesh).num_indices = dst_index;
-        (*mesh).max_face_triangles = 2;
-    }
-
     // SAFETY: `mesh` is tc's own mesh slot, reached through `*mut` off the
     // context (write-capable provenance for `Mut`) and live for the borrow;
     // every field accessed below was either filled above or is zero-valid from
     // tc's zeroed construction (`tessellate_nurbs_surface` creates the whole
     // context zeroed).
     let mesh_view = unsafe { View::<Mesh>::from_ptr(mesh) };
+    mesh_view
+        .element()
+        .name_view()
+        .set_data(EMPTY_CHAR.as_ptr());
+    mesh_view.element().set_type(ElementType::Mesh);
+    mesh_view.element().set_typed_id(u32::MAX);
+    mesh_view.element().set_element_id(u32::MAX);
+
+    mesh_view.vertices_view().set_data(positions);
+    mesh_view.vertices_view().set_count(num_positions as usize);
+    mesh_view.set_num_vertices(num_positions as usize);
+    mesh_view.vertex_indices_view().set_data(vertex_ix);
+    mesh_view.vertex_indices_view().set_count(dst_index);
+
+    mesh_view.faces_view().set_data(faces);
+    mesh_view.faces_view().set_count(num_faces);
+
+    mesh_view.vertex_position().set_exists(true);
+    mesh_view
+        .vertex_position()
+        .values_view()
+        .set_data(positions);
+    mesh_view
+        .vertex_position()
+        .values_view()
+        .set_count(num_positions as usize);
+    mesh_view
+        .vertex_position()
+        .indices_view()
+        .set_data(vertex_ix);
+    mesh_view
+        .vertex_position()
+        .indices_view()
+        .set_count(dst_index);
+    mesh_view.vertex_position().set_unique_per_vertex(true);
+
+    // C publishes the compacted corner count for these three parameter-grid
+    // value lists. The headers may exceed the sampled storage, so only their
+    // index lists are used as bounded runs in this path.
+    mesh_view.vertex_uv().set_exists(true);
+    mesh_view.vertex_uv().values_view().set_data(uvs);
+    mesh_view.vertex_uv().values_view().set_count(dst_index);
+    mesh_view.vertex_uv().indices_view().set_data(attrib_ix);
+    mesh_view.vertex_uv().indices_view().set_count(dst_index);
+
+    mesh_view.vertex_normal().set_exists(true);
+    mesh_view.vertex_normal().values_view().set_data(normals);
+    mesh_view
+        .vertex_normal()
+        .values_view()
+        .set_count(num_positions as usize);
+    mesh_view.vertex_normal().indices_view().set_data(vertex_ix);
+    mesh_view
+        .vertex_normal()
+        .indices_view()
+        .set_count(dst_index);
+
+    mesh_view.vertex_tangent().set_exists(true);
+    mesh_view.vertex_tangent().values_view().set_data(tangents);
+    mesh_view
+        .vertex_tangent()
+        .values_view()
+        .set_count(dst_index);
+    mesh_view
+        .vertex_tangent()
+        .indices_view()
+        .set_data(attrib_ix);
+    mesh_view
+        .vertex_tangent()
+        .indices_view()
+        .set_count(dst_index);
+
+    mesh_view.vertex_bitangent().set_exists(true);
+    mesh_view
+        .vertex_bitangent()
+        .values_view()
+        .set_data(bitangents);
+    mesh_view
+        .vertex_bitangent()
+        .values_view()
+        .set_count(dst_index);
+    mesh_view
+        .vertex_bitangent()
+        .indices_view()
+        .set_data(attrib_ix);
+    mesh_view
+        .vertex_bitangent()
+        .indices_view()
+        .set_count(dst_index);
+
+    mesh_view.set_num_faces(num_faces);
+    mesh_view.set_num_triangles(num_triangles);
+    mesh_view.set_num_indices(dst_index);
+    mesh_view.set_max_face_triangles(2);
 
     if surface_view.material().is_some() {
         mesh_view
@@ -1184,19 +1242,15 @@ pub(crate) fn tessellate_nurbs_surface_imp(
         );
     }
 
-    // The normal run is mesh-owned (`data`/`count` were set from the `normals`
-    // push above).
+    // `compute_normals` initialized the mesh-owned normal values before this
+    // optional orientation pass.
     if surface_view.flip_normals() {
         // C: `ufbxi_nounroll ufbxi_for_list(ufbx_vec3, normal, mesh->vertex_normal.values)`
-        unsafe {
-            let mut normal: *mut Vec3 = mesh_view.vertex_normal().values().data as *mut Vec3;
-            let normal_end: *mut Vec3 = add_ptr(normal, mesh_view.vertex_normal().values().count);
-            while normal != normal_end {
-                (*normal).x *= -1.0f32 as Real;
-                (*normal).y *= -1.0f32 as Real;
-                (*normal).z *= -1.0f32 as Real;
-                normal = normal.add(1);
-            }
+        let normals_write = Run::from_list(mesh_view.vertex_normal().values_view());
+        for normal in normals_write.iter() {
+            normal.set_x(normal.x() * (-1.0f32 as Real));
+            normal.set_y(normal.y() * (-1.0f32 as Real));
+            normal.set_z(normal.z() * (-1.0f32 as Real));
         }
     }
 

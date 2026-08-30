@@ -433,21 +433,79 @@ fn tessellate_nurbs_surface() {
     let mut acc = 0.0f64;
     let mut triangles = 0usize;
     let mut quads = 0usize;
-    for fixture in [
-        "maya_nurbs_surface_plane_6100_ascii.fbx",
-        "maya_nurbs_low_sphere_7500_ascii.fbx",
-    ] {
-        let scene = load(fixture);
-        assert!(!scene.nurbs_surfaces.is_empty());
-        for surface in &scene.nurbs_surfaces {
-            let mesh = ufbx::tessellate_nurbs_surface(surface, Default::default())
-                .expect("tessellate_nurbs_surface failed");
-            let (mesh_triangles, mesh_quads) = check_mesh(surface, &mesh, 4, 4);
-            triangles += mesh_triangles;
-            quads += mesh_quads;
-            acc += walk_mesh(&mesh);
-        }
+    let sphere_scene = load("maya_nurbs_low_sphere_7500_ascii.fbx");
+    assert!(!sphere_scene.nurbs_surfaces.is_empty());
+    for surface in &sphere_scene.nurbs_surfaces {
+        let mesh = ufbx::tessellate_nurbs_surface(surface, Default::default())
+            .expect("tessellate_nurbs_surface failed");
+        let (mesh_triangles, mesh_quads) = check_mesh(surface, &mesh, 4, 4);
+        triangles += mesh_triangles;
+        quads += mesh_quads;
+        acc += walk_mesh(&mesh);
     }
+
+    let mut flipped_data = read_data("maya_nurbs_surface_plane_6100_ascii.fbx");
+    let needle = b"FlipNormals: 0";
+    let replacement = b"FlipNormals: 1";
+    let matches: Vec<usize> = flipped_data
+        .windows(needle.len())
+        .enumerate()
+        .filter_map(|(index, window)| (window == needle).then_some(index))
+        .collect();
+    assert_eq!(matches.len(), 1);
+    flipped_data[matches[0]..matches[0] + needle.len()].copy_from_slice(replacement);
+    let flipped_scene = ufbx::load_memory(&flipped_data, LoadOpts::default())
+        .expect("failed to load flipped-normal surface");
+    let flipped_surface = flipped_scene
+        .nurbs_surfaces
+        .first()
+        .expect("no flipped surface");
+    assert!(flipped_surface.flip_normals);
+    let flipped_mesh = ufbx::tessellate_nurbs_surface(
+        flipped_surface,
+        ufbx::TessellateSurfaceOpts {
+            span_subdivision_u: 1,
+            span_subdivision_v: 1,
+            ..Default::default()
+        },
+    )
+    .expect("flipped surface tessellation failed");
+    let (plane_triangles, plane_quads) = check_mesh(flipped_surface, &flipped_mesh, 1, 1);
+    triangles += plane_triangles;
+    quads += plane_quads;
+
+    // Recompute from topology, positions, and the normal mapping into an
+    // independent buffer; this does not read the tessellated normal values.
+    let mut unflipped_normals = vec![ufbx::Vec3::default(); flipped_mesh.num_vertices];
+    ufbx::compute_normals(
+        &flipped_mesh,
+        &flipped_mesh.vertex_position,
+        flipped_mesh.vertex_normal.indices.as_ref(),
+        &mut unflipped_normals,
+    );
+    assert_eq!(
+        unflipped_normals.len(),
+        flipped_mesh.vertex_normal.values.len()
+    );
+    for (base, flipped) in unflipped_normals
+        .iter()
+        .zip(&flipped_mesh.vertex_normal.values)
+    {
+        assert_eq!(
+            flipped.x.to_bits(),
+            (base.x * (-1.0f32 as ufbx::Real)).to_bits()
+        );
+        assert_eq!(
+            flipped.y.to_bits(),
+            (base.y * (-1.0f32 as ufbx::Real)).to_bits()
+        );
+        assert_eq!(
+            flipped.z.to_bits(),
+            (base.z * (-1.0f32 as ufbx::Real)).to_bits()
+        );
+    }
+    acc += walk_mesh(&flipped_mesh);
+
     assert!(triangles > 0);
     assert!(quads > 0);
     assert!(acc.is_finite());
