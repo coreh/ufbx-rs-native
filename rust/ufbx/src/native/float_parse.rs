@@ -824,24 +824,21 @@ pub(crate) fn parse_double_init_flags() -> u32 {
 }
 
 // ufbx.c:1807-1828 `ufbxi_parse_int64`
-// C reads `str[len]` without an end bound (max 30 chars) — callers guarantee
-// readable memory past the number (NUL-terminated token buffers).
 #[inline(always)]
-pub(crate) unsafe fn parse_int64(str_: *const u8, end: *mut *const u8) -> i64 {
+pub(crate) fn parse_int64(input: &[u8], end: &mut *const u8) -> i64 {
     let mut abs_val: u64 = 0;
-    // SAFETY: the caller passes a NUL-terminated token buffer, so `str_[0]` is a
-    // live byte.
-    let negative = unsafe { *str_ } == b'-';
-    let positive = unsafe { *str_ } == b'+';
+    let first = input.first().copied().unwrap_or(b'\0');
+    let negative = first == b'-';
+    let positive = first == b'+';
 
     // C: `size_t init_len = (negative | positive) ? 1 : 0;` — non-short-circuit.
     let init_len: usize = if negative | positive { 1 } else { 0 };
     let mut len = init_len;
     while len < 30 {
-        // SAFETY: the caller passes a NUL-terminated token buffer and the loop
-        // breaks at the first non-digit (the NUL at the latest), so `str_[len]`
-        // never reads past the terminator.
-        let c = unsafe { *str_.add(len) };
+        let Some(&c) = input.get(len) else {
+            *end = core::ptr::null();
+            return 0;
+        };
         if !(c >= b'0' && c <= b'9') {
             break;
         }
@@ -851,15 +848,12 @@ pub(crate) unsafe fn parse_int64(str_: *const u8, end: *mut *const u8) -> i64 {
         len += 1;
     }
     if len == 30 || len == init_len {
-        // SAFETY: `end` is a live `*mut *const u8` out-param the caller owns.
-        unsafe { *end = core::ptr::null() };
+        *end = core::ptr::null();
         return 0;
     }
 
     // TODO: Wrap/clamp?
-    // SAFETY: `end` is the caller's live out-param; `len` bytes were scanned as
-    // readable, so `str_ + len` is a valid one-past-the-digits pointer.
-    unsafe { *end = str_.add(len) };
+    *end = input.as_ptr().wrapping_add(len);
     // C: `negative ? (int64_t)(0 - abs_val) : (int64_t)abs_val;` — the
     // canonical `0u64.wrapping_sub` site (PORTING.md integer table, ufbx.c:1827).
     if negative {
@@ -870,16 +864,10 @@ pub(crate) unsafe fn parse_int64(str_: *const u8, end: *mut *const u8) -> i64 {
 }
 
 // ufbx.c:1830-1846 `ufbxi_parse_uint32_radix`
-// C scans until the first non-digit with no end bound — callers pass
-// NUL-terminated buffers (XML entity parsing, ufbx.c:7412-7414).
 #[inline(never)]
-pub(crate) unsafe fn parse_uint32_radix(str_: *const u8, radix: u32) -> u32 {
+pub(crate) fn parse_uint32_radix(input: &[u8], radix: u32) -> u32 {
     let mut value: u32 = 0;
-    let mut p = str_;
-    loop {
-        // SAFETY: the caller passes a NUL-terminated buffer, so `*p` reads a live
-        // byte; the loop breaks at the first non-digit (the NUL included).
-        let c = unsafe { *p };
+    for &c in input {
         if c >= b'0' && c <= b'9' {
             // C: `value = value * radix + (uint32_t)(c - '0');` — unsigned, wraps.
             value = value.wrapping_mul(radix).wrapping_add((c - b'0') as u32);
@@ -897,10 +885,6 @@ pub(crate) unsafe fn parse_uint32_radix(str_: *const u8, radix: u32) -> u32 {
         } else {
             break;
         }
-        // SAFETY: `p` addresses a digit within the caller's NUL-terminated buffer
-        // (the NUL would have broken the loop above), so advancing by one stays
-        // within the buffer.
-        p = unsafe { p.add(1) };
     }
     value
 }
@@ -911,6 +895,35 @@ pub(crate) unsafe fn parse_uint32_radix(str_: *const u8, radix: u32) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_parse_int64() {
+        fn check(input: &[u8], expected: i64, expected_end: Option<usize>) {
+            let mut end = core::ptr::null();
+            assert_eq!(parse_int64(input, &mut end), expected);
+            if let Some(offset) = expected_end {
+                assert_eq!(end, input.as_ptr().wrapping_add(offset));
+            } else {
+                assert!(end.is_null());
+            }
+        }
+
+        check(b"123\0", 123, Some(3));
+        check(b"-42,", -42, Some(3));
+        check(b"+7 ", 7, Some(2));
+        check(b"\0", 0, None);
+        check(b"+\0", 0, None);
+        check(b"123", 0, None);
+        check(b"123456789012345678901234567890,", 0, None);
+    }
+
+    #[test]
+    fn test_parse_uint32_radix() {
+        assert_eq!(parse_uint32_radix(b"123\0", 10), 123);
+        assert_eq!(parse_uint32_radix(b"123", 10), 123);
+        assert_eq!(parse_uint32_radix(b"deadBEEF!", 16), 0xdead_beef);
+        assert_eq!(parse_uint32_radix(b"xyz", 10), 0);
+    }
 
     // test/unit_tests.c:363-384 `ufbxt_bigint_div_word`
     unsafe fn bigint_div_word(b: *mut Bigint, divisor: BigintLimb) -> BigintLimb {

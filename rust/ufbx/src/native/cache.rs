@@ -1426,10 +1426,8 @@ pub(crate) fn cache_load_xml_imp(cc: &CacheContext, doc: &XmlDocumentView) -> Re
 
         if let Some(tag_fps) = tag_fps {
             if let Some(fps) = xml_find_attrib(tag_fps, c"TimePerFrame") {
-                // SAFETY: attrib values are NUL-terminated arena strings
-                // (xml-parser invariant), which is what the radix parse scans.
                 let value: u32 =
-                    unsafe { crate::native::float_parse::parse_uint32_radix(fps.value().data, 10) };
+                    crate::native::float_parse::parse_uint32_radix(fps.value_view().bytes(), 10);
                 if value > 0 {
                     cc.set_xml_ticks_per_frame(value);
                 }
@@ -1480,21 +1478,23 @@ pub(crate) fn cache_load_xml_imp(cc: &CacheContext, doc: &XmlDocumentView) -> Re
                 if let (Some(sampling_rate), Some(start_time), Some(end_time)) =
                     (sampling_rate, start_time, end_time)
                 {
-                    // SAFETY: `channel` is the in-bounds slot from above; the
-                    // parses scan NUL-terminated arena attrib values.
+                    let sample_rate = crate::native::float_parse::parse_uint32_radix(
+                        sampling_rate.value_view().bytes(),
+                        10,
+                    );
+                    let start_time = crate::native::float_parse::parse_uint32_radix(
+                        start_time.value_view().bytes(),
+                        10,
+                    );
+                    let end_time = crate::native::float_parse::parse_uint32_radix(
+                        end_time.value_view().bytes(),
+                        10,
+                    );
+                    // SAFETY: `channel` is the in-bounds slot from above.
                     unsafe {
-                        (*channel).sample_rate = crate::native::float_parse::parse_uint32_radix(
-                            sampling_rate.value().data,
-                            10,
-                        );
-                        (*channel).start_time = crate::native::float_parse::parse_uint32_radix(
-                            start_time.value().data,
-                            10,
-                        );
-                        (*channel).end_time = crate::native::float_parse::parse_uint32_radix(
-                            end_time.value().data,
-                            10,
-                        );
+                        (*channel).sample_rate = sample_rate;
+                        (*channel).start_time = start_time;
+                        (*channel).end_time = end_time;
                         (*channel).current_time = (*channel).start_time;
                         (*channel).try_load = true;
                     }

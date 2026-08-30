@@ -713,16 +713,14 @@ pub(crate) fn ascii_next_token(uc: &Context, token: &AsciiTokenView) -> Result<(
         }
 
         let mut end: *const u8 = core::ptr::null();
+        // SAFETY: the token buffer contains `str_len` bytes, including the NUL
+        // appended above.
+        let input = unsafe { crate::prelude::slice_from_ptr(token.str_data(), token.str_len()) };
         if token.type_() == ASCII_INT {
-            // SAFETY: `token->str_data` is its NUL-terminated number buffer just
-            // filled above; `parse_int64` scans it and stores its end in `end`.
-            token.set_value_i64(unsafe { parse_int64(token.str_data(), &raw mut end) });
+            token.set_value_i64(parse_int64(input, &mut end));
             ufbxi_check!(
                 uc,
-                // SAFETY: `token`'s buffer holds `str_len` bytes (the digits plus
-                // the trailing NUL), so `str_data + str_len - 1` is the NUL slot
-                // `parse_int64` stops at.
-                end == unsafe { token.str_data().add(token.str_len() - 1) },
+                end == input.as_ptr().wrapping_add(input.len() - 1),
                 "end == token->str_data + token->str_len - 1"
             );
         } else if token.type_() == ASCII_FLOAT {
@@ -732,16 +730,10 @@ pub(crate) fn ascii_next_token(uc: &Context, token: &AsciiTokenView) -> Result<(
             if unsafe { (*ua).parse_as_f32 } {
                 flags = PARSE_DOUBLE_AS_BINARY32;
             }
-            // SAFETY: `token->str_data`/`str_len` describe its NUL-terminated
-            // number buffer.
-            let input =
-                unsafe { crate::prelude::slice_from_ptr(token.str_data(), token.str_len()) };
             token.set_value_f64(parse_double(input, &mut end, flags));
             ufbxi_check!(
                 uc,
-                // SAFETY: as in the int branch — `str_data + str_len - 1` is the
-                // trailing-NUL slot within `token`'s buffer.
-                end == unsafe { token.str_data().add(token.str_len() - 1) },
+                end == input.as_ptr().wrapping_add(input.len() - 1),
                 "end == token->str_data + token->str_len - 1"
             );
         }
@@ -990,8 +982,9 @@ pub(crate) fn ascii_read_int_array(
         }
 
         // SAFETY: `left >= 32` bytes are readable at `src_scan` inside the source
-        // window; `parse_int64` scans them and stores its end back into `src_scan`.
-        val = unsafe { parse_int64(src_scan, &raw mut src_scan) };
+        // window.
+        let input = unsafe { core::slice::from_raw_parts(src_scan, left) };
+        val = parse_int64(input, &mut src_scan);
         if src_scan.is_null() {
             break;
         }
@@ -1194,10 +1187,7 @@ pub(crate) unsafe fn ascii_array_task_parse_ints(
         }
 
         let mut num_end: *const u8 = core::ptr::null();
-        // SAFETY: `src[src_ix..]` is a readable run halted by the trailing
-        // `','`; `parse_int64` scans it and stores its end into `num_end`, which
-        // therefore lands inside `src`.
-        let val: i64 = unsafe { parse_int64(src[src_ix..].as_ptr(), &raw mut num_end) };
+        let val: i64 = parse_int64(&src[src_ix..], &mut num_end);
         if num_end.is_null() {
             return None;
         }

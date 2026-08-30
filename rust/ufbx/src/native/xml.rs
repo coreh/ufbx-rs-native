@@ -611,32 +611,20 @@ pub(crate) fn xml_read_until(
             xml_advance(xc);
             xml_push_token_char(xc, b'\0')?;
 
-            // SAFETY: `entity_begin` is a token length captured before the
-            // entity was pushed, so it is at most the current `tok_len` and the
-            // offset stays inside the token allocation.
-            let entity: *mut u8 = unsafe { xc.tok().add(entity_begin) };
+            // SAFETY: `tok` contains the `tok_len` bytes pushed into the token
+            // allocation. `entity_begin` is a prior token length within it.
+            let token = unsafe { crate::prelude::slice_from_ptr(xc.tok(), xc.tok_len()) };
+            let entity = &token[entity_begin..];
             xc.set_tok_len(entity_begin);
 
-            // SAFETY: `entity` points at the entity text just pushed, which the
-            // `'\0'` push above terminates, so byte 0 is readable.
-            if unsafe { *entity.add(0) } == b'#' {
+            if entity[0] == b'#' {
                 // C: `unsigned long code` — 64-bit on the oracle targets; the
                 // value always comes from `ufbxi_parse_uint32_radix`.
                 let mut code: u64 = 0;
-                // SAFETY: byte 0 is `'#'`, so byte 1 is still inside the
-                // NUL-terminated entity text (worst case it is the terminator).
-                if unsafe { *entity.add(1) } == b'x' {
-                    // SAFETY: `"#x"` precedes it, so the offset addresses the
-                    // remaining NUL-terminated digits `parse_uint32_radix` scans.
-                    code = unsafe {
-                        crate::native::float_parse::parse_uint32_radix(entity.add(2), 16)
-                    } as u64;
+                if entity[1] == b'x' {
+                    code = crate::native::float_parse::parse_uint32_radix(&entity[2..], 16) as u64;
                 } else {
-                    // SAFETY: `'#'` precedes it, so the offset addresses the
-                    // remaining NUL-terminated digits `parse_uint32_radix` scans.
-                    code = unsafe {
-                        crate::native::float_parse::parse_uint32_radix(entity.add(1), 10)
-                    } as u64;
+                    code = crate::native::float_parse::parse_uint32_radix(&entity[1..], 10) as u64;
                 }
 
                 let mut bytes: [u8; 5] = [0; 5];
@@ -666,18 +654,15 @@ pub(crate) fn xml_read_until(
                 }
             } else {
                 let mut ch: u8 = b'\0';
-                // SAFETY (all five compares): `entity` is the NUL-terminated
-                // entity text pushed above and each literal is a NUL-terminated
-                // `'static` run, which is `strcmp`'s raw-param contract.
-                if unsafe { strcmp(entity, b"lt\0".as_ptr()) } == 0 {
+                if c_strcmp(entity, b"lt\0") == 0 {
                     ch = b'<';
-                } else if unsafe { strcmp(entity, b"quot\0".as_ptr()) } == 0 {
+                } else if c_strcmp(entity, b"quot\0") == 0 {
                     ch = b'"';
-                } else if unsafe { strcmp(entity, b"amp\0".as_ptr()) } == 0 {
+                } else if c_strcmp(entity, b"amp\0") == 0 {
                     ch = b'&';
-                } else if unsafe { strcmp(entity, b"apos\0".as_ptr()) } == 0 {
+                } else if c_strcmp(entity, b"apos\0") == 0 {
                     ch = b'\'';
-                } else if unsafe { strcmp(entity, b"gt\0".as_ptr()) } == 0 {
+                } else if c_strcmp(entity, b"gt\0") == 0 {
                     ch = b'>';
                 }
                 if ch != 0 {
