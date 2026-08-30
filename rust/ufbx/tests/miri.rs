@@ -448,6 +448,55 @@ fn load_instancing() {
     assert!(acc > 0.0);
 }
 
+/// Helper-node inherit handling follows parent, scale-helper and
+/// inherit-scale-node links while composing transforms.
+#[test]
+fn load_scale_helpers() {
+    fn close_vec3(actual: ufbx::Vec3, expected: [f32; 3]) {
+        let expected = expected.map(|v| v as ufbx::Real);
+        let epsilon = 0.00001f32 as ufbx::Real;
+        assert!((actual.x - expected[0]).abs() <= epsilon);
+        assert!((actual.y - expected[1]).abs() <= epsilon);
+        assert!((actual.z - expected[2]).abs() <= epsilon);
+    }
+
+    let name = "maya_static_no_inherit_scale_7700_ascii.fbx";
+    let data = read_data(name);
+    let scene = ufbx::load_memory(
+        &data,
+        LoadOpts {
+            inherit_mode_handling: ufbx::InheritModeHandling::HelperNodes,
+            ..Default::default()
+        },
+    )
+    .unwrap_or_else(|e| panic!("failed to load {}: {:?}", name, e));
+
+    let joint1 = scene.find_node("joint1").expect("missing joint1");
+    let helper1 = joint1.scale_helper.as_ref().expect("joint1 has no helper");
+    close_vec3(helper1.local_transform.scale, [2.0, 2.0, 2.0]);
+    close_vec3(
+        ufbx::matrix_to_transform(&helper1.node_to_world).translation,
+        [0.0, 0.0, 0.0],
+    );
+    close_vec3(joint1.local_transform.scale, [1.0, 1.0, 1.0]);
+
+    let joint2 = scene.find_node("joint2").expect("missing joint2");
+    let helper2 = joint2.scale_helper.as_ref().expect("joint2 has no helper");
+    close_vec3(helper2.local_transform.scale, [1.0, 2.0, 2.0]);
+    close_vec3(
+        ufbx::matrix_to_transform(&helper2.node_to_world).translation,
+        [0.0, 8.0, 0.0],
+    );
+    close_vec3(joint2.local_transform.scale, [1.0, 1.0, 1.0]);
+
+    let joint3 = scene.find_node("joint3").expect("missing joint3");
+    assert!(joint3.scale_helper.is_none());
+    close_vec3(
+        ufbx::matrix_to_transform(&joint3.node_to_world).translation,
+        [0.0, 12.0, 0.0],
+    );
+}
+
 /// Embedded textures: the base64/binary blob path and video elements.
 #[test]
 fn load_embedded_textures() {

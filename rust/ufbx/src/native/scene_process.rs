@@ -4870,13 +4870,10 @@ impl MaterialMapView {
 pub(crate) fn fetch_maps(scene_view: &SceneView, material_view: &MaterialView) {
     ufbxi_ignore!(scene_view);
 
-    // C: `ufbx_shader *shader = material->shader;` — the nullable `Ref` field
-    // minted once as the view `ufbxi_fetch_mapping_maps` takes.
-    // SAFETY: the material's `shader` reference is a live scene element,
-    // unwritten during the map fetches below, so it mints a `Const` view.
-    let shader: Option<&View<Shader, Const>> = material_view
-        .shader()
-        .map(|shader| unsafe { View::<Shader, Const>::from_ptr(shader.ptr()) });
+    // C: `ufbx_shader *shader = material->shader;` — retain the nullable
+    // reference as the const view `ufbxi_fetch_mapping_maps` takes.
+    let shader: Option<&View<Shader, Const>> =
+        material_view.shader().map(|shader| shader.view::<Const>());
     ufbx_assert!((material_view.shader_type() as u32) < SHADER_TYPE_COUNT as u32);
 
     // SAFETY: each `*_raw()` accessor projects the material's own aggregate
@@ -5649,11 +5646,7 @@ pub(crate) fn update_shader_texture(texture_view: &TextureView, shader_view: &Sh
     for input in input_iter {
         // C: `ufbx_prop *prop = input->prop;`
         if let Some(prop) = input.prop() {
-            // SAFETY: the `prop` field holds a live `ufbx_prop` of this
-            // texture's own prop list — an arena element reached through a
-            // pointer stored in arena memory, which carries the write-capable
-            // provenance the mint asks for.
-            let prop: &PropView = unsafe { PropView::from_ptr(prop.ptr()) };
+            let prop: &View<Prop, Const> = prop.view::<Const>();
             let found: Option<&PropView> =
                 find_prop_len(texture_view.props_view(), prop.name_view().bytes());
             // SAFETY: `found` is an entry of the texture's scene-arena prop table,
@@ -5686,9 +5679,7 @@ pub(crate) fn update_shader_texture(texture_view: &TextureView, shader_view: &Sh
 
         // C: `prop = input->texture_prop;`
         if let Some(prop) = input.texture_prop() {
-            // SAFETY: the `texture_prop` field holds a live `ufbx_prop` of this
-            // texture's own prop list (see the `prop` field above).
-            let prop: &PropView = unsafe { PropView::from_ptr(prop.ptr()) };
+            let prop: &View<Prop, Const> = prop.view::<Const>();
             let found: Option<&PropView> =
                 find_prop_len(texture_view.props_view(), prop.name_view().bytes());
             let prop: *mut Prop = found.map_or(ptr::null_mut(), PropView::get);
@@ -5710,9 +5701,7 @@ pub(crate) fn update_shader_texture(texture_view: &TextureView, shader_view: &Sh
         input.set_texture_enabled(input.texture().is_some());
         // C: `prop = input->texture_enabled_prop;`
         if let Some(prop) = input.texture_enabled_prop() {
-            // SAFETY: the `texture_enabled_prop` field holds a live `ufbx_prop`
-            // of this texture's own prop list (see the `prop` field above).
-            let prop: &PropView = unsafe { PropView::from_ptr(prop.ptr()) };
+            let prop: &View<Prop, Const> = prop.view::<Const>();
             let found: Option<&PropView> =
                 find_prop_len(texture_view.props_view(), prop.name_view().bytes());
             // SAFETY: `found` is an entry of the texture's scene-arena prop table,
@@ -8381,9 +8370,7 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
 
     for i in 0..num_elements {
         let elem: Ref<Element> = element_refs[i];
-        // SAFETY: the slot names a live element header in the arena element blob
-        // (see above), so it anchors an `ElementView`.
-        let elem_view: &ElementView = unsafe { ElementView::from_ptr(elem.ptr()) };
+        let elem_view: &ElementView = elem.view();
         let name_elem: &View<NameElement> = name_elems.at(i);
 
         name_elem.set_name(elem_view.name());
@@ -8406,9 +8393,7 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
         // node run and holds the same non-null `Ref<ufbx_node>` that `at` read.
         let node_ref: Ref<Node> = unsafe { *p_node };
         if let Some(parent_ref) = node.parent() {
-            // SAFETY: a non-null `parent` names another live `ufbx_node` of the
-            // same scene.
-            let parent: &NodeView = unsafe { NodeView::from_ptr(parent_ref.ptr()) };
+            let parent: &NodeView = parent_ref.view();
             parent
                 .children_view()
                 .set_count(parent.children_view().count() + 1);
@@ -8625,9 +8610,7 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
                     )
                 } {
                     let dst_ref: Ref<Element> = conn.dst();
-                    // SAFETY: a connection's `dst` names a live element of the
-                    // scene, so it anchors an `ElementView`.
-                    let dst_view: &ElementView = unsafe { ElementView::from_ptr(dst_ref.ptr()) };
+                    let dst_view: &ElementView = dst_ref.view();
                     if dst_view.type_() != ElementType::SkinCluster {
                         continue;
                     }
@@ -8763,9 +8746,7 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
                     continue;
                 }
                 let dst_ref: Ref<Element> = conn.dst();
-                // SAFETY: a connection's `dst` names a live element of the scene,
-                // so it anchors an `ElementView`.
-                let dst_view: &ElementView = unsafe { ElementView::from_ptr(dst_ref.ptr()) };
+                let dst_view: &ElementView = dst_ref.view();
                 if dst_view.type_() == ElementType::Mesh {
                     // SAFETY: the check pins the type, so the non-null header is
                     // the head of a live `ufbx_mesh`.
@@ -8776,17 +8757,14 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
                     let mut node: &NodeView =
                         unsafe { NodeView::from_ptr(dst_ref.ptr() as *mut Node) };
                     if let Some(helper) = node.geometry_transform_helper() {
-                        // SAFETY: a non-null helper names another live `ufbx_node`
-                        // of the same scene.
-                        node = unsafe { NodeView::from_ptr(helper.ptr()) };
+                        node = helper.view();
                     }
                     mesh = node.mesh();
                 }
                 let Some(mesh) = mesh else {
                     continue;
                 };
-                // SAFETY: `mesh` names a live `ufbx_mesh` of the scene (see above).
-                let mesh_view: &View<Mesh> = unsafe { View::<Mesh>::from_ptr(mesh.ptr()) };
+                let mesh_view: &View<Mesh> = mesh.view();
                 num_vertices = max_sz(num_vertices, mesh_view.num_vertices());
             }
         }
@@ -9061,13 +9039,7 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
                     // SAFETY: the full-weight list's own `data` run holds `count`
                     // reals and `i` is below it.
                     key.set_target_weight(unsafe { *full_weights.data().add(i) } / 100.0);
-                // C: `key->shape->num_offsets` — `ufbxi_fetch_blend_keyframes`
-                // fills every keyframe's `shape` from a connection source, so it
-                // is a non-null live `ufbx_blend_shape` of the same scene.
-                // SAFETY: as above.
-                } else if full_weights.count()
-                    == unsafe { View::<BlendShape>::from_ptr(key.shape().ptr()) }.num_offsets()
-                {
+                } else if full_weights.count() == key.shape().view::<Mut>().num_offsets() {
                     if i == 0 {
                         // Duplicate `index_data` for modification if we retain DOM
                         if uc.opts_view().retain_dom() {
@@ -9100,7 +9072,7 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
                     unsafe {
                         ptr::copy_nonoverlapping(
                             full_weights.as_ptr(),
-                            View::<BlendShape>::from_ptr(key.shape().ptr()).offset_weights_raw(),
+                            key.shape().view::<Mut>().offset_weights_raw(),
                             1,
                         )
                     };
@@ -9532,9 +9504,7 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
                 let ac: &View<Connection> = connections_src.at(ac_ix);
                 if ac.src_prop_view().length() == 0 && ac.dst_prop_view().length() > 0 {
                     let aprop: *mut AnimProp = uc.tmp_stack_view().push::<AnimProp>(1);
-                    // SAFETY: `ac`'s `dst` is a non-null reference to a live
-                    // element of the same scene.
-                    let id: u32 = unsafe { ElementView::from_ptr(ac.dst().ptr()) }.element_id();
+                    let id: u32 = ac.dst().view::<Mut>().element_id();
                     min_id = min32(min_id, id);
                     max_id = max32(max_id, id);
                     // C: `ufbxi_arraycount(layer->_element_id_bitmask) - 1`.
@@ -9657,9 +9627,7 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
         let connections_dst: &ListView<Connection> = value.element().connections_dst_view();
         for conn_ix in 0..connections_dst.count() {
             let conn: &View<Connection> = connections_dst.at(conn_ix);
-            // SAFETY: `conn`'s `src` is a non-null reference to a live element
-            // of the same scene.
-            let src: &ElementView = unsafe { ElementView::from_ptr(conn.src().ptr()) };
+            let src: &ElementView = conn.src().view();
             if src.type_() == ElementType::AnimCurve && conn.src_prop_view().length() == 0 {
                 // The check above pins the source's type, so it heads a live
                 // `ufbx_anim_curve`.
@@ -9769,10 +9737,7 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
         }
 
         if let Some(material_shader) = material.shader() {
-            // SAFETY: a `Some` shader reference names a live `ufbx_shader` of
-            // the same scene.
-            let material_shader: &ShaderView =
-                unsafe { ShaderView::from_ptr(material_shader.ptr()) };
+            let material_shader: &ShaderView = material_shader.view();
             material.set_shader_type(material_shader.type_());
         } else {
             if uc.opts_view().use_blender_pbr_material()
@@ -10097,11 +10062,7 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
             )
         });
         if let Some(texture_video) = texture.video() {
-            // SAFETY: a non-null `video` names a live `ufbx_video` element of
-            // the uc-owned scene, so its provenance is write-capable; only the
-            // `content` field is projected out of it.
-            let texture_video: &View<Video> =
-                unsafe { View::<Video>::from_ptr(texture_video.ptr()) };
+            let texture_video: &View<Video> = texture_video.view();
             texture.set_content(texture_video.content());
         }
 
@@ -10185,10 +10146,7 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
         // Fetch `ufbx_material_texture.shader_prop` names
         // C: `if (material->shader)`
         if let Some(material_shader) = material.shader() {
-            // SAFETY: a non-null `shader` names a live `ufbx_shader` element of
-            // the uc-owned scene, so its provenance is write-capable.
-            let material_shader: &View<Shader> =
-                unsafe { View::<Shader>::from_ptr(material_shader.ptr()) };
+            let material_shader: &View<Shader> = material_shader.view();
             // C: `ufbxi_for_ptr_list(ufbx_shader_binding, p_binding, material->shader->bindings)`
             let bindings: &RefListView<ShaderBinding> = material_shader.bindings_view();
             for binding_ix in 0..bindings.count() {
@@ -10292,17 +10250,11 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
         // (!node->target_node && node->target_mesh && node->target_mesh->instances.count > 0)`
         match (node.target_mesh(), node.target_node()) {
             (None, Some(target_node)) => {
-                // SAFETY: a non-null `target_node` names a live `ufbx_node`
-                // element of the uc-owned scene; only its own `mesh` field is
-                // projected out of it.
-                let target_node: &NodeView = unsafe { NodeView::from_ptr(target_node.ptr()) };
+                let target_node: &NodeView = target_node.view();
                 node.set_target_mesh(target_node.mesh());
             }
             (Some(target_mesh), None) => {
-                // SAFETY: a non-null `target_mesh` names a live `ufbx_mesh`
-                // element of the uc-owned scene, so its provenance is
-                // write-capable.
-                let target_mesh: &View<Mesh> = unsafe { View::<Mesh>::from_ptr(target_mesh.ptr()) };
+                let target_mesh: &View<Mesh> = target_mesh.view();
                 let instances: &RefListView<Node> = target_mesh.element().instances_view();
                 if instances.count() > 0 {
                     // C: `node->target_mesh->instances.data[0]` — indexed from
@@ -10317,10 +10269,7 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
 
         // C: `ufbx_mesh *mesh = node->target_mesh;`
         if let Some(mesh) = node.target_mesh() {
-            // SAFETY: a non-null `target_mesh` names a live `ufbx_mesh` element of
-            // the uc-owned scene, so its provenance is write-capable and `Mut` is
-            // the right mode.
-            let mesh: &View<Mesh> = unsafe { View::<Mesh>::from_ptr(mesh.ptr()) };
+            let mesh: &View<Mesh> = mesh.view();
             validate_indices(uc, node.vertices_view(), mesh.num_vertices())?;
             validate_indices(uc, node.edges_view(), mesh.num_edges())?;
             validate_indices(uc, node.faces_view(), mesh.num_faces())?;
@@ -11061,15 +11010,9 @@ pub(crate) fn update_node(node_view: &NodeView, overrides: &[TransformOverride])
         // C: `if (node->parent && node->parent->scale_helper)` — the helper link
         // is reached through the parent, as in C.
         if let Some(parent) = node_view.parent() {
-            // SAFETY: a non-null `parent` link points to a live, initialized
-            // `ufbx_node` of the same scene, allocated from the scene arena
-            // (write-capable provenance, unmoved for the update pass).
-            let parent_view: &NodeView = unsafe { NodeView::from_ptr(parent.ptr()) };
+            let parent_view: &NodeView = parent.view();
             if let Some(scale_helper) = parent_view.scale_helper() {
-                // SAFETY: as for `parent_view` — a non-null `scale_helper` link
-                // points to a live, initialized scene node.
-                let scale_helper_view: &NodeView =
-                    unsafe { NodeView::from_ptr(scale_helper.ptr()) };
+                let scale_helper_view: &NodeView = scale_helper.view();
                 // SAFETY: `local_transform_ptr()` is the helper's own live
                 // transform field, so the nested `scale` member lies inside it;
                 // the borrow asserts nothing beyond that (no `View<Transform>`
@@ -11092,19 +11035,11 @@ pub(crate) fn update_node(node_view: &NodeView, overrides: &[TransformOverride])
         // C: `if (node->is_scale_helper && node->parent && node->parent->inherit_scale_node)`
         if node_view.is_scale_helper() {
             if let Some(parent) = node_view.parent() {
-                // SAFETY: a non-null `parent` link points to a live,
-                // initialized scene node (see above).
-                let parent_view: &NodeView = unsafe { NodeView::from_ptr(parent.ptr()) };
+                let parent_view: &NodeView = parent.view();
                 if let Some(inherit_scale_node) = parent_view.inherit_scale_node() {
-                    // SAFETY: a non-null `inherit_scale_node` link points to a
-                    // live, initialized scene node (see above).
-                    let scale_parent: &NodeView =
-                        unsafe { NodeView::from_ptr(inherit_scale_node.ptr()) };
+                    let scale_parent: &NodeView = inherit_scale_node.view();
                     if let Some(scale_helper) = scale_parent.scale_helper() {
-                        // SAFETY: a non-null `scale_helper` link points to a
-                        // live, initialized scene node (see above).
-                        let scale_helper_view: &NodeView =
-                            unsafe { NodeView::from_ptr(scale_helper.ptr()) };
+                        let scale_helper_view: &NodeView = scale_helper.view();
                         let inherit_scale: Vec3 = scale_helper_view.local_transform().scale;
                         // SAFETY: `local_transform_raw()` is the node view's own
                         // live, writable transform field, so the nested `scale`
@@ -11164,9 +11099,7 @@ pub(crate) fn update_node(node_view: &NodeView, overrides: &[TransformOverride])
     node_view.set_inherit_scale(node_view.local_transform().scale);
 
     if let Some(parent) = node_view.parent() {
-        // SAFETY: a non-null `parent` link points to a live, initialized
-        // `ufbx_node` of the same scene (see above).
-        let parent_view: &NodeView = unsafe { NodeView::from_ptr(parent.ptr()) };
+        let parent_view: &NodeView = parent.view();
         if node_view.inherit_mode() == InheritMode::Normal {
             // SAFETY: both operands are live matrix fields projected from their
             // own views, and `ufbx_matrix_mul` takes them by raw pointer and
@@ -11191,11 +11124,7 @@ pub(crate) fn update_node(node_view: &NodeView, overrides: &[TransformOverride])
 
             let mut parent_scale: Vec3 = ONE_VEC3;
             if let Some(inherit_scale_node) = node_view.inherit_scale_node() {
-                // SAFETY: a non-null `inherit_scale_node` link points to a
-                // live, initialized scene node whose `inherit_scale` was
-                // computed earlier in this update pass.
-                let inherit_scale_node_view: &NodeView =
-                    unsafe { NodeView::from_ptr(inherit_scale_node.ptr()) };
+                let inherit_scale_node_view: &NodeView = inherit_scale_node.view();
                 parent_scale = inherit_scale_node_view.inherit_scale();
             }
 
@@ -12386,11 +12315,7 @@ pub(crate) fn update_initial_clusters(scene_view: &SceneView) {
             && metadata.mirror_axis() == MirrorAxis::None
         {
             // C: `world_to_units = scene->root_node->node_to_parent;`
-            // SAFETY: the scene's own non-optional root link names a live,
-            // initialized `ufbx_node` in the scene's arena, so its address
-            // carries write-capable provenance.
-            let root_node: &View<Node> =
-                unsafe { View::<Node>::from_ptr(scene_view.root_node().ptr()) };
+            let root_node: &View<Node> = scene_view.root_node().view();
             world_to_units = root_node.node_to_parent();
         } else {
             // C: `ufbx_transform root_transform;` — every member is written
