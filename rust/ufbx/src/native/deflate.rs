@@ -734,7 +734,7 @@ pub(crate) unsafe fn bit_refill(
     // SAFETY: `*p_data` addresses the current chunk position, which the refill
     // machinery keeps at least 8 bytes before `chunk_real_end`, so a 64-bit read
     // is in bounds.
-    *p_bits |= unsafe { read_u64(*p_data) } << *p_left;
+    *p_bits |= unsafe { read_u64(crate::prelude::slice_from_ptr(*p_data, 8)) } << *p_left;
     // SAFETY: `(63 - *p_left) >> 3` is at most 7 bytes and the current chunk has
     // at least that much headroom before `chunk_real_end`.
     *p_data = unsafe { (*p_data).add((63 - *p_left) >> 3) };
@@ -1863,7 +1863,7 @@ pub(crate) unsafe fn inflate_block_fast(dc: &DeflateContext, trees: *mut Trees) 
     let mut sym1: HuffSym;
     // SAFETY: `data` is the current chunk position, kept at least 8 bytes before
     // `chunk_real_end`, so a 64-bit read is in bounds.
-    let mut refill_bits = unsafe { read_u64(data) };
+    let mut refill_bits = unsafe { read_u64(crate::prelude::slice_from_ptr(data, 8)) };
 
     // C: `#define ufbxi_fast_inflate_refill_and_decode()` (function-local macro;
     // the free identifiers resolve to the locals above at each expansion site).
@@ -1878,7 +1878,7 @@ pub(crate) unsafe fn inflate_block_fast(dc: &DeflateContext, trees: *mut Trees) 
                 tree_lit_length
             }))
             .fast_sym[(wrap_shr64(sym01_bits, sym0 as u32) as usize) & HUFF_FAST_MASK];
-            refill_bits = read_u64(data);
+            refill_bits = read_u64(crate::prelude::slice_from_ptr(data, 8));
         }};
     }
 

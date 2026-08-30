@@ -1216,20 +1216,25 @@ pub(crate) fn cache_load_mc(cc: &CacheContext) -> Result<(), Fail> {
 #[cfg(feature = "geometry-cache")]
 #[inline(never)]
 pub(crate) fn cache_load_pc2(cc: &CacheContext) -> Result<(), Fail> {
-    let mut header = MaybeUninit::<[u8; 32]>::uninit(); // ufbxi_uninit
-    let header: *mut u8 = header.as_mut_ptr() as *mut u8;
-    // SAFETY: local 32-byte header buffer, fully written by `cache_read`
-    // before Ok; the field reads below stay within its 32 bytes.
-    let (version, num_points, start_frame, frames_per_sample, num_samples) = unsafe {
-        cache_read(cc, header as *mut c_void, size_of::<[u8; 32]>(), false)?;
-        (
-            read_u32(header.add(12)),
-            read_u32(header.add(16)),
-            read_f32(header.add(20)) as f64,
-            read_f32(header.add(24)) as f64,
-            read_u32(header.add(28)),
-        )
-    };
+    // C: `char header[32];` — ufbxi_uninit.
+    let mut header = MaybeUninit::<[u8; 32]>::uninit();
+    // SAFETY: `header` supplies the 32 writable bytes requested from
+    // `cache_read`, which fills them before returning success.
+    unsafe {
+        cache_read(
+            cc,
+            header.as_mut_ptr() as *mut c_void,
+            size_of::<[u8; 32]>(),
+            false,
+        )?;
+    }
+    // SAFETY: the successful read above initialized all 32 bytes.
+    let header = unsafe { header.assume_init() };
+    let version = read_u32(&header[12..]);
+    let num_points = read_u32(&header[16..]);
+    let start_frame = read_f32(&header[20..]) as f64;
+    let frames_per_sample = read_f32(&header[24..]) as f64;
+    let num_samples = read_u32(&header[28..]);
 
     let _ = version;
 

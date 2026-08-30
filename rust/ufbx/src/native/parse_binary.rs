@@ -312,13 +312,12 @@ pub(crate) unsafe fn binary_convert_array(
     // cursor's identifier is threaded through as `$val`.
     macro_rules! ufbxi_convert_loop_fast {
         ($m_dst:ty, $m_cast:ident, $m_size:expr, $val:ident, $m_expr:expr) => {{
-            let mut $val: *const u8 = src as *const u8;
-            let val_end: *const u8 = $val.add(size * $m_size);
+            let mut $val: &[u8] = slice_from_ptr(src as *const u8, size * $m_size);
             let mut d: *mut $m_dst = dst as *mut $m_dst;
-            while $val != val_end {
+            while !$val.is_empty() {
                 *d = $m_cast!($m_expr);
                 d = d.add(1);
-                $val = $val.add($m_size);
+                $val = &$val[$m_size..];
             }
         }};
     }
@@ -328,13 +327,12 @@ pub(crate) unsafe fn binary_convert_array(
     // macro for call-site diff parity.
     macro_rules! ufbxi_convert_loop_slow {
         ($m_dst:ty, $m_cast:ident, $m_size:expr, $val:ident, $m_expr:expr) => {{
-            let mut $val: *const u8 = src as *const u8;
-            let val_end: *const u8 = $val.add(size * $m_size);
+            let mut $val: &[u8] = slice_from_ptr(src as *const u8, size * $m_size);
             let mut d: *mut $m_dst = dst as *mut $m_dst;
-            while $val != val_end {
+            while !$val.is_empty() {
                 *d = $m_cast!($m_expr);
                 d = d.add(1);
-                $val = $val.add($m_size);
+                $val = &$val[$m_size..];
             }
         }};
     }
@@ -373,17 +371,14 @@ pub(crate) unsafe fn binary_convert_array(
             // C-parity: `*val` is `char`, which is SIGNED on this port's targets
             // (x86-64 SysV and Apple AArch64) — the read sign-extends. This is the
             // documented exception to the "`char` → `u8` everywhere" storage rule
-            // (PORTING.md "Integer semantics", the `char` (value) row): do NOT
-            // "fix" these five `*const i8` derefs back to `u8` on an upstream sync,
-            // it changes every source byte >= 0x80.
+            // (PORTING.md "Integer semantics", the `char` (value) row): the first
+            // source byte is interpreted as `i8`, preserving sign extension for
+            // bytes >= 0x80.
             // SAFETY: the convert loop walks exactly `size` elements, reading
             // `$m_size` bytes per step from `src` (caller-guaranteed `size`
             // `src_type` elements) and writing one `$m_dst` per step to `dst`
-            // (`size` `dst_type` elements). The `*(val as *const i8)` arm reads
-            // one in-bounds source byte as a signed char.
-            b'c' => unsafe {
-                ufbxi_convert_loop_slow!(i32, ufbxi_cast_i32, 1, val, *(val as *const i8))
-            },
+            // (`size` `dst_type` elements). `val[0]` is the in-bounds source byte.
+            b'c' => unsafe { ufbxi_convert_loop_slow!(i32, ufbxi_cast_i32, 1, val, val[0] as i8) },
             // case 'i': ufbxi_convert_loop_slow(int32_t, (int32_t), 4, ufbxi_read_i32(val)); break;
             // SAFETY: as above.
             b'l' => unsafe { ufbxi_convert_loop_slow!(i32, ufbxi_cast_i32, 8, val, read_i64(val)) },
@@ -416,11 +411,8 @@ pub(crate) unsafe fn binary_convert_array(
             // SAFETY: the convert loop walks exactly `size` elements, reading
             // `$m_size` bytes per step from `src` (caller-guaranteed `size`
             // `src_type` elements) and writing one `$m_dst` per step to `dst`
-            // (`size` `dst_type` elements). The `*(val as *const i8)` arm reads
-            // one in-bounds source byte as a signed char.
-            b'c' => unsafe {
-                ufbxi_convert_loop_slow!(i64, ufbxi_cast_i64, 1, val, *(val as *const i8))
-            },
+            // (`size` `dst_type` elements). `val[0]` is the in-bounds source byte.
+            b'c' => unsafe { ufbxi_convert_loop_slow!(i64, ufbxi_cast_i64, 1, val, val[0] as i8) },
             // SAFETY: as above.
             b'i' => unsafe { ufbxi_convert_loop_slow!(i64, ufbxi_cast_i64, 4, val, read_i32(val)) },
             // case 'l': ufbxi_convert_loop_slow(int64_t, (int64_t), 8, ufbxi_read_i64(val)); break;
@@ -453,11 +445,8 @@ pub(crate) unsafe fn binary_convert_array(
             // SAFETY: the convert loop walks exactly `size` elements, reading
             // `$m_size` bytes per step from `src` (caller-guaranteed `size`
             // `src_type` elements) and writing one `$m_dst` per step to `dst`
-            // (`size` `dst_type` elements). The `*(val as *const i8)` arm reads
-            // one in-bounds source byte as a signed char.
-            b'c' => unsafe {
-                ufbxi_convert_loop_slow!(f32, ufbxi_cast_f32, 1, val, *(val as *const i8))
-            },
+            // (`size` `dst_type` elements). `val[0]` is the in-bounds source byte.
+            b'c' => unsafe { ufbxi_convert_loop_slow!(f32, ufbxi_cast_f32, 1, val, val[0] as i8) },
             // SAFETY: as above.
             b'i' => unsafe { ufbxi_convert_loop_slow!(f32, ufbxi_cast_f32, 4, val, read_i32(val)) },
             // SAFETY: as above.
@@ -486,11 +475,8 @@ pub(crate) unsafe fn binary_convert_array(
             // SAFETY: the convert loop walks exactly `size` elements, reading
             // `$m_size` bytes per step from `src` (caller-guaranteed `size`
             // `src_type` elements) and writing one `$m_dst` per step to `dst`
-            // (`size` `dst_type` elements). The `*(val as *const i8)` arm reads
-            // one in-bounds source byte as a signed char.
-            b'c' => unsafe {
-                ufbxi_convert_loop_slow!(f64, ufbxi_cast_f64, 1, val, *(val as *const i8))
-            },
+            // (`size` `dst_type` elements). `val[0]` is the in-bounds source byte.
+            b'c' => unsafe { ufbxi_convert_loop_slow!(f64, ufbxi_cast_f64, 1, val, val[0] as i8) },
             // SAFETY: as above.
             b'i' => unsafe { ufbxi_convert_loop_slow!(f64, ufbxi_cast_f64, 4, val, read_i32(val)) },
             // SAFETY: as above.
@@ -559,9 +545,10 @@ pub(crate) unsafe fn binary_parse_multivalue_array(
                 val = swap_endian_value(uc, &val_bytes[1..], type_);
                 ufbxi_check!(uc, !val.is_null(), "val");
             }
-            // SAFETY: `val` addresses the 4-byte length word within the peeked
+            // SAFETY: `val` addresses the 12-byte payload within the peeked
             // (and, for big-endian, swapped) window.
-            let len: usize = unsafe { read_u32(val) } as usize;
+            let value_bytes = unsafe { slice_from_ptr(val, 12) };
+            let len: usize = read_u32(value_bytes) as usize;
             consume_bytes(uc, 5);
             // SAFETY: `d` walks `size` live `String` slots of the `dst` array
             // (caller contract); these write its `data`/`length` fields.
@@ -629,10 +616,10 @@ pub(crate) unsafe fn binary_parse_multivalue_array(
         // `base < size`, so writes stay in bounds.
         unsafe {
             match dst_type {
-                b'i' => ufbxi_convert_parse_fast!(i32, b'I', read_i32(val)),
-                b'l' => ufbxi_convert_parse_fast!(i64, b'L', read_i64(val)),
-                b'f' => ufbxi_convert_parse_fast!(f32, b'F', read_f32(val)),
-                b'd' => ufbxi_convert_parse_fast!(f64, b'D', read_f64(val)),
+                b'i' => ufbxi_convert_parse_fast!(i32, b'I', read_i32(slice_from_ptr(val, 4))),
+                b'l' => ufbxi_convert_parse_fast!(i64, b'L', read_i64(slice_from_ptr(val, 8))),
+                b'f' => ufbxi_convert_parse_fast!(f32, b'F', read_f32(slice_from_ptr(val, 4))),
+                b'd' => ufbxi_convert_parse_fast!(f64, b'D', read_f64(slice_from_ptr(val, 8))),
                 _ => {} // Fallthrough to rest
             }
         }
@@ -660,37 +647,38 @@ pub(crate) unsafe fn binary_parse_multivalue_array(
                     val = swap_endian_value(uc, &val_bytes[1..], type_);
                     ufbxi_check!(uc, !val.is_null(), "val");
                 }
+                let value_bytes = slice_from_ptr(val, 12);
                 match type_ {
                     // C-parity: `*val` is `char` — SIGNED on this port's targets.
                     // Documented exception to the `u8` storage rule, see
                     // PORTING.md "Integer semantics" (the `char` (value) row).
                     b'C' | b'B' => {
-                        *d = $m_cast_int!(*(val as *const i8));
+                        *d = $m_cast_int!(value_bytes[0] as i8);
                         d = d.add(1);
                         val_size = 1 + 1;
                     }
                     b'Y' => {
-                        *d = $m_cast_int!(read_i16(val));
+                        *d = $m_cast_int!(read_i16(value_bytes));
                         d = d.add(1);
                         val_size = 2 + 1;
                     }
                     b'I' => {
-                        *d = $m_cast_int!(read_i32(val));
+                        *d = $m_cast_int!(read_i32(value_bytes));
                         d = d.add(1);
                         val_size = 4 + 1;
                     }
                     b'L' => {
-                        *d = $m_cast_int!(read_i64(val));
+                        *d = $m_cast_int!(read_i64(value_bytes));
                         d = d.add(1);
                         val_size = 8 + 1;
                     }
                     b'F' => {
-                        *d = $m_cast_float!(read_f32(val));
+                        *d = $m_cast_float!(read_f32(value_bytes));
                         d = d.add(1);
                         val_size = 4 + 1;
                     }
                     b'D' => {
-                        *d = $m_cast_float!(read_f64(val));
+                        *d = $m_cast_float!(read_f64(value_bytes));
                         d = d.add(1);
                         val_size = 8 + 1;
                     }
@@ -946,26 +934,24 @@ fn binary_parse_node_rec(
             header_words = swap_endian(uc, &header_bytes[..24], 3, 8);
             ufbxi_check!(uc, !header_words.is_null(), "header_words");
         }
-        // SAFETY: `header_words` addresses three 8-byte words at offsets 0/8/16
-        // (of the 25-byte header, or of the 24-byte swap buffer for a big-endian
-        // file); `header` holds the name-length byte at offset 24 of the read
-        // region.
-        end_offset = unsafe { read_u64(header_words.add(0)) };
-        num_values64 = unsafe { read_u64(header_words.add(8)) };
-        values_len = unsafe { read_u64(header_words.add(16)) };
+        // SAFETY: `header_words` addresses the three 8-byte words from the
+        // 25-byte header, or the corresponding 24-byte swap buffer.
+        let words = unsafe { slice_from_ptr(header_words, 24) };
+        end_offset = read_u64(&words[0..]);
+        num_values64 = read_u64(&words[8..]);
+        values_len = read_u64(&words[16..]);
         name_len = header_bytes[24];
     } else {
         if uc.file_big_endian() {
             header_words = swap_endian(uc, &header_bytes[..12], 3, 4);
             ufbxi_check!(uc, !header_words.is_null(), "header_words");
         }
-        // SAFETY: `header_words` addresses three 4-byte words at offsets 0/4/8
-        // (of the 13-byte header, or of the 12-byte swap buffer for a big-endian
-        // file); `header` holds the name-length byte at offset 12 of the read
-        // region.
-        end_offset = unsafe { read_u32(header_words.add(0)) } as u64;
-        num_values64 = unsafe { read_u32(header_words.add(4)) } as u64;
-        values_len = unsafe { read_u32(header_words.add(8)) } as u64;
+        // SAFETY: `header_words` addresses the three 4-byte words from the
+        // 13-byte header, or the corresponding 12-byte swap buffer.
+        let words = unsafe { slice_from_ptr(header_words, 12) };
+        end_offset = read_u32(&words[0..]) as u64;
+        num_values64 = read_u32(&words[4..]) as u64;
+        values_len = read_u32(&words[8..]) as u64;
         name_len = header_bytes[12];
     }
 
@@ -1082,12 +1068,12 @@ fn binary_parse_node_rec(
 
             // Parse the array header from the prefix we already peeked above.
             let mut src_type: u8 = data_bytes[0];
-            // SAFETY: `arr_words` addresses the three 4-byte header words (size,
-            // encoding, encoded_size) at offsets 0/4/8 within the peeked (and,
-            // for big-endian, swapped) window.
-            let size: u32 = unsafe { read_u32(arr_words.add(0)) };
-            let encoding: u32 = unsafe { read_u32(arr_words.add(4)) };
-            let encoded_size: u32 = unsafe { read_u32(arr_words.add(8)) };
+            // SAFETY: `arr_words` addresses the three 4-byte header words in
+            // the peeked or byte-swapped window.
+            let arr_words = unsafe { slice_from_ptr(arr_words, 12) };
+            let size: u32 = read_u32(&arr_words[0..]);
+            let encoding: u32 = read_u32(&arr_words[4..]);
+            let encoded_size: u32 = read_u32(&arr_words[8..]);
             consume_bytes(uc, 13);
 
             // Normalize the source type as well, but don't convert UFBX-specific
@@ -1433,6 +1419,9 @@ fn binary_parse_node_rec(
                 value = swap_endian_value(uc, &data_bytes[1..], type_);
                 ufbxi_check!(uc, !value.is_null(), "value");
             }
+            // SAFETY: `value` addresses the 12-byte payload in the peeked or
+            // byte-swapped window.
+            let value_bytes = unsafe { slice_from_ptr(value, 12) };
 
             match type_ {
                 b'C' | b'B' | b'Z' => {
@@ -1440,10 +1429,9 @@ fn binary_parse_node_rec(
                     // C: `vals[i].f = (double)(vals[i].i = (int64_t)(uint8_t)value[0]);`
                     // — the inner assignment happens first, then its value is
                     // converted; decomposed per PORTING.md "Evaluation order".
-                    // SAFETY: `i < num_values`, so `vals.add(i)` is a live `Value`;
-                    // `value` points into the peeked window, read its first byte.
+                    // SAFETY: `i < num_values`, so `vals.add(i)` is a live `Value`.
                     unsafe {
-                        (*vals.add(i)).num.i = *value.add(0) as i64;
+                        (*vals.add(i)).num.i = value_bytes[0] as i64;
                         (*vals.add(i)).num.f = (*vals.add(i)).num.i as f64;
                     }
                     consume_bytes(uc, 2);
@@ -1451,11 +1439,9 @@ fn binary_parse_node_rec(
 
                 b'Y' => {
                     type_mask |= (ValueType::Number as u32) << (i * 2);
-                    // SAFETY: `i < num_values`, so `vals.add(i)` is a live `Value`;
-                    // `value` addresses the 2-byte payload in the peeked (and,
-                    // for a big-endian file, swapped) window.
+                    // SAFETY: `i < num_values`, so `vals.add(i)` is a live `Value`.
                     unsafe {
-                        (*vals.add(i)).num.i = read_i16(value) as i64;
+                        (*vals.add(i)).num.i = read_i16(value_bytes) as i64;
                         (*vals.add(i)).num.f = (*vals.add(i)).num.i as f64;
                     }
                     consume_bytes(uc, 3);
@@ -1463,11 +1449,9 @@ fn binary_parse_node_rec(
 
                 b'I' => {
                     type_mask |= (ValueType::Number as u32) << (i * 2);
-                    // SAFETY: `i < num_values`, so `vals.add(i)` is a live `Value`;
-                    // `value` addresses the 4-byte payload in the peeked (and,
-                    // for a big-endian file, swapped) window.
+                    // SAFETY: `i < num_values`, so `vals.add(i)` is a live `Value`.
                     unsafe {
-                        (*vals.add(i)).num.i = read_i32(value) as i64;
+                        (*vals.add(i)).num.i = read_i32(value_bytes) as i64;
                         (*vals.add(i)).num.f = (*vals.add(i)).num.i as f64;
                     }
                     consume_bytes(uc, 5);
@@ -1475,11 +1459,9 @@ fn binary_parse_node_rec(
 
                 b'L' => {
                     type_mask |= (ValueType::Number as u32) << (i * 2);
-                    // SAFETY: `i < num_values`, so `vals.add(i)` is a live `Value`;
-                    // `value` addresses the 8-byte payload in the peeked (and,
-                    // for a big-endian file, swapped) window.
+                    // SAFETY: `i < num_values`, so `vals.add(i)` is a live `Value`.
                     unsafe {
-                        (*vals.add(i)).num.i = read_i64(value);
+                        (*vals.add(i)).num.i = read_i64(value_bytes);
                         (*vals.add(i)).num.f = (*vals.add(i)).num.i as f64;
                     }
                     consume_bytes(uc, 9);
@@ -1490,11 +1472,9 @@ fn binary_parse_node_rec(
                     // C: `vals[i].i = ufbxi_f64_to_i64(vals[i].f = ufbxi_read_f32(value));`
                     // — the `float` is promoted to `double` by the assignment to
                     // the `double` member, and that value feeds `ufbxi_f64_to_i64`.
-                    // SAFETY: `i < num_values`, so `vals.add(i)` is a live `Value`;
-                    // `value` addresses the 4-byte payload in the peeked (and,
-                    // for a big-endian file, swapped) window.
+                    // SAFETY: `i < num_values`, so `vals.add(i)` is a live `Value`.
                     unsafe {
-                        (*vals.add(i)).num.f = read_f32(value) as f64;
+                        (*vals.add(i)).num.f = read_f32(value_bytes) as f64;
                         (*vals.add(i)).num.i = f64_to_i64((*vals.add(i)).num.f);
                     }
                     consume_bytes(uc, 5);
@@ -1502,20 +1482,16 @@ fn binary_parse_node_rec(
 
                 b'D' => {
                     type_mask |= (ValueType::Number as u32) << (i * 2);
-                    // SAFETY: `i < num_values`, so `vals.add(i)` is a live `Value`;
-                    // `value` addresses the 8-byte payload in the peeked (and,
-                    // for a big-endian file, swapped) window.
+                    // SAFETY: `i < num_values`, so `vals.add(i)` is a live `Value`.
                     unsafe {
-                        (*vals.add(i)).num.f = read_f64(value);
+                        (*vals.add(i)).num.f = read_f64(value_bytes);
                         (*vals.add(i)).num.i = f64_to_i64((*vals.add(i)).num.f);
                     }
                     consume_bytes(uc, 9);
                 }
 
                 b'S' | b'R' => {
-                    // SAFETY: `value` addresses the 4-byte length word in the
-                    // peeked (and, for a big-endian file, swapped) window.
-                    let length: u32 = unsafe { read_u32(value) };
+                    let length: u32 = read_u32(value_bytes);
                     consume_bytes(uc, 5);
                     let str_: *const u8 = read_bytes(uc, length as usize);
                     ufbxi_check!(uc, !str_.is_null(), "str");
@@ -1564,11 +1540,7 @@ fn binary_parse_node_rec(
 
                 // Treat arrays as non-values and skip them
                 b'c' | b'b' | b'i' | b'l' | b'f' | b'd' => {
-                    // SAFETY: `value` addresses the array's three 4-byte header
-                    // words — in the 13-byte peeked window, or in the 12-byte swap
-                    // buffer for a big-endian file and a non-`c` type — and the
-                    // encoded-size word sits at offset 8 within them.
-                    let encoded_size: u32 = unsafe { read_u32(value.add(8)) };
+                    let encoded_size: u32 = read_u32(&value_bytes[8..]);
                     consume_bytes(uc, 13);
                     skip_bytes(uc, encoded_size as u64)?;
                 }

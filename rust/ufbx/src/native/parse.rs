@@ -6746,7 +6746,8 @@ pub(crate) fn begin_parse(uc: &Context) -> Result<(), Fail> {
         }
         // SAFETY: `version_word` is 4 readable bytes — either the header slice
         // above or the swap buffer that replaced it.
-        uc.set_version(unsafe { read_u32(version_word) });
+        let version_word = unsafe { crate::prelude::slice_from_ptr(version_word, 4) };
+        uc.set_version(read_u32(version_word));
 
         // This is quite probably an FBX file..
         uc.set_sure_fbx(true);

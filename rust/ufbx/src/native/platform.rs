@@ -471,84 +471,65 @@ pub(crate) fn is_aligned_mask<T>(ptr: *const T, mask: usize) -> bool {
 
 // ufbx.c:745 `#define ufbxi_read_u8(ptr) (*(const uint8_t*)(ptr))`
 #[inline(always)]
-pub(crate) unsafe fn read_u8(ptr: *const u8) -> u8 {
-    // SAFETY: caller contract — `ptr` has 1 readable byte.
-    unsafe { *ptr }
+pub(crate) fn read_u8(bytes: &[u8]) -> u8 {
+    bytes[0]
 }
 
 // ufbx.c:791-836 `ufbxi_read_u16`
 // The unaligned-pointer fast path (ufbx.c:792-796) and the byte-assembly
-// portable path (ufbx.c:798-835) collapse to read_unaligned + from_le_bytes
+// portable path (ufbx.c:798-835) collapse to byte slices + from_le_bytes
 // (PORTING.md "Byte order"); correct on big-endian targets too.
 #[inline(always)]
-pub(crate) unsafe fn read_u16(ptr: *const u8) -> u16 {
-    // SAFETY: caller contract — `ptr` has 2 readable bytes; the unaligned
-    // read imposes no alignment requirement.
-    unsafe { u16::from_le_bytes((ptr as *const [u8; 2]).read_unaligned()) }
+pub(crate) fn read_u16(bytes: &[u8]) -> u16 {
+    u16::from_le_bytes(bytes[..2].try_into().unwrap())
 }
 
 // ufbx.c:791-830 `ufbxi_read_u32`
 #[inline(always)]
-pub(crate) unsafe fn read_u32(ptr: *const u8) -> u32 {
-    // SAFETY: caller contract — `ptr` has 4 readable bytes; the unaligned
-    // read imposes no alignment requirement.
-    unsafe { u32::from_le_bytes((ptr as *const [u8; 4]).read_unaligned()) }
+pub(crate) fn read_u32(bytes: &[u8]) -> u32 {
+    u32::from_le_bytes(bytes[..4].try_into().unwrap())
 }
 
 // ufbx.c:791-830 `ufbxi_read_u64`
 #[inline(always)]
-pub(crate) unsafe fn read_u64(ptr: *const u8) -> u64 {
-    // SAFETY: caller contract — `ptr` has 8 readable bytes; the unaligned
-    // read imposes no alignment requirement.
-    unsafe { u64::from_le_bytes((ptr as *const [u8; 8]).read_unaligned()) }
+pub(crate) fn read_u64(bytes: &[u8]) -> u64 {
+    u64::from_le_bytes(bytes[..8].try_into().unwrap())
 }
 
 // ufbx.c:791-830 `ufbxi_read_f32` (u32 read + bit copy, ufbx.c:824-829)
 #[inline(always)]
-pub(crate) unsafe fn read_f32(ptr: *const u8) -> f32 {
-    // SAFETY: forwards the caller's `4 readable bytes at ptr` contract to
-    // `read_u32`.
-    unsafe { f32::from_bits(read_u32(ptr)) }
+pub(crate) fn read_f32(bytes: &[u8]) -> f32 {
+    f32::from_bits(read_u32(bytes))
 }
 
 // ufbx.c:791-830 `ufbxi_read_f64` (u64 read + bit copy, ufbx.c:824-829)
 #[inline(always)]
-pub(crate) unsafe fn read_f64(ptr: *const u8) -> f64 {
-    // SAFETY: forwards the caller's `8 readable bytes at ptr` contract to
-    // `read_u64`.
-    unsafe { f64::from_bits(read_u64(ptr)) }
+pub(crate) fn read_f64(bytes: &[u8]) -> f64 {
+    f64::from_bits(read_u64(bytes))
 }
 
 // ufbx.c:838 `#define ufbxi_read_i8(ptr) (int8_t)(ufbxi_read_u8(ptr))`
 #[inline(always)]
-pub(crate) unsafe fn read_i8(ptr: *const u8) -> i8 {
-    // SAFETY: forwards the caller's `1 readable byte at ptr` contract to
-    // `read_u8`.
-    unsafe { read_u8(ptr) as i8 }
+pub(crate) fn read_i8(bytes: &[u8]) -> i8 {
+    read_u8(bytes) as i8
 }
 
 // ufbx.c:839 `ufbxi_read_i16`
 #[inline(always)]
-pub(crate) unsafe fn read_i16(ptr: *const u8) -> i16 {
-    // SAFETY: forwards the caller's `2 readable bytes at ptr` contract to
-    // `read_u16`.
-    unsafe { read_u16(ptr) as i16 }
+pub(crate) fn read_i16(bytes: &[u8]) -> i16 {
+    read_u16(bytes) as i16
 }
 
 // ufbx.c:840 `ufbxi_read_i32`
 #[inline(always)]
-pub(crate) unsafe fn read_i32(ptr: *const u8) -> i32 {
-    // SAFETY: forwards the caller's `4 readable bytes at ptr` contract to
-    // `read_u32`.
-    unsafe { read_u32(ptr) as i32 }
+pub(crate) fn read_i32(bytes: &[u8]) -> i32 {
+    read_u32(bytes) as i32
 }
 
 // ufbx.c:841 `ufbxi_read_i64`
 #[inline(always)]
-pub(crate) unsafe fn read_i64(ptr: *const u8) -> i64 {
-    // SAFETY: forwards the caller's `8 readable bytes at ptr` contract to
-    // `read_u64`.
-    unsafe { read_u64(ptr) as i64 }
+pub(crate) fn read_i64(bytes: &[u8]) -> i64 {
+    read_u64(bytes) as i64
 }
 
 // ufbx.c:843-854 sizeof static asserts — fixed-width types make most of these
@@ -1528,18 +1509,16 @@ mod tests {
             0x3F, // 1.0f LE
             0x01, 0x02, 0x03, 0x04,
         ];
-        unsafe {
-            let p = buf.as_ptr().add(1);
-            assert_eq!(read_u8(p), 0x78);
-            assert_eq!(read_u16(p), 0x5678);
-            assert_eq!(read_u32(p), 0x1234_5678);
-            assert_eq!(read_u64(p), 0xDEAD_BEEF_1234_5678);
-            assert_eq!(read_i32(buf.as_ptr().add(5)), 0xDEAD_BEEFu32 as i32);
-            assert_eq!(read_i16(p), 0x5678);
-            assert_eq!(read_i8(buf.as_ptr().add(8)), 0xDEu8 as i8);
-            assert_eq!(read_f32(buf.as_ptr().add(9)), 1.0f32);
-            assert_eq!(read_f64(p), f64::from_bits(0xDEAD_BEEF_1234_5678));
-        }
+        let p = &buf[1..];
+        assert_eq!(read_u8(p), 0x78);
+        assert_eq!(read_u16(p), 0x5678);
+        assert_eq!(read_u32(p), 0x1234_5678);
+        assert_eq!(read_u64(p), 0xDEAD_BEEF_1234_5678);
+        assert_eq!(read_i32(&buf[5..]), 0xDEAD_BEEFu32 as i32);
+        assert_eq!(read_i16(p), 0x5678);
+        assert_eq!(read_i8(&buf[8..]), 0xDEu8 as i8);
+        assert_eq!(read_f32(&buf[9..]), 1.0f32);
+        assert_eq!(read_f64(p), f64::from_bits(0xDEAD_BEEF_1234_5678));
     }
 
     #[test]
