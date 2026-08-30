@@ -284,7 +284,7 @@ pub static EMPTY_STRING: EmptyString = EmptyString(String::new_c(EMPTY_CHAR.as_p
 pub(crate) struct EmptyBlob(pub Blob);
 unsafe impl Sync for EmptyBlob {}
 #[cfg_attr(feature = "c-abi", export_name = "ufbx_empty_blob")]
-pub static EMPTY_BLOB: EmptyBlob = EmptyBlob(Blob::new_c(core::ptr::null(), 0));
+pub static EMPTY_BLOB: EmptyBlob = EmptyBlob(Blob::empty());
 
 // ufbx.c:30341 `ufbx_abi_data_def const ufbx_matrix ufbx_identity_matrix = { 1,0,0, 0,1,0, 0,0,1, 0,0,0 };`
 // Plain `Real` fields, so no `Sync` wrapper is needed (unlike `EMPTY_STRING`).
@@ -2544,77 +2544,63 @@ pub(crate) fn find_baked_element<'a, M: Mode>(
 // list (`count - 1` wraps), an out-of-bounds read reachable from any caller
 // passing an empty keyframe list. The empty case returns `ZERO_VEC3` here;
 // reconcile once upstream lands the fix.
-pub(crate) unsafe fn evaluate_baked_vec3(keyframes: List<BakedVec3>, time: f64) -> Vec3 {
+pub(crate) fn evaluate_baked_vec3_slice(keyframes: &[BakedVec3], time: f64) -> Vec3 {
     let mut begin: usize = 0;
-    let mut end: usize = keyframes.count;
-    let keys: *const BakedVec3 = keyframes.data;
+    let mut end: usize = keyframes.len();
     while end - begin >= 8 {
         let mid: usize = (begin + end) >> 1;
-        // SAFETY: `mid < end <= keyframes.count`, so `keys.add(mid)` addresses a
-        // live `BakedVec3` of the caller's keyframe run.
-        if unsafe { (*keys.add(mid)).time } <= time {
+        if keyframes[mid].time <= time {
             begin = mid + 1;
         } else {
             end = mid;
         }
     }
 
-    end = keyframes.count;
+    end = keyframes.len();
     // C: `for (; begin < end; begin++)` — every path out of the body either
     // `continue`s (the only one that advances `begin`) or returns.
     while begin < end {
-        // SAFETY: `begin < end <= keyframes.count`, so `keys.add(begin)` addresses
-        // a live keyframe of the run.
-        let next: *const BakedVec3 = unsafe { keys.add(begin) };
-        // SAFETY: `next` is the live keyframe just indexed.
-        if unsafe { (*next).time } <= time {
+        let next = &keyframes[begin];
+        if next.time <= time {
             begin += 1;
             continue;
         }
         if begin == 0 {
-            // SAFETY: `next` is the live keyframe just indexed.
-            return unsafe { (*next).value };
+            return next.value;
         }
 
-        // SAFETY: `begin >= 1` here, so `next.sub(1)` addresses the previous live
-        // keyframe of the run.
-        let mut prev: *const BakedVec3 = unsafe { next.sub(1) };
-        // SAFETY: `prev > keys` guards the `prev.sub(1)` read to stay within the
-        // run; `prev`/`prev-1` are live keyframes.
-        if prev > keys
-            && unsafe {
-                ((*prev).flags & BakedKeyFlags::STEP_RIGHT).any() && (*prev.sub(1)).time == time
-            }
+        let mut prev: usize = begin - 1;
+        if prev > 0
+            && (keyframes[prev].flags & BakedKeyFlags::STEP_RIGHT).any()
+            && keyframes[prev - 1].time == time
         {
-            // SAFETY: `prev > keys` (checked), so `prev.sub(1)` stays in the run.
-            prev = unsafe { prev.sub(1) };
+            prev -= 1;
         }
-        // SAFETY: `prev` is a live keyframe of the run.
-        if time == unsafe { (*prev).time } {
-            // SAFETY: as above.
-            return unsafe { (*prev).value };
+        if time == keyframes[prev].time {
+            return keyframes[prev].value;
         }
-        // SAFETY: `prev`/`next` are live keyframes of the run.
-        let mut t: f64 = (time - unsafe { (*prev).time }) / unsafe { (*next).time - (*prev).time };
-        // SAFETY: `prev` is a live keyframe.
-        if unsafe { ((*prev).flags & BakedKeyFlags::STEP_LEFT).any() } {
+        let mut t: f64 = (time - keyframes[prev].time) / (next.time - keyframes[prev].time);
+        if (keyframes[prev].flags & BakedKeyFlags::STEP_LEFT).any() {
             t = 0.0;
         }
-        // SAFETY: `next` is a live keyframe.
-        if unsafe { ((*next).flags & BakedKeyFlags::STEP_RIGHT).any() } {
+        if (next.flags & BakedKeyFlags::STEP_RIGHT).any() {
             t = 1.0;
         }
-        // SAFETY: `prev`/`next` are live keyframes of the run.
-        return unsafe { lerp3((*prev).value, (*next).value, t as Real) };
+        return lerp3(keyframes[prev].value, next.value, t as Real);
     }
 
     // PORT DIVERGENCE (ufbx.c:31369): guard the empty list (see fn header).
-    if keyframes.count == 0 {
+    if keyframes.is_empty() {
         return ZERO_VEC3;
     }
-    // SAFETY: `count >= 1` (guarded above), so `count - 1` addresses the last
-    // live keyframe of the run — the clamp value when no keyframe is past `time`.
-    unsafe { (*keyframes.data.add(keyframes.count - 1)).value }
+    keyframes[keyframes.len() - 1].value
+}
+
+pub(crate) unsafe fn evaluate_baked_vec3(keyframes: List<BakedVec3>, time: f64) -> Vec3 {
+    // SAFETY: the raw list boundary requires `data`/`count` to describe one live,
+    // initialized keyframe run for this call; null is accepted exactly at zero.
+    let keyframes = unsafe { crate::prelude::slice_from_ptr(keyframes.data, keyframes.count) };
+    evaluate_baked_vec3_slice(keyframes, time)
 }
 
 // ufbx.c:31372-31403 `ufbx_evaluate_baked_quat`
@@ -2629,84 +2615,67 @@ pub(crate) unsafe fn evaluate_baked_vec3(keyframes: List<BakedVec3>, time: f64) 
 // the first test to have been false, and both tests read the same `prev[-1]
 // .time == time` (if the first fired, `time == prev->time` returns right
 // after it). Ported verbatim anyway — it is the C source text.
-pub(crate) unsafe fn evaluate_baked_quat(keyframes: List<BakedQuat>, time: f64) -> Quat {
+pub(crate) fn evaluate_baked_quat_slice(keyframes: &[BakedQuat], time: f64) -> Quat {
     let mut begin: usize = 0;
-    let mut end: usize = keyframes.count;
-    let keys: *const BakedQuat = keyframes.data;
+    let mut end: usize = keyframes.len();
     while end - begin >= 8 {
         let mid: usize = (begin + end) >> 1;
-        // SAFETY: `mid < end <= keyframes.count`, so `keys.add(mid)` addresses a
-        // live `BakedQuat` of the caller's keyframe run.
-        if unsafe { (*keys.add(mid)).time } <= time {
+        if keyframes[mid].time <= time {
             begin = mid + 1;
         } else {
             end = mid;
         }
     }
 
-    end = keyframes.count;
+    end = keyframes.len();
     while begin < end {
-        // SAFETY: `begin < end <= keyframes.count`, so `keys.add(begin)` addresses
-        // a live keyframe of the run.
-        let next: *const BakedQuat = unsafe { keys.add(begin) };
-        // SAFETY: `next` is the live keyframe just indexed.
-        if unsafe { (*next).time } <= time {
+        let next = &keyframes[begin];
+        if next.time <= time {
             begin += 1;
             continue;
         }
         if begin == 0 {
-            // SAFETY: `next` is the live keyframe just indexed.
-            return unsafe { (*next).value };
+            return next.value;
         }
 
-        // SAFETY: `begin >= 1` here, so `next.sub(1)` addresses the previous live
-        // keyframe of the run.
-        let mut prev: *const BakedQuat = unsafe { next.sub(1) };
-        // SAFETY: `prev > keys` guards the `prev.sub(1)` read to stay within the
-        // run; `prev-1` is a live keyframe.
-        if prev > keys && unsafe { (*prev.sub(1)).time } == time {
-            // SAFETY: `prev > keys` (checked), so `prev.sub(1)` stays in the run.
-            prev = unsafe { prev.sub(1) };
+        let mut prev: usize = begin - 1;
+        if prev > 0 && keyframes[prev - 1].time == time {
+            prev -= 1;
         }
-        // SAFETY: `prev` is a live keyframe of the run.
-        if time == unsafe { (*prev).time } {
-            // SAFETY: as above.
-            return unsafe { (*prev).value };
+        if time == keyframes[prev].time {
+            return keyframes[prev].value;
         }
-        // SAFETY: `prev`/`next` are live keyframes of the run.
-        let mut t: f64 = (time - unsafe { (*prev).time }) / unsafe { (*next).time - (*prev).time };
-        // SAFETY: `prev > keys` guards the `prev.sub(1)` read; `prev`/`prev-1` are
-        // live keyframes of the run.
-        if prev > keys
-            && unsafe {
-                ((*prev).flags & BakedKeyFlags::STEP_RIGHT).any() && (*prev.sub(1)).time == time
-            }
+        let mut t: f64 = (time - keyframes[prev].time) / (next.time - keyframes[prev].time);
+        if prev > 0
+            && (keyframes[prev].flags & BakedKeyFlags::STEP_RIGHT).any()
+            && keyframes[prev - 1].time == time
         {
-            // SAFETY: `prev > keys` (checked), so `prev.sub(1)` stays in the run.
-            prev = unsafe { prev.sub(1) };
+            prev -= 1;
         }
-        // SAFETY: `prev` is a live keyframe.
-        if unsafe { ((*prev).flags & BakedKeyFlags::STEP_LEFT).any() } {
+        if (keyframes[prev].flags & BakedKeyFlags::STEP_LEFT).any() {
             t = 0.0;
         }
-        // SAFETY: `next` is a live keyframe.
-        if unsafe { ((*next).flags & BakedKeyFlags::STEP_RIGHT).any() } {
+        if (next.flags & BakedKeyFlags::STEP_RIGHT).any() {
             t = 1.0;
         }
-        // SAFETY: `prev`/`next` are live keyframes of the run.
-        return unsafe { quat_slerp((*prev).value, (*next).value, t as Real) };
+        return quat_slerp(keyframes[prev].value, next.value, t as Real);
     }
 
     // PORT DIVERGENCE (ufbx.c:31402): upstream's trailing
     // `keyframes.data[keyframes.count - 1]` reads `data[SIZE_MAX]` for an empty
     // list; return `IDENTITY_QUAT` for that case. Reconcile once upstream lands
     // the fix.
-    if keyframes.count == 0 {
+    if keyframes.is_empty() {
         return IDENTITY_QUAT;
     }
-    // SAFETY: `count >= 1` (guarded above), so `count - 1` addresses the last
-    // live keyframe of the run — the clamp value when no keyframe is past `time`.
-    unsafe { (*keyframes.data.add(keyframes.count - 1)).value }
+    keyframes[keyframes.len() - 1].value
+}
+
+pub(crate) unsafe fn evaluate_baked_quat(keyframes: List<BakedQuat>, time: f64) -> Quat {
+    // SAFETY: the raw list boundary requires `data`/`count` to describe one live,
+    // initialized keyframe run for this call; null is accepted exactly at zero.
+    let keyframes = unsafe { crate::prelude::slice_from_ptr(keyframes.data, keyframes.count) };
+    evaluate_baked_quat_slice(keyframes, time)
 }
 
 // ufbx.c:31405-31412 `ufbx_get_bone_pose`
@@ -8243,44 +8212,49 @@ mod tests {
 
     #[test]
     fn test_evaluate_baked_vec3() {
-        unsafe {
-            let none = BakedKeyFlags::NONE;
+        let none = BakedKeyFlags::NONE;
 
-            // `begin == 0`: the query lands before the first key.
-            let keys = [baked_vec3(1.0, 10.0, none), baked_vec3(2.0, 20.0, none)];
-            let eval = |t: f64| evaluate_baked_vec3(List::from_slice(&keys), t);
-            assert_eq!(eval(0.0).x, 10.0);
-            // Past the last key the loop runs out and C indexes `count - 1`.
-            assert_eq!(eval(3.0).x, 20.0);
-            // Exact hit on a key time.
-            assert_eq!(eval(2.0).x, 20.0);
+        let empty = evaluate_baked_vec3_slice(&[], 0.0);
+        assert_eq!((empty.x, empty.y, empty.z), (0.0, 0.0, 0.0));
+        // The raw C list may spell the same empty run as null+zero.
+        let raw_empty: List<BakedVec3> = unsafe { core::mem::MaybeUninit::zeroed().assume_init() };
+        let empty = unsafe { evaluate_baked_vec3(raw_empty, 0.0) };
+        assert_eq!((empty.x, empty.y, empty.z), (0.0, 0.0, 0.0));
 
-            // Linear interpolation, and the two step overrides.
-            let keys = [baked_vec3(0.0, 0.0, none), baked_vec3(1.0, 10.0, none)];
-            assert_eq!(evaluate_baked_vec3(List::from_slice(&keys), 0.25).x, 2.5);
-            let keys = [
-                baked_vec3(0.0, 0.0, BakedKeyFlags::STEP_LEFT),
-                baked_vec3(1.0, 10.0, none),
-            ];
-            assert_eq!(evaluate_baked_vec3(List::from_slice(&keys), 0.25).x, 0.0);
-            let keys = [
-                baked_vec3(0.0, 0.0, none),
-                baked_vec3(1.0, 10.0, BakedKeyFlags::STEP_RIGHT),
-            ];
-            assert_eq!(evaluate_baked_vec3(List::from_slice(&keys), 0.25).x, 10.0);
+        // `begin == 0`: the query lands before the first key.
+        let keys = [baked_vec3(1.0, 10.0, none), baked_vec3(2.0, 20.0, none)];
+        let eval = |t: f64| evaluate_baked_vec3_slice(&keys, t);
+        assert_eq!(eval(0.0).x, 10.0);
+        // Past the last key the loop runs out and C indexes `count - 1`.
+        assert_eq!(eval(3.0).x, 20.0);
+        // Exact hit on a key time.
+        assert_eq!(eval(2.0).x, 20.0);
 
-            // The `end - begin >= 8` binary-search prologue: 10 keys forces it,
-            // and the linear scan must resume from the narrowed `begin`.
-            let mut many: std::vec::Vec<BakedVec3> = std::vec::Vec::new();
-            for i in 0..10 {
-                many.push(baked_vec3(i as f64, (i as Real) * 10.0, none));
-            }
-            let eval = |t: f64| evaluate_baked_vec3(List::from_slice(&many), t);
-            assert_eq!(eval(4.5).x, 45.0);
-            assert_eq!(eval(0.5).x, 5.0);
-            assert_eq!(eval(8.5).x, 85.0);
-            assert_eq!(eval(100.0).x, 90.0);
+        // Linear interpolation, and the two step overrides.
+        let keys = [baked_vec3(0.0, 0.0, none), baked_vec3(1.0, 10.0, none)];
+        assert_eq!(evaluate_baked_vec3_slice(&keys, 0.25).x, 2.5);
+        let keys = [
+            baked_vec3(0.0, 0.0, BakedKeyFlags::STEP_LEFT),
+            baked_vec3(1.0, 10.0, none),
+        ];
+        assert_eq!(evaluate_baked_vec3_slice(&keys, 0.25).x, 0.0);
+        let keys = [
+            baked_vec3(0.0, 0.0, none),
+            baked_vec3(1.0, 10.0, BakedKeyFlags::STEP_RIGHT),
+        ];
+        assert_eq!(evaluate_baked_vec3_slice(&keys, 0.25).x, 10.0);
+
+        // The `end - begin >= 8` binary-search prologue: 10 keys forces it,
+        // and the linear scan must resume from the narrowed `begin`.
+        let mut many: std::vec::Vec<BakedVec3> = std::vec::Vec::new();
+        for i in 0..10 {
+            many.push(baked_vec3(i as f64, (i as Real) * 10.0, none));
         }
+        let eval = |t: f64| evaluate_baked_vec3_slice(&many, t);
+        assert_eq!(eval(4.5).x, 45.0);
+        assert_eq!(eval(0.5).x, 5.0);
+        assert_eq!(eval(8.5).x, 85.0);
+        assert_eq!(eval(100.0).x, 90.0);
     }
 
     #[test]
@@ -8291,98 +8265,104 @@ mod tests {
         // time the two functions therefore pick DIFFERENT keys unless the
         // middle key carries the flag. Copying vec3's body over would make
         // both cases below return the same key.
-        unsafe {
-            let none = BakedKeyFlags::NONE;
-            let step_right = BakedKeyFlags::STEP_RIGHT;
+        let none = BakedKeyFlags::NONE;
+        let step_right = BakedKeyFlags::STEP_RIGHT;
 
-            // Duplicated time at indices 0 and 1, no flags.
-            let v = [
-                baked_vec3(1.0, 10.0, none),
-                baked_vec3(1.0, 20.0, none),
-                baked_vec3(2.0, 30.0, none),
-            ];
-            let q = [
-                baked_quat(1.0, 10.0, none),
-                baked_quat(1.0, 20.0, none),
-                baked_quat(2.0, 30.0, none),
-            ];
-            // vec3: the flag is missing, so `prev` stays at index 1.
-            assert_eq!(evaluate_baked_vec3(List::from_slice(&v), 1.0).x, 20.0);
-            // quat: unconditional `prev--`, so it reads index 0 instead.
-            assert_eq!(evaluate_baked_quat(List::from_slice(&q), 1.0).w, 10.0);
+        // Duplicated time at indices 0 and 1, no flags.
+        let v = [
+            baked_vec3(1.0, 10.0, none),
+            baked_vec3(1.0, 20.0, none),
+            baked_vec3(2.0, 30.0, none),
+        ];
+        let q = [
+            baked_quat(1.0, 10.0, none),
+            baked_quat(1.0, 20.0, none),
+            baked_quat(2.0, 30.0, none),
+        ];
+        // vec3: the flag is missing, so `prev` stays at index 1.
+        assert_eq!(evaluate_baked_vec3_slice(&v, 1.0).x, 20.0);
+        // quat: unconditional `prev--`, so it reads index 0 instead.
+        assert_eq!(evaluate_baked_quat_slice(&q, 1.0).w, 10.0);
 
-            // With `UFBX_BAKED_KEY_STEP_RIGHT` on the middle key both agree.
-            let v = [
-                baked_vec3(1.0, 10.0, none),
-                baked_vec3(1.0, 20.0, step_right),
-                baked_vec3(2.0, 30.0, none),
-            ];
-            let q = [
-                baked_quat(1.0, 10.0, none),
-                baked_quat(1.0, 20.0, step_right),
-                baked_quat(2.0, 30.0, none),
-            ];
-            assert_eq!(evaluate_baked_vec3(List::from_slice(&v), 1.0).x, 10.0);
-            assert_eq!(evaluate_baked_quat(List::from_slice(&q), 1.0).w, 10.0);
+        // With `UFBX_BAKED_KEY_STEP_RIGHT` on the middle key both agree.
+        let v = [
+            baked_vec3(1.0, 10.0, none),
+            baked_vec3(1.0, 20.0, step_right),
+            baked_vec3(2.0, 30.0, none),
+        ];
+        let q = [
+            baked_quat(1.0, 10.0, none),
+            baked_quat(1.0, 20.0, step_right),
+            baked_quat(2.0, 30.0, none),
+        ];
+        assert_eq!(evaluate_baked_vec3_slice(&v, 1.0).x, 10.0);
+        assert_eq!(evaluate_baked_quat_slice(&q, 1.0).w, 10.0);
 
-            // `prev > keys` guards both: a duplicate at index 0 with `begin == 1`
-            // cannot decrement past the start.
-            let q = [baked_quat(1.0, 10.0, none), baked_quat(2.0, 20.0, none)];
-            assert_eq!(evaluate_baked_quat(List::from_slice(&q), 1.0).w, 10.0);
-        }
+        // `prev > keys` guards both: a duplicate at index 0 with `begin == 1`
+        // cannot decrement past the start.
+        let q = [baked_quat(1.0, 10.0, none), baked_quat(2.0, 20.0, none)];
+        assert_eq!(evaluate_baked_quat_slice(&q, 1.0).w, 10.0);
     }
 
     #[test]
     fn test_evaluate_baked_quat_paths() {
-        unsafe {
-            let none = BakedKeyFlags::NONE;
-            let keys = [baked_quat(1.0, 1.0, none), baked_quat(2.0, 1.0, none)];
-            let eval = |t: f64| evaluate_baked_quat(List::from_slice(&keys), t);
-            // `begin == 0` and the past-the-end `count - 1` read.
-            assert_eq!(eval(0.0).w, 1.0);
-            assert_eq!(eval(3.0).w, 1.0);
+        let none = BakedKeyFlags::NONE;
 
-            // Interpolating arm: slerp between identity and a 90-degree Z
-            // rotation, and `UFBX_BAKED_KEY_STEP_LEFT` / `_RIGHT` pinning
-            // `t` to 0 / 1.
-            let half = core::f64::consts::FRAC_1_SQRT_2 as Real;
-            let identity = Quat {
-                x: 0.0,
-                y: 0.0,
-                z: 0.0,
-                w: 1.0,
-            };
-            let rot90 = Quat {
-                x: 0.0,
-                y: 0.0,
-                z: half,
-                w: half,
-            };
-            let pair = |left: BakedKeyFlags, right: BakedKeyFlags| {
-                let mut keys = [baked_quat(0.0, 0.0, left), baked_quat(1.0, 0.0, right)];
-                keys[0].value = identity;
-                keys[1].value = rot90;
-                keys
-            };
+        let empty = evaluate_baked_quat_slice(&[], 0.0);
+        assert_eq!((empty.x, empty.y, empty.z, empty.w), (0.0, 0.0, 0.0, 1.0));
+        // The raw C list may spell the same empty run as null+zero.
+        let raw_empty: List<BakedQuat> = unsafe { core::mem::MaybeUninit::zeroed().assume_init() };
+        let empty = unsafe { evaluate_baked_quat(raw_empty, 0.0) };
+        assert_eq!((empty.x, empty.y, empty.z, empty.w), (0.0, 0.0, 0.0, 1.0));
 
-            let keys = pair(none, none);
-            assert!(quat_close(
-                evaluate_baked_quat(List::from_slice(&keys), 0.5),
-                quat_slerp(identity, rot90, 0.5)
-            ));
+        let keys = [baked_quat(1.0, 1.0, none), baked_quat(2.0, 1.0, none)];
+        let eval = |t: f64| evaluate_baked_quat_slice(&keys, t);
+        // `begin == 0` and the past-the-end `count - 1` read.
+        assert_eq!(eval(0.0).w, 1.0);
+        assert_eq!(eval(3.0).w, 1.0);
 
-            let keys = pair(BakedKeyFlags::STEP_LEFT, none);
-            assert!(quat_close(
-                evaluate_baked_quat(List::from_slice(&keys), 0.5),
-                identity
-            ));
-
-            let keys = pair(none, BakedKeyFlags::STEP_RIGHT);
-            assert!(quat_close(
-                evaluate_baked_quat(List::from_slice(&keys), 0.5),
-                rot90
-            ));
+        // The `end - begin >= 8` binary-search prologue is independent of the
+        // Vec3 evaluator and must resume the linear scan at the narrowed begin.
+        let mut many: std::vec::Vec<BakedQuat> = std::vec::Vec::new();
+        for i in 0..10 {
+            many.push(baked_quat(i as f64, (i + 1) as Real, none));
         }
+        assert_eq!(evaluate_baked_quat_slice(&many, 8.0).w, 9.0);
+        assert_eq!(evaluate_baked_quat_slice(&many, 100.0).w, 10.0);
+
+        // Interpolating arm: slerp between identity and a 90-degree Z rotation,
+        // and `UFBX_BAKED_KEY_STEP_LEFT` / `_RIGHT` pinning `t` to 0 / 1.
+        let half = core::f64::consts::FRAC_1_SQRT_2 as Real;
+        let identity = Quat {
+            x: 0.0,
+            y: 0.0,
+            z: 0.0,
+            w: 1.0,
+        };
+        let rot90 = Quat {
+            x: 0.0,
+            y: 0.0,
+            z: half,
+            w: half,
+        };
+        let pair = |left: BakedKeyFlags, right: BakedKeyFlags| {
+            let mut keys = [baked_quat(0.0, 0.0, left), baked_quat(1.0, 0.0, right)];
+            keys[0].value = identity;
+            keys[1].value = rot90;
+            keys
+        };
+
+        let keys = pair(none, none);
+        assert!(quat_close(
+            evaluate_baked_quat_slice(&keys, 0.5),
+            quat_slerp(identity, rot90, 0.5)
+        ));
+
+        let keys = pair(BakedKeyFlags::STEP_LEFT, none);
+        assert!(quat_close(evaluate_baked_quat_slice(&keys, 0.5), identity));
+
+        let keys = pair(none, BakedKeyFlags::STEP_RIGHT);
+        assert!(quat_close(evaluate_baked_quat_slice(&keys, 0.5), rot90));
     }
 
     fn quat_close(a: Quat, b: Quat) -> bool {

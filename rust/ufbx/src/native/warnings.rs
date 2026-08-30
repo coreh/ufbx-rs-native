@@ -64,12 +64,24 @@ impl WarningsView {
     pub(crate) fn tmp_stack_view(&self) -> &crate::native::buf::BufView {
         unsafe { &*(&raw mut (*self.get()).tmp_stack as *mut crate::native::buf::BufView) }
     }
+
+    /// Publish the error sink used by warning failure paths.
+    ///
+    /// # Safety
+    /// `error` must address a live, unmoved, write-capable `Error` for every
+    /// subsequent use of this warning state.
     #[inline(always)]
-    pub(crate) fn set_error(&self, error: *mut Error) {
+    pub(crate) unsafe fn set_error(&self, error: *mut Error) {
         view_write!(self, error, error)
     }
+
+    /// Publish the result buffer that owns retained warning records.
+    ///
+    /// # Safety
+    /// `result` must address a live, unmoved, write-capable `Buf` for every
+    /// subsequent use of this warning state.
     #[inline(always)]
-    pub(crate) fn set_result(&self, result: *mut Buf) {
+    pub(crate) unsafe fn set_result(&self, result: *mut Buf) {
         view_write!(self, result, result)
     }
     #[inline(always)]

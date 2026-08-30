@@ -511,7 +511,9 @@ pub(crate) unsafe fn begin_file_context(
         // and that flowed back in through `ufbx_open_file_ctx`/`ufbx_open_memory_ctx`
         // — the contract of this `unsafe fn`.
         fc.set_ator(unsafe { *fc.parent_ator() });
-        fc.ator_view().set_error(fc.error_mut_ptr());
+        // SAFETY: `fc.error` is an owned field of this live, unmoved file
+        // context and stays write-capable throughout use of the local allocator.
+        unsafe { fc.ator_view().set_error(fc.error_mut_ptr()) };
     } else {
         // SAFETY: a non-null `ator_opts` is the caller's live, initialized
         // `RawAllocatorOpts` (the contract of this `unsafe fn`), written
@@ -531,11 +533,10 @@ pub(crate) unsafe fn begin_file_context(
 pub(crate) unsafe fn end_file_context(fc: &FileContext, ok: bool) -> Result<(), Error> {
     if !fc.parent_ator().is_null() {
         // SAFETY: a non-null `parent_ator` is the live caller-owned `Allocator`
-        // `begin_file_context` was handed (checked non-null just above); the
-        // read of its error slot and the write-back of the local copy both
-        // target that same live allocator.
-        fc.ator_view()
-            .set_error(unsafe { (*fc.parent_ator()).error });
+        // `begin_file_context` was handed (checked non-null just above); its
+        // error sink remains live for the caller-owned allocator, and the
+        // write-back of the local copy targets that same live allocator.
+        unsafe { fc.ator_view().set_error((*fc.parent_ator()).error) };
         unsafe { *fc.parent_ator() = fc.ator() };
     } else {
         // SAFETY: with no parent, `fc` owns its `ator` field, which is live for

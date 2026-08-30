@@ -2227,7 +2227,9 @@ pub(crate) fn obj_parse_mtl_map(uc: &Context, prefix_len: usize) -> Result<(), F
     }
 
     let mut tex_str: String = obj_span_token(uc, start, usize::MAX);
-    let mut tex_raw: Blob = Blob::new_c(tex_str.data, tex_str.length);
+    // SAFETY: `tex_str` names the live OBJ token span; `tex_raw` is overwritten
+    // with its pool-owned copy below before the token storage can expire.
+    let mut tex_raw: Blob = unsafe { Blob::new_c(tex_str.data, tex_str.length) };
 
     // Interns the texture path into uc's own string pool through an unaliased
     // local.

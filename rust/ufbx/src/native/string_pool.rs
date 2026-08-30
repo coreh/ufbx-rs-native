@@ -75,8 +75,14 @@ impl StringPoolView {
     pub(crate) fn buf_view(&self) -> &crate::native::buf::BufView {
         unsafe { &*(&raw mut (*self.get()).buf as *mut crate::native::buf::BufView) }
     }
+
+    /// Publish the error sink used by string-pool failure paths.
+    ///
+    /// # Safety
+    /// `error` must address a live, unmoved, write-capable `Error` for every
+    /// subsequent use of the pool.
     #[inline(always)]
-    pub(crate) fn set_error(&self, error: *mut Error) {
+    pub(crate) unsafe fn set_error(&self, error: *mut Error) {
         view_write!(self, error, error)
     }
     // `error` — STORED pointer to the owning context's `ufbx_error`; the
@@ -123,8 +129,14 @@ impl StringPoolView {
     pub(crate) fn set_error_handling(&self, error_handling: UnicodeErrorHandling) {
         view_write!(self, error_handling, error_handling)
     }
+
+    /// Publish the optional warning sink used while interning strings.
+    ///
+    /// # Safety
+    /// `warnings` must be null or address a live, unmoved, write-capable
+    /// `Warnings` for every subsequent pool operation that may emit one.
     #[inline(always)]
-    pub(crate) fn set_warnings(&self, warnings: *mut Warnings) {
+    pub(crate) unsafe fn set_warnings(&self, warnings: *mut Warnings) {
         view_write!(self, warnings, warnings)
     }
     #[inline(always)]

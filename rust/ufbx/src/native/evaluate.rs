@@ -67,7 +67,7 @@ use crate::native::api::{
     quat_to_euler, IDENTITY_QUAT,
 };
 #[cfg(feature = "baking")]
-use crate::native::api::{evaluate_baked_vec3, evaluate_transform_flags, quat_fix_antipodal};
+use crate::native::api::{evaluate_baked_vec3_slice, evaluate_transform_flags, quat_fix_antipodal};
 #[cfg(feature = "scene-eval")]
 use crate::native::api::{evaluate_props_flags, ELEMENT_TYPE_SIZE};
 #[cfg(feature = "baking")]
@@ -1127,10 +1127,15 @@ pub(crate) unsafe fn load_imp(uc: &Context) -> Result<(), Fail> {
     // header are distinct allocations.
     unsafe { ptr::copy_nonoverlapping(uc.scene_mut_ptr(), imp_view.scene_mut_ptr(), 1) };
     imp_view.refcount_view().set_ator(uc.ator_result());
-    imp_view
-        .refcount_view()
-        .ator_view()
-        .set_error(ptr::null_mut());
+    // SAFETY: this retained allocator is used only to own/account and finally
+    // free the transferred result buffers; no later path allocates or reports
+    // an error through it, so its error sink may be null.
+    unsafe {
+        imp_view
+            .refcount_view()
+            .ator_view()
+            .set_error(ptr::null_mut());
+    }
 
     // Copy retained buffers and translate the allocator struct to the one
     // contained within `ufbxi_scene_imp`
@@ -1387,7 +1392,9 @@ pub(crate) unsafe fn load(
 
     uc.set_synthetic_id_counter(SYNTHETIC_ID_START);
 
-    uc.string_pool_view().set_error(uc.error_mut_ptr());
+    // SAFETY: the pool and error sink are fields of the same live, unmoved
+    // context; the error field remains write-capable for the pool's lifetime.
+    unsafe { uc.string_pool_view().set_error(uc.error_mut_ptr()) };
     // SAFETY: `map_cmp_string` reads no user data, so the null `cmp_user` meets
     // its contract.
     unsafe {
@@ -1493,12 +1500,19 @@ pub(crate) unsafe fn load(
     uc.tmp_parse_view().set_clearable(true);
     uc.result_view().set_unordered(true);
 
-    uc.warnings_view().set_error(uc.error_mut_ptr());
-    uc.warnings_view().set_result(uc.result_mut_ptr());
+    // SAFETY: the warning state, error sink, and result buffer are fields of
+    // the same live, unmoved context and remain write-capable while warnings
+    // are collected.
+    unsafe {
+        uc.warnings_view().set_error(uc.error_mut_ptr());
+        uc.warnings_view().set_result(uc.result_mut_ptr());
+    }
     uc.warnings_view()
         .tmp_stack_view()
         .set_ator(uc.ator_tmp_mut_ptr());
-    uc.string_pool_view().set_warnings(uc.warnings_mut_ptr());
+    // SAFETY: the context-owned warnings sink stays live, unmoved, and
+    // write-capable for every later use of the context-owned string pool.
+    unsafe { uc.string_pool_view().set_warnings(uc.warnings_mut_ptr()) };
 
     // Set zero size `swap_arr` to a non-NULL buffer so we can tell the difference between empty
     // array and an allocation failure.
@@ -7261,11 +7275,8 @@ pub(crate) unsafe fn bake_node_imp(
 
         if (flags & TransformFlags::INCLUDE_TRANSLATION.raw()) != 0 {
             if let Some(scale_helper_t) = scale_helper_t {
-                // SAFETY: `scale_keys` is read out of the baked node for the
-                // parent's scale helper as the plain pointer/length pair it is,
-                // and `evaluate_baked_vec3` only reads that run.
                 let scale: Vec3 =
-                    unsafe { evaluate_baked_vec3(scale_helper_t.scale_keys(), eval_time) };
+                    evaluate_baked_vec3_slice(scale_helper_t.scale_keys().as_ref(), eval_time);
                 transform.translation.x *= scale.x;
                 transform.translation.y *= scale.y;
                 transform.translation.z *= scale.z;
@@ -7294,11 +7305,8 @@ pub(crate) unsafe fn bake_node_imp(
         }
         if (flags & TransformFlags::INCLUDE_SCALE.raw()) != 0 {
             if let Some(scale_helper_s) = scale_helper_s {
-                // SAFETY: `scale_keys` is read out of the baked node for the
-                // inherit-scale helper as the plain pointer/length pair it is,
-                // and `evaluate_baked_vec3` only reads that run.
                 let scale: Vec3 =
-                    unsafe { evaluate_baked_vec3(scale_helper_s.scale_keys(), eval_time) };
+                    evaluate_baked_vec3_slice(scale_helper_s.scale_keys().as_ref(), eval_time);
                 transform.scale.x *= scale.x;
                 transform.scale.y *= scale.y;
                 transform.scale.z *= scale.z;

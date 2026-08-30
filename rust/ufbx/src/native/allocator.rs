@@ -196,8 +196,15 @@ impl AllocatorView {
     pub(crate) fn name(&self) -> *const u8 {
         view_read!(self, name)
     }
+
+    /// Publish the error sink used by allocator failure paths.
+    ///
+    /// # Safety
+    /// `error` must be null only while this allocator is restricted to paths
+    /// that cannot report an error. Otherwise it must address a live, unmoved,
+    /// write-capable `Error` for every subsequent use of the allocator.
     #[inline(always)]
-    pub(crate) fn set_error(&self, error: *mut Error) {
+    pub(crate) unsafe fn set_error(&self, error: *mut Error) {
         view_write!(self, error, error)
     }
 }

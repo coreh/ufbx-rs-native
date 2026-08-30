@@ -2225,7 +2225,9 @@ pub(crate) unsafe fn load_geometry_cache(
 
     cc.set_open_file_cb(opts.open_file_cb);
 
-    cc.string_pool_view().set_error(cc.error_mut_ptr());
+    // SAFETY: the pool and error sink are fields of the same live, unmoved
+    // cache context; the error field remains write-capable for the pool's use.
+    unsafe { cc.string_pool_view().set_error(cc.error_mut_ptr()) };
     // SAFETY: `cc.ator_tmp()` is `cc`'s temp allocator (initialized above), live
     // and write-capable for the duration of the cache load; `map_cmp_string`
     // reads no user data, so the null `cmp_user` meets its contract.

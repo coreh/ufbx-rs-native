@@ -827,10 +827,25 @@ pub struct Blob {
 }
 
 impl Blob {
-    // Raw constructor for the native port (C: `ufbx_blob b = { data, size };`).
-    // `_marker` is private to this module, so aggregate construction is only
-    // possible here. `const` so the static `ufbx_empty_blob` datum can use it.
-    pub(crate) const fn new_c(data: *const u8, size: usize) -> Blob {
+    /// Empty blob descriptor. Its data pointer is never dereferenced.
+    pub(crate) const fn empty() -> Blob {
+        Blob {
+            data: ptr::null(),
+            size: 0,
+            _marker: PhantomData,
+        }
+    }
+
+    /// Raw constructor for the native port (C: `ufbx_blob b = { data, size };`).
+    /// `_marker` is private to this module, so raw-parts construction is
+    /// centralized here.
+    ///
+    /// # Safety
+    /// When `size > 0`, `data` must address `size` readable bytes whose storage
+    /// remains live and unwritten for every use of the returned descriptor (and
+    /// any copies of it) until that descriptor's pair is replaced. A zero-sized
+    /// descriptor never dereferences `data`.
+    pub(crate) const unsafe fn new_c(data: *const u8, size: usize) -> Blob {
         Blob {
             data,
             size,

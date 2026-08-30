@@ -7716,7 +7716,9 @@ pub(crate) fn push_file_content(
     // stack, so it addresses writable storage for one `ufbxi_file_content`; the two
     // C struct assignments are rebuilt from the source views' own leaf reads.
     unsafe { (*content).absolute_filename = String::new_c(p_filename.data(), p_filename.length()) };
-    // SAFETY: as above.
+    // SAFETY: as above for the destination; `p_data` is a live Blob view whose
+    // byte run belongs to the scene/result storage and outlives this temporary
+    // file-content entry.
     unsafe { (*content).content = Blob::new_c(p_data.data(), p_data.size()) };
     Ok(())
 }

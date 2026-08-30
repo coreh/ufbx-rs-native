@@ -10602,12 +10602,18 @@ pub(crate) fn init_file_paths(uc: &Context) -> Result<(), Fail> {
     }
 
     if uc.opts_view().raw_filename_view().size() > 0 {
-        uc.scene_view()
-            .metadata_view()
-            .set_raw_filename(Blob::new_c(
+        // SAFETY: the raw load-option filename is a caller-owned byte run that
+        // stays live for the load; this metadata copy is interned below before
+        // the load can return.
+        let raw_filename = unsafe {
+            Blob::new_c(
                 uc.opts_view().raw_filename_view().data(),
                 uc.opts_view().raw_filename_view().size(),
-            ));
+            )
+        };
+        uc.scene_view()
+            .metadata_view()
+            .set_raw_filename(raw_filename);
     } else if uc.opts_view().filename_view().length() > 0 {
         uc.scene_view()
             .metadata_view()
