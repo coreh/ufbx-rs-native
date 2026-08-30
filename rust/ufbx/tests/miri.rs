@@ -216,6 +216,68 @@ fn load_shader_texture_prefixes() {
 
 // -- Scene features exercised on load
 
+/// LOD groups derive their level count from the first instance's children,
+/// then combine zero-initialized defaults with threshold and display props.
+#[test]
+fn load_lod_groups() {
+    fn close(actual: ufbx::Real, expected: f32) {
+        let expected = expected as ufbx::Real;
+        assert!(
+            (actual - expected).abs() <= 0.00001f32 as ufbx::Real,
+            "{actual:?} != {expected:?}",
+        );
+    }
+
+    fn get<'a>(scene: &'a ufbx::Scene, name: &str) -> (&'a ufbx::Node, &'a ufbx::LodGroup) {
+        let node = scene
+            .find_node(name)
+            .unwrap_or_else(|| panic!("missing {name}"));
+        assert_eq!(node.attrib_type, ufbx::ElementType::LodGroup);
+        let attrib = node.attrib.as_ref().expect("LOD node has no attrib");
+        let lod = ufbx::as_lod_group(attrib.as_ref()).expect("attrib is not LodGroup");
+        assert_eq!(lod.element.type_, ufbx::ElementType::LodGroup);
+        (node, lod)
+    }
+
+    let scene = load("maya_lod_group_7500_binary.fbx");
+    assert_eq!(scene.lod_groups.len(), 2);
+
+    let (node1, lod1) = get(&scene, "LOD_Group_1");
+    assert_eq!(node1.children.len(), 3);
+    assert_eq!(lod1.element.instances.len(), 1);
+    assert_eq!(lod1.element.instances[0].children.len(), 3);
+    assert_eq!(lod1.lod_levels.len(), 3);
+    assert!(lod1.relative_distances);
+    assert!(!lod1.use_distance_limit);
+    assert!(!lod1.ignore_parent_transform);
+    close(lod1.distance_limit_min, -100.0);
+    close(lod1.distance_limit_max, 100.0);
+    for (level, distance) in lod1.lod_levels.iter().zip([100.0, 64.0, 32.0]) {
+        assert_eq!(level.display, ufbx::LodDisplay::UseLod);
+        close(level.distance, distance);
+    }
+
+    let (node2, lod2) = get(&scene, "LOD_Group_2");
+    assert_eq!(node2.children.len(), 3);
+    assert_eq!(lod2.element.instances.len(), 1);
+    assert_eq!(lod2.element.instances[0].children.len(), 3);
+    assert_eq!(lod2.lod_levels.len(), 3);
+    assert!(!lod2.relative_distances);
+    assert!(!lod2.use_distance_limit);
+    assert!(lod2.ignore_parent_transform);
+    close(lod2.distance_limit_min, -100.0);
+    close(lod2.distance_limit_max, 100.0);
+    let expected = [
+        (0.0, ufbx::LodDisplay::UseLod),
+        (4.520276, ufbx::LodDisplay::Show),
+        (18.081102, ufbx::LodDisplay::Hide),
+    ];
+    for (level, (distance, display)) in lod2.lod_levels.iter().zip(expected) {
+        assert_eq!(level.display, display);
+        close(level.distance, distance);
+    }
+}
+
 /// Skin deformers: clusters, weights and the bind-pose matrices.
 #[test]
 fn load_skinned() {

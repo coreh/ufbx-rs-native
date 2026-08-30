@@ -5262,27 +5262,11 @@ pub(crate) fn finalize_nurbs_basis(uc: &Context, basis: &View<NurbsBasis>) -> Re
 // ufbx.c:20314-20362 `ufbxi_finalize_lod_group`
 #[inline(never)]
 pub(crate) fn finalize_lod_group(uc: &Context, lod_view: &LodGroupView) -> Result<(), Fail> {
-    // `lod_view` is the uc-anchored dispatch handle (minted in `finalize_scene`
-    // from the arena `lod_groups` run); the raw `lod` is used only for the field
-    // writes, while every property lookup goes through `lod_view.props_view()`
-    // (<= uc), collapsing the per-call free-lifetime `PropsView` bridges.
-    let lod: *mut LodGroup = lod_view.get();
     let mut num_levels: usize = 0;
-    // SAFETY: reads the LOD group's own instance run; C subscripts entry `0`
-    // (never `i`), which the loop guard proves present, so the always-set node
-    // reference there is read in place and followed as a view.
-    unsafe {
-        for _i in 0..(*lod).element.instances.count {
-            // C-parity: the subscript really is `instances.data[0]` (not `[i]`) —
-            // ufbx.c:20318.
-            num_levels = max_sz(
-                num_levels,
-                ptr::read((*lod).element.instances.data)
-                    .view::<Mut>()
-                    .children()
-                    .count,
-            );
-        }
+    let instances = lod_view.element().instances_view();
+    for _ in 0..instances.count() {
+        // ufbx.c:20318 repeatedly reads entry zero rather than the loop index.
+        num_levels = max_sz(num_levels, instances.at(0).children_view().count());
     }
 
     // C: `char prop_name[64];` — uninitialized local (no upstream
@@ -5297,49 +5281,67 @@ pub(crate) fn finalize_lod_group(uc: &Context, lod_view: &LodGroupView) -> Resul
         loop {
             let len: i32 =
                 ufbxi_snprintf!(prop_name, size_of::<[u8; 64]>(), "Thresholds|Level%zu", i);
-            let prop: *mut Prop = find_prop_len(
+            if find_prop_len(
                 lod_view.props_view(),
                 slice_from_ptr(prop_name, len as usize),
             )
-            .map_or(ptr::null_mut(), PropView::get);
-            if prop.is_null() {
+            .is_none()
+            {
                 break;
             }
-            num_levels = max_sz(num_levels, i + 1);
-            i += 1;
+            num_levels = max_sz(num_levels, i.wrapping_add(1));
+            i = i.wrapping_add(1);
         }
     }
 
-    let levels: *mut LodLevel = uc.result_view().push_zero(num_levels);
-    ufbxi_check!(uc, !levels.is_null(), "levels");
+    let levels_data: *mut LodLevel = uc.result_view().push_zero(num_levels);
+    ufbxi_check!(uc, !levels_data.is_null(), "levels");
+    let levels = if num_levels == 0 {
+        // Empty pushes return the shared non-writable zero-size sentinel. The
+        // list header retains that pointer; the empty fill loop needs no slot
+        // capability.
+        Run::<LodLevel>::empty()
+    } else {
+        // SAFETY: `levels_data` is the fresh `num_levels`-element zeroed push
+        // above. Zero initializes every `LodLevel` field to a valid value.
+        unsafe { Run::<LodLevel>::from_raw_parts(levels_data, num_levels) }
+    };
 
-    // SAFETY: `lod` is the LOD-group view's own storage and every lookup reads
-    // that same view's props with a NUL-terminated literal; `levels` is the fresh
-    // non-null push above.
-    unsafe {
-        (*lod).relative_distances =
-            api_find_bool_len(lod_view.props_view(), b"ThresholdsUsedAsPercentage", false);
-        (*lod).ignore_parent_transform =
-            !api_find_bool_len(lod_view.props_view(), b"WorldSpace", true);
+    lod_view.set_relative_distances(api_find_bool_len(
+        lod_view.props_view(),
+        b"ThresholdsUsedAsPercentage",
+        false,
+    ));
+    lod_view.set_ignore_parent_transform(!api_find_bool_len(
+        lod_view.props_view(),
+        b"WorldSpace",
+        true,
+    ));
 
-        (*lod).use_distance_limit =
-            api_find_bool_len(lod_view.props_view(), b"MinMaxDistance", false);
-        (*lod).distance_limit_min =
-            api_find_real_len(lod_view.props_view(), b"MinDistance", -100.0 as Real);
-        (*lod).distance_limit_max =
-            api_find_real_len(lod_view.props_view(), b"MaxDistance", 100.0 as Real);
+    lod_view.set_use_distance_limit(api_find_bool_len(
+        lod_view.props_view(),
+        b"MinMaxDistance",
+        false,
+    ));
+    lod_view.set_distance_limit_min(api_find_real_len(
+        lod_view.props_view(),
+        b"MinDistance",
+        -100.0 as Real,
+    ));
+    lod_view.set_distance_limit_max(api_find_real_len(
+        lod_view.props_view(),
+        b"MaxDistance",
+        100.0 as Real,
+    ));
 
-        (*lod).lod_levels.data = levels;
-        (*lod).lod_levels.count = num_levels;
-    }
+    lod_view.lod_levels_view().set_data(levels_data);
+    lod_view.lod_levels_view().set_count(num_levels);
 
-    // SAFETY: `levels` is the fresh non-null `num_levels`-element push above, so
-    // every `add(i)` is in bounds; `prop_name` is the local 64-byte buffer that
-    // `ufbxi_snprintf` NUL-terminates with the matching `len`; the transmute is
-    // guarded by the explicit `[0, 2]` check.
+    // SAFETY: `prop_name` is the local 64-byte buffer that `ufbxi_snprintf`
+    // NUL-terminates with the matching `len` before each property lookup.
     unsafe {
         for i in 0..num_levels {
-            let level: *mut LodLevel = levels.add(i);
+            let level = levels.at(i);
 
             if i > 0 {
                 let len: i32 = ufbxi_snprintf!(
@@ -5348,13 +5350,13 @@ pub(crate) fn finalize_lod_group(uc: &Context, lod_view: &LodGroupView) -> Resul
                     "Thresholds|Level%zu",
                     i - 1
                 );
-                (*level).distance = api_find_real_len(
+                level.set_distance(api_find_real_len(
                     lod_view.props_view(),
                     slice_from_ptr(prop_name, len as usize),
                     0.0f32 as Real,
-                );
-            } else if (*lod).relative_distances {
-                (*level).distance = 100.0 as Real;
+                ));
+            } else if lod_view.relative_distances() {
+                level.set_distance(100.0 as Real);
             }
 
             {
@@ -5369,10 +5371,13 @@ pub(crate) fn finalize_lod_group(uc: &Context, lod_view: &LodGroupView) -> Resul
                     slice_from_ptr(prop_name, len as usize),
                     0,
                 );
-                if display >= 0 && display <= 2 {
-                    // C: `(ufbx_lod_display)display` — guarded to [0, 2], every
-                    // value of which is a valid `ufbx_lod_display`.
-                    (*level).display = core::mem::transmute::<u32, LodDisplay>(display as u32);
+                if let Some(display) = match display {
+                    0 => Some(LodDisplay::UseLod),
+                    1 => Some(LodDisplay::Show),
+                    2 => Some(LodDisplay::Hide),
+                    _ => None,
+                } {
+                    level.set_display(display);
                 }
             }
         }
