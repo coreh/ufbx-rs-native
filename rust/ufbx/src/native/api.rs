@@ -4866,10 +4866,9 @@ pub(crate) unsafe fn catch_compute_topology<M: Mode>(
 }
 
 // ufbx.c:32484-32492 `ufbx_catch_topo_next_vertex_edge`
-pub(crate) unsafe fn catch_topo_next_vertex_edge(
+pub(crate) fn catch_topo_next_vertex_edge_run(
     mut panic: Option<&mut Panic>,
-    topo: *const TopoEdge,
-    num_topo: usize,
+    topo: Run<'_, TopoEdge, Const>,
     index: u32,
 ) -> u32 {
     if index == NO_INDEX {
@@ -4877,34 +4876,29 @@ pub(crate) unsafe fn catch_topo_next_vertex_edge(
     }
     if ufbxi_panicf!(
         panic,
-        (index as usize) < num_topo,
+        (index as usize) < topo.len(),
         "index (%u) out of bounds (%zu)",
         index,
-        num_topo,
+        topo.len(),
     ) {
         return NO_INDEX;
     }
-    // SAFETY: `index < num_topo` (guarded above), so `topo.add(index)` addresses
-    // a live `TopoEdge` in the caller's array; reading its own `twin` field.
-    let twin: u32 = unsafe { (*topo.add(index as usize)).twin };
+    let twin = topo.at(index as usize).twin();
     if twin == NO_INDEX {
         return NO_INDEX;
     }
     if ufbxi_panicf!(
         panic,
-        (twin as usize) < num_topo,
+        (twin as usize) < topo.len(),
         "Corrupted topology structure"
     ) {
         return NO_INDEX;
     }
-    // SAFETY: `twin < num_topo` (guarded above), so `topo.add(twin)` addresses a
-    // live `TopoEdge`; reading its own `next` field.
-    unsafe { (*topo.add(twin as usize)).next }
+    topo.at(twin as usize).next()
 }
 
-// ufbx.c:32494-32499 `ufbx_catch_topo_prev_vertex_edge`
-pub(crate) unsafe fn catch_topo_prev_vertex_edge(
-    mut panic: Option<&mut Panic>,
+pub(crate) unsafe fn catch_topo_next_vertex_edge(
+    panic: Option<&mut Panic>,
     topo: *const TopoEdge,
     num_topo: usize,
     index: u32,
@@ -4912,20 +4906,55 @@ pub(crate) unsafe fn catch_topo_prev_vertex_edge(
     if index == NO_INDEX {
         return NO_INDEX;
     }
+    // SAFETY: `topo`/`num_topo` are the caller's initialized read-only
+    // topology run, live and frozen for this call.
+    let topo = unsafe { Run::<TopoEdge, Const>::from_const_raw_parts(topo, num_topo) };
+    catch_topo_next_vertex_edge_run(panic, topo, index)
+}
+
+// ufbx.c:32494-32499 `ufbx_catch_topo_prev_vertex_edge`
+pub(crate) fn catch_topo_prev_vertex_edge_run(
+    mut panic: Option<&mut Panic>,
+    topo: Run<'_, TopoEdge, Const>,
+    index: u32,
+) -> u32 {
+    if index == NO_INDEX {
+        return NO_INDEX;
+    }
     if ufbxi_panicf!(
         panic,
-        (index as usize) < num_topo,
+        (index as usize) < topo.len(),
         "index (%u) out of bounds (%zu)",
         index,
-        num_topo,
+        topo.len(),
     ) {
         return NO_INDEX;
     }
     // C: `topo[topo[index].prev].twin`.
-    // SAFETY: `index < num_topo` (guarded above), so `topo.add(index)` addresses
-    // a live `TopoEdge`; its own `prev` field indexes another live `TopoEdge`
-    // whose own `twin` field is read.
-    unsafe { (*topo.add((*topo.add(index as usize)).prev as usize)).twin }
+    let prev = topo.at(index as usize).prev();
+    if ufbxi_panicf!(
+        panic,
+        (prev as usize) < topo.len(),
+        "Corrupted topology structure"
+    ) {
+        return NO_INDEX;
+    }
+    topo.at(prev as usize).twin()
+}
+
+pub(crate) unsafe fn catch_topo_prev_vertex_edge(
+    panic: Option<&mut Panic>,
+    topo: *const TopoEdge,
+    num_topo: usize,
+    index: u32,
+) -> u32 {
+    if index == NO_INDEX {
+        return NO_INDEX;
+    }
+    // SAFETY: `topo`/`num_topo` are the caller's initialized read-only
+    // topology run, live and frozen for this call.
+    let topo = unsafe { Run::<TopoEdge, Const>::from_const_raw_parts(topo, num_topo) };
+    catch_topo_prev_vertex_edge_run(panic, topo, index)
 }
 
 // Mode-generic read accessors over the public vertex-attribute structs
@@ -5121,9 +5150,7 @@ pub(crate) unsafe fn catch_generate_normal_mapping<M: Mode>(
         let mut cur: u32 = start;
 
         loop {
-            // SAFETY: `topo`/`num_topo` are this fn's raw-pointer contract,
-            // forwarded unchanged to the topology walkers.
-            let prev: u32 = unsafe { topo_next_vertex_edge(topo, num_topo, cur) };
+            let prev = catch_topo_next_vertex_edge_run(None, topo_view, cur);
             if !is_edge_smooth(mesh, topo_view, cur, assume_smooth) {
                 start = cur;
             }
@@ -5144,8 +5171,7 @@ pub(crate) unsafe fn catch_generate_normal_mapping<M: Mode>(
         next_index = next_index.wrapping_add(1);
         let mut next: u32 = start;
         loop {
-            // SAFETY: `topo`/`num_topo` contract as above.
-            next = unsafe { topo_prev_vertex_edge(topo, num_topo, next) };
+            next = catch_topo_prev_vertex_edge_run(None, topo_view, next);
             if next == NO_INDEX || next == start {
                 break;
             }
@@ -7462,6 +7488,29 @@ mod tests {
         // SAFETY: same live `imp`; writing its own `refcount.buf` field.
         unsafe { (*imp).refcount.buf = buf };
         imp
+    }
+
+    #[test]
+    fn test_topology_walkers_reject_corrupt_links() {
+        let mut topo = [TopoEdge::default(); 2];
+        topo[0].twin = 2;
+        topo[0].prev = 2;
+        // SAFETY: `topo` is a fully initialized stack array, held read-only for
+        // the lifetime of this run.
+        let topo =
+            unsafe { Run::<TopoEdge, Const>::from_const_raw_parts(topo.as_ptr(), topo.len()) };
+
+        let mut panic = Panic::default();
+        let next = catch_topo_next_vertex_edge_run(Some(&mut panic), topo, 0);
+        assert_eq!(next, NO_INDEX);
+        assert!(panic.did_panic);
+        assert_eq!(panic.message(), "Corrupted topology structure");
+
+        let mut panic = Panic::default();
+        let prev = catch_topo_prev_vertex_edge_run(Some(&mut panic), topo, 0);
+        assert_eq!(prev, NO_INDEX);
+        assert!(panic.did_panic);
+        assert_eq!(panic.message(), "Corrupted topology structure");
     }
 
     #[test]
