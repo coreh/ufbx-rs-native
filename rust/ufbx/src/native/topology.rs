@@ -176,31 +176,17 @@ pub(crate) struct KdTriangle {
 
 // ufbx.c:28274-28282 `ufbxi_ngon_project`
 // C: `ufbxi_noinline static`.
-// Stays `unsafe fn`: `index` is an unchecked index contract. It is added to
-// `face.index_begin` and used to read `positions.indices` with no bounds
-// check, and the value read is then used just as unchecked to index
-// `positions.values`. Only the caller knows `index < face.num_indices`, so the
-// obligation cannot be discharged here.
 #[cfg(feature = "triangulation")]
 #[inline(never)]
-pub(crate) unsafe fn ngon_project(nc: &NgonContext, index: u32) -> Vec2 {
-    // SAFETY: the caller guarantees `index < face.num_indices`, so
-    // `index_begin + index` selects a live `indices` slot, whose value in turn
-    // is an in-range `values` slot — the C gather this mirrors — so both the
-    // inner and outer `add`/deref stay inside `nc.positions`' arrays.
-    let point: Vec3 = unsafe {
-        *nc.positions_view().values_view().data().add(
-            *nc.positions_view()
-                .indices_view()
-                .data()
-                .add(nc.face_view().index_begin().wrapping_add(index) as usize)
-                as usize,
-        )
-    };
+pub(crate) fn ngon_project(nc: &NgonContext, index: u32) -> Vec2 {
+    assert!(index < nc.face_view().num_indices());
+    let positions = nc.positions_view();
+    let corner = nc.face_view().index_begin().wrapping_add(index) as usize;
+    let point_index = positions.indices_view().copy_at(corner) as usize;
+    let point: Vec3 = positions.values_view().copy_at(point_index);
 
     // C: `ufbx_vec2 p;` — both fields are assigned below.
-    // SAFETY: `Vec2` is two `Real`s; an all-zero bit pattern is a valid value.
-    let mut p: Vec2 = unsafe { core::mem::zeroed() };
+    let mut p = Vec2 { x: 0.0, y: 0.0 };
     p.x = dot3(nc.axes_at(0).get(), point);
     p.y = dot3(nc.axes_at(1).get(), point);
     p
@@ -215,17 +201,13 @@ pub(crate) fn orient2d(a: Vec2, b: Vec2, c: Vec2) -> Real {
 }
 
 // ufbx.c:28289-28301 `ufbxi_kd_check_point`
-// Stays `unsafe fn`: `index` is an unchecked index contract carried through to
-// `ngon_project` — only the caller knows it is in range for `nc`'s face.
 #[cfg(feature = "triangulation")]
 #[inline(never)]
-pub(crate) unsafe fn kd_check_point(nc: &NgonContext, tri: &KdTriangle, index: u32) -> bool {
+pub(crate) fn kd_check_point(nc: &NgonContext, tri: &KdTriangle, index: u32) -> bool {
     if index == tri.indices[0] || index == tri.indices[1] || index == tri.indices[2] {
         return false;
     }
-    // SAFETY: `index` is a corner index the caller vouches is in range for
-    // `nc`'s face, which is `ngon_project`'s contract.
-    let p: Vec2 = unsafe { ngon_project(nc, index) };
+    let p: Vec2 = ngon_project(nc, index);
 
     let u: Real = orient2d(p, tri.points[0], tri.points[1]);
     let v: Real = orient2d(p, tri.points[1], tri.points[2]);
@@ -293,10 +275,9 @@ unsafe fn kd_check_slow_rec(
     let mut count = count;
     let mut axis = axis;
 
-    // C: `ufbx_vertex_vec3 pos = nc->positions;` — a struct memcpy.
-    // SAFETY: `positions_mut_ptr()` is the address of `nc`'s own live
-    // `positions` field; `ptr::read` copies the `VertexVec3` value out by value.
-    let pos: VertexVec3 = unsafe { core::ptr::read(nc.positions_mut_ptr()) };
+    // C: `ufbx_vertex_vec3 pos = nc->positions;` — the view reads the same
+    // stable list pair without moving the non-`Copy` Rust header.
+    let pos = nc.positions_view();
     let kd_indices: *mut u32 = nc.kd_indices();
 
     while count > 0 {
@@ -308,26 +289,16 @@ unsafe fn kd_check_slow_rec(
         // the `[begin, begin+count)` span of live `kd_indices` entries the caller
         // vouches for.
         let index: u32 = unsafe { *kd_indices.add(begin.wrapping_add(num_left) as usize) };
-        // SAFETY: `index` is a corner index from `nc`'s KD index buffer, so
-        // `index_begin + index` selects a live `indices` slot whose value is an
-        // in-range `values` slot — the same gather as `ngon_project`.
-        let point: Vec3 = unsafe {
-            *pos.values.data.add(
-                *pos.indices
-                    .data
-                    .add(nc.face_view().index_begin().wrapping_add(index) as usize)
-                    as usize,
-            )
-        };
+        let corner = nc.face_view().index_begin().wrapping_add(index) as usize;
+        let point_index = pos.indices_view().copy_at(corner) as usize;
+        let point: Vec3 = pos.values_view().copy_at(point_index);
         let split: Real = dot3(point, nc.axes_at(axis as usize).get());
         // `axis` is 0 or 1, in bounds for the length-2 `min_t`/`max_t` arrays.
         let hit_left: bool = tri.min_t[axis as usize] <= split;
         let hit_right: bool = tri.max_t[axis as usize] >= split;
 
         if hit_left && hit_right {
-            // SAFETY: `index` comes from `nc`'s KD index buffer, so it is a corner
-            // index in range for `nc`'s face — `kd_check_point`'s contract.
-            if unsafe { kd_check_point(nc, tri, index) } {
+            if kd_check_point(nc, tri, index) {
                 return true;
             }
 
@@ -419,9 +390,7 @@ unsafe fn kd_check_fast_rec(
         if hit_left && hit_right {
             // Check for the point on the split plane
             let index: u32 = node.index_plus_one.wrapping_sub(1);
-            // SAFETY: `index` is `node.index_plus_one - 1`, a corner index stored
-            // in `nc`'s KD tree — `kd_check_point`'s in-range contract.
-            if unsafe { kd_check_point(nc, tri, index) } {
+            if kd_check_point(nc, tri, index) {
                 return true;
             }
 
@@ -493,40 +462,31 @@ unsafe fn kd_check_fast_rec(
 }
 
 // ufbx.c:28392-28406 `ufbxi_kd_check`
+//
+// # Safety
+// `nc` must hold the KD nodes and slow-index runs produced by `kd_build` for
+// its current face; the borrowed triangle windows carry their own bounds, but
+// not that tree-state relation.
 #[cfg(feature = "triangulation")]
 #[inline(never)]
-pub(crate) unsafe fn kd_check(nc: &NgonContext, points: *const Vec2, indices: *const u32) -> bool {
+pub(crate) unsafe fn kd_check(nc: &NgonContext, points: &[Vec2], indices: &[u32]) -> bool {
+    assert!(points.len() >= 3);
+    assert!(indices.len() >= 3);
     // SAFETY: `KdTriangle` is plain arithmetic/index scalars; an all-zero bit
     // pattern is a valid value.
     let mut tri: KdTriangle = unsafe { core::mem::zeroed() }; // ufbxi_uninit
 
-    // SAFETY: the caller passes `points`/`indices` addressing the 3 corners of
-    // the candidate triangle, so offsets 0..=2 are in bounds and readable.
-    unsafe {
-        tri.points[0] = *points.add(0);
-        tri.points[1] = *points.add(1);
-        tri.points[2] = *points.add(2);
-        tri.indices[0] = *indices.add(0);
-        tri.indices[1] = *indices.add(1);
-        tri.indices[2] = *indices.add(2);
+    tri.points[0] = points[0];
+    tri.points[1] = points[1];
+    tri.points[2] = points[2];
+    tri.indices[0] = indices[0];
+    tri.indices[1] = indices[1];
+    tri.indices[2] = indices[2];
 
-        tri.min_t[0] = min_real(
-            min_real((*points.add(0)).x, (*points.add(1)).x),
-            (*points.add(2)).x,
-        );
-        tri.min_t[1] = min_real(
-            min_real((*points.add(0)).y, (*points.add(1)).y),
-            (*points.add(2)).y,
-        );
-        tri.max_t[0] = max_real(
-            max_real((*points.add(0)).x, (*points.add(1)).x),
-            (*points.add(2)).x,
-        );
-        tri.max_t[1] = max_real(
-            max_real((*points.add(0)).y, (*points.add(1)).y),
-            (*points.add(2)).y,
-        );
-    }
+    tri.min_t[0] = min_real(min_real(points[0].x, points[1].x), points[2].x);
+    tri.min_t[1] = min_real(min_real(points[0].y, points[1].y), points[2].y);
+    tri.max_t[0] = max_real(max_real(points[0].x, points[1].x), points[2].x);
+    tri.max_t[1] = max_real(max_real(points[0].y, points[1].y), points[2].y);
     // SAFETY: forwards the caller's `nc` KD-tree contract to `kd_check_fast`.
     unsafe { kd_check_fast(nc, &tri, 0, 0, 0) }
 }
@@ -547,26 +507,12 @@ pub(crate) unsafe extern "C" fn kd_index_less(
     // SAFETY: the comparator contract is that `va`/`vb` address live `u32`
     // elements of the KD index buffer being sorted.
     let (a, b) = unsafe { (*(va as *const u32), *(vb as *const u32)) };
-    // SAFETY: `a` is a corner index from the KD index buffer, so
-    // `cur_face.index_begin + a` selects a live `indices` slot whose value is an
-    // in-range `values` slot; `pos` is `nc`'s own live `positions`.
-    let da: Real = dot3(nc.cur_axis_dir(), unsafe {
-        *pos.values().data.add(
-            *pos.indices()
-                .data
-                .add(nc.cur_face_view().index_begin().wrapping_add(a) as usize)
-                as usize,
-        )
-    });
-    // SAFETY: as above, for corner index `b`.
-    let db: Real = dot3(nc.cur_axis_dir(), unsafe {
-        *pos.values().data.add(
-            *pos.indices()
-                .data
-                .add(nc.cur_face_view().index_begin().wrapping_add(b) as usize)
-                as usize,
-        )
-    });
+    let a_corner = nc.cur_face_view().index_begin().wrapping_add(a) as usize;
+    let a_point = pos.indices_view().copy_at(a_corner) as usize;
+    let da: Real = dot3(nc.cur_axis_dir(), pos.values_view().copy_at(a_point));
+    let b_corner = nc.cur_face_view().index_begin().wrapping_add(b) as usize;
+    let b_point = pos.indices_view().copy_at(b_corner) as usize;
+    let db: Real = dot3(nc.cur_axis_dir(), pos.values_view().copy_at(b_point));
     da < db
 }
 
@@ -622,10 +568,9 @@ unsafe fn kd_build_rec(
         return;
     }
 
-    // C: `ufbx_vertex_vec3 pos = nc->positions;` — a struct memcpy.
-    // SAFETY: `positions_mut_ptr()` is the address of `nc`'s own live
-    // `positions` field; `ptr::read` copies the `VertexVec3` value out by value.
-    let pos: VertexVec3 = unsafe { core::ptr::read(nc.positions_mut_ptr()) };
+    // C: `ufbx_vertex_vec3 pos = nc->positions;` — the view reads the same
+    // stable list pair without moving the non-`Copy` Rust header.
+    let pos = nc.positions_view();
     let axis_dir: Vec3 = nc.axes_at(axis as usize).get();
     let face: Face = nc.face();
 
@@ -665,20 +610,12 @@ unsafe fn kd_build_rec(
         let index: u32 = unsafe { *indices.add(num_left as usize) };
         let kd: *mut KdNode = nc.kd_nodes_at(fast_index as usize).as_ptr();
 
-        // SAFETY: `kd` is the address of `nc`'s own live `kd_nodes[fast_index]`
-        // slot; `index` is a corner index so `index_begin + index` gathers a
-        // live `indices`→`values` slot from `pos` (`nc`'s own positions).
-        unsafe {
-            (*kd).split = dot3(
-                axis_dir,
-                *pos.values.data.add(
-                    *pos.indices
-                        .data
-                        .add(face.index_begin.wrapping_add(index) as usize)
-                        as usize,
-                ),
-            );
-        }
+        let corner = face.index_begin.wrapping_add(index) as usize;
+        let point_index = pos.indices_view().copy_at(corner) as usize;
+        let point = pos.values_view().copy_at(point_index);
+        // SAFETY: `kd` is the address of `nc`'s own live
+        // `kd_nodes[fast_index]` slot.
+        unsafe { (*kd).split = dot3(axis_dir, point) };
         // SAFETY: `kd` addresses `nc`'s own live `kd_nodes` slot (as above).
         unsafe {
             (*kd).index_plus_one = index.wrapping_add(1);
@@ -753,10 +690,9 @@ unsafe fn kd_build_rec(
 // ufbx.c:28474-28487 `ufbxi_ngon_tri_weight`
 #[cfg(feature = "triangulation")]
 #[inline(never)]
-pub(crate) unsafe fn ngon_tri_weight(points: *const Vec2) -> Real {
-    // SAFETY: the caller passes `points` addressing 3 consecutive `Vec2`s (the
-    // candidate triangle corners), so offsets 0..=2 are in bounds and readable.
-    let (p0, p1, p2) = unsafe { (*points.add(0), *points.add(1), *points.add(2)) };
+pub(crate) fn ngon_tri_weight(points: &[Vec2]) -> Real {
+    assert!(points.len() >= 3);
+    let (p0, p1, p2) = (points[0], points[1], points[2]);
     let orient: Real = orient2d(p0, p1, p2);
     if orient <= 0.0 {
         return -1.0;
@@ -832,12 +768,8 @@ pub(crate) unsafe fn triangulate_ngon(
     // Collect all the reflex corners for intersection testing.
     let mut num_kd_indices: u32 = 0;
     {
-        // SAFETY: `face.num_indices - 1 < face.num_indices` (non-zero:
-        // `face.num_indices > 4` asserted above) is a valid corner index for
-        // `ngon_project`.
-        let mut a: Vec2 = unsafe { ngon_project(nc, face.num_indices.wrapping_sub(1)) };
-        // SAFETY: `0` is a valid corner index for `ngon_project`.
-        let mut b: Vec2 = unsafe { ngon_project(nc, 0) };
+        let mut a: Vec2 = ngon_project(nc, face.num_indices.wrapping_sub(1));
+        let mut b: Vec2 = ngon_project(nc, 0);
         let mut i: u32 = 0;
         while i < face.num_indices {
             let next: u32 = if i.wrapping_add(1) < face.num_indices {
@@ -845,9 +777,7 @@ pub(crate) unsafe fn triangulate_ngon(
             } else {
                 0
             };
-            // SAFETY: `next < face.num_indices` (either `i+1` under the guard or
-            // wrapped to `0`) is a valid corner index for `ngon_project`.
-            let c: Vec2 = unsafe { ngon_project(nc, next) };
+            let c: Vec2 = ngon_project(nc, next);
 
             if orient2d(a, b, c) <= 0.0 {
                 // C: `kd_indices[num_kd_indices++] = i;`
@@ -930,20 +860,13 @@ pub(crate) unsafe fn triangulate_ngon(
 
         let mut num_steps: u32 = 0;
         while indices_left > 3 {
-            // SAFETY: `point_indices` are corner indices in `[0, face.num_indices)`,
-            // valid corner indices for `ngon_project`.
-            unsafe {
-                points[0] = ngon_project(nc, point_indices[0]);
-                points[1] = ngon_project(nc, point_indices[1]);
-                points[2] = ngon_project(nc, point_indices[2]);
-                points[3] = ngon_project(nc, point_indices[3]);
-            }
+            points[0] = ngon_project(nc, point_indices[0]);
+            points[1] = ngon_project(nc, point_indices[1]);
+            points[2] = ngon_project(nc, point_indices[2]);
+            points[3] = ngon_project(nc, point_indices[3]);
 
-            // SAFETY: `points` is a 4-element array, so offset 0 leaves 3 readable
-            // corners — `ngon_tri_weight`'s requirement.
-            weights[0] = unsafe { ngon_tri_weight(points.as_ptr().add(0)) };
-            // SAFETY: offset 1 of the 4-element `points` leaves 3 readable corners.
-            weights[1] = unsafe { ngon_tri_weight(points.as_ptr().add(1)) };
+            weights[0] = ngon_tri_weight(&points[0..3]);
+            weights[1] = ngon_tri_weight(&points[1..4]);
 
             let first_side: u32 = if weights[1] > weights[0] { 1 } else { 0 };
             let mut clipped: bool = false;
@@ -958,14 +881,15 @@ pub(crate) unsafe fn triangulate_ngon(
 
                 // If there is no reflex angle contained within the triangle formed
                 // by `{ a, b, c }` connect the vertices `a - c` (prev, next) directly.
-                // SAFETY: `side` is 0 or 1, so `points`/`point_indices` (both
-                // length-4) offset by `side` leave 3 readable corners —
-                // `kd_check`'s requirement — and `nc` is the live context.
+                let side_begin = side as usize;
+                // SAFETY: the KD tree in `nc` was built above from the current
+                // face's reflex corners; both slices are the selected local
+                // three-corner window.
                 if !unsafe {
                     kd_check(
                         nc,
-                        points.as_ptr().add(side as usize),
-                        point_indices.as_ptr().add(side as usize),
+                        &points[side_begin..side_begin + 3],
+                        &point_indices[side_begin..side_begin + 3],
                     )
                 } {
                     let ia: u32 = point_indices[side.wrapping_add(0) as usize];

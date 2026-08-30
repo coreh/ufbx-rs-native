@@ -499,6 +499,20 @@ impl<T, M: crate::native::view::Mode> crate::native::view::View<List<T>, M> {
         unsafe { crate::native::view::View::mint((self.data() as *mut T).add(index)) }
     }
 
+    /// Bounds-checked value read from an initialized viewed list.
+    #[cfg_attr(not(feature = "triangulation"), allow(dead_code))]
+    #[inline(always)]
+    pub(crate) fn copy_at(&self, index: usize) -> T
+    where
+        T: Copy,
+    {
+        assert!(index < self.count());
+        // SAFETY: a viewed `List<T>` holds `count` contiguous initialized
+        // elements; the assertion bounds this read to one of them, and `T:
+        // Copy` permits returning the stored value by value.
+        unsafe { *self.data().add(index) }
+    }
+
     /// C `ufbxi_macro_lower_bound_eq` over this viewed list. The probe
     /// closures receive in-bounds `&View<T, M>` elements minted under the same
     /// list invariant as `at`, so callers' probes are safe code; the search
