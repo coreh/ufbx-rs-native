@@ -10,9 +10,9 @@
 #![cfg_attr(not(all(feature = "c-abi", feature = "dev")), allow(dead_code))]
 #[cfg(feature = "subdivision")]
 use crate::generated::{
-    ColorSet, Edge, Error, Face, Mesh, MeshPart, RawSubdivideOpts, SkinDeformer, SkinVertex,
-    SkinWeight, SubdivisionBoundary, SubdivisionResult, SubdivisionWeight, SubdivisionWeightRange,
-    TopoEdge, TopoFlags, UvSet, VertexAttrib, VertexReal, VertexVec3,
+    ColorSet, Edge, Error, Face, Mesh, MeshPart, RawSubdivideOpts, SkinDeformer, SkinWeight,
+    SubdivisionBoundary, SubdivisionResult, SubdivisionWeight, SubdivisionWeightRange, TopoEdge,
+    TopoFlags, UvSet, VertexAttrib, VertexReal, VertexVec3,
 };
 #[cfg(not(feature = "subdivision"))]
 use crate::generated::{Error, Mesh, RawSubdivideOpts};
@@ -51,7 +51,7 @@ use crate::native::view::{view_project, view_read, view_write};
 #[cfg(feature = "subdivision")]
 use crate::native::view::{Const, Mode, SliceViewIter, View};
 #[cfg(feature = "subdivision")]
-use crate::prelude::{ListView, Real, Ref};
+use crate::prelude::{ListView, Real};
 #[cfg(feature = "subdivision")]
 use core::ffi::c_void;
 #[cfg(feature = "subdivision")]
@@ -1991,16 +1991,10 @@ pub(crate) fn init_source_vertex_weights(
 // ufbx.c:29521-29546 `ufbxi_init_skin_weights`
 #[cfg(feature = "subdivision")]
 #[inline(never)]
-/// # Safety
-/// `skin.vertices` and `skin.weights` address live runs covering every element
-/// this call reaches — `vertices[0..num_vertices]`, and for each such vertex the
-/// `weights[weight_begin .. weight_begin + min(sc.max_vertex_weights,
-/// num_weights)]` run. Those lengths are a caller promise the parameter types
-/// cannot carry, so this stays an `unsafe fn`.
-pub(crate) unsafe fn init_skin_weights(
+pub(crate) fn init_skin_weights<M: Mode>(
     sc: &SubdivideContext,
     num_vertices: usize,
-    skin: &View<SkinDeformer, Const>,
+    skin: &View<SkinDeformer, M>,
 ) -> *mut SubdivisionVertexWeights {
     let dst: *mut SubdivisionVertexWeights =
         sc.tmp_view().push::<SubdivisionVertexWeights>(num_vertices);
@@ -2011,16 +2005,14 @@ pub(crate) unsafe fn init_skin_weights(
         "dst"
     );
 
-    // C: `const ufbx_skin_deformer *skin` — read-only for the whole call, so a
-    // `Const` view (mintable from any readable provenance) is the honest mode.
+    let vertices = skin.vertices_view();
+    let source_weights = skin.weights_view();
+    assert!(num_vertices <= vertices.count());
+
     let mut i: usize = 0;
     while i < num_vertices {
         ufbxi_dev_assert!(i < skin.vertices().count);
-        // SAFETY: `skin.vertices` covers `0..num_vertices` (fn contract) — a
-        // mesh's skin deformer carries an entry per vertex, the assumption
-        // ufbx.c makes too — so `.add(i)` is a live element, copied out by
-        // value; dev-asserted in dev/regression builds.
-        let vertex: SkinVertex = unsafe { *skin.vertices().data.add(i) };
+        let vertex = vertices.copy_at(i);
         let num_weights: usize = min_sz(sc.max_vertex_weights(), vertex.num_weights as usize);
 
         let weights: *mut SubdivisionWeight = sc.tmp_view().push::<SubdivisionWeight>(num_weights);
@@ -2033,10 +2025,9 @@ pub(crate) unsafe fn init_skin_weights(
             "weights"
         );
 
-        // SAFETY: `vertex.weight_begin` indexes into the deformer's `weights`
-        // list, so `.add(weight_begin)` points at this vertex's run.
-        let skin_weights: *const SkinWeight =
-            unsafe { skin.weights().data.add(vertex.weight_begin as usize) };
+        let weight_begin = vertex.weight_begin as usize;
+        assert!(weight_begin <= source_weights.count());
+        assert!(num_weights <= source_weights.count() - weight_begin);
 
         // SAFETY: `dst` is a fresh `num_vertices`-element push and `i` is in
         // range, so slot `i` is live.
@@ -2047,19 +2038,18 @@ pub(crate) unsafe fn init_skin_weights(
         // C: `ufbxi_nounroll for (size_t wi = 0; wi != num_weights; wi++)`
         let mut wi: usize = 0;
         while wi != num_weights {
+            let skin_weight: SkinWeight = source_weights.copy_at(weight_begin + wi);
             ufbxi_check_return_err!(
                 sc.error_view(),
-                // SAFETY: `num_weights <= vertex.num_weights`, so `wi < num_weights`
-                // indexes within this vertex's `skin_weights` run.
-                unsafe { (*skin_weights.add(wi)).cluster_index } <= i32::MAX as u32,
+                skin_weight.cluster_index <= i32::MAX as u32,
                 core::ptr::null_mut(),
                 "skin_weights[wi].cluster_index <= INT32_MAX"
             );
-            // SAFETY: `wi < num_weights`, in range for both the fresh
-            // `num_weights`-element `weights` push and the `skin_weights` run.
+            // SAFETY: `wi < num_weights`, in range for the fresh
+            // `num_weights`-element `weights` push.
             unsafe {
-                (*weights.add(wi)).index = (*skin_weights.add(wi)).cluster_index;
-                (*weights.add(wi)).weight = (*skin_weights.add(wi)).weight;
+                (*weights.add(wi)).index = skin_weight.cluster_index;
+                (*weights.add(wi)).weight = skin_weight.weight;
             }
             wi += 1;
         }
@@ -2574,7 +2564,7 @@ pub(crate) unsafe fn subdivide_mesh_level(
         let result_sub_view: &View<SubdivisionResult> =
             unsafe { View::<SubdivisionResult>::from_ptr(result_sub) };
 
-        let mut skin: *mut SkinDeformer = core::ptr::null_mut();
+        let mut skin: Option<&View<SkinDeformer>> = None;
         if sc.opts_view().evaluate_skin_weights() {
             if mesh.skin_deformers().count > 0 {
                 ufbxi_check_err!(
@@ -2582,18 +2572,10 @@ pub(crate) unsafe fn subdivide_mesh_level(
                     sc.opts_view().skin_deformer_index() < mesh.skin_deformers().count,
                     "sc->opts.skin_deformer_index < mesh->skin_deformers.count"
                 );
-                // SAFETY: the check above bounds `skin_deformer_index` below
-                // `skin_deformers.count`, so `.add(index)` addresses a live
-                // element of the mesh's own deformer-ref run and reading the
-                // `Ref` out of it copies one initialized element.
-                let skin_ref: Ref<SkinDeformer> = unsafe {
-                    core::ptr::read(
-                        mesh.skin_deformers()
-                            .data
-                            .add(sc.opts_view().skin_deformer_index()),
-                    )
-                };
-                skin = skin_ref.ptr();
+                skin = Some(
+                    mesh.skin_deformers_view()
+                        .at(sc.opts_view().skin_deformer_index()),
+                );
             }
         }
 
@@ -2601,11 +2583,7 @@ pub(crate) unsafe fn subdivide_mesh_level(
         if sc.opts_view().evaluate_source_vertices() {
             max_weights = max_sz(max_weights, mesh.num_vertices());
         }
-        if !skin.is_null() {
-            // SAFETY: `skin` is the non-null live deformer resolved above, read
-            // only here — a `Const` view scoped to this branch.
-            let skin_view: &View<SkinDeformer, Const> =
-                unsafe { View::<SkinDeformer, Const>::from_ptr(skin) };
+        if let Some(skin_view) = skin {
             max_weights = max_sz(max_weights, skin_view.clusters().count);
         }
 
@@ -2655,7 +2633,7 @@ pub(crate) unsafe fn subdivide_mesh_level(
             }?;
         }
 
-        if !skin.is_null() {
+        if let Some(skin_view) = skin {
             sc.set_max_vertex_weights(if sc.opts_view().max_skin_weights() != 0 {
                 sc.opts_view().max_skin_weights()
             } else {
@@ -2677,17 +2655,7 @@ pub(crate) unsafe fn subdivide_mesh_level(
                     )
                 };
             } else {
-                // SAFETY: `skin` is the non-null live deformer resolved above,
-                // read only here — a `Const` view scoped to this call; its
-                // `vertices`/`weights` runs cover every element the call reaches
-                // by loaded-scene consistency — `init_skin_weights`' contract.
-                weights = unsafe {
-                    init_skin_weights(
-                        sc,
-                        mesh.num_vertices(),
-                        View::<SkinDeformer, Const>::from_ptr(skin),
-                    )
-                };
+                weights = init_skin_weights(sc, mesh.num_vertices(), skin_view);
             }
 
             // SAFETY: `weights` is the per-vertex weight array built just above
