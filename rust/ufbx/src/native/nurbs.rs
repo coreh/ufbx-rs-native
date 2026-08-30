@@ -725,18 +725,17 @@ pub(crate) fn tessellate_nurbs_surface_imp(
     let sub_u: usize = tc.opts_view().span_subdivision_u();
     let sub_v: usize = tc.opts_view().span_subdivision_v();
 
-    let surface: *const NurbsSurface = tc.surface();
-    let mesh: *mut Mesh = tc.mesh_mut_ptr();
+    let surface = tc.surface();
+    let mesh = tc.mesh_mut_ptr();
+    // SAFETY: the context was constructed around this live input surface,
+    // whose bytes remain read-only for the tessellation call.
+    let surface_view = unsafe { View::<NurbsSurface, Const>::from_ptr(surface) };
     ufbxi_check_err_msg!(
         tc.error_view(),
-        // SAFETY: `tc.surface()` is the surface the context was built around
-        // (tc construction invariant) — a live scene element.
-        unsafe {
-            (*surface).basis_u.valid
-                && (*surface).basis_v.valid
-                && (*surface).num_control_points_u > 0
-                && (*surface).num_control_points_v > 0
-        },
+        surface_view.basis_u().valid()
+            && surface_view.basis_v().valid()
+            && surface_view.num_control_points_u() > 0
+            && surface_view.num_control_points_v() > 0,
         "Bad NURBS geometry",
         "surface->basis_u.valid && surface->basis_v.valid && surface->num_control_points_u > 0 && surface->num_control_points_v > 0"
     );
@@ -763,15 +762,12 @@ pub(crate) fn tessellate_nurbs_surface_imp(
     tc.result_view().set_ator(tc.ator_result_mut_ptr());
     tc.tmp_view().set_ator(tc.ator_tmp_mut_ptr());
 
-    // SAFETY: reading the live surface's two bases (tc construction invariant).
-    let (open_u, open_v, spans_u, spans_v) = unsafe {
-        (
-            (*surface).basis_u.topology == NurbsTopology::Open,
-            (*surface).basis_v.topology == NurbsTopology::Open,
-            (*surface).basis_u.spans.count,
-            (*surface).basis_v.spans.count,
-        )
-    };
+    let (open_u, open_v, spans_u, spans_v) = (
+        surface_view.basis_u().topology() == NurbsTopology::Open,
+        surface_view.basis_v().topology() == NurbsTopology::Open,
+        surface_view.basis_u().spans_view().count(),
+        surface_view.basis_v().spans_view().count(),
+    );
 
     // Check conservatively that we don't overflow anything
     {
@@ -864,19 +860,19 @@ pub(crate) fn tessellate_nurbs_surface_imp(
             let ix_v: usize = span_v * sub_v + split_v;
             ufbx_assert!(ix_v < indices_v);
 
-            // SAFETY: `span_v < spans_v == basis_v.spans.count`; the
-            // `split_v > 0` arm only runs for a non-final span (the final one
-            // has `splits_v == 1`), so `span_v + 1` is in bounds too, and
-            // index 0 exists because `spans_v > 0` guards this loop.
-            let mut v: Real = unsafe { *(*surface).basis_v.spans.data.add(span_v) };
+            let spans_v_data = surface_view.basis_v().spans_view().data();
+            // SAFETY: the frozen surface view pairs the basis-V span pointer
+            // with the previously read `spans_v` count for this live input.
+            let spans_v_read =
+                unsafe { Run::<Real, Const>::from_const_raw_parts(spans_v_data, spans_v) };
+            let mut v = spans_v_read.copy_at(span_v);
             if split_v > 0 {
                 let t: Real = split_v as Real / splits_v as Real;
-                v = v * (1.0f32 as Real - t)
-                    + t * unsafe { *(*surface).basis_v.spans.data.add(span_v + 1) };
+                v = v * (1.0f32 as Real - t) + t * spans_v_read.copy_at(span_v + 1);
             }
             let original_v: Real = v;
             if span_v + 1 == spans_v && !open_v {
-                v = unsafe { *(*surface).basis_v.spans.data.add(0) };
+                v = spans_v_read.copy_at(0);
             }
 
             for span_u in 0..spans_u {
@@ -885,19 +881,19 @@ pub(crate) fn tessellate_nurbs_surface_imp(
                     let ix_u: usize = span_u * sub_u + split_u;
                     ufbx_assert!(ix_u < indices_u);
 
-                    // SAFETY: `span_u < spans_u == basis_u.spans.count`; the
-                    // `split_u > 0` arm only runs for a non-final span, so
-                    // `span_u + 1` is in bounds, and index 0 exists because
-                    // `spans_u > 0` guards this loop.
-                    let mut u: Real = unsafe { *(*surface).basis_u.spans.data.add(span_u) };
+                    let spans_u_data = surface_view.basis_u().spans_view().data();
+                    // SAFETY: the frozen surface view pairs the basis-U span
+                    // pointer with the previously read `spans_u` count.
+                    let spans_u_read =
+                        unsafe { Run::<Real, Const>::from_const_raw_parts(spans_u_data, spans_u) };
+                    let mut u = spans_u_read.copy_at(span_u);
                     if split_u > 0 {
                         let t: Real = split_u as Real / splits_u as Real;
-                        u = u * (1.0f32 as Real - t)
-                            + t * unsafe { *(*surface).basis_u.spans.data.add(span_u + 1) };
+                        u = u * (1.0f32 as Real - t) + t * spans_u_read.copy_at(span_u + 1);
                     }
                     let original_u: Real = u;
                     if span_u + 1 == spans_u && !open_u {
-                        u = unsafe { *(*surface).basis_u.spans.data.add(0) };
+                        u = spans_u_read.copy_at(0);
                     }
 
                     let (pos, tangent_u, tangent_v) = {
@@ -1000,6 +996,18 @@ pub(crate) fn tessellate_nurbs_surface_imp(
         !faces.is_null() && !vertex_ix.is_null() && !attrib_ix.is_null(),
         "faces && vertex_ix && attrib_ix"
     );
+    let corner_capacity = num_faces.wrapping_mul(4);
+    // SAFETY: the sampling loops initialized all `num_indices` tmp slots and
+    // never write them again. Non-empty result pushes provide stable disjoint
+    // slots; zero-count pushes produce empty runs that are never indexed.
+    let (position_ix_read, faces_write, vertex_ix_write, attrib_ix_write) = unsafe {
+        (
+            Run::<u32, Const>::from_const_raw_parts(position_ix, num_indices),
+            Run::<Face>::from_raw_parts(faces, num_faces),
+            Run::<u32>::from_raw_parts(vertex_ix, corner_capacity),
+            Run::<u32>::from_raw_parts(attrib_ix, corner_capacity),
+        )
+    };
 
     let mut face_ix: usize = 0;
     let mut dst_index: usize = 0;
@@ -1008,46 +1016,44 @@ pub(crate) fn tessellate_nurbs_surface_imp(
 
     for face_v in 0..faces_v {
         for face_u in 0..faces_u {
-            // SAFETY: each face consumes at most 4 slots and `dst_index`
-            // advances by 3 or 4 per face, so `dst_index + 3` stays inside the
-            // `4 * num_faces`-element `vertex_ix`/`attrib_ix` pushes, and
-            // `face_ix < num_faces` indexes the `faces` push. The corner
-            // indices written into `attrib_ix` peak at `num_indices - 1`
-            // (`face_v + 1 <= indices_v - 1`, `face_u + 1 <= indices_u - 1`),
-            // so using them to index the `num_indices`-element `position_ix`
-            // is in bounds.
-            let is_triangle: bool = unsafe {
-                *attrib_ix.add(dst_index + 0) = ((face_v + 0) * indices_u + (face_u + 0)) as u32;
-                *attrib_ix.add(dst_index + 1) = ((face_v + 0) * indices_u + (face_u + 1)) as u32;
-                *attrib_ix.add(dst_index + 2) = ((face_v + 1) * indices_u + (face_u + 1)) as u32;
-                *attrib_ix.add(dst_index + 3) = ((face_v + 1) * indices_u + (face_u + 0)) as u32;
+            let mut attrib = [0u32; 4];
+            attrib[0] = ((face_v + 0) * indices_u + (face_u + 0)) as u32;
+            attrib_ix_write.write_at(dst_index + 0, attrib[0]);
+            attrib[1] = ((face_v + 0) * indices_u + (face_u + 1)) as u32;
+            attrib_ix_write.write_at(dst_index + 1, attrib[1]);
+            attrib[2] = ((face_v + 1) * indices_u + (face_u + 1)) as u32;
+            attrib_ix_write.write_at(dst_index + 2, attrib[2]);
+            attrib[3] = ((face_v + 1) * indices_u + (face_u + 0)) as u32;
+            attrib_ix_write.write_at(dst_index + 3, attrib[3]);
 
-                *vertex_ix.add(dst_index + 0) =
-                    *position_ix.add(*attrib_ix.add(dst_index + 0) as usize);
-                *vertex_ix.add(dst_index + 1) =
-                    *position_ix.add(*attrib_ix.add(dst_index + 1) as usize);
-                *vertex_ix.add(dst_index + 2) =
-                    *position_ix.add(*attrib_ix.add(dst_index + 2) as usize);
-                *vertex_ix.add(dst_index + 3) =
-                    *position_ix.add(*attrib_ix.add(dst_index + 3) as usize);
+            let mut vertex = [0u32; 4];
+            vertex[0] = position_ix_read.copy_at(attrib[0] as usize);
+            vertex_ix_write.write_at(dst_index + 0, vertex[0]);
+            vertex[1] = position_ix_read.copy_at(attrib[1] as usize);
+            vertex_ix_write.write_at(dst_index + 1, vertex[1]);
+            vertex[2] = position_ix_read.copy_at(attrib[2] as usize);
+            vertex_ix_write.write_at(dst_index + 2, vertex[2]);
+            vertex[3] = position_ix_read.copy_at(attrib[3] as usize);
+            vertex_ix_write.write_at(dst_index + 3, vertex[3]);
 
-                let mut is_triangle: bool = false;
-                for prev_ix in 0..4usize {
-                    let next_ix: usize = (prev_ix + 1) % 4;
-                    if *vertex_ix.add(dst_index + prev_ix) == *vertex_ix.add(dst_index + next_ix) {
-                        for i in next_ix..3 {
-                            *attrib_ix.add(dst_index + i) = *attrib_ix.add(dst_index + i + 1);
-                            *vertex_ix.add(dst_index + i) = *vertex_ix.add(dst_index + i + 1);
-                        }
-                        is_triangle = true;
-                        break;
+            let mut is_triangle = false;
+            for prev_ix in 0..4usize {
+                let next_ix = (prev_ix + 1) % 4;
+                if vertex[prev_ix] == vertex[next_ix] {
+                    for i in next_ix..3 {
+                        attrib[i] = attrib[i + 1];
+                        attrib_ix_write.write_at(dst_index + i, attrib[i]);
+                        vertex[i] = vertex[i + 1];
+                        vertex_ix_write.write_at(dst_index + i, vertex[i]);
                     }
+                    is_triangle = true;
+                    break;
                 }
+            }
 
-                (*faces.add(face_ix)).index_begin = dst_index as u32;
-                (*faces.add(face_ix)).num_indices = if is_triangle { 3 } else { 4 };
-                is_triangle
-            };
+            let face = faces_write.at(face_ix);
+            face.set_index_begin(dst_index as u32);
+            face.set_num_indices(if is_triangle { 3 } else { 4 });
             dst_index += if is_triangle { 3 } else { 4 };
             num_triangles += if is_triangle { 1 } else { 2 };
             face_ix += 1;
@@ -1122,12 +1128,6 @@ pub(crate) fn tessellate_nurbs_surface_imp(
     // context zeroed).
     let mesh_view = unsafe { View::<Mesh>::from_ptr(mesh) };
 
-    // SAFETY: `surface` is the live surface the context was built around (tc
-    // construction invariant), reached through a `*const` the caller keeps
-    // read-only; the `Const` mint is not held across any write to its bytes.
-    let surface_view: &View<NurbsSurface, Const> =
-        unsafe { View::<NurbsSurface, Const>::from_ptr(surface) };
-
     if surface_view.material().is_some() {
         mesh_view
             .face_material_view()
@@ -1184,9 +1184,9 @@ pub(crate) fn tessellate_nurbs_surface_imp(
         );
     }
 
-    // SAFETY: reading the live surface's flag, then walking the mesh's own
-    // normal run (`data`/`count` set from the `normals` push above).
-    if unsafe { (*surface).flip_normals } {
+    // The normal run is mesh-owned (`data`/`count` were set from the `normals`
+    // push above).
+    if surface_view.flip_normals() {
         // C: `ufbxi_nounroll ufbxi_for_list(ufbx_vec3, normal, mesh->vertex_normal.values)`
         unsafe {
             let mut normal: *mut Vec3 = mesh_view.vertex_normal().values().data as *mut Vec3;
@@ -1217,14 +1217,9 @@ pub(crate) fn tessellate_nurbs_surface_imp(
     let finished_imp = unsafe {
         finish_imp(
             tc.imp(),
-            ImpHandle::<SceneImp>::from_payload(
-                View::<NurbsSurface, Const>::from_ptr(surface)
-                    .element()
-                    .scene()
-                    .ptr(),
-            )
-            .refcount_ptr(),
-            tc.mesh_mut_ptr(),
+            ImpHandle::<SceneImp>::from_payload(surface_view.element().scene().ptr())
+                .refcount_ptr(),
+            mesh,
             tc.ator_result(),
             tc.take_result(),
         )

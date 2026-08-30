@@ -338,14 +338,118 @@ fn tessellate_nurbs_curve() {
 /// the curve case).
 #[test]
 fn tessellate_nurbs_surface() {
-    let scene = load("maya_nurbs_surface_plane_6100_ascii.fbx");
-    assert!(!scene.nurbs_surfaces.is_empty());
-    let mut acc = 0.0f64;
-    for surface in &scene.nurbs_surfaces {
-        let mesh = ufbx::tessellate_nurbs_surface(surface, Default::default())
-            .expect("tessellate_nurbs_surface failed");
-        acc += walk_mesh(&mesh);
+    fn check_mesh(
+        surface: &ufbx::NurbsSurface,
+        mesh: &ufbx::Mesh,
+        sub_u: usize,
+        sub_v: usize,
+    ) -> (usize, usize) {
+        let spans_u = surface.basis_u.spans.len();
+        let spans_v = surface.basis_v.spans.len();
+        let expected_faces = spans_u
+            .checked_sub(1)
+            .and_then(|n| n.checked_mul(sub_u))
+            .and_then(|n| {
+                spans_v
+                    .checked_sub(1)
+                    .and_then(|m| m.checked_mul(sub_v))
+                    .and_then(|m| n.checked_mul(m))
+            })
+            .expect("surface face count overflow");
+        let samples_u = spans_u
+            .checked_sub(1)
+            .and_then(|n| n.checked_mul(sub_u - 1))
+            .and_then(|n| spans_u.checked_add(n))
+            .expect("surface U sample count overflow");
+        let samples_v = spans_v
+            .checked_sub(1)
+            .and_then(|n| n.checked_mul(sub_v - 1))
+            .and_then(|n| spans_v.checked_add(n))
+            .expect("surface V sample count overflow");
+        let sample_count = samples_u
+            .checked_mul(samples_v)
+            .expect("surface sample count overflow");
+
+        assert_eq!(mesh.num_faces, expected_faces);
+        assert_eq!(mesh.faces.len(), mesh.num_faces);
+        assert_eq!(mesh.vertices.len(), mesh.num_vertices);
+        assert_eq!(mesh.vertex_indices.len(), mesh.num_indices);
+        assert_eq!(mesh.vertex_position.values.len(), mesh.num_vertices);
+        assert_eq!(mesh.vertex_position.indices.len(), mesh.num_indices);
+        assert_eq!(mesh.vertex_normal.values.len(), mesh.num_vertices);
+        assert_eq!(mesh.vertex_normal.indices.len(), mesh.num_indices);
+        // These value-list headers carry the corner count, while their storage
+        // is the sampled parameter grid. Validate the live index lists against
+        // that grid without materializing the oversized value slices.
+        assert_eq!(mesh.vertex_uv.indices.len(), mesh.num_indices);
+        assert_eq!(mesh.vertex_tangent.indices.len(), mesh.num_indices);
+        assert_eq!(mesh.vertex_bitangent.indices.len(), mesh.num_indices);
+        assert_eq!(
+            mesh.vertex_position.indices.as_ref(),
+            mesh.vertex_indices.as_ref()
+        );
+        assert_eq!(
+            mesh.vertex_normal.indices.as_ref(),
+            mesh.vertex_indices.as_ref()
+        );
+        assert_eq!(
+            mesh.vertex_tangent.indices.as_ref(),
+            mesh.vertex_uv.indices.as_ref()
+        );
+        assert_eq!(
+            mesh.vertex_bitangent.indices.as_ref(),
+            mesh.vertex_uv.indices.as_ref()
+        );
+
+        let mut cursor = 0usize;
+        let mut triangles = 0usize;
+        let mut quads = 0usize;
+        for face in &mesh.faces {
+            assert_eq!(face.index_begin as usize, cursor);
+            let count = face.num_indices as usize;
+            assert!(count == 3 || count == 4);
+            let end = cursor.checked_add(count).expect("face range overflow");
+            assert!(end <= mesh.num_indices);
+
+            for index in cursor..end {
+                assert!((mesh.vertex_indices[index] as usize) < mesh.num_vertices);
+                assert!((mesh.vertex_uv.indices[index] as usize) < sample_count);
+                assert!((mesh.vertex_tangent.indices[index] as usize) < sample_count);
+                assert!((mesh.vertex_bitangent.indices[index] as usize) < sample_count);
+            }
+
+            triangles += usize::from(count == 3);
+            quads += usize::from(count == 4);
+            cursor = end;
+        }
+
+        assert_eq!(cursor, mesh.num_indices);
+        assert_eq!(mesh.num_indices, triangles * 3 + quads * 4);
+        assert_eq!(mesh.num_triangles, triangles + quads * 2);
+        assert_eq!(mesh.max_face_triangles, 2);
+        (triangles, quads)
     }
+
+    let mut acc = 0.0f64;
+    let mut triangles = 0usize;
+    let mut quads = 0usize;
+    for fixture in [
+        "maya_nurbs_surface_plane_6100_ascii.fbx",
+        "maya_nurbs_low_sphere_7500_ascii.fbx",
+    ] {
+        let scene = load(fixture);
+        assert!(!scene.nurbs_surfaces.is_empty());
+        for surface in &scene.nurbs_surfaces {
+            let mesh = ufbx::tessellate_nurbs_surface(surface, Default::default())
+                .expect("tessellate_nurbs_surface failed");
+            let (mesh_triangles, mesh_quads) = check_mesh(surface, &mesh, 4, 4);
+            triangles += mesh_triangles;
+            quads += mesh_quads;
+            acc += walk_mesh(&mesh);
+        }
+    }
+    assert!(triangles > 0);
+    assert!(quads > 0);
     assert!(acc.is_finite());
 }
 
