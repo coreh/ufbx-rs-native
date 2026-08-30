@@ -309,8 +309,52 @@ fn tessellate_nurbs_curve() {
     assert!(!scene.nurbs_curves.is_empty());
     let mut acc = 0.0f64;
     for curve in &scene.nurbs_curves {
+        let order = curve.basis.order as usize;
+        let sample_u = (curve.basis.t_min + curve.basis.t_max) * (0.5f32 as ufbx::Real);
+        let sentinel = 1234.5f32 as ufbx::Real;
+        let mut weights = vec![sentinel; order + 2];
+        let mut derivatives = vec![sentinel; order + 2];
+        let basis = curve
+            .basis
+            .evaluate(sample_u, &mut weights, &mut derivatives);
+        assert_ne!(basis, usize::MAX);
+        let weight_sum: ufbx::Real = weights[..order].iter().copied().sum();
+        assert!((weight_sum - 1.0f32 as ufbx::Real).abs() < 0.0001f32 as ufbx::Real);
+        assert!(weights[order..]
+            .iter()
+            .all(|value| value.to_bits() == sentinel.to_bits()));
+        assert!(derivatives[order..]
+            .iter()
+            .all(|value| value.to_bits() == sentinel.to_bits()));
+
+        let mut weights_without_derivatives = vec![sentinel; order];
+        let basis_without_derivatives =
+            curve
+                .basis
+                .evaluate(sample_u, &mut weights_without_derivatives, &mut []);
+        assert_eq!(basis_without_derivatives, basis);
+        for (with, without) in weights[..order].iter().zip(&weights_without_derivatives) {
+            assert_eq!(with.to_bits(), without.to_bits());
+        }
+
+        let mut short_weights = vec![sentinel; order - 1];
+        let mut untouched_derivatives = vec![sentinel; order];
+        let short_basis =
+            curve
+                .basis
+                .evaluate(sample_u, &mut short_weights, &mut untouched_derivatives);
+        assert_eq!(short_basis, basis);
+        assert!(short_weights
+            .iter()
+            .all(|value| value.to_bits() == sentinel.to_bits()));
+        assert!(untouched_derivatives
+            .iter()
+            .all(|value| value.to_bits() == sentinel.to_bits()));
+
         for u in [0.0, 0.5, 1.0] {
-            acc += ufbx::evaluate_nurbs_curve(curve, u).position.x as f64;
+            let point = ufbx::evaluate_nurbs_curve(curve, u);
+            assert!(point.valid);
+            acc += point.position.x as f64;
         }
         let line = ufbx::tessellate_nurbs_curve(curve, Default::default())
             .expect("tessellate_nurbs_curve failed");
@@ -436,6 +480,16 @@ fn tessellate_nurbs_surface() {
     let sphere_scene = load("maya_nurbs_low_sphere_7500_ascii.fbx");
     assert!(!sphere_scene.nurbs_surfaces.is_empty());
     for surface in &sphere_scene.nurbs_surfaces {
+        let sample_u = (surface.basis_u.t_min + surface.basis_u.t_max) * (0.5f32 as ufbx::Real);
+        let sample_v = (surface.basis_v.t_min + surface.basis_v.t_max) * (0.5f32 as ufbx::Real);
+        let point = ufbx::evaluate_nurbs_surface(surface, sample_u, sample_v);
+        assert!(point.valid);
+        acc += point.position.x as f64
+            + point.position.y as f64
+            + point.position.z as f64
+            + point.derivative_u.x as f64
+            + point.derivative_v.y as f64;
+
         let mesh = ufbx::tessellate_nurbs_surface(surface, Default::default())
             .expect("tessellate_nurbs_surface failed");
         let (mesh_triangles, mesh_quads) = check_mesh(surface, &mesh, 4, 4);

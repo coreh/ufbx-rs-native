@@ -58,7 +58,6 @@ use crate::native::string_pool::slow_normalize3;
 use crate::native::view::view_raw_mut;
 use crate::native::view::View;
 use crate::native::view::{view_project, view_read, view_write};
-#[cfg(feature = "tessellation")]
 use crate::native::view::{Const, Run};
 use crate::prelude::Real;
 #[cfg(feature = "tessellation")]
@@ -83,9 +82,14 @@ impl View<Vec2> {
 
 // ufbx.c:27771-27780 `ufbxi_nurbs_weight`
 // C copies `ufbx_real_list` by value at the call sites and passes `&knots`;
-// the Rust caller passes the borrowed contents of the same list.
+// the Rust caller passes a bounded read-only run over the same stored list.
 #[inline(always)]
-pub(crate) fn nurbs_weight(knots: &[Real], knot: usize, degree: usize, u: Real) -> Real {
+pub(crate) fn nurbs_weight(
+    knots: Run<'_, Real, Const>,
+    knot: usize,
+    degree: usize,
+    u: Real,
+) -> Real {
     if knot >= knots.len() {
         return 0.0f32 as Real;
     }
@@ -95,8 +99,8 @@ pub(crate) fn nurbs_weight(knots: &[Real], knot: usize, degree: usize, u: Real) 
     // C's `< degree` early-out admits the one-past boundary when the remaining
     // count equals `degree`; valid basis spans are strictly inside the run.
     assert!(degree < knots.len() - knot);
-    let prev_u: Real = knots[knot];
-    let next_u: Real = knots[knot + degree];
+    let prev_u: Real = knots.copy_at(knot);
+    let next_u: Real = knots.copy_at(knot + degree);
     if prev_u >= next_u {
         return 0.0f32 as Real;
     }
@@ -111,7 +115,7 @@ pub(crate) fn nurbs_weight(knots: &[Real], knot: usize, degree: usize, u: Real) 
 
 // ufbx.c:27782-27789 `ufbxi_nurbs_deriv`
 #[inline(always)]
-pub(crate) fn nurbs_deriv(knots: &[Real], knot: usize, degree: usize) -> Real {
+pub(crate) fn nurbs_deriv(knots: Run<'_, Real, Const>, knot: usize, degree: usize) -> Real {
     if knot >= knots.len() {
         return 0.0f32 as Real;
     }
@@ -119,8 +123,8 @@ pub(crate) fn nurbs_deriv(knots: &[Real], knot: usize, degree: usize) -> Real {
         return 0.0f32 as Real;
     }
     assert!(degree < knots.len() - knot);
-    let prev_u: Real = knots[knot];
-    let next_u: Real = knots[knot + degree];
+    let prev_u: Real = knots.copy_at(knot);
+    let next_u: Real = knots.copy_at(knot + degree);
     if prev_u >= next_u {
         return 0.0f32 as Real;
     }

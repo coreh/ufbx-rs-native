@@ -4045,6 +4045,54 @@ pub(crate) unsafe fn add_blend_vertex_offsets(
     }
 }
 
+fn evaluate_nurbs_basis_run(
+    knots: Run<'_, Real, Const>,
+    knot: usize,
+    degree: usize,
+    u: Real,
+    weights: Run<'_, Real>,
+    derivatives: Option<Run<'_, Real>>,
+) {
+    weights.write_at(0, 1.0f32 as Real);
+    for p in 1..=degree {
+        let mut prev: Real = 0.0f32 as Real;
+        let mut g: Real = 1.0f32 as Real - nurbs_weight(knots, knot - p + 1, p, u);
+        let mut dg: Real = 0.0f32 as Real;
+        if derivatives.is_some() && p == degree {
+            dg = nurbs_deriv(knots, knot - p + 1, p);
+        }
+
+        // C: `for (size_t i = p; i > 0; i--)`
+        let mut i: usize = p;
+        while i > 0 {
+            let f: Real = nurbs_weight(knots, knot - p + i, p, u);
+            // SAFETY: slot 0 is initialized before the outer loop; after each
+            // completed degree `p - 1`, the prefix `0..p` is initialized. The
+            // descending inner loop therefore reads only initialized slot
+            // `i - 1`, while `Run::at()` bounds it to the output capability.
+            let weight: Real = unsafe { weights.at(i - 1).as_ptr().read() };
+            weights.write_at(i, f * weight + g * prev);
+
+            if let Some(derivatives) = derivatives.filter(|_| p == degree) {
+                let df: Real = nurbs_deriv(knots, knot - p + i, p);
+                if i < derivatives.len() {
+                    derivatives.write_at(i, df * weight - dg * prev);
+                }
+                dg = df;
+            }
+
+            prev = weight;
+            g = 1.0f32 as Real - f;
+            i -= 1;
+        }
+
+        weights.write_at(0, g * prev);
+        if let Some(derivatives) = derivatives.filter(|_| p == degree) {
+            derivatives.write_at(0, -dg * prev);
+        }
+    }
+}
+
 // ufbx.c:32097-32166 `ufbx_evaluate_nurbs_basis`
 pub(crate) unsafe fn evaluate_nurbs_basis(
     basis: *const NurbsBasis,
@@ -4074,31 +4122,27 @@ pub(crate) unsafe fn evaluate_nurbs_basis(
     ufbx_assert!(degree >= 1);
 
     // Binary search for the knot span `[min_u, max_u]` where `min_u <= u < max_u`
-    // C: `ufbx_real_list knots = basis->knot_vector;` — a by-value list copy;
-    // `List` is not `Copy`, so borrow the contents of the viewed field.
-    let knots_view: &View<List<Real>, Const> = basis_view.knot_vector_view();
-    // SAFETY: the viewed list's stored pair is the basis's contiguous knot run
-    // and nothing writes it while this borrowed slice is live.
-    let knots_slice: &[Real] =
-        unsafe { crate::prelude::slice_from_ptr(knots_view.data(), knots_view.count()) };
+    // C: `ufbx_real_list knots = basis->knot_vector;` — the bounded run is the
+    // viewed list's same stored `(data, count)` pair.
+    let knots = Run::from_list(basis_view.knot_vector_view());
     let mut knot: usize = usize::MAX;
 
     if u <= basis_view.t_min() {
         knot = degree;
         u = basis_view.t_min();
     } else if u >= basis_view.t_max() {
-        knot = knots_slice.len().wrapping_sub(degree).wrapping_sub(2);
+        knot = knots.len().wrapping_sub(degree).wrapping_sub(2);
         u = basis_view.t_max();
     } else {
-        // SAFETY: `knots_slice` is the basis's live knot run, and the search
+        // SAFETY: `knots` is the basis's live bounded knot run, and the search
         // keeps each raw probe within `[0, len-1)`.
         unsafe {
             macro_lower_bound_eq::<Real>(
                 8,
                 &mut knot,
-                knots_slice.as_ptr(),
+                knots.as_ptr(),
                 0,
-                knots_slice.len().wrapping_sub(1),
+                knots.len().wrapping_sub(1),
                 // C: `( a[1] <= u )`
                 |a| *a.add(1) <= u,
                 // C: `( a[0] <= u && u < a[1] )`
@@ -4118,68 +4162,30 @@ pub(crate) unsafe fn evaluate_nurbs_basis(
     if num_derivatives == 0 {
         derivatives = core::ptr::null_mut();
     }
-    if num_weights < basis_view.order() as usize {
+    let order = basis_view.order() as usize;
+    if num_weights < order {
         return knot - degree;
     }
     if weights.is_null() {
         return knot - degree;
     }
 
-    // SAFETY: `weights` is non-null here with `num_weights >= order` entries, so
-    // index 0 is in bounds of the caller's weight buffer.
-    unsafe {
-        *weights.add(0) = 1.0f32 as Real;
-    }
-    for p in 1..=degree {
-        let mut prev: Real = 0.0f32 as Real;
-        let mut g: Real = 1.0f32 as Real - nurbs_weight(knots_slice, knot - p + 1, p, u);
-        let mut dg: Real = 0.0f32 as Real;
-        if !derivatives.is_null() && p == degree {
-            dg = nurbs_deriv(knots_slice, knot - p + 1, p);
-        }
-
-        // C: `for (size_t i = p; i > 0; i--)`
-        let mut i: usize = p;
-        while i > 0 {
-            let f: Real = nurbs_weight(knots_slice, knot - p + i, p, u);
-            // SAFETY: `weights` has `num_weights >= order > degree >= i` entries,
-            // so `i - 1` is in bounds of the caller's weight buffer.
-            let weight: Real = unsafe { *weights.add(i - 1) };
-            // SAFETY: as above, `i <= degree < order <= num_weights`.
-            unsafe {
-                *weights.add(i) = f * weight + g * prev;
-            }
-
-            if !derivatives.is_null() && p == degree {
-                let df: Real = nurbs_deriv(knots_slice, knot - p + i, p);
-                if i < num_derivatives {
-                    // SAFETY: `derivatives` is non-null here with `num_derivatives`
-                    // entries and `i < num_derivatives`, so `i` is in bounds.
-                    unsafe {
-                        *derivatives.add(i) = df * weight - dg * prev;
-                    }
-                }
-                dg = df;
-            }
-
-            prev = weight;
-            g = 1.0f32 as Real - f;
-            i -= 1;
-        }
-
-        // SAFETY: index 0 is in bounds of the caller's weight buffer.
-        unsafe {
-            *weights.add(0) = g * prev;
-        }
-        if !derivatives.is_null() && p == degree {
-            // SAFETY: `derivatives` is non-null here, which (given it was nulled
-            // above when `num_derivatives == 0`) implies `num_derivatives >= 1`,
-            // so index 0 is in bounds of the caller's derivative buffer.
-            unsafe {
-                *derivatives.add(0) = -dg * prev;
-            }
-        }
-    }
+    let derivative_count = core::cmp::min(num_derivatives, order);
+    // SAFETY: the weight count/null checks above establish the exact `order`
+    // prefix C writes. A non-null derivative pointer with positive count
+    // supplies the exact prefix C may write; the two output runs may overlap,
+    // matching C's non-restrict pointers and `View`'s interior mutability.
+    let (weights, derivatives) = unsafe {
+        (
+            Run::<Real>::from_raw_parts(weights, order),
+            if derivatives.is_null() {
+                None
+            } else {
+                Some(Run::<Real>::from_raw_parts(derivatives, derivative_count))
+            },
+        )
+    };
+    evaluate_nurbs_basis_run(knots, knot, degree, u, weights, derivatives);
 
     knot - degree
 }
@@ -4188,29 +4194,25 @@ pub(crate) unsafe fn evaluate_nurbs_basis(
 #[inline(never)]
 pub(crate) unsafe fn evaluate_nurbs_curve(curve: *const NurbsCurve, u: Real) -> CurvePoint {
     // C: `ufbx_curve_point result = { false };`
-    // SAFETY: an all-zero bit pattern is a valid `CurvePoint` (a `bool` flag and
-    // `Real` vectors).
-    let mut result: CurvePoint = unsafe { core::mem::zeroed() };
+    let mut result = CurvePoint::default();
 
     ufbx_assert!(!curve.is_null());
     if curve.is_null() {
         return result;
     }
+    // SAFETY: `curve` is non-null here (checked above), points at a live
+    // `NurbsCurve` per this fn's contract, and remains read-only for the call.
+    let curve_view = unsafe { View::<NurbsCurve, Const>::from_ptr(curve) };
 
-    // SAFETY: an all-zero bit pattern is a valid `[Real; MAX_NURBS_ORDER]`.
-    let (mut weights, mut derivs): ([Real; MAX_NURBS_ORDER], [Real; MAX_NURBS_ORDER]) = unsafe {
-        (
-            core::mem::zeroed(), // ufbxi_uninit
-            core::mem::zeroed(), // ufbxi_uninit
-        )
-    };
-    // SAFETY: `curve` is non-null here (checked above) and points at a live
-    // `NurbsCurve` per this fn's contract; the raw basis-field address and
-    // `weights`/`derivs` are live buffers of length
-    // `MAX_NURBS_ORDER`.
+    // C leaves these arrays uninitialized; every consumed prefix is written by
+    // `evaluate_nurbs_basis`, so zero initialization has identical live values.
+    let mut weights = [0.0f32 as Real; MAX_NURBS_ORDER];
+    let mut derivs = [0.0f32 as Real; MAX_NURBS_ORDER];
+    // SAFETY: the basis projection belongs to the live frozen curve, and the
+    // two stack arrays are distinct writable `MAX_NURBS_ORDER` runs.
     let base: usize = unsafe {
         evaluate_nurbs_basis(
-            &raw const (*curve).basis,
+            curve_view.basis_ptr(),
             u,
             weights.as_mut_ptr(),
             MAX_NURBS_ORDER,
@@ -4222,25 +4224,22 @@ pub(crate) unsafe fn evaluate_nurbs_curve(curve: *const NurbsCurve, u: Real) -> 
         return result;
     }
 
-    // SAFETY: an all-zero bit pattern is a valid `Vec4` (all `Real` fields).
-    let (mut p, mut d): (Vec4, Vec4) = unsafe { (core::mem::zeroed(), core::mem::zeroed()) };
+    let mut p = Vec4::default();
+    let mut d = Vec4::default();
 
-    // SAFETY: same live `NurbsCurve`; reading its own `basis.order`.
-    let order: usize = unsafe { (*curve).basis.order } as usize;
+    let order = curve_view.basis().order() as usize;
     if order > MAX_NURBS_ORDER {
         return result;
     }
-    // SAFETY: same live `NurbsCurve`; reading its own `control_points.count`.
-    if unsafe { (*curve).control_points.count } == 0 {
+    let num_control_points = curve_view.control_points_view().count();
+    if num_control_points == 0 {
         return result;
     }
+    let control_points = Run::from_list(curve_view.control_points_view());
 
     for i in 0..order {
-        // SAFETY: same live `NurbsCurve`; reading its own `control_points.count`.
-        let ix: usize = base.wrapping_add(i) % unsafe { (*curve).control_points.count };
-        // SAFETY: `ix < control_points.count` (modulo above), so
-        // `control_points.data.add(ix)` addresses a live `Vec4` control point.
-        let cp: Vec4 = unsafe { *(*curve).control_points.data.add(ix) };
+        let ix: usize = base.wrapping_add(i) % num_control_points;
+        let cp: Vec4 = control_points.copy_at(ix);
         let weight: Real = weights[i] * cp.w;
         let deriv: Real = derivs[i] * cp.w;
 
@@ -4274,36 +4273,27 @@ pub(crate) unsafe fn evaluate_nurbs_surface(
     v: Real,
 ) -> SurfacePoint {
     // C: `ufbx_surface_point result = { false };`
-    // SAFETY: an all-zero bit pattern is a valid `SurfacePoint` (a `bool` flag
-    // and `Real` vectors).
-    let mut result: SurfacePoint = unsafe { core::mem::zeroed() };
+    let mut result = SurfacePoint::default();
 
     ufbx_assert!(!surface.is_null());
     if surface.is_null() {
         return result;
     }
+    // SAFETY: `surface` is non-null here (checked above), points at a live
+    // `NurbsSurface` per this fn's contract, and remains read-only for the call.
+    let surface_view = unsafe { View::<NurbsSurface, Const>::from_ptr(surface) };
 
-    // SAFETY: an all-zero bit pattern is a valid `[Real; MAX_NURBS_ORDER]`.
-    let (mut weights_u, mut weights_v, mut derivs_u, mut derivs_v): (
-        [Real; MAX_NURBS_ORDER],
-        [Real; MAX_NURBS_ORDER],
-        [Real; MAX_NURBS_ORDER],
-        [Real; MAX_NURBS_ORDER],
-    ) = unsafe {
-        (
-            core::mem::zeroed(), // ufbxi_uninit
-            core::mem::zeroed(), // ufbxi_uninit
-            core::mem::zeroed(), // ufbxi_uninit
-            core::mem::zeroed(), // ufbxi_uninit
-        )
-    };
-    // SAFETY: `surface` is non-null here (checked above) and points at a live
-    // `NurbsSurface` per this fn's contract; the raw basis-field address and
-    // `weights_u`/`derivs_u` are live stack buffers of
-    // length `MAX_NURBS_ORDER`.
+    // C leaves these arrays uninitialized; every consumed prefix is written by
+    // the two basis evaluations, so zero initialization has identical live values.
+    let mut weights_u = [0.0f32 as Real; MAX_NURBS_ORDER];
+    let mut weights_v = [0.0f32 as Real; MAX_NURBS_ORDER];
+    let mut derivs_u = [0.0f32 as Real; MAX_NURBS_ORDER];
+    let mut derivs_v = [0.0f32 as Real; MAX_NURBS_ORDER];
+    // SAFETY: the U basis projection belongs to the live frozen surface, and
+    // the two stack arrays are distinct writable `MAX_NURBS_ORDER` runs.
     let base_u: usize = unsafe {
         evaluate_nurbs_basis(
-            &raw const (*surface).basis_u,
+            surface_view.basis_u_ptr(),
             u,
             weights_u.as_mut_ptr(),
             MAX_NURBS_ORDER,
@@ -4311,11 +4301,11 @@ pub(crate) unsafe fn evaluate_nurbs_surface(
             MAX_NURBS_ORDER,
         )
     };
-    // SAFETY: same live `NurbsSurface`; the raw basis-field address and
-    // `weights_v`/`derivs_v` are live stack buffers.
+    // SAFETY: the V basis projection and its two stack arrays satisfy the same
+    // contracts; this call remains before the combined result check, as in C.
     let base_v: usize = unsafe {
         evaluate_nurbs_basis(
-            &raw const (*surface).basis_v,
+            surface_view.basis_v_ptr(),
             v,
             weights_v.as_mut_ptr(),
             MAX_NURBS_ORDER,
@@ -4327,31 +4317,23 @@ pub(crate) unsafe fn evaluate_nurbs_surface(
         return result;
     }
 
-    // SAFETY: an all-zero bit pattern is a valid `Vec4` (all `Real` fields).
-    let (mut p, mut du, mut dv): (Vec4, Vec4, Vec4) = unsafe {
-        (
-            core::mem::zeroed(),
-            core::mem::zeroed(),
-            core::mem::zeroed(),
-        )
-    };
+    let mut p = Vec4::default();
+    let mut du = Vec4::default();
+    let mut dv = Vec4::default();
 
-    // SAFETY: same live `NurbsSurface`; every field read below is one of its own
-    // control-point-count / basis-order fields.
-    let (num_u, num_v, order_u, order_v) = unsafe {
-        (
-            (*surface).num_control_points_u,
-            (*surface).num_control_points_v,
-            (*surface).basis_u.order as usize,
-            (*surface).basis_v.order as usize,
-        )
-    };
+    let (num_u, num_v, order_u, order_v) = (
+        surface_view.num_control_points_u(),
+        surface_view.num_control_points_v(),
+        surface_view.basis_u().order() as usize,
+        surface_view.basis_v().order() as usize,
+    );
     if order_u > MAX_NURBS_ORDER || order_v > MAX_NURBS_ORDER {
         return result;
     }
     if num_u == 0 || num_v == 0 {
         return result;
     }
+    let control_points = Run::from_list(surface_view.control_points_view());
 
     for vi in 0..order_v {
         let vix: usize = base_v.wrapping_add(vi) % num_v;
@@ -4362,15 +4344,7 @@ pub(crate) unsafe fn evaluate_nurbs_surface(
             let uix: usize = base_u.wrapping_add(ui) % num_u;
             let weight_u: Real = weights_u[ui];
             let deriv_u: Real = derivs_u[ui];
-            // SAFETY: `uix < num_u` and `vix < num_v`, so
-            // `vix*num_u + uix < num_u*num_v` is in bounds of the surface's
-            // `control_points` grid; `.add(..)` addresses a live `Vec4`.
-            let cp: Vec4 = unsafe {
-                *(*surface)
-                    .control_points
-                    .data
-                    .add(vix.wrapping_mul(num_u).wrapping_add(uix))
-            };
+            let cp: Vec4 = control_points.copy_at(vix.wrapping_mul(num_u).wrapping_add(uix));
 
             let weight: Real = weight_u * weight_v * cp.w;
             let wderiv_u: Real = deriv_u * weight_v * cp.w;
