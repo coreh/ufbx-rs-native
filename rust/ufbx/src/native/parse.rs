@@ -2666,8 +2666,8 @@ impl SceneMetadataView {
 }
 
 // Typed interior-mutable VIEW over `Scene.settings` (the public `ufbx_scene_settings`),
-// reinterpreted in place. Copy scalars use value getters; `props` (Props aggregate)
-// uses a raw-ptr getter for its addr-of / nested-read sites.
+// reinterpreted in place. Copy scalars use value getters; the `props` aggregate
+// is reached through a borrow-correlated nested view.
 pub(crate) type SceneSettingsView = crate::native::view::View<crate::generated::SceneSettings>;
 
 impl SceneSettingsView {
@@ -2691,10 +2691,6 @@ impl SceneSettingsView {
     pub(crate) fn frames_per_second(&self) -> f64 {
         view_read!(self, frames_per_second)
     }
-    #[inline(always)]
-    pub(crate) fn props_mut_ptr(&self) -> *mut crate::generated::Props {
-        view_raw_mut!(self, props)
-    }
 }
 
 impl Context {
@@ -2706,6 +2702,14 @@ impl Context {
     #[inline(always)]
     pub(crate) fn axis_matrix(&self) -> Matrix {
         view_read!(self, axis_matrix)
+    }
+
+    #[inline(always)]
+    pub(crate) fn axis_matrix_view(&self) -> &View<Matrix> {
+        // SAFETY: `axis_matrix` is context-owned storage inside `UnsafeCell`;
+        // the field projection remains tied to the context borrow and preserves
+        // write-capable provenance.
+        unsafe { View::<Matrix>::from_ptr(&raw mut (*self.get()).axis_matrix) }
     }
 
     #[inline(always)]
@@ -3028,12 +3032,6 @@ impl Context {
     #[inline(always)]
     pub(crate) fn root_id_mut_ptr(&self) -> *mut u64 {
         view_raw_mut!(self, root_id)
-    }
-
-    // `axis_matrix` — raw-ptr getter (address of field for out-param/mutation sites).
-    #[inline(always)]
-    pub(crate) fn axis_matrix_mut_ptr(&self) -> *mut Matrix {
-        view_raw_mut!(self, axis_matrix)
     }
 
     // `legacy_node` — raw-ptr getter (address of field for out-param/mutation sites).
@@ -3805,9 +3803,8 @@ impl Context {
         view_write!(self, version, version)
     }
 
-    // Temp-arena allocator. `Allocator` is aliased (copied by raw pointer into
-    // sibling contexts) and mutated by `alloc`, so the honest accessor is a raw
-    // pointer, not a reference — passing it onward is a safe operation.
+    // Temp-arena allocator. Raw identity handoffs use the pointer accessor;
+    // field-local bookkeeping uses the borrow-correlated view below.
     #[inline(always)]
     pub(crate) fn ator_tmp_mut_ptr(&self) -> *mut Allocator {
         view_raw_mut!(self, ator_tmp)

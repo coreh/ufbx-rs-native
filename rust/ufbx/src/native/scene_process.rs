@@ -12630,13 +12630,10 @@ pub(crate) fn axis_matrix(mat: &View<Matrix>, src: CoordinateAxes, dst: Coordina
 pub(crate) fn update_adjust_transforms<'a>(uc: &'a Context, scene: &'a SceneView) {
     let scene: *mut Scene = scene.get();
     let mut root_transform: Transform = IDENTITY_TRANSFORM;
-    // SAFETY: `axis_matrix_mut_ptr()` projects uc's own live, initialized,
-    // write-capable `axis_matrix` storage.
-    let axis_matrix_view: &View<Matrix> =
-        unsafe { View::<Matrix>::from_ptr(uc.axis_matrix_mut_ptr()) };
+    let axis_matrix_view: &View<Matrix> = uc.axis_matrix_view();
     // SAFETY: pure value math over `uc`'s live axis-matrix field.
     unsafe {
-        let axis_matrix: *const Matrix = uc.axis_matrix_mut_ptr();
+        let axis_matrix: *const Matrix = axis_matrix_view.as_ptr();
         if !matrix_all_zero(axis_matrix_view) {
             root_transform = matrix_to_transform(axis_matrix);
         }

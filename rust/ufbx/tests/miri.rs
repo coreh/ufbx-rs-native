@@ -114,6 +114,22 @@ fn load_cube_binary() {
 }
 
 #[test]
+fn load_cube_with_axis_conversion() {
+    let data = read_data("maya_cube_7500_binary.fbx");
+    let opts = LoadOpts {
+        target_axes: ufbx::CoordinateAxes::left_handed_y_up(),
+        handedness_conversion_axis: ufbx::MirrorAxis::X,
+        ..Default::default()
+    };
+    let scene = ufbx::load_memory(&data, opts).expect("axis-converted load should succeed");
+    assert!(walk(&scene).is_finite());
+    assert_eq!(
+        scene.metadata.handedness_conversion_axis,
+        ufbx::MirrorAxis::X
+    );
+}
+
+#[test]
 fn load_cube_ascii() {
     assert!(load_and_walk("maya_cube_7500_ascii.fbx").is_finite());
 }
@@ -1450,6 +1466,54 @@ fn public_deform_helpers_from_shared_refs() {
 fn open_from_memory(name: &str, _info: &ufbx::OpenFileInfo) -> Option<ufbx::Stream> {
     let data = std::fs::read(name).ok()?;
     Some(ufbx::Stream::Read(Box::new(std::io::Cursor::new(data))))
+}
+
+unsafe extern "C" fn mark_broken_stream_closed(user: *mut std::ffi::c_void) {
+    // SAFETY: `broken_open_file` installs the pointer to its caller-owned
+    // `AtomicBool`, which remains live for the synchronous cache load.
+    unsafe { &*(user as *const std::sync::atomic::AtomicBool) }
+        .store(true, std::sync::atomic::Ordering::Relaxed);
+}
+
+unsafe extern "C" fn broken_open_file(
+    user: *mut std::ffi::c_void,
+    stream: *mut ufbx::RawStream,
+    _filename: *const u8,
+    _filename_len: usize,
+    _info: *const ufbx::OpenFileInfo,
+) -> bool {
+    // SAFETY: ufbx supplies a live out-parameter for one `RawStream`.
+    unsafe {
+        (*stream).close_fn = Some(mark_broken_stream_closed);
+        (*stream).user = user;
+    }
+    true
+}
+
+#[test]
+fn geometry_cache_rejects_stream_without_read_callback() {
+    let closed = std::sync::atomic::AtomicBool::new(false);
+    let raw = ufbx::RawOpenFileCb {
+        fn_: Some(broken_open_file),
+        user: (&closed as *const std::sync::atomic::AtomicBool)
+            .cast_mut()
+            .cast(),
+    };
+    let result = ufbx::load_geometry_cache(
+        "broken.xml",
+        ufbx::GeometryCacheOpts {
+            // SAFETY: the callback writes only the live `RawStream` out-parameter;
+            // its user pointer remains valid for this synchronous call.
+            open_file_cb: ufbx::OpenFileCb::Raw(unsafe { ufbx::Unsafe::new(raw) }),
+            ..Default::default()
+        },
+    );
+    let error = match result {
+        Ok(_) => panic!("a stream without read_fn must fail"),
+        Err(error) => error,
+    };
+    assert_eq!(error.type_, ufbx::ErrorType::Io);
+    assert!(closed.load(std::sync::atomic::Ordering::Relaxed));
 }
 
 /// Mirrors `ufbxt_test_sine_cache` (test_cache.h): the `pCubeShape1` channel

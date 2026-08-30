@@ -9096,11 +9096,7 @@ pub(crate) fn read_legacy_settings(uc: &Context, node: &NodeView) -> Result<(), 
     }
 
     if num_props > 0 {
-        // SAFETY: `props_mut_ptr()` addresses uc's own scene-settings
-        // `ufbx_props`, reached through its element views — write-capable
-        // provenance, stable for this call.
-        let props: &PropsView =
-            unsafe { PropsView::from_ptr(uc.scene_view().settings_view().props_mut_ptr()) };
+        let props: &PropsView = uc.scene_view().settings_view().props_view();
         // SAFETY: `new_props` is a fresh `new_count`-element push into uc's
         // result arena, checked non-null, and the two copies fill it exactly:
         // `num_props` entries from the local `tmp_props` (that many were written

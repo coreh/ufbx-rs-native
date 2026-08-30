@@ -1144,10 +1144,7 @@ pub(crate) unsafe fn load_imp(uc: &Context) -> Result<(), Fail> {
     imp_view.set_string_buf(uc.string_pool_view().take_buf());
     imp_view.string_buf_view().set_ator(imp_ator);
 
-    // SAFETY: `ator_tmp` is `uc`'s own allocator field, live and initialized
-    // for the `&Context` borrow, and the projected pointer carries the context
-    // handle's write-capable provenance.
-    let ator_tmp: &AllocatorView = unsafe { AllocatorView::from_ptr(uc.ator_tmp_mut_ptr()) };
+    let ator_tmp: &AllocatorView = uc.ator_tmp_view();
     imp_view
         .scene_view()
         .metadata_view()

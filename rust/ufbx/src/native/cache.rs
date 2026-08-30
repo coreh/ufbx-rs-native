@@ -1544,17 +1544,23 @@ pub(crate) fn cache_load_xml(cc: &CacheContext) -> Result<(), Fail> {
 // ufbx.c:24414-24437 `ufbxi_cache_load_file`
 #[cfg(feature = "geometry-cache")]
 #[inline(never)]
+///
+/// # Safety
+/// `filename.data` must address `filename.length` readable bytes. The opened
+/// stream state is validated before its callback is invoked.
 pub(crate) unsafe fn cache_load_file(cc: &CacheContext, filename: String) -> Result<(), Fail> {
     cc.set_stream_filename(filename);
     push_string_place_str(cc.string_pool_view(), cc.stream_filename_view(), false)?;
 
     // Assume all files have at least 16 bytes of header
-    // SAFETY: the stream's `read_fn` is non-null for the whole lifetime of an
-    // opened `cc.stream` (the caller opened it before calling); the
-    // destination is `cc`'s own buffer, which is larger than the 16-byte
-    // header read here.
+    let Some(read_fn) = cc.stream_view().read_fn() else {
+        ufbxi_fail_err_msg!(cc.error_view(), "cc->stream.read_fn", "IO error");
+    };
+    // SAFETY: the destination is `cc`'s own buffer, which is larger than the
+    // 16-byte header read here. The raw callback is responsible for honoring
+    // that destination length and its own `user` pointer.
     let magic_len: usize = unsafe {
-        (cc.stream_view().read_fn().unwrap_unchecked())(
+        read_fn(
             cc.stream_view().user(),
             cc.buffer_mut_ptr() as *mut c_void,
             16,
@@ -1637,8 +1643,8 @@ pub(crate) unsafe fn cache_try_open_file(
         return Ok(());
     }
 
-    // SAFETY: `open_file` returned true, so `cc.stream` is an opened stream —
-    // what `cache_load_file` requires to read its header.
+    // SAFETY: `filename` is the same live, NUL-terminated run passed to
+    // `open_file` above; `cache_load_file` validates the resulting stream.
     let ok = unsafe { cache_load_file(cc, filename) };
     *p_found = true;
 
@@ -2748,9 +2754,7 @@ pub(crate) fn transform_to_axes(uc: &Context, dst_axes: CoordinateAxes) {
     if !coordinate_axes_valid(uc.scene_view().settings_view().axes()) {
         return;
     }
-    // SAFETY: `axis_matrix_mut_ptr()` projects uc's own live, initialized,
-    // write-capable `axis_matrix` storage.
-    let axis_matrix_view = unsafe { View::<Matrix>::from_ptr(uc.axis_matrix_mut_ptr()) };
+    let axis_matrix_view = uc.axis_matrix_view();
     if !axis_matrix(
         axis_matrix_view,
         uc.scene_view().settings_view().axes(),
@@ -2760,7 +2764,7 @@ pub(crate) fn transform_to_axes(uc: &Context, dst_axes: CoordinateAxes) {
     }
 
     // SAFETY: pure value math over `uc`'s live axis-matrix field.
-    if unsafe { matrix_determinant(uc.axis_matrix_mut_ptr()) } < 0.0f32 as Real {
+    if unsafe { matrix_determinant(axis_matrix_view.as_ptr()) } < 0.0f32 as Real {
         if uc.opts_view().handedness_conversion_axis() != MirrorAxis::None {
             let mirror_axis: MirrorAxis = uc.opts_view().handedness_conversion_axis();
             uc.set_mirror_axis(mirror_axis);
@@ -2768,14 +2772,11 @@ pub(crate) fn transform_to_axes(uc: &Context, dst_axes: CoordinateAxes) {
                 .metadata_view()
                 .set_mirror_axis(uc.mirror_axis());
 
-            // SAFETY: `axis_matrix_mut_ptr()` projects uc's own live,
-            // initialized, write-capable `axis_matrix` storage.
-            let axis_matrix_view: &View<Matrix> =
-                unsafe { View::<Matrix>::from_ptr(uc.axis_matrix_mut_ptr()) };
+            let axis_matrix_view: &View<Matrix> = uc.axis_matrix_view();
             mirror_matrix_dst(axis_matrix_view, uc.mirror_axis());
             // SAFETY: a pure value read of uc's own live axis-matrix field.
             ufbxi_dev_assert!(
-                unsafe { matrix_determinant(uc.axis_matrix_mut_ptr()) } >= 0.0f32 as Real
+                unsafe { matrix_determinant(axis_matrix_view.as_ptr()) } >= 0.0f32 as Real
             );
 
             // C: `ufbxi_for_ptr_list(ufbx_node, p_node, uc->scene.nodes)`
