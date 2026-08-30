@@ -1663,6 +1663,38 @@ fn geometry_cache_through_scene() {
     assert!(acc2.is_finite());
 }
 
+#[test]
+fn geometry_cache_retries_absolute_filename() {
+    let name = "maya_cache_sine_6100_binary.fbx";
+    let path = data_path(name);
+    let data = read_data(name);
+    let mut requests = Vec::new();
+    let mut open_missing = |filename: &str, _info: &ufbx::OpenFileInfo| {
+        requests.push(filename.to_owned());
+        None
+    };
+    let result = ufbx::load_memory(
+        &data,
+        LoadOpts {
+            filename: ufbx::StringOpt::Ref(&path),
+            load_external_files: true,
+            open_file_cb: ufbx::OpenFileCb::Mut(&mut open_missing),
+            ..Default::default()
+        },
+    );
+    let error = match result {
+        Ok(_) => panic!("missing geometry cache must fail"),
+        Err(error) => error,
+    };
+
+    assert_eq!(error.type_, ufbx::ErrorType::ExternalFileNotFound);
+    assert_eq!(requests.len(), 2);
+    assert!(requests[0].ends_with(".xml"));
+    assert_ne!(requests[0], requests[1]);
+    assert!(requests[1].starts_with(r"D:\Dev\clean\ufbx\data\"));
+    assert_eq!(error.info(), requests[1]);
+}
+
 // -- Threaded loader (std::thread pool over the raw `ufbx_thread_pool` interface)
 
 /// One `std::thread` per `run_fn` batch, joined by `wait_fn`. The task indices

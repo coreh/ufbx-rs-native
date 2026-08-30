@@ -58,6 +58,8 @@ use crate::native::warnings::ufbxi_warnf;
 use crate::native::xml::{
     free_xml, load_xml, xml_find_attrib, xml_find_child, XmlDocument, XmlLoadOpts, XmlTagView,
 };
+#[cfg(feature = "geometry-cache")]
+use crate::prelude::slice_from_ptr;
 use crate::prelude::{Real, Ref, String, StringView};
 
 // ufbx.c:23950-23957 `ufbxi_geometry_cache_imp` (UFBXI_FEATURE_GEOMETRY_CACHE)
@@ -1544,12 +1546,8 @@ pub(crate) fn cache_load_xml(cc: &CacheContext) -> Result<(), Fail> {
 // ufbx.c:24414-24437 `ufbxi_cache_load_file`
 #[cfg(feature = "geometry-cache")]
 #[inline(never)]
-///
-/// # Safety
-/// `filename.data` must address `filename.length` readable bytes. The opened
-/// stream state is validated before its callback is invoked.
-pub(crate) unsafe fn cache_load_file(cc: &CacheContext, filename: String) -> Result<(), Fail> {
-    cc.set_stream_filename(filename);
+fn cache_load_file(cc: &CacheContext, filename: &[u8]) -> Result<(), Fail> {
+    cc.set_stream_filename(String::new_c(filename.as_ptr(), filename.len()));
     push_string_place_str(cc.string_pool_view(), cc.stream_filename_view(), false)?;
 
     // Assume all files have at least 16 bytes of header
@@ -1643,9 +1641,10 @@ pub(crate) unsafe fn cache_try_open_file(
         return Ok(());
     }
 
-    // SAFETY: `filename` is the same live, NUL-terminated run passed to
-    // `open_file` above; `cache_load_file` validates the resulting stream.
-    let ok = unsafe { cache_load_file(cc, filename) };
+    // SAFETY: the function contract makes `filename.data` readable for
+    // `filename.length` bytes; the slice is only used during this call.
+    let filename_bytes = unsafe { slice_from_ptr(filename.data, filename.length) };
+    let ok = cache_load_file(cc, filename_bytes);
     *p_found = true;
 
     if let Some(close_fn) = cc.stream_view().close_fn() {
@@ -2024,9 +2023,15 @@ pub(crate) fn cache_setup_channels(cc: &CacheContext) -> Result<(), Fail> {
 // ufbx.c:24637-24691 `ufbxi_cache_load_imp`
 #[cfg(feature = "geometry-cache")]
 #[inline(never)]
-pub(crate) unsafe fn cache_load_imp(
+///
+/// # Safety
+/// `cc` must be in an active cache-load phase. A successful call moves its
+/// cache, result buffer, and string-pool buffer into the returned imp, so that
+/// state must not be consumed again. `filename` must not alias scratch storage
+/// that the load may grow, reuse, or free.
+unsafe fn cache_load_imp(
     cc: &CacheContext,
-    filename: String,
+    filename: &[u8],
 ) -> Result<crate::native::parse::FinishedImp<GeometryCacheImp>, Fail> {
     cc.tmp_view().set_ator(cc.ator_tmp());
     cc.tmp_stack_view().set_ator(cc.ator_tmp());
@@ -2038,26 +2043,26 @@ pub(crate) unsafe fn cache_load_imp(
             .set_fn_(Some(crate::native::api::default_open_file));
     }
 
-    // Make sure the filename we pass to `open_file_fn()` is NULL-terminated
-    let filename_data: *mut u8 = cc.tmp_view().push(filename.length.wrapping_add(1));
+    // Make sure the filename we pass to `open_file_fn()` is NULL-terminated.
+    // The filename run is caller-owned or interned storage, distinct from the
+    // temporary buffer grown below.
+    let filename_data: *mut u8 = cc.tmp_view().push(filename.len().wrapping_add(1));
     ufbxi_check_err!(cc.error_view(), !filename_data.is_null(), "filename_data");
-    // SAFETY: `filename_data` is a fresh non-null `length + 1` byte arena
-    // allocation (checked above), distinct from the caller's `filename` run of
-    // `length` readable bytes.
-    unsafe { core::ptr::copy_nonoverlapping(filename.data, filename_data, filename.length) };
+    // SAFETY: `filename_data` is a fresh non-null `len + 1` byte arena
+    // allocation (checked above), distinct from the borrowed `filename` run.
+    unsafe { core::ptr::copy_nonoverlapping(filename.as_ptr(), filename_data, filename.len()) };
     // SAFETY: the allocation is `length + 1` bytes, so index `length` is its
     // last writable byte.
-    unsafe { *filename_data.add(filename.length) = b'\0' };
-    let filename_copy: String = String::new_c(filename_data, filename.length);
+    unsafe { *filename_data.add(filename.len()) = b'\0' };
+    let filename_copy: String = String::new_c(filename_data, filename.len());
 
-    // TODO: NULL termination!
     let mut found: bool = false;
     // SAFETY: `filename_copy` is the NUL-terminated arena copy built just
     // above.
     unsafe { cache_try_open_file(cc, filename_copy, None, &mut found)? };
     if !found {
-        // SAFETY: `filename.data`/`.length` is the caller's live string run.
-        unsafe { set_err_info(Some(cc.error_view()), filename.data, filename.length) };
+        // SAFETY: the borrowed filename is readable for its full length.
+        unsafe { set_err_info(Some(cc.error_view()), filename.as_ptr(), filename.len()) };
         ufbxi_fail_err_msg!(cc.error_view(), "open_file_fn()", "File not found");
     }
 
@@ -2118,11 +2123,17 @@ pub(crate) unsafe fn cache_load_imp(
 // ufbx.c:24693-24716 `ufbxi_cache_load`
 #[cfg(feature = "geometry-cache")]
 #[inline(never)]
-pub(crate) unsafe fn cache_load(cc: &CacheContext, filename: String) -> *mut GeometryCache {
-    // SAFETY: `cc` is the initialized cache context the caller set up, which is
-    // what `cache_load_imp` requires; `filename` is forwarded unchanged. On
-    // success the `FinishedImp` carries the finished imp through the shared
+///
+/// # Safety
+/// `cc` must be in an active cache-load phase with live allocators and buffers.
+/// Success consumes its result ownership; standalone teardown consumes its
+/// allocators. A scene-owned failed attempt may be retried as below. `filename`
+/// must not alias scratch storage that the load may grow, reuse, or free.
+unsafe fn cache_load(cc: &CacheContext, filename: &[u8]) -> *mut GeometryCache {
+    // On success the `FinishedImp` carries the finished imp through the shared
     // teardown to the return below.
+    // SAFETY: the caller provides the active, unconsumed load phase forwarded
+    // to `cache_load_imp`; this function performs its matching teardown.
     let result = unsafe { cache_load_imp(cc, filename) };
 
     buf_free(cc.tmp_view());
@@ -2239,9 +2250,13 @@ pub(crate) unsafe fn load_geometry_cache(
         30.0
     });
 
-    // SAFETY: `cc` is fully initialized above (allocators, string pool, opts) —
-    // the state `cache_load` consumes.
-    let cache: *mut GeometryCache = unsafe { cache_load(&cc, filename) };
+    // SAFETY: `filename` came from the raw API boundary and addresses its
+    // declared readable run for the duration of this call; `cc` is fully
+    // initialized above and has not yet been consumed.
+    let cache: *mut GeometryCache = unsafe {
+        let filename = slice_from_ptr(filename.data, filename.length);
+        cache_load(&cc, filename)
+    };
     if !cache.is_null() {
         // (The success-path `clear_error` of the caller's slot lives in the
         // boundary shim.)
@@ -2363,12 +2378,11 @@ pub(crate) struct ExternalFile {
 // `load_external_cache` takes it in place of C's `ufbxi_external_file *`.
 //
 // MINT INVARIANT (on top of `View::<_, Mut>::from_ptr`'s liveness and
-// write-capable provenance): the viewed record's `filename` and
-// `absolute_filename` must each be a run that is NUL-terminated at index
-// `length` — interned string-pool strings are. `load_external_cache` hands
-// both to `cache_load` and prints `filename.data` through a printf `%s`, and
-// `String`'s `{ data, length }` pair cannot express that obligation, so it
-// rides on this type's mint instead of on a raw-pointer parameter.
+// write-capable provenance): the viewed record's `filename` is NUL-terminated
+// at index `length` — interned string-pool strings are. `load_external_cache`
+// prints `filename.data` through a printf `%s`, and `String`'s
+// `{ data, length }` pair cannot express that obligation, so it rides on this
+// type's mint instead of on a raw-pointer parameter.
 pub(crate) type ExternalFileView = View<ExternalFile>;
 
 impl ExternalFileView {
@@ -2385,8 +2399,8 @@ impl ExternalFileView {
         view_project!(self, filename)
     }
     #[inline(always)]
-    pub(crate) fn absolute_filename(&self) -> String {
-        view_read!(self, absolute_filename)
+    pub(crate) fn absolute_filename_view(&self) -> &View<String> {
+        view_project!(self, absolute_filename)
     }
     #[inline(always)]
     pub(crate) fn index(&self) -> usize {
@@ -2470,21 +2484,17 @@ pub(crate) fn load_external_cache(uc: &Context, file: &ExternalFileView) -> Resu
     cc.opts_view()
         .set_scale_factor(uc.scene_view().metadata_view().geometry_scale());
 
-    // SAFETY: `cc` is initialized above with the borrowed allocators and string
-    // pool `cache_load` consumes; `file`'s `filename` is NUL-terminated at
-    // `length` — the `ExternalFileView` mint invariant — which is the run
-    // `cache_load` requires.
-    let mut cache: *mut GeometryCache = unsafe { cache_load(&cc, file.filename()) };
+    // SAFETY: `cc` is in its first scene-owned cache-load phase. Its borrowed
+    // allocators and buffers remain live in `uc` for the duration of the call.
+    let mut cache: *mut GeometryCache = unsafe { cache_load(&cc, file.filename_view().bytes()) };
     if cache.is_null() {
         if cc.error_view().type_() == ErrorType::FileNotFound {
             // SAFETY: `error_mut_ptr` addresses `cc`'s own `Error` field, so
             // one `Error` worth of bytes is writable there.
             unsafe { core::ptr::write_bytes(cc.error_mut_ptr(), 0, 1) };
-            // SAFETY: same initialized `cc` as the first attempt, and
-            // `file`'s `absolute_filename` is NUL-terminated at `length` by
-            // the same `ExternalFileView` mint invariant; the error was just
-            // cleared for the retry.
-            cache = unsafe { cache_load(&cc, file.absolute_filename()) };
+            // SAFETY: a scene-owned failed attempt leaves the borrowed
+            // allocators active for this retry; the error was cleared above.
+            cache = unsafe { cache_load(&cc, file.absolute_filename_view().bytes()) };
         }
     }
 
