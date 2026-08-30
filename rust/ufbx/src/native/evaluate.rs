@@ -4765,7 +4765,8 @@ pub(crate) unsafe fn check_string(
         // SAFETY: `data` is the source string's own data pointer and `length` is
         // that string's length (or its `strlen`), so the whole span is readable
         // under either shape of this `unsafe fn`'s contract.
-        let valid_length: usize = unsafe { utf8_valid_length(data, length) };
+        let data_bytes = unsafe { crate::prelude::slice_from_ptr(data, length) };
+        let valid_length: usize = utf8_valid_length(data_bytes);
         ufbxi_check_err_msg!(error, valid_length == length, "Invalid UTF-8");
     }
 

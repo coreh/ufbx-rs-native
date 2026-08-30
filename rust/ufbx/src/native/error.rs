@@ -494,12 +494,11 @@ pub(crate) fn fail_err(
 // ufbx.c:3446-3486 `ufbxi_utf8_valid_length`
 #[must_use]
 #[inline(never)]
-pub(crate) unsafe fn utf8_valid_length(str_: *const u8, length: usize) -> usize {
+pub(crate) fn utf8_valid_length(str_: &[u8]) -> usize {
+    let length = str_.len();
     let mut index: usize = 0;
     while index < length {
-        // SAFETY: the caller's contract is that `str_` is readable for
-        // `length` bytes, and the loop condition holds `index < length`.
-        let c: u8 = unsafe { *str_.add(index) };
+        let c: u8 = str_[index];
         let left = length - index;
 
         if (c & 0x80) == 0 {
@@ -508,19 +507,15 @@ pub(crate) unsafe fn utf8_valid_length(str_: *const u8, length: usize) -> usize 
                 continue;
             }
         } else if (c & 0xe0) == 0xc0 && left >= 2 {
-            // SAFETY: `left >= 2` means `index + 1 < length`, inside the
-            // `length` bytes the caller guarantees readable.
-            let t0: u8 = unsafe { *str_.add(index + 1) };
+            let t0: u8 = str_[index + 1];
             let code: u32 = (c as u32) << 8 | t0 as u32;
             if (code & 0xc0) == 0x80 && code >= 0xc280 {
                 index += 2;
                 continue;
             }
         } else if (c & 0xf0) == 0xe0 && left >= 3 {
-            // SAFETY: `left >= 3` means `index + 2 < length`, inside the
-            // `length` bytes the caller guarantees readable.
-            let t0: u8 = unsafe { *str_.add(index + 1) };
-            let t1: u8 = unsafe { *str_.add(index + 2) };
+            let t0: u8 = str_[index + 1];
+            let t1: u8 = str_[index + 2];
             let code: u32 = (c as u32) << 16 | (t0 as u32) << 8 | t1 as u32;
             if (code & 0xc0c0) == 0x8080
                 && code >= 0xe0a080
@@ -530,11 +525,9 @@ pub(crate) unsafe fn utf8_valid_length(str_: *const u8, length: usize) -> usize 
                 continue;
             }
         } else if (c & 0xf8) == 0xf0 && left >= 4 {
-            // SAFETY: `left >= 4` means `index + 3 < length`, inside the
-            // `length` bytes the caller guarantees readable.
-            let t0: u8 = unsafe { *str_.add(index + 1) };
-            let t1: u8 = unsafe { *str_.add(index + 2) };
-            let t2: u8 = unsafe { *str_.add(index + 3) };
+            let t0: u8 = str_[index + 1];
+            let t1: u8 = str_[index + 2];
+            let t2: u8 = str_[index + 3];
             let code: u32 = (c as u32) << 24 | (t0 as u32) << 16 | (t1 as u32) << 8 | t2 as u32;
             if (code & 0xc0c0c0) == 0x808080 && code >= 0xf0908080u32 && code <= 0xf48fbfbfu32 {
                 index += 4;
@@ -551,24 +544,19 @@ pub(crate) unsafe fn utf8_valid_length(str_: *const u8, length: usize) -> usize 
 
 // ufbx.c:3488-3496 `ufbxi_clean_string_utf8`
 #[inline(never)]
-pub(crate) unsafe fn clean_string_utf8(str_: *mut u8, length: usize) {
+pub(crate) fn clean_string_utf8(str_: &mut [u8]) {
+    let length = str_.len();
     let mut pos: usize = 0;
     loop {
         // PORT DIVERGENCE (ufbx.c:3492): C passes the full `length` from the
         // offset base `str + pos`, so `utf8_valid_length`'s multi-byte lookahead
         // reads up to two bytes past the terminating NUL. This passes the
         // remaining `length - pos` instead; reconcile once upstream lands the fix.
-        // SAFETY: `pos <= length` on every iteration (the loop breaks at
-        // equality), so `str_.add(pos)` stays inside the caller's buffer, and
-        // the `length - pos` scan bound keeps the lookahead inside
-        // `[str_, str_+length)`.
-        pos += unsafe { utf8_valid_length(str_.add(pos) as *const u8, length - pos) };
+        pos += utf8_valid_length(&str_[pos..]);
         if pos == length {
             break;
         }
-        // SAFETY: `pos != length` here and `pos <= length`, so `pos < length` —
-        // a writable byte of the caller's buffer.
-        unsafe { *str_.add(pos) = b'?' };
+        str_[pos] = b'?';
         pos += 1;
     }
 }
@@ -605,9 +593,9 @@ pub(crate) unsafe fn set_err_info(err: Option<&ErrorView>, data: *const u8, mut 
     unsafe { *info.add(to_copy) = b'\0' };
     err.set_info_length(to_copy);
     // SAFETY: `info` is writable for `info_length` bytes with the terminating
-    // NUL written just above at `info[info_length]` — the scan bound
-    // `clean_string_utf8` needs.
-    unsafe { clean_string_utf8(info, err.info_length()) };
+    // NUL written just above at `info[info_length]`.
+    let info = unsafe { core::slice::from_raw_parts_mut(info, err.info_length()) };
+    clean_string_utf8(info);
 }
 
 // ufbx.c:3510-3519 `ufbxi_fmt_err_info` (variadic entry point — see
@@ -634,8 +622,9 @@ pub(crate) unsafe fn fmt_err_info(err: Option<&ErrorView>, fmt: *const u8, args:
     err.set_info_length(info_length);
     // SAFETY: `vsnprintf` returns at most `ERROR_INFO_LENGTH - 1` and
     // NUL-terminates at that length, so `info` is writable for `info_length`
-    // bytes with the terminator `clean_string_utf8` scans to.
-    unsafe { clean_string_utf8(info, err.info_length()) };
+    // bytes.
+    let info = unsafe { core::slice::from_raw_parts_mut(info, err.info_length()) };
+    clean_string_utf8(info);
 }
 
 // Call-site wrapper building the `&[PrintArg]` argument pack.
@@ -1654,27 +1643,24 @@ mod tests {
 
     #[test]
     fn test_utf8_valid_length_and_clean() {
-        unsafe {
-            // ASCII
-            assert_eq!(utf8_valid_length(b"hello\0".as_ptr(), 5), 5);
-            // NUL stops the scan
-            assert_eq!(utf8_valid_length(b"he\0lo\0".as_ptr(), 5), 2);
-            // 2-byte: U+00E4, overlong C1 80 rejected
-            assert_eq!(utf8_valid_length(b"\xc3\xa4\0".as_ptr(), 2), 2);
-            assert_eq!(utf8_valid_length(b"\xc1\x80\0".as_ptr(), 2), 0);
-            // 3-byte: U+20AC valid; UTF-16 surrogate ED A0 80 rejected
-            assert_eq!(utf8_valid_length(b"\xe2\x82\xac\0".as_ptr(), 3), 3);
-            assert_eq!(utf8_valid_length(b"\xed\xa0\x80\0".as_ptr(), 3), 0);
-            // 4-byte: U+1F600 valid; > U+10FFFF rejected
-            assert_eq!(utf8_valid_length(b"\xf0\x9f\x98\x80\0".as_ptr(), 4), 4);
-            assert_eq!(utf8_valid_length(b"\xf4\x90\x80\x80\0".as_ptr(), 4), 0);
+        // ASCII
+        assert_eq!(utf8_valid_length(b"hello"), 5);
+        // NUL stops the scan
+        assert_eq!(utf8_valid_length(b"he\0lo"), 2);
+        // 2-byte: U+00E4, overlong C1 80 rejected
+        assert_eq!(utf8_valid_length(b"\xc3\xa4"), 2);
+        assert_eq!(utf8_valid_length(b"\xc1\x80"), 0);
+        // 3-byte: U+20AC valid; UTF-16 surrogate ED A0 80 rejected
+        assert_eq!(utf8_valid_length(b"\xe2\x82\xac"), 3);
+        assert_eq!(utf8_valid_length(b"\xed\xa0\x80"), 0);
+        // 4-byte: U+1F600 valid; > U+10FFFF rejected
+        assert_eq!(utf8_valid_length(b"\xf0\x9f\x98\x80"), 4);
+        assert_eq!(utf8_valid_length(b"\xf4\x90\x80\x80"), 0);
 
-            // clean_string_utf8 replaces each invalid byte with '?'
-            let mut s = *b"a\xffb\xc3\xa4\xed\xa0\x80\0";
-            let len = 8;
-            clean_string_utf8(s.as_mut_ptr(), len);
-            assert_eq!(&s[..len], b"a?b\xc3\xa4???");
-        }
+        // clean_string_utf8 replaces each invalid byte with '?'
+        let mut s = *b"a\xffb\xc3\xa4\xed\xa0\x80";
+        clean_string_utf8(&mut s);
+        assert_eq!(&s, b"a?b\xc3\xa4???");
     }
 
     #[test]

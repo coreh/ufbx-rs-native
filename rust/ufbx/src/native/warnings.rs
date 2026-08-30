@@ -157,9 +157,8 @@ pub(crate) fn vwarnf_imp(
         )
     } as usize;
 
-    // SAFETY: `desc_len < 256` (`vsnprintf` truncates to the buffer size
-    // minus the NUL), so the cleaned range stays inside `desc`.
-    unsafe { clean_string_utf8(desc.as_mut_ptr(), desc_len) };
+    // `desc_len < 256`: `vsnprintf` truncates to the buffer size minus the NUL.
+    clean_string_utf8(&mut desc[..desc_len]);
 
     // SAFETY: `ws` as above; `(*ws).result` and `(*ws).error` are the
     // context-owned result buf / error the sink was initialized with (live for

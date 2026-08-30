@@ -760,8 +760,7 @@ pub(crate) fn push_sanitized_string(
     sanitized.set_utf8_length(0);
 
     if !raw {
-        // SAFETY: `str_` is a shared slice, readable for its own length.
-        let valid_length = unsafe { utf8_valid_length(str_.as_ptr(), length) };
+        let valid_length = utf8_valid_length(str_);
         if valid_length != length {
             // C: `ufbxi_check_err(pool->error, ufbxi_sanitize_string(...))` — `?`
             // per PORTING.md error threading. `valid_length < length` (just
@@ -816,9 +815,11 @@ pub(crate) fn push_sanitized_string(
 //
 // `str_` must be readable for `length` bytes, and when `copy` is false its
 // bytes must outlive every use of the pool's interned strings — the pointer
-// itself is stored in the map entry and returned. `p_out_length` must be null
-// or address a live `usize` slot; the sanitize path writes through it
-// unconditionally, so a non-null slot is required whenever `raw` is false.
+// itself is stored in the map entry and returned. When `raw` is false the run
+// must not overlap `pool.temp_str`, which sanitization may grow and write.
+// `p_out_length` must be null or address a live `usize` slot; the sanitize path
+// writes through it unconditionally, so a non-null slot is required whenever
+// `raw` is false.
 #[inline(never)]
 pub(crate) unsafe fn push_string_imp(
     pool: &StringPoolView,
@@ -838,23 +839,18 @@ pub(crate) unsafe fn push_string_imp(
         ptr::null(),
         "ufbxi_map_grow_size((&pool->map), sizeof(ufbx_string), (pool->initial_size))"
     );
+    // SAFETY: the caller vouches `str_` is readable for `length` bytes and
+    // unwritten for this call.
+    let mut str_bytes = unsafe { crate::prelude::slice_from_ptr(str_, length) };
 
     let mut hash: u32;
     if raw {
-        // SAFETY: the caller vouches `str_` is readable for `length` bytes;
-        // the borrow lasts only for the hash scan.
-        hash = hash_string(unsafe { crate::prelude::slice_from_ptr(str_, length) });
+        hash = hash_string(str_bytes);
     } else {
         let mut non_ascii = false;
-        // SAFETY: the caller vouches `str_` is readable for `length` bytes;
-        // the borrow lasts only for the hash scan.
-        hash = hash_string_check_ascii(
-            unsafe { crate::prelude::slice_from_ptr(str_, length) },
-            &mut non_ascii,
-        );
+        hash = hash_string_check_ascii(str_bytes, &mut non_ascii);
         if non_ascii {
-            // SAFETY: `str_` is readable for `length` bytes.
-            let valid_length = unsafe { utf8_valid_length(str_, length) };
+            let valid_length = utf8_valid_length(str_bytes);
             if valid_length < length {
                 // C: `ufbxi_sanitized_string sanitized;` (written in full by
                 // `ufbxi_sanitize_string` before any read).
@@ -869,10 +865,7 @@ pub(crate) unsafe fn push_string_imp(
                 if sanitize_string(
                     pool,
                     SanitizedStringView::from_mut(&mut sanitized),
-                    // SAFETY: the caller vouches `str_` is readable for `length`
-                    // bytes and unwritten for the borrow — in particular it is
-                    // not the pool's own temp buffer, which the callee writes.
-                    unsafe { crate::prelude::slice_from_ptr(str_, length) },
+                    str_bytes,
                     valid_length,
                     false,
                 )
@@ -883,8 +876,9 @@ pub(crate) unsafe fn push_string_imp(
                 str_ = sanitized.raw_data;
                 length = sanitized.raw_length as usize;
                 // SAFETY: `str_`/`length` are the sanitized run just produced;
-                // the borrow lasts only for the hash scan.
-                hash = hash_string(unsafe { crate::prelude::slice_from_ptr(str_, length) });
+                // it stays live in the pool's temp buffer through this call.
+                str_bytes = unsafe { crate::prelude::slice_from_ptr(str_, length) };
+                hash = hash_string(str_bytes);
                 // SAFETY: the caller vouches `p_out_length` addresses a live
                 // `usize` out-param.
                 unsafe { *p_out_length = length };
