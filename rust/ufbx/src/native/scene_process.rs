@@ -5546,117 +5546,76 @@ pub(crate) fn shader_texture_find_prefix(
     // C: `ufbx_string suffixes[3];` — uninitialized local (no upstream
     // `// ufbxi_uninit` marker at ufbx.c:20431); only the first
     // `num_suffixes` entries are ever written, and only those are read.
-    let mut suffixes_storage = MaybeUninit::<[String; 3]>::uninit();
-    let suffixes: *mut String = suffixes_storage.as_mut_ptr() as *mut String;
+    let mut suffixes_storage: [MaybeUninit<&[u8]>; 3] = [MaybeUninit::uninit(); 3];
     let mut num_suffixes: usize = 0;
 
-    // SAFETY: `num_suffixes` is `0` here, in bounds of the 3-entry local array;
-    // the literal is NUL-terminated, which is what `str_c` measures.
-    unsafe { *suffixes.add(num_suffixes) = sp::str_c(b" Parameters/Connections\0".as_ptr()) };
+    suffixes_storage[num_suffixes].write(b" Parameters/Connections");
     num_suffixes += 1;
-    if shader.shader_name().length > 0 {
-        // SAFETY: `num_suffixes` is `1` here, in bounds of the 3-entry local
-        // array.
-        unsafe { *suffixes.add(num_suffixes) = shader.shader_name() };
+    let shader_name = shader.shader_name_view().bytes();
+    if !shader_name.is_empty() {
+        suffixes_storage[num_suffixes].write(shader_name);
         num_suffixes += 1;
     }
-    // SAFETY: `num_suffixes` is at most `2` here, in bounds of the 3-entry local
-    // array; the literal is NUL-terminated, which is what `str_c` measures.
-    unsafe { *suffixes.add(num_suffixes) = sp::str_c(b"3dsMax|parameters\0".as_ptr()) };
+    suffixes_storage[num_suffixes].write(b"3dsMax|parameters");
     num_suffixes += 1;
 
     // C: `ufbx_assert(num_suffixes <= ufbxi_arraycount(suffixes));`
     ufbx_assert!(num_suffixes <= 3);
+    // SAFETY: exactly the first `num_suffixes` slots were initialized above.
+    let suffixes = unsafe {
+        core::slice::from_raw_parts(suffixes_storage.as_ptr() as *const &[u8], num_suffixes)
+    };
 
     // C: `ufbxi_for(ufbx_string, p_suffix, suffixes, num_suffixes)`
-    let mut p_suffix: *mut String = suffixes;
-    let p_suffix_end: *mut String = add_ptr(p_suffix, num_suffixes);
-    while p_suffix != p_suffix_end {
-        // SAFETY: `p_suffix != p_suffix_end`, so it addresses one of the
-        // `num_suffixes` entries written above.
-        let suffix: String = unsafe { *p_suffix };
-
+    for &suffix in suffixes {
         // C: `ufbxi_for_list(ufbx_prop, prop, texture->props.props)`
         let texture_props: &PropsView = texture.props_view();
-        // SAFETY: the viewed table's `props` `data`/`count` pair describes one
-        // contiguous arena run of initialized, arena-owned `ufbx_prop`s (the
-        // viewed-list invariant), live and unmoved for the borrow.
-        let props = unsafe {
-            SliceViewIter::<Prop>::from_raw_parts(
-                texture_props.props_data(),
-                texture_props.props_count(),
-            )
-        };
-        for prop in props {
+        for prop in Run::from_list(texture_props.props_view()).iter() {
             if prop.type_() != PropType::Compound {
                 continue;
             }
-            // SAFETY: `suffix` is a live `ufbx_string` whose `data` is readable
-            // for `length` bytes; the borrow ends with the call. The prop's
-            // interned `name` span comes from its own view, and
-            // `push_prop_prefix` copies the `ufbx_string`.
-            if sp::ends_with(prop.name_view().bytes(), unsafe { suffix.as_bytes() }) {
+            if sp::ends_with(prop.name_view().bytes(), suffix) {
+                // SAFETY: the prop's viewed name is an interned live span and
+                // `push_prop_prefix` copies its `ufbx_string` value.
                 unsafe {
                     push_prop_prefix(uc, shader.prop_prefix_view(), prop.name())?;
                 }
                 return Ok(());
             }
         }
-        // SAFETY: `p_suffix != p_suffix_end`, so the advance lands at or before
-        // the one-past-the-end pointer of the written suffix prefix.
-        p_suffix = unsafe { p_suffix.add(1) };
     }
 
     // Pre-7000 files don't have explicit Compound properties, so let's look for
     // any property that has the suffix before the last `|` ...
-    let mut p_suffix: *mut String = suffixes;
-    let p_suffix_end: *mut String = add_ptr(p_suffix, num_suffixes);
-    while p_suffix != p_suffix_end {
-        // SAFETY: `p_suffix != p_suffix_end`, so it addresses one of the
-        // `num_suffixes` entries written above.
-        let suffix: String = unsafe { *p_suffix };
-
+    for &suffix in suffixes {
         // C: `ufbxi_for_list(ufbx_prop, prop, texture->props.props)`
         let texture_props: &PropsView = texture.props_view();
-        // SAFETY: the viewed table's `props` `data`/`count` pair describes one
-        // contiguous arena run of initialized, arena-owned `ufbx_prop`s (the
-        // viewed-list invariant), live and unmoved for the borrow.
-        let props = unsafe {
-            SliceViewIter::<Prop>::from_raw_parts(
-                texture_props.props_data(),
-                texture_props.props_count(),
-            )
-        };
-        for prop in props {
-            let mut name: String = prop.name();
-            while name.length > 0 {
-                // SAFETY: `name` is the prop's interned span of `length`
-                // readable bytes, and the loop guard makes `length - 1` an
-                // in-bounds index; the loop only ever shrinks `length`.
-                if unsafe { *name.data.add(name.length - 1) } == b'|' {
+        for prop in Run::from_list(texture_props.props_view()).iter() {
+            let mut name = prop.name_view().bytes();
+            while !name.is_empty() {
+                if name[name.len() - 1] == b'|' {
                     break;
                 }
-                name.length -= 1;
+                name = &name[..name.len() - 1];
             }
-            if name.length <= 1 {
+            if name.len() <= 1 {
                 continue;
             }
-            name.length -= 1;
+            name = &name[..name.len() - 1];
 
-            // SAFETY: `name` is a prefix of the prop's interned span and
-            // `suffix` a live `ufbx_string`, so each `data` is readable for its
-            // `length` bytes; both borrows end with the call.
-            // `push_prop_prefix` copies the `ufbx_string`.
-            if sp::ends_with(unsafe { name.as_bytes() }, unsafe { suffix.as_bytes() }) {
+            if sp::ends_with(name, suffix) {
+                // SAFETY: `name` is a prefix of the prop's interned span and
+                // `push_prop_prefix` copies the temporary `ufbx_string` value.
                 unsafe {
-                    push_prop_prefix(uc, shader.prop_prefix_view(), name)?;
+                    push_prop_prefix(
+                        uc,
+                        shader.prop_prefix_view(),
+                        String::new_c(name.as_ptr(), name.len()),
+                    )?;
                 }
                 return Ok(());
             }
         }
-        // SAFETY: `p_suffix != p_suffix_end`, so the advance lands at or before
-        // the one-past-the-end pointer of the written suffix prefix.
-        p_suffix = unsafe { p_suffix.add(1) };
     }
 
     Ok(())

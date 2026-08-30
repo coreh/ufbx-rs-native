@@ -18,7 +18,7 @@
 //! ~1500 later use sites (`AllSame`, `Cone_angle`, `d_X`, ...), hence the
 //! `non_upper_case_globals` allow.
 #![allow(dead_code, non_upper_case_globals)]
-use core::ffi::c_void;
+use core::ffi::{c_void, CStr};
 use core::ptr;
 
 use crate::generated::{Error, UnicodeErrorHandling, Vec2, Vec3, WarningType};
@@ -230,10 +230,9 @@ pub(crate) fn str_cmp(a: &[u8], b: &[u8]) -> i32 {
 
 // ufbx.c:4940-4944 `ufbxi_str_c`
 #[inline(always)]
-pub(crate) unsafe fn str_c(str_: *const u8) -> String {
-    // SAFETY: the caller vouches `str_` points at a NUL-terminated C string, the
-    // precondition `strlen` requires.
-    String::new_c(str_, unsafe { strlen(str_) })
+pub(crate) fn str_c(str_: &'static CStr) -> String {
+    let bytes = str_.to_bytes();
+    String::new_c(bytes.as_ptr(), bytes.len())
 }
 
 // Rust-port infrastructure: borrowed Rust callers supply byte slices directly.
@@ -474,46 +473,30 @@ pub(crate) unsafe fn string_pool_temp_free(pool: &StringPoolView) {
 
 // ufbx.c:5034-5063 `ufbxi_add_replacement_char`
 // C: `ufbxi_nodiscard static size_t` — infallible, plain return value.
-///
-/// # Safety
-///
-/// `dst` must be writable for the bytes the selected arm writes: up to 3 for
-/// `ReplacementCharacter`, 1 for the single-byte arms. The count is chosen by
-/// `pool`'s error handling, so the type cannot carry the length.
-pub(crate) unsafe fn add_replacement_char(pool: &StringPoolView, dst: *mut u8, c: u8) -> usize {
+// `dst` is the writable sanitizer tail; the selected arm writes up to 3 bytes.
+pub(crate) fn add_replacement_char(pool: &StringPoolView, dst: &mut [u8], c: u8) -> usize {
     match pool.error_handling() {
         UnicodeErrorHandling::ReplacementCharacter => {
-            // SAFETY: the caller vouches `dst` has room for the up-to-3-byte
-            // replacement this arm writes (`sanitize_string` keeps >= 16 free
-            // bytes at `dst`).
-            unsafe {
-                *dst.add(0) = 0xefu8;
-                *dst.add(1) = 0xbfu8;
-                *dst.add(2) = 0xbdu8;
-            }
+            dst[0] = 0xefu8;
+            dst[1] = 0xbfu8;
+            dst[2] = 0xbdu8;
             3
         }
 
         UnicodeErrorHandling::Underscore => {
-            // SAFETY: the caller vouches `dst` has room for the single byte this
-            // arm writes.
-            unsafe { *dst.add(0) = b'_' };
+            dst[0] = b'_';
             1
         }
 
         UnicodeErrorHandling::QuestionMark => {
-            // SAFETY: the caller vouches `dst` has room for the single byte this
-            // arm writes.
-            unsafe { *dst.add(0) = b'?' };
+            dst[0] = b'?';
             1
         }
 
         UnicodeErrorHandling::Remove => 0,
 
         UnicodeErrorHandling::UnsafeIgnore => {
-            // SAFETY: the caller vouches `dst` has room for the single byte this
-            // arm writes.
-            unsafe { *dst.add(0) = c };
+            dst[0] = c;
             1
         }
 
@@ -652,11 +635,14 @@ pub(crate) fn sanitize_string(
             dst = pool.temp_str();
         }
 
+        // SAFETY: `dst` is the current temp buffer pointer and the growth above
+        // keeps it allocated for `temp_cap` bytes. No growth occurs while this
+        // iteration's exclusive slice is live.
+        let dst_bytes = unsafe { core::slice::from_raw_parts_mut(dst, pool.temp_cap()) };
+
         if (c & 0x80) == 0 {
             if c != 0 {
-                // SAFETY: the block above guarantees >= 16 free bytes at
-                // `dst[dst_len]`, room for this 1-byte write.
-                unsafe { *dst.add(dst_len) = c };
+                dst_bytes[dst_len] = c;
                 dst_len += 1;
                 index += 1;
                 continue;
@@ -666,11 +652,8 @@ pub(crate) fn sanitize_string(
             let t0 = str_[index + 1];
             let code = (c as u32) << 8 | (t0 as u32) << 0;
             if (code & 0xc0) == 0x80 && code >= 0xc280 {
-                // SAFETY: >= 16 free bytes at `dst[dst_len]`, room for 2 bytes.
-                unsafe {
-                    *dst.add(dst_len + 0) = c;
-                    *dst.add(dst_len + 1) = t0;
-                }
+                dst_bytes[dst_len] = c;
+                dst_bytes[dst_len + 1] = t0;
                 dst_len += 2;
                 index += 2;
                 continue;
@@ -684,12 +667,9 @@ pub(crate) fn sanitize_string(
                 && code >= 0xe0a080
                 && (code < 0xeda080 || code >= 0xee8080)
             {
-                // SAFETY: >= 16 free bytes at `dst[dst_len]`, room for 3 bytes.
-                unsafe {
-                    *dst.add(dst_len + 0) = c;
-                    *dst.add(dst_len + 1) = t0;
-                    *dst.add(dst_len + 2) = t1;
-                }
+                dst_bytes[dst_len] = c;
+                dst_bytes[dst_len + 1] = t0;
+                dst_bytes[dst_len + 2] = t1;
                 dst_len += 3;
                 index += 3;
                 continue;
@@ -701,22 +681,17 @@ pub(crate) fn sanitize_string(
             let t2 = str_[index + 3];
             let code = (c as u32) << 24 | (t0 as u32) << 16 | (t1 as u32) << 8 | (t2 as u32);
             if (code & 0xc0c0c0) == 0x808080 && code >= 0xf0908080u32 && code <= 0xf48fbfbfu32 {
-                // SAFETY: >= 16 free bytes at `dst[dst_len]`, room for 4 bytes.
-                unsafe {
-                    *dst.add(dst_len + 0) = c;
-                    *dst.add(dst_len + 1) = t0;
-                    *dst.add(dst_len + 2) = t1;
-                    *dst.add(dst_len + 3) = t2;
-                }
+                dst_bytes[dst_len] = c;
+                dst_bytes[dst_len + 1] = t0;
+                dst_bytes[dst_len + 2] = t1;
+                dst_bytes[dst_len + 3] = t2;
                 dst_len += 4;
                 index += 4;
                 continue;
             }
         }
 
-        // SAFETY: `dst[dst_len]` has >= 16 free bytes (the grow above), room for
-        // the up-to-3-byte replacement `add_replacement_char` writes.
-        dst_len += unsafe { add_replacement_char(pool, dst.add(dst_len), c) };
+        dst_len += add_replacement_char(pool, &mut dst_bytes[dst_len..], c);
         index += 1;
     }
 
@@ -2227,7 +2202,7 @@ mod tests {
             assert!(str_cmp(b"ab", b"abc") < 0);
             assert!(str_cmp(b"abd", b"abc") > 0);
 
-            let c = str_c(b"Model\0".as_ptr());
+            let c = str_c(c"Model");
             assert_eq!(c.length, 5);
 
             assert!(starts_with(b"Lcl Rotation", b"Lcl "));

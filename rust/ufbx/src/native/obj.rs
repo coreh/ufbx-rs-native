@@ -2236,9 +2236,9 @@ pub(crate) fn obj_parse_mtl_map(uc: &Context, prefix_len: usize) -> Result<(), F
     }
 
     let mut num_props: usize = 1;
-    // SAFETY: the property name is a NUL-terminated literal, so `str_c` yields
-    // a readable span for the parser to intern.
-    unsafe { obj_parse_prop(uc, str_c(b"obj|args\0".as_ptr()), 1, true, None)? };
+    // SAFETY: the property name points into a static C literal, so its span
+    // remains readable while the parser interns it.
+    unsafe { obj_parse_prop(uc, str_c(c"obj|args"), 1, true, None)? };
 
     let mut start: usize = 1;
     // C: `for (; start + 1 < uc->obj.num_tokens; )`
