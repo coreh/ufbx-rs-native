@@ -6039,10 +6039,7 @@ pub(crate) fn propagate_main_textures(scene_view: &SceneView) {
             let Some(shader) = texture.shader() else {
                 continue;
             };
-            // SAFETY: `shader` is the viewed texture's own non-null
-            // `ufbx_shader_texture` reference, so it names a live scene shader
-            // texture with the scene's write-capable provenance.
-            let shader: &ShaderTextureView = unsafe { ShaderTextureView::from_ptr(shader.ptr()) };
+            let shader: &ShaderTextureView = shader.view();
 
             let Some(main_tex) = shader.main_texture() else {
                 continue;
@@ -6051,17 +6048,11 @@ pub(crate) fn propagate_main_textures(scene_view: &SceneView) {
                 continue;
             }
 
-            // SAFETY: `main_tex` is the viewed shader texture's own non-null
-            // `main_texture` reference, so it names a live scene texture with
-            // the scene's write-capable provenance.
-            let main_tex: &TextureView = unsafe { TextureView::from_ptr(main_tex.ptr()) };
+            let main_tex: &TextureView = main_tex.view();
             let Some(main_shader) = main_tex.shader() else {
                 continue;
             };
-            // SAFETY: `main_shader` is that texture's own non-null
-            // `ufbx_shader_texture` reference (see the `shader` mint above).
-            let main_shader: &ShaderTextureView =
-                unsafe { ShaderTextureView::from_ptr(main_shader.ptr()) };
+            let main_shader: &ShaderTextureView = main_shader.view();
             if main_shader.main_texture().is_none() {
                 continue;
             }
@@ -6078,9 +6069,7 @@ pub(crate) fn propagate_main_textures(scene_view: &SceneView) {
         let Some(shader) = texture.shader() else {
             continue;
         };
-        // SAFETY: `shader` is the viewed texture's own non-null
-        // `ufbx_shader_texture` reference (see the mint in the pass above).
-        let shader: &ShaderTextureView = unsafe { ShaderTextureView::from_ptr(shader.ptr()) };
+        let shader: &ShaderTextureView = shader.view();
         if shader.main_texture().is_none() || shader.main_texture_output_index() != 0 {
             continue;
         }
@@ -6089,15 +6078,9 @@ pub(crate) fn propagate_main_textures(scene_view: &SceneView) {
         let Some(main_tex) = shader.main_texture() else {
             continue;
         };
-        // SAFETY: `main_tex` is the viewed shader texture's own non-null
-        // `main_texture` reference, so it names a live scene texture with the
-        // scene's write-capable provenance.
-        let main_tex: &TextureView = unsafe { TextureView::from_ptr(main_tex.ptr()) };
+        let main_tex: &TextureView = main_tex.view();
         if let Some(main_shader) = main_tex.shader() {
-            // SAFETY: `main_shader` is that texture's own non-null
-            // `ufbx_shader_texture` reference (see the `shader` mint above).
-            let main_shader: &ShaderTextureView =
-                unsafe { ShaderTextureView::from_ptr(main_shader.ptr()) };
+            let main_shader: &ShaderTextureView = main_shader.view();
             if main_shader.main_texture().is_some() {
                 // Should have been propagated to `texture`
                 shader.set_main_texture(None);
@@ -6111,9 +6094,7 @@ pub(crate) fn propagate_main_textures(scene_view: &SceneView) {
         let Some(shader) = texture.shader() else {
             continue;
         };
-        // SAFETY: `shader` is the viewed texture's own non-null
-        // `ufbx_shader_texture` reference (see the mint in the first pass).
-        let shader: &ShaderTextureView = unsafe { ShaderTextureView::from_ptr(shader.ptr()) };
+        let shader: &ShaderTextureView = shader.view();
 
         // C: `ufbxi_for_list(ufbx_shader_texture_input, input, shader->inputs)`
         let inputs = shader.inputs_view();
@@ -6122,19 +6103,13 @@ pub(crate) fn propagate_main_textures(scene_view: &SceneView) {
             let Some(input_texture) = input.texture() else {
                 continue;
             };
-            // SAFETY: `input_texture` is the viewed input's own non-null
-            // texture reference, so it names a live scene texture with the
-            // scene's write-capable provenance.
-            let input_texture: &TextureView = unsafe { TextureView::from_ptr(input_texture.ptr()) };
+            let input_texture: &TextureView = input_texture.view();
             // C: `if (... || !input->texture->shader) continue;` and the
             // following `input_shader` binding read the same field.
             let Some(input_shader) = input_texture.shader() else {
                 continue;
             };
-            // SAFETY: `input_shader` is that texture's own non-null
-            // `ufbx_shader_texture` reference (see the `shader` mint above).
-            let input_shader: &ShaderTextureView =
-                unsafe { ShaderTextureView::from_ptr(input_shader.ptr()) };
+            let input_shader: &ShaderTextureView = input_shader.view();
             if input_shader.main_texture().is_some() {
                 input.set_texture(input_shader.main_texture());
                 input.set_texture_output_index(input_shader.main_texture_output_index());
@@ -6151,16 +6126,10 @@ pub(crate) fn propagate_main_textures(scene_view: &SceneView) {
         let material_textures = material.textures_view();
         for tex_ix in 0..material_textures.count() {
             let tex = material_textures.at(tex_ix);
-            // SAFETY: `ufbx_material_texture.texture` is non-nullable, so the
-            // viewed entry's own reference names a live scene texture with the
-            // scene's write-capable provenance.
-            let tex_texture: &TextureView = unsafe { TextureView::from_ptr(tex.texture().ptr()) };
+            let tex_texture: &TextureView = tex.texture().view();
             let shader = tex_texture.shader();
             if let Some(shader) = shader {
-                // SAFETY: `shader` is that texture's own non-null
-                // `ufbx_shader_texture` reference (see the mints above).
-                let shader: &ShaderTextureView =
-                    unsafe { ShaderTextureView::from_ptr(shader.ptr()) };
+                let shader: &ShaderTextureView = shader.view();
                 if let Some(main_texture) = shader.main_texture() {
                     if shader.main_texture_output_index() == 0 {
                         // C: `tex->texture = shader->main_texture;` —

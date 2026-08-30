@@ -182,8 +182,7 @@ fn load_attribute_zoo_6100_binary() {
 /// properties and legacy names, then interned with a trailing separator.
 #[test]
 fn load_shader_texture_prefixes() {
-    fn check_prefix(name: &str, expected: &str) {
-        let scene = load(name);
+    fn check_prefix(scene: &ufbx::Scene, name: &str, expected: &str) {
         let mut num_prefixes = 0usize;
         let mut found_expected = false;
         for texture in &scene.textures {
@@ -201,17 +200,87 @@ fn load_shader_texture_prefixes() {
         assert!(found_expected, "{} is missing prefix {:?}", name, expected);
     }
 
+    let legacy = load("max_texture_mapping_6100_binary.fbx");
     check_prefix(
+        &legacy,
         "max_texture_mapping_6100_binary.fbx",
         "3dsMax|ai_bump2d Parameters/Connections|",
     );
+    let color_tweak = (&legacy.textures)
+        .into_iter()
+        .find(|texture| {
+            texture
+                .shader
+                .as_ref()
+                .is_some_and(|shader| shader.shader_name.as_ref() == "ColorTweak")
+        })
+        .expect("missing ColorTweak shader texture");
+    let shader = color_tweak
+        .shader
+        .as_ref()
+        .expect("ColorTweak has no shader");
+    let input = ufbx::find_shader_texture_input(shader, "Input").expect("missing Input");
+    let input_texture: &ufbx::Texture = input
+        .texture
+        .as_ref()
+        .expect("Input has no texture")
+        .as_ref();
+    assert_eq!(input_texture.type_, ufbx::TextureType::File);
+    assert_eq!(color_tweak.file_textures.len(), 1);
+    assert!(std::ptr::eq(&color_tweak.file_textures[0], input_texture));
 
     // The OpenPBR ASCII fixture exercises the explicit Compound-property arm.
     // Stacked Borrows rejects its ASCII parser path before scene finalization,
     // so the ordinary integration corpus covers this arm while the legacy
     // binary arm runs under both Miri models.
     #[cfg(not(miri))]
-    check_prefix("max_openpbr_material_7700_ascii.fbx", "3dsMax|parameters|");
+    {
+        let openpbr = load("max_openpbr_material_7700_ascii.fbx");
+        check_prefix(
+            &openpbr,
+            "max_openpbr_material_7700_ascii.fbx",
+            "3dsMax|parameters|",
+        );
+
+        // This ASCII fixture is the exact upstream oracle for multi-hop main
+        // texture propagation and output-channel remapping.
+        let graph = load("max_shadergraph_7700_ascii.fbx");
+        let material = (&graph.materials)
+            .into_iter()
+            .find(|material| material.element.name.as_ref() == "Material #25")
+            .expect("missing Material #25");
+        let roughness = material
+            .pbr
+            .roughness
+            .texture
+            .as_ref()
+            .expect("roughness has no texture");
+        assert_eq!(roughness.file_textures.len(), 1);
+        assert_eq!(
+            roughness.file_textures[0].relative_filename.as_ref(),
+            "textures\\checkerboard_ambient.png",
+        );
+        let shader = roughness.shader.as_ref().expect("roughness has no shader");
+        let main = shader
+            .main_texture
+            .as_ref()
+            .expect("roughness shader has no main texture");
+        assert_eq!(shader.main_texture_output_index, 6);
+        assert_eq!(main.element.name.as_ref(), "Map #30");
+        let source =
+            ufbx::find_shader_texture_input(shader, "sourceMap").expect("missing sourceMap input");
+        assert_eq!(source.texture_output_index, 6);
+        assert_eq!(
+            source
+                .texture
+                .as_ref()
+                .expect("sourceMap has no texture")
+                .element
+                .name
+                .as_ref(),
+            "Map #30",
+        );
+    }
 }
 
 // -- Scene features exercised on load
