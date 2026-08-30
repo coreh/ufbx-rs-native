@@ -217,6 +217,17 @@ fn load_shader_texture_prefixes() {
     }
 
     let legacy = load("max_texture_mapping_6100_binary.fbx");
+    let material = legacy
+        .materials
+        .iter()
+        .find(|material| !material.textures.is_empty())
+        .expect("missing material with a property texture");
+    let material_texture = &material.textures[0];
+    let found = ufbx::find_prop_texture(material, material_texture.material_prop.as_ref())
+        .expect("missing material property texture");
+    assert!(std::ptr::eq(found, material_texture.texture.as_ref()));
+    assert!(ufbx::find_prop_texture(material, "DefinitelyNotAProperty").is_none());
+
     check_prefix(
         &legacy,
         "max_texture_mapping_6100_binary.fbx",
@@ -1445,6 +1456,14 @@ fn public_deform_helpers_from_shared_refs() {
             }
         }
     }
+
+    let pose_root = load("maya_poses_7700_ascii.fbx");
+    let pose_scene: &Scene = &pose_root;
+    let pose = pose_scene.poses.first().expect("missing pose");
+    let bone_pose = pose.bone_poses.first().expect("missing bone pose");
+    let found =
+        ufbx::get_bone_pose(pose, bone_pose.bone_node.as_ref()).expect("missing indexed bone pose");
+    assert!(std::ptr::eq(found, bone_pose));
 
     let root = load("blender_279_shape_weights_7400_binary.fbx");
     let scene: &Scene = &root;

@@ -2712,72 +2712,68 @@ pub(crate) unsafe fn evaluate_baked_quat(keyframes: List<BakedQuat>, time: f64) 
 // ufbx.c:31405-31412 `ufbx_get_bone_pose`
 // Kept here because `ufbxi_update_pose` (ufbx.c:23271,
 // `native::scene_process`) calls it.
+pub(crate) fn get_bone_pose_entry<'a, PM: Mode, NM: Mode>(
+    pose: Option<&'a View<Pose, PM>>,
+    node: Option<&View<Node, NM>>,
+) -> Option<&'a View<BonePose, PM>> {
+    let (Some(pose), Some(node)) = (pose, node) else {
+        return None;
+    };
+
+    let bone_poses = pose.bone_poses_view();
+    let index = bone_poses.lower_bound_eq(
+        8,
+        |a| a.bone_node_view().element().typed_id() < node.element().typed_id(),
+        |a| core::ptr::eq(a.bone_node().ptr(), node.as_ptr()),
+    )?;
+    Some(bone_poses.at(index))
+}
+
 pub(crate) unsafe fn get_bone_pose(pose: *const Pose, node: *const Node) -> *mut BonePose {
     if pose.is_null() || node.is_null() {
         return core::ptr::null_mut();
     }
-    let mut index: usize = usize::MAX;
-    // SAFETY: `pose`/`node` are non-null (checked) and point at a live `Pose` and
-    // `Node` — the raw-pointer contract of this `unsafe fn`; the search spans the
-    // pose's own sorted `bone_poses` run `0..count`, every probe pointer the
-    // comparators receive addresses a live `BonePose` whose `bone_node` ref is
-    // readable by value (`Ref` is `Copy`), compared against the live `node`.
+
+    // SAFETY: the two pointers are this raw boundary's null-or-live parameters.
+    // Const views freeze them only for the lookup; the returned pointer projects
+    // the matching entry of `pose`'s own stable bone-pose list.
     unsafe {
-        macro_lower_bound_eq::<BonePose>(
-            8,
-            &mut index,
-            (*pose).bone_poses.data,
-            0,
-            (*pose).bone_poses.count,
-            |a| {
-                core::ptr::read(&raw const (*a).bone_node)
-                    .view::<Mut>()
-                    .element()
-                    .typed_id()
-                    < (*node).element.typed_id
-            },
-            |a| std::ptr::eq(core::ptr::read(&raw const (*a).bone_node).ptr(), node),
+        get_bone_pose_entry(
+            Some(View::<Pose, Const>::from_ptr(pose)),
+            Some(View::<Node, Const>::from_ptr(node)),
         )
-    };
-    if index < usize::MAX {
-        // SAFETY: `index < count` (a hit), so `bone_poses.data.add(index)`
-        // addresses the `index`-th live `BonePose` of the pose's run.
-        unsafe { (*pose).bone_poses.data.add(index) as *mut BonePose }
-    } else {
-        core::ptr::null_mut()
+        .map_or(core::ptr::null_mut(), |bone_pose| {
+            bone_pose.as_ptr().cast_mut()
+        })
     }
 }
 
 // ufbx.c:31414-31423 `ufbx_find_prop_texture_len`
 // `name: &[u8]` carries C's `(name, name_len)` pair (see `find_prop_len`).
+pub(crate) fn find_prop_texture_entry<'a, M: Mode>(
+    material: Option<&'a View<Material, M>>,
+    name: &[u8],
+) -> Option<&'a View<MaterialTexture, M>> {
+    let textures = material?.textures_view();
+    let index = textures.lower_bound_eq(
+        4,
+        |a| str_less(a.material_prop_view().bytes(), name),
+        |a| str_equal(a.material_prop_view().bytes(), name),
+    )?;
+    Some(textures.at(index))
+}
+
 pub(crate) unsafe fn find_prop_texture_len(material: *const Material, name: &[u8]) -> *mut Texture {
     if material.is_null() {
         return core::ptr::null_mut();
     }
 
-    let mut index: usize = usize::MAX;
-    // SAFETY: `material` is non-null here (checked above) and points at a live
-    // `Material` per this fn's raw-pointer contract; `textures.data`/`.count`
-    // are its own list fields, and each closure derefs a `MaterialTexture` the
-    // search keeps within `[0, count)`.
+    // SAFETY: `material` is this raw boundary's null-or-live parameter. The
+    // short-lived Const view roots the exact material-texture search; a hit's
+    // stored `Ref<Texture>` supplies the returned stable texture pointer.
     unsafe {
-        macro_lower_bound_eq::<MaterialTexture>(
-            4,
-            &mut index,
-            (*material).textures.data,
-            0,
-            (*material).textures.count,
-            |a| str_less((*a).material_prop.as_bytes(), name),
-            |a| str_equal((*a).material_prop.as_bytes(), name),
-        );
-    }
-    if index < usize::MAX {
-        // SAFETY: `index < count` here, so `textures.data.add(index)` addresses a
-        // live `MaterialTexture`; its own `texture` ref is read out by value
-        // (`Ref` is `Copy`) and forwarded as the bare C pointer.
-        unsafe { core::ptr::read(&raw const (*(*material).textures.data.add(index)).texture) }.ptr()
-    } else {
-        core::ptr::null_mut()
+        find_prop_texture_entry(Some(View::<Material, Const>::from_ptr(material)), name)
+            .map_or(core::ptr::null_mut(), |entry| entry.texture().ptr())
     }
 }
 

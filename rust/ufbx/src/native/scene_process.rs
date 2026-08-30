@@ -211,12 +211,13 @@ use crate::native::allocator::grow_array;
 use crate::native::api::{
     compute_normals, compute_topology, coordinate_axes_valid, euler_to_quat, find_blob_len,
     find_bool_len as api_find_bool_len, find_int_len as api_find_int_len, find_prop_concat,
-    find_prop_len, find_prop_texture_len, find_real_len as api_find_real_len,
+    find_prop_len, find_prop_texture_entry, find_real_len as api_find_real_len,
     find_shader_prop_bindings_len, find_shader_texture_input, find_shader_texture_input_len,
-    find_string_len, find_vec3_len as api_find_vec3_len, generate_normal_mapping, get_bone_pose,
-    get_prop_element, matrix_for_normals, matrix_invert, matrix_mul, matrix_to_transform,
-    quat_rotate_vec3, transform_direction, transform_position, transform_to_matrix, EMPTY_BLOB,
-    EMPTY_STRING, IDENTITY_MATRIX, IDENTITY_QUAT, IDENTITY_TRANSFORM, ZERO_VEC3,
+    find_string_len, find_vec3_len as api_find_vec3_len, generate_normal_mapping,
+    get_bone_pose_entry, get_prop_element, matrix_for_normals, matrix_invert, matrix_mul,
+    matrix_to_transform, quat_rotate_vec3, transform_direction, transform_position,
+    transform_to_matrix, EMPTY_BLOB, EMPTY_STRING, IDENTITY_MATRIX, IDENTITY_QUAT,
+    IDENTITY_TRANSFORM, ZERO_VEC3,
 };
 use crate::native::buf::{buf_clear, buf_free, pop, BufView};
 use crate::native::error::{
@@ -4511,12 +4512,7 @@ pub(crate) unsafe fn fetch_mapping_maps(
                     }
                 }
                 if (mapping_flags & SHADER_FEATURE_IF_TEXTURE as u32) != 0 {
-                    // SAFETY: the material view's own pointer addresses a live
-                    // `ufbx_material`, which is all this raw-pointer entry point
-                    // requires.
-                    let texture: *mut Texture =
-                        unsafe { find_prop_texture_len(material.get(), name_bytes) };
-                    if !texture.is_null() {
+                    if find_prop_texture_entry(Some(material), name_bytes).is_some() {
                         feature.set_enabled(true);
                     }
                 }
@@ -4598,15 +4594,8 @@ pub(crate) unsafe fn fetch_mapping_maps(
             }
 
             if (flags & MAPPING_FETCH_TEXTURE) != 0 {
-                // SAFETY: the material view's own pointer addresses a live
-                // `ufbx_material`, which is all this raw-pointer entry point
-                // requires.
-                let texture: *mut Texture =
-                    unsafe { find_prop_texture_len(material.get(), name_bytes) };
-                if !texture.is_null() {
-                    // SAFETY: `texture` is a non-null (checked) live
-                    // `ufbx_texture`, so it is a valid element reference.
-                    map.set_texture(unsafe { opt_ref(texture) });
+                if let Some(entry) = find_prop_texture_entry(Some(material), name_bytes) {
+                    map.set_texture(Some(entry.texture()));
                     map.set_texture_enabled(true);
                 }
             }
@@ -11687,15 +11676,8 @@ pub(crate) fn update_pose(pose_view: &PoseView) {
         let node: &NodeView = unsafe { ptr::read(&raw const (*bone).bone_node) }.view();
 
         let mut parent_to_world: *const Matrix = &raw const IDENTITY_MATRIX;
-        // SAFETY: `pose` is live, and the parent link is null or a live,
-        // initialized `ufbx_node` of the same scene — `get_bone_pose`'s
-        // raw-pointer contract.
-        let bone_pose: *mut BonePose =
-            unsafe { get_bone_pose(pose, node.parent().map_or(ptr::null_mut(), |r| r.ptr())) };
-        if !bone_pose.is_null() {
-            // SAFETY: `bone_pose` is non-null here, so it addresses a live entry
-            // of the pose's own bone-pose run, which outlives this loop.
-            parent_to_world = unsafe { &raw const (*bone_pose).bone_to_world };
+        if let Some(bone_pose) = get_bone_pose_entry(Some(pose_view), node.parent_view()) {
+            parent_to_world = bone_pose.bone_to_world_ptr();
         } else if let Some(parent) = node.parent_view() {
             // The parent view projects a live scene node's own matrix, which
             // outlives this loop.
