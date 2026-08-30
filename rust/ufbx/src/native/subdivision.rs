@@ -51,7 +51,7 @@ use crate::native::view::{view_project, view_read, view_write};
 #[cfg(feature = "subdivision")]
 use crate::native::view::{Const, Mode, Run, SliceViewIter, View};
 #[cfg(feature = "subdivision")]
-use crate::prelude::{ListView, Real};
+use crate::prelude::{List, ListView, Real};
 #[cfg(feature = "subdivision")]
 use core::ffi::c_void;
 #[cfg(feature = "subdivision")]
@@ -196,6 +196,33 @@ impl View<SubdivideLayerOutput> {
 pub(crate) struct SubdivisionVertexWeights {
     pub weights: *mut SubdivisionWeight,
     pub num_weights: usize,
+}
+
+// Checked read/write surfaces for the two subdivision-only weight carriers.
+#[cfg(feature = "subdivision")]
+impl<M: Mode> View<SubdivisionWeightRange, M> {
+    #[inline(always)]
+    pub(crate) fn weight_begin(&self) -> u32 {
+        view_read_shared!(self, weight_begin)
+    }
+
+    #[inline(always)]
+    pub(crate) fn num_weights(&self) -> u32 {
+        view_read_shared!(self, num_weights)
+    }
+}
+
+#[cfg(feature = "subdivision")]
+impl View<SubdivisionVertexWeights> {
+    #[inline(always)]
+    pub(crate) fn set_weights(&self, weights: *mut SubdivisionWeight) {
+        view_write!(self, weights, weights)
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_num_weights(&self, num_weights: usize) {
+        view_write!(self, num_weights, num_weights)
+    }
 }
 
 // ufbx.c:28861-28889 `ufbxi_subdivide_context`
@@ -883,28 +910,23 @@ pub(crate) static REAL_SUM_FNS: [Option<SubdivideSumFn>; 4] = [
 #[cfg(feature = "subdivision")]
 #[inline(never)]
 /// # Safety
-/// `input.indices` covers every corner reached through `topo`, and each stored
-/// index addresses a `stride`-byte value in `input.values`. Those buffer lengths
-/// are caller promises the parameter types cannot carry.
+/// Each index stored in `input_indices` addresses a `stride`-byte value in
+/// `input.values`. That value-buffer length is a caller promise the parameter
+/// types cannot carry.
 pub(crate) unsafe fn is_edge_split(
     input: &View<SubdivideLayerInput, Const>,
+    input_indices: Run<'_, u32, Const>,
     topo: Run<'_, TopoEdge, Const>,
     index: u32,
 ) -> bool {
     let topo_edge = topo.at(index as usize);
     let twin = topo_edge.twin();
     if twin != NO_INDEX {
-        // SAFETY: `input.indices()` is an array indexed by corner; `index` is an
-        // in-range corner, so `.add(index)` is in-bounds.
-        let a0: u32 = unsafe { *input.indices().add(index as usize) };
-        // SAFETY: the topology `.next` values index `input.indices` by the
-        // function contract.
-        let a1: u32 = unsafe { *input.indices().add(topo_edge.next() as usize) };
+        let a0 = input_indices.copy_at(index as usize);
+        let a1 = input_indices.copy_at(topo_edge.next() as usize);
         let twin_topo = topo.at(twin as usize);
-        // SAFETY: as above for the twin corner's `.next` value.
-        let b0: u32 = unsafe { *input.indices().add(twin_topo.next() as usize) };
-        // SAFETY: `twin` is a valid corner index in range for `indices`.
-        let b1: u32 = unsafe { *input.indices().add(twin as usize) };
+        let b0 = input_indices.copy_at(twin_topo.next() as usize);
+        let b1 = input_indices.copy_at(twin as usize);
         if a0 == b0 && a1 == b1 {
             return false;
         }
@@ -913,7 +935,7 @@ pub(crate) unsafe fn is_edge_split(
         }
         let stride: usize = input.stride();
         // SAFETY: `input.values()` is a byte-addressed attribute buffer holding
-        // `stride` bytes per value; `a0`/`a1`/`b0`/`b1` come from `input.indices()`,
+        // `stride` bytes per value; `a0`/`a1`/`b0`/`b1` come from `input_indices`,
         // which maps corners to indices into that value array (not to mesh
         // vertices), so every `.add(ix*stride)` byte offset stays within the buffer.
         let (da0, da1, db0, db1) = unsafe {
@@ -971,9 +993,10 @@ pub(crate) fn edge_crease(
 }
 
 // ufbx.c:29044-29462 `ufbxi_subdivide_layer`
-// Safe `fn`: the layer input/output arrive as views; the residual raw ops walk
-// the topology run, the arena pushes and the attribute buffers the input
-// describes — each vouched at its own block.
+// Safe `fn`: the layer input/output arrive as views and checked runs carry the
+// topology, corner-index and initialized face-value reads. Residual raw ops
+// address owned arena pushes, dynamically grown scratch inputs, uncounted value
+// buffers and callbacks — each vouched at its own block.
 #[cfg(feature = "subdivision")]
 #[inline(never)]
 pub(crate) fn subdivide_layer(
@@ -989,6 +1012,10 @@ pub(crate) fn subdivide_layer(
     // SAFETY: `sc` owns an initialized `num_topo`-element topology run that is
     // read-only and stable throughout layer subdivision.
     let topo_view = unsafe { Run::<TopoEdge, Const>::from_const_raw_parts(topo, num_topo) };
+    // SAFETY: `input.indices` is an initialized `mesh.num_indices()`
+    // source-corner run, stable and frozen throughout layer subdivision.
+    let input_indices =
+        unsafe { Run::<u32, Const>::from_const_raw_parts(input.indices(), mesh.num_indices()) };
 
     let edge_indices: *mut u32 = sc.result_view().push::<u32>(mesh.num_indices());
     ufbxi_check_err!(sc.error_view(), !edge_indices.is_null(), "edge_indices");
@@ -999,9 +1026,9 @@ pub(crate) fn subdivide_layer(
     let mut ix: u32 = 0;
     while ix < mesh.num_indices() as u32 {
         let twin = topo_view.at(ix as usize).twin();
-        // SAFETY: the layer input's index/value buffers cover every topology
-        // corner reached from `ix`.
-        if twin < ix && !unsafe { is_edge_split(input, topo_view, ix) } {
+        // SAFETY: every stored index in this topology neighborhood addresses a
+        // live `stride`-byte value in the input buffer.
+        if twin < ix && !unsafe { is_edge_split(input, input_indices, topo_view, ix) } {
             // SAFETY: `edge_indices` holds `num_indices` live slots; `ix` and
             // `twin < ix` are both in-range corner indices.
             unsafe { *edge_indices.add(ix as usize) = *edge_indices.add(twin as usize) };
@@ -1114,12 +1141,11 @@ pub(crate) fn subdivide_layer(
             let ix: u32 = face.index_begin.wrapping_add(ci);
             // SAFETY: `inputs` was grown to hold at least `max_face_triangles+2`
             // and `>= 32` entries, so `ci < face.num_indices` indexes a live
-            // slot; `input.values`/`input.indices` are live, and `indices[ix]`
-            // is an in-range index into the value array whose `stride`-sized
-            // entry the byte offset addresses.
+            // slot; the checked stored index addresses a live input value whose
+            // `stride`-sized entry the byte offset addresses.
             unsafe {
                 (*inputs.add(ci as usize)).data = (input.values() as *const u8)
-                    .add((*input.indices().add(ix as usize) as usize).wrapping_mul(stride))
+                    .add((input_indices.copy_at(ix as usize) as usize).wrapping_mul(stride))
                     as *const c_void;
                 (*inputs.add(ci as usize)).weight = weight;
             }
@@ -1143,6 +1169,11 @@ pub(crate) fn subdivide_layer(
         );
         fi += 1;
     }
+    // SAFETY: the face loop above initialized the full `num_faces*stride` byte
+    // segment; later subdivision stages only read these stable tmp-arena bytes.
+    let face_value_bytes = unsafe {
+        Run::<u8, Const>::from_const_raw_parts(face_values, mesh.num_faces().wrapping_mul(stride))
+    };
 
     // Edge points
     // C: `for (uint32_t ix = 0; ix < mesh->num_indices; ix++)` — `ix` is
@@ -1158,9 +1189,9 @@ pub(crate) fn subdivide_layer(
 
         let topo_edge = topo_view.at(ix as usize);
         let twin = topo_edge.twin();
-        // SAFETY: the layer input's index/value buffers cover every topology
-        // corner reached from `ix`.
-        let split: bool = unsafe { is_edge_split(input, topo_view, ix) };
+        // SAFETY: every stored index in this topology neighborhood addresses a
+        // live `stride`-byte value in the input buffer.
+        let split: bool = unsafe { is_edge_split(input, input_indices, topo_view, ix) };
 
         if split || topo_edge.flags().has_any(TopoFlags::NON_MANIFOLD) {
             output.set_unique_per_vertex(false);
@@ -1182,9 +1213,10 @@ pub(crate) fn subdivide_layer(
         let (v0, v1) = unsafe {
             (
                 (input.values() as *const u8)
-                    .add((*input.indices().add(ix as usize) as usize).wrapping_mul(stride)),
+                    .add((input_indices.copy_at(ix as usize) as usize).wrapping_mul(stride)),
                 (input.values() as *const u8).add(
-                    (*input.indices().add(topo_edge.next() as usize) as usize).wrapping_mul(stride),
+                    (input_indices.copy_at(topo_edge.next() as usize) as usize)
+                        .wrapping_mul(stride),
                 ),
             )
         };
@@ -1193,16 +1225,15 @@ pub(crate) fn subdivide_layer(
         if twin < ix && !split {
             // Already calculated
         } else if crease <= 0.0 {
-            // SAFETY: `topo_view.at(twin)` bounds the twin topology slot; a
-            // loaded topology keeps both `.face` values below `num_faces`, so
-            // `face*stride` stays within the face segment of `values`.
-            let (f0, f1) = unsafe {
-                (
-                    face_values.add((topo_edge.face() as usize).wrapping_mul(stride)),
-                    face_values
-                        .add((topo_view.at(twin as usize).face() as usize).wrapping_mul(stride)),
+            let f0 = face_value_bytes
+                .subrun((topo_edge.face() as usize).wrapping_mul(stride), stride)
+                .as_ptr();
+            let f1 = face_value_bytes
+                .subrun(
+                    (topo_view.at(twin as usize).face() as usize).wrapping_mul(stride),
+                    stride,
                 )
-            };
+                .as_ptr();
             // SAFETY: `inputs` holds at least 4 live slots (grown `>= 32`); the
             // four `data`/`weight` fields are the sum-fn's inputs.
             unsafe {
@@ -1239,16 +1270,15 @@ pub(crate) fn subdivide_layer(
                 "sum_fn(sum_user, dst, inputs, 2)"
             );
         } else if crease < 1.0 {
-            // SAFETY: `topo_view.at(twin)` bounds the twin topology slot; a
-            // loaded topology keeps both `.face` values below `num_faces`, so
-            // `face*stride` stays within the face segment of `values`.
-            let (f0, f1) = unsafe {
-                (
-                    face_values.add((topo_edge.face() as usize).wrapping_mul(stride)),
-                    face_values
-                        .add((topo_view.at(twin as usize).face() as usize).wrapping_mul(stride)),
+            let f0 = face_value_bytes
+                .subrun((topo_edge.face() as usize).wrapping_mul(stride), stride)
+                .as_ptr();
+            let f1 = face_value_bytes
+                .subrun(
+                    (topo_view.at(twin as usize).face() as usize).wrapping_mul(stride),
+                    stride,
                 )
-            };
+                .as_ptr();
             let w0: Real = 0.25 + 0.25 * crease;
             let w1: Real = 0.25 - 0.25 * crease;
 
@@ -1278,8 +1308,7 @@ pub(crate) fn subdivide_layer(
     // Vertex points
     let mut vi: usize = 0;
     while vi < mesh.num_vertices() {
-        // SAFETY: `vi < num_vertices` indexes the live `vertex_first_index` array.
-        let mut original_start: u32 = unsafe { *mesh.vertex_first_index().data.add(vi) };
+        let mut original_start = mesh.vertex_first_index_view().copy_at(vi);
         if original_start == NO_INDEX {
             vi += 1;
             continue;
@@ -1295,9 +1324,9 @@ pub(crate) fn subdivide_layer(
                 start = cur;
                 break;
             } // Topological boundary: Stop and use as start
-              // SAFETY: the layer input's index/value buffers cover every
-              // topology corner reached from `prev`.
-            if unsafe { is_edge_split(input, topo_view, prev) } {
+              // SAFETY: every stored index in this topology neighborhood
+              // addresses a live `stride`-byte value in the input buffer.
+            if unsafe { is_edge_split(input, input_indices, topo_view, prev) } {
                 start = cur;
             } // Split edge: Consider as start
             if prev == original_start {
@@ -1353,7 +1382,7 @@ pub(crate) fn subdivide_layer(
             // byte offset addresses.
             let v0: *const u8 = unsafe {
                 (input.values() as *const u8)
-                    .add((*input.indices().add(start as usize) as usize).wrapping_mul(stride))
+                    .add((input_indices.copy_at(start as usize) as usize).wrapping_mul(stride))
             };
 
             let mut num_inputs: usize = 4;
@@ -1365,19 +1394,18 @@ pub(crate) fn subdivide_layer(
                 let (e0, e1) = unsafe {
                     (
                         (input.values() as *const u8).add(
-                            (*input.indices().add(start_topo.next() as usize) as usize)
+                            (input_indices.copy_at(start_topo.next() as usize) as usize)
                                 .wrapping_mul(stride),
                         ),
                         (input.values() as *const u8).add(
-                            (*input.indices().add(start_prev as usize) as usize)
+                            (input_indices.copy_at(start_prev as usize) as usize)
                                 .wrapping_mul(stride),
                         ),
                     )
                 };
-                // SAFETY: this corner's `.face` is an in-range face index, so
-                // `face*stride` stays within the face segment of `values`.
-                let f0: *const u8 =
-                    unsafe { face_values.add((start_topo.face() as usize).wrapping_mul(stride)) };
+                let f0 = face_value_bytes
+                    .subrun((start_topo.face() as usize).wrapping_mul(stride), stride)
+                    .as_ptr();
                 // SAFETY: `inputs` holds at least 4 live slots; these are the
                 // first four sum-fn inputs.
                 unsafe {
@@ -1388,13 +1416,14 @@ pub(crate) fn subdivide_layer(
                 }
             }
 
-            // SAFETY: the layer input's index/value buffers cover every
-            // topology corner reached from `start` and the non-sentinel
-            // `end_edge`.
+            // SAFETY: every stored index reached from `start` and, when taken,
+            // the non-sentinel `end_edge` addresses a live `stride`-byte input
+            // value.
             let (start_split, prev_split) = unsafe {
                 (
-                    is_edge_split(input, topo_view, start),
-                    end_edge != NO_INDEX && is_edge_split(input, topo_view, end_edge),
+                    is_edge_split(input, input_indices, topo_view, start),
+                    end_edge != NO_INDEX
+                        && is_edge_split(input, input_indices, topo_view, end_edge),
                 )
             };
 
@@ -1460,9 +1489,10 @@ pub(crate) fn subdivide_layer(
                     // SAFETY: `cur` is an in-range corner slot of `vertex_indices`.
                     unsafe { *vertex_indices.add(cur as usize) = value_index };
 
-                    // SAFETY: the layer input's index/value buffers cover every
-                    // topology corner reached from `cur`.
-                    let split: bool = unsafe { is_edge_split(input, topo_view, cur) };
+                    // SAFETY: every stored index in this topology neighborhood
+                    // addresses a live `stride`-byte value in the input buffer.
+                    let split: bool =
+                        unsafe { is_edge_split(input, input_indices, topo_view, cur) };
 
                     // Looped: Add the face from the other side still if not split
                     if cur == end_edge && !split {
@@ -1480,11 +1510,9 @@ pub(crate) fn subdivide_layer(
                             },
                             "ufbxi_grow_array_size((&sc->ator_tmp), sizeof(**(&sc->inputs)), (&sc->inputs), (&sc->inputs_cap), (num_inputs + 1))"
                         );
-                        // SAFETY: `cur`'s `.face` is an in-range face index, so
-                        // `face*stride` stays within the face segment of `values`.
-                        let f0: *const u8 = unsafe {
-                            face_values.add((cur_topo.face() as usize).wrapping_mul(stride))
-                        };
+                        let f0 = face_value_bytes
+                            .subrun((cur_topo.face() as usize).wrapping_mul(stride), stride)
+                            .as_ptr();
                         // C-parity: C does NOT refresh the local `inputs` from
                         // `sc->inputs` after this grow (unlike the paired grow
                         // below) — the stale pointer is written through
@@ -1537,15 +1565,13 @@ pub(crate) fn subdivide_layer(
                         // `stride`-sized entry in `values`.
                         let e0: *const u8 = unsafe {
                             (input.values() as *const u8).add(
-                                (*input.indices().add(cur_topo.next() as usize) as usize)
+                                (input_indices.copy_at(cur_topo.next() as usize) as usize)
                                     .wrapping_mul(stride),
                             )
                         };
-                        // SAFETY: `cur`'s `.face` is an in-range face index, so
-                        // `face*stride` stays within the face segment of `values`.
-                        let f0: *const u8 = unsafe {
-                            face_values.add((cur_topo.face() as usize).wrapping_mul(stride))
-                        };
+                        let f0 = face_value_bytes
+                            .subrun((cur_topo.face() as usize).wrapping_mul(stride), stride)
+                            .as_ptr();
                         // SAFETY: the grow above ensured `inputs` holds at least
                         // `num_inputs + 2` slots, so both slots are live.
                         unsafe {
@@ -1698,7 +1724,7 @@ pub(crate) fn subdivide_layer(
             // byte offset into `values` addresses.
             let src: *const u8 = unsafe {
                 (input.values() as *const u8)
-                    .add((*input.indices().add(old_ix) as usize).wrapping_mul(stride))
+                    .add((input_indices.copy_at(old_ix) as usize).wrapping_mul(stride))
             };
             // SAFETY: `ix < num_vertex_values <= num_indices`, so `ix*stride` is
             // within the vertex segment of `values` that `vertex_values` heads.
@@ -1865,36 +1891,41 @@ pub(crate) fn subdivide_attrib(
 }
 
 // ufbx.c:29491-29503 `ufbxi_subdivision_copy_weights`
+// Safe `fn`: source ranges and weights arrive as viewed lists, every stored
+// span is bounds-checked, and the sole raw mint covers the fresh destination
+// run initialized below.
 #[cfg(feature = "subdivision")]
 #[inline(never)]
-pub(crate) unsafe fn subdivision_copy_weights(
+pub(crate) fn subdivision_copy_weights<RM: Mode, WM: Mode>(
     sc: &SubdivideContext,
-    ranges: crate::prelude::List<SubdivisionWeightRange>,
-    weights: crate::prelude::List<SubdivisionWeight>,
+    ranges: &View<List<SubdivisionWeightRange>, RM>,
+    weights: &View<List<SubdivisionWeight>, WM>,
 ) -> *mut SubdivisionVertexWeights {
-    let dst: *mut SubdivisionVertexWeights =
-        sc.tmp_view().push::<SubdivisionVertexWeights>(ranges.count);
+    let dst: *mut SubdivisionVertexWeights = sc
+        .tmp_view()
+        .push::<SubdivisionVertexWeights>(ranges.count());
     ufbxi_check_return_err!(
         sc.error_view(),
         !dst.is_null(),
         core::ptr::null_mut(),
         "dst"
     );
+    // SAFETY: `dst` is the fresh non-null `ranges.count()`-element tmp-arena
+    // push checked above; its slots are write-capable and stable for this call.
+    let dst_run = unsafe { Run::<SubdivisionVertexWeights>::from_raw_parts(dst, ranges.count()) };
+    let weights_run = Run::from_list(weights);
 
     // C: `ufbxi_nounroll for (size_t i = 0; i != ranges.count; i++)`
     let mut i: usize = 0;
-    while i != ranges.count {
-        // SAFETY: `i < ranges.count`, so `ranges.data.add(i)` is a live element,
-        // read out by value.
-        let range: SubdivisionWeightRange = unsafe { core::ptr::read(ranges.data.add(i)) };
-        // SAFETY: `dst` is a fresh `ranges.count`-element push and `i` is in
-        // range; `range.weight_begin` is an offset into the `weights` list this
-        // range references, so `weights.data.add(weight_begin)` is in-bounds.
-        unsafe {
-            (*dst.add(i)).weights =
-                (weights.data as *mut SubdivisionWeight).add(range.weight_begin as usize);
-            (*dst.add(i)).num_weights = range.num_weights as usize;
-        }
+    while i != ranges.count() {
+        let range = ranges.at(i);
+        let weight_span =
+            weights_run.subrun(range.weight_begin() as usize, range.num_weights() as usize);
+        let out = dst_run.at(i);
+        // The C-shaped carrier stores a mutable-typed pointer, but this borrowed
+        // source span remains frozen and every downstream consumer reads it.
+        out.set_weights(weight_span.as_ptr().cast_mut());
+        out.set_num_weights(weight_span.len());
         i += 1;
     }
 
@@ -2549,16 +2580,11 @@ pub(crate) unsafe fn subdivide_mesh_level(
 
             let weights: *mut SubdivisionVertexWeights;
             if let Some(sub) = mesh_sub_view.filter(|sub| sub.source_vertex_ranges().count > 0) {
-                // SAFETY: the list arguments are by-value copies of `mesh_sub`'s
-                // own live source-vertex lists — `subdivision_copy_weights`'
-                // contract.
-                weights = unsafe {
-                    subdivision_copy_weights(
-                        sc,
-                        sub.source_vertex_ranges(),
-                        sub.source_vertex_weights(),
-                    )
-                };
+                weights = subdivision_copy_weights(
+                    sc,
+                    sub.source_vertex_ranges_view(),
+                    sub.source_vertex_weights_view(),
+                );
             } else {
                 weights = init_source_vertex_weights(sc, mesh.num_vertices());
             }
@@ -2589,16 +2615,11 @@ pub(crate) unsafe fn subdivide_mesh_level(
             // C-parity: the guard reads `source_vertex_ranges` here too
             // (ufbx.c:29750), not `skin_cluster_ranges`.
             if let Some(sub) = mesh_sub_view.filter(|sub| sub.source_vertex_ranges().count > 0) {
-                // SAFETY: the list arguments are by-value copies of `mesh_sub`'s
-                // own live skin-cluster lists — `subdivision_copy_weights`'
-                // contract.
-                weights = unsafe {
-                    subdivision_copy_weights(
-                        sc,
-                        sub.skin_cluster_ranges(),
-                        sub.skin_cluster_weights(),
-                    )
-                };
+                weights = subdivision_copy_weights(
+                    sc,
+                    sub.skin_cluster_ranges_view(),
+                    sub.skin_cluster_weights_view(),
+                );
             } else {
                 weights = init_skin_weights(sc, mesh.num_vertices(), skin_view);
             }

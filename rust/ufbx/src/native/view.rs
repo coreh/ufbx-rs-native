@@ -392,6 +392,15 @@ impl<'a, T, M: Mode> Run<'a, T, M> {
         self.count
     }
 
+    /// Raw read pointer to the first slot, preserving the run's original
+    /// allocation provenance. An empty run may retain a null base or a legal
+    /// one-past pointer from its parent run.
+    #[cfg_attr(not(feature = "subdivision"), allow(dead_code))]
+    #[inline(always)]
+    pub(crate) fn as_ptr(self) -> *const T {
+        self.base
+    }
+
     /// Bounds-checked element view carrying the run's mode and lifetime.
     #[inline(always)]
     pub(crate) fn at(self, index: usize) -> &'a View<T, M> {
@@ -499,6 +508,19 @@ impl<'a, T> Run<'a, T, Const> {
             count,
             _marker: PhantomData,
         }
+    }
+
+    /// Bounds-checked value read from an initialized read-only run.
+    #[cfg_attr(not(feature = "subdivision"), allow(dead_code))]
+    #[inline(always)]
+    pub(crate) fn copy_at(self, index: usize) -> T
+    where
+        T: Copy,
+    {
+        assert!(index < self.count);
+        // SAFETY: the constructor vouches that every slot is initialized and
+        // readable, and the assertion keeps this read in the run.
+        unsafe { *self.base.add(index) }
     }
 }
 
