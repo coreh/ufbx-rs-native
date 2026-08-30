@@ -19,7 +19,7 @@ use crate::generated::{Error, Mesh, RawSubdivideOpts};
 #[cfg(feature = "subdivision")]
 use crate::generated::{Vec2, Vec3, Vec4};
 #[cfg(feature = "subdivision")]
-use crate::native::allocator::{free, free_ator, grow_array, init_ator, Allocator};
+use crate::native::allocator::{does_overflow, free, free_ator, grow_array, init_ator, Allocator};
 #[cfg(feature = "subdivision")]
 use crate::native::api::{
     catch_topo_next_vertex_edge_run, catch_topo_prev_vertex_edge_run, compute_normals,
@@ -1168,13 +1168,43 @@ pub(crate) fn subdivide_layer(
     let values: *mut u8 = push_size(sc.tmp_view(), stride, num_initial_values) as *mut u8;
     ufbxi_check_err!(sc.error_view(), !values.is_null(), "values");
 
-    let face_values: *mut u8 = values;
-    // SAFETY: `values` is a `num_initial_values`-element `stride`-sized buffer
-    // laid out faces|edges|vertices, so `num_faces*stride` and
-    // `num_edge_values*stride` are the intended in-range segment offsets.
-    let edge_values: *mut u8 = unsafe { face_values.add(mesh.num_faces().wrapping_mul(stride)) };
-    // SAFETY: as above; the vertex segment begins after the edge segment.
-    let vertex_values: *mut u8 = unsafe { edge_values.add(num_edge_values.wrapping_mul(stride)) };
+    let num_value_bytes = num_initial_values.wrapping_mul(stride);
+    let num_face_value_bytes = mesh.num_faces().wrapping_mul(stride);
+    let num_edge_value_bytes = num_edge_values.wrapping_mul(stride);
+    let num_vertex_value_bytes = mesh.num_indices().wrapping_mul(stride);
+    assert!(!does_overflow(
+        num_face_value_bytes,
+        mesh.num_faces(),
+        stride,
+    ));
+    assert!(!does_overflow(
+        num_edge_value_bytes,
+        num_edge_values,
+        stride,
+    ));
+    assert!(!does_overflow(
+        num_vertex_value_bytes,
+        mesh.num_indices(),
+        stride,
+    ));
+    // SAFETY: the checked tmp-arena push owns exactly
+    // `num_initial_values*stride` stable, write-capable bytes. `push_size`
+    // rejects multiplication overflow and supplies the alignment selected for
+    // `stride`; registered sum callbacks use an output type of this size whose
+    // alignment divides that stride.
+    let value_bytes = unsafe { Run::<u8>::from_raw_parts(values, num_value_bytes) };
+    let face_values_write = value_bytes.subrun(0, num_face_value_bytes);
+    let remaining_value_bytes = value_bytes.subrun(
+        num_face_value_bytes,
+        value_bytes.len() - num_face_value_bytes,
+    );
+    let edge_values_write = remaining_value_bytes.subrun(0, num_edge_value_bytes);
+    let remaining_value_bytes = remaining_value_bytes.subrun(
+        num_edge_value_bytes,
+        remaining_value_bytes.len() - num_edge_value_bytes,
+    );
+    assert!(remaining_value_bytes.len() == num_vertex_value_bytes);
+    let vertex_values_write = remaining_value_bytes.subrun(0, num_vertex_value_bytes);
 
     let mut num_vertex_values: usize = 0;
 
@@ -1255,9 +1285,9 @@ pub(crate) fn subdivide_layer(
     let mut fi: usize = 0;
     while fi < mesh.num_faces() {
         let face = mesh.faces_view().copy_at(fi);
-        // SAFETY: `fi < num_faces`, so `fi*stride` is within the `num_faces`
-        // face-value segment at the head of `values`.
-        let dst: *mut u8 = unsafe { face_values.add(fi.wrapping_mul(stride)) };
+        let dst = face_values_write
+            .subrun(fi.wrapping_mul(stride), stride)
+            .as_mut_ptr();
 
         let weight: Real = 1.0 / (face.num_indices as Real);
         let mut ci: u32 = 0;
@@ -1296,7 +1326,7 @@ pub(crate) fn subdivide_layer(
     // SAFETY: the face loop above initialized the full `num_faces*stride` byte
     // segment; later subdivision stages only read these stable tmp-arena bytes.
     let face_value_bytes = unsafe {
-        Run::<u8, Const>::from_const_raw_parts(face_values, mesh.num_faces().wrapping_mul(stride))
+        Run::<u8, Const>::from_const_raw_parts(face_values_write.as_ptr(), num_face_value_bytes)
     };
 
     // Edge points
@@ -1305,9 +1335,9 @@ pub(crate) fn subdivide_layer(
     let mut ix: u32 = 0;
     while (ix as usize) < mesh.num_indices() {
         let edge_index = edge_indices_read.copy_at(ix as usize);
-        // SAFETY: the stored edge-value index times `stride` stays within the
-        // edge segment of `values` that `edge_values` heads.
-        let dst: *mut u8 = unsafe { edge_values.add((edge_index as usize).wrapping_mul(stride)) };
+        let dst = edge_values_write
+            .subrun((edge_index as usize).wrapping_mul(stride), stride)
+            .as_mut_ptr();
 
         let topo_edge = topo_view.at(ix as usize);
         let twin = topo_edge.twin();
@@ -1465,16 +1495,7 @@ pub(crate) fn subdivide_layer(
 
             let value_index: u32 = num_vertex_values as u32;
             num_vertex_values += 1;
-            // SAFETY: every completed iteration claims a fresh corner through
-            // the runtime-checked `vertex_indices[..] == NO_INDEX` guard below,
-            // so `value_index` is at most the claimed-corner count and stays
-            // `<= num_indices`; `value_index*stride` therefore addresses at
-            // worst one-past the vertex segment of `values` that
-            // `vertex_values` heads, and this iteration's own claim (which
-            // errors out otherwise) makes it strictly in-bounds before `dst` is
-            // written through.
-            let dst: *mut u8 =
-                unsafe { vertex_values.add((value_index as usize).wrapping_mul(stride)) };
+            let vertex_value_begin = (value_index as usize).wrapping_mul(stride);
 
             // We need to compute the average crease value and keep track of
             // two creased edges, if there's more we use the corner rule that
@@ -1822,9 +1843,22 @@ pub(crate) fn subdivide_layer(
 
             ufbxi_check_err!(
                 sc.error_view(),
-                // SAFETY: `sum_fn`/`sum_user`/`dst` and the first `num_inputs`
-                // `inputs` entries were set up above per the summer contract.
-                unsafe { sum_fn(sum_user, dst as *mut c_void, inputs, num_inputs) } != 0,
+                // A successful corner claim makes this dense destination slot
+                // part of the initialized vertex prefix. The registered
+                // callback writes its complete `stride`-byte output value.
+                // SAFETY: `sum_fn`/`sum_user`, the checked destination slot,
+                // and the first `num_inputs` entries were set up above per the
+                // summer contract.
+                unsafe {
+                    sum_fn(
+                        sum_user,
+                        vertex_values_write
+                            .subrun(vertex_value_begin, stride)
+                            .as_mut_ptr() as *mut c_void,
+                        inputs,
+                        num_inputs,
+                    )
+                } != 0,
                 "sum_fn(sum_user, dst, inputs, num_inputs)"
             );
         }
@@ -1848,9 +1882,9 @@ pub(crate) fn subdivide_layer(
                 (input.values() as *const u8)
                     .add((input_indices.copy_at(old_ix) as usize).wrapping_mul(stride))
             };
-            // SAFETY: `ix < num_vertex_values <= num_indices`, so `ix*stride` is
-            // within the vertex segment of `values` that `vertex_values` heads.
-            let dst: *mut u8 = unsafe { vertex_values.add((ix as usize).wrapping_mul(stride)) };
+            let dst = vertex_values_write
+                .subrun((ix as usize).wrapping_mul(stride), stride)
+                .as_mut_ptr();
 
             // SAFETY: `inputs` holds at least one live slot.
             unsafe {
@@ -1872,21 +1906,44 @@ pub(crate) fn subdivide_layer(
     let num_values: usize = num_edge_values
         .wrapping_add(mesh.num_faces())
         .wrapping_add(num_vertex_values);
-    let mut new_values: *mut u8 =
+    let new_values: *mut u8 =
         push_size(sc.result_view(), stride, num_values.wrapping_add(1)) as *mut u8;
     ufbxi_check_err!(sc.error_view(), !new_values.is_null(), "new_values");
 
-    // SAFETY: `new_values` is a `(num_values+1)*stride`-byte push, so the leading
-    // `stride` bytes are writable.
-    unsafe { core::ptr::write_bytes(new_values, 0, stride) };
-    // SAFETY: advancing by the leading zero element keeps `new_values` within the
-    // `num_values+1`-element buffer.
-    new_values = unsafe { new_values.add(stride) };
+    let num_new_value_bytes = num_values.wrapping_add(1).wrapping_mul(stride);
+    // SAFETY: the checked result-arena push owns exactly
+    // `(num_values+1)*stride` stable, write-capable bytes; `push_size` rejects
+    // multiplication overflow.
+    let new_value_bytes = unsafe { Run::<u8>::from_raw_parts(new_values, num_new_value_bytes) };
+    // SAFETY: the checked leading subrun contains the complete sentinel value.
+    unsafe { core::ptr::write_bytes(new_value_bytes.subrun(0, stride).as_mut_ptr(), 0, stride) };
 
-    // SAFETY: `values` holds `num_initial_values >= num_values` `stride`-sized
-    // elements and `new_values` now has room for `num_values` elements; the two
-    // buffers are distinct allocations, so the copy is non-overlapping.
-    unsafe { core::ptr::copy_nonoverlapping(values, new_values, num_values.wrapping_mul(stride)) };
+    let num_copied_value_bytes = num_values.wrapping_mul(stride);
+    let initialized_value_bytes = value_bytes.subrun(0, num_copied_value_bytes);
+    // SAFETY: successful callbacks initialize every byte of their output slot.
+    // Face slots are sequential; first-seen edges assign dense indices and
+    // initialize them before a twin can reuse one; vertex slots form the dense
+    // `0..num_vertex_values` prefix. No scratch-value writes occur after this
+    // point.
+    let initialized_value_bytes = unsafe {
+        Run::<u8, Const>::from_const_raw_parts(
+            initialized_value_bytes.as_ptr(),
+            num_copied_value_bytes,
+        )
+    };
+    let new_values = new_value_bytes
+        .subrun(stride, num_copied_value_bytes)
+        .as_mut_ptr();
+
+    // SAFETY: the checked source and destination runs have equal length and
+    // belong to the distinct tmp and result arenas, so they do not overlap.
+    unsafe {
+        core::ptr::copy_nonoverlapping(
+            initialized_value_bytes.as_ptr(),
+            new_values,
+            num_copied_value_bytes,
+        )
+    };
 
     output.set_values(new_values as *mut c_void);
     output.set_num_values(num_values);
