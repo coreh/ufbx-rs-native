@@ -468,6 +468,20 @@ impl<'a, T> Run<'a, T, Mut> {
     pub(crate) fn as_mut_ptr(self) -> *mut T {
         self.base
     }
+
+    /// Bounds-checked initialization or replacement of one slot.
+    ///
+    /// This intentionally has `ptr::write` semantics: an existing value is not
+    /// dropped. Native runs contain C-compatible arena values, and fresh arena
+    /// pushes may still be uninitialized when the run is minted.
+    #[cfg_attr(not(feature = "subdivision"), allow(dead_code))]
+    #[inline(always)]
+    pub(crate) fn write_at(self, index: usize, value: T) {
+        assert!(index < self.count);
+        // SAFETY: the constructor vouches for `count` contiguous allocated,
+        // write-capable slots, and the assertion keeps this write in the run.
+        unsafe { self.base.add(index).write(value) };
+    }
 }
 
 impl<'a, T> Run<'a, T, Const> {

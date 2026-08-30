@@ -2127,8 +2127,8 @@ pub(crate) unsafe fn subdivide_weights(
 }
 
 // ufbx.c:29596-29629 `ufbxi_subdivide_vertex_crease`
-// Safe `fn`: both crease attributes arrive as views, and the residual raw ops
-// index the freshly pushed `dst` runs and the `src` runs those views describe.
+// Safe `fn`: both crease attributes arrive as views; source reads use checked
+// list access and the fresh destination runs use bounds-checked writes.
 #[cfg(feature = "subdivision")]
 #[inline(never)]
 pub(crate) fn subdivide_vertex_crease<M: Mode>(
@@ -2148,9 +2148,8 @@ pub(crate) fn subdivide_vertex_crease<M: Mode>(
         !dst.values().data.is_null(),
         "dst->values.data"
     );
-    // SAFETY: `dst.values.data` holds `src_values+1` `Real`s, so slot `src_values`
-    // (the trailing zero) is in-bounds.
-    unsafe { *(dst.values().data as *mut Real).add(src_values) = 0.0 };
+    let dst_values = Run::from_list(dst.values_view());
+    dst_values.write_at(src_values, 0.0);
 
     // The pushed `indices.data` is a `src_indices*4`-element buffer.
     dst.indices_view().set_count(src_indices.wrapping_mul(4));
@@ -2166,8 +2165,7 @@ pub(crate) fn subdivide_vertex_crease<M: Mode>(
     // C: `ufbxi_nounroll for (size_t i = 0; i < src_values; i++)`
     let mut i: usize = 0;
     while i < src_values {
-        // SAFETY: `i < src_values`, in range for the live `src.values` array.
-        let mut crease: Real = unsafe { *src.values().data.add(i) };
+        let mut crease = src.values_view().copy_at(i);
         // C: `0.999f` / `0.1f` are `float` literals widened to `ufbx_real`.
         if crease < 0.999f32 as Real {
             crease -= 0.1f32 as Real;
@@ -2175,28 +2173,21 @@ pub(crate) fn subdivide_vertex_crease<M: Mode>(
         if crease < 0.0 {
             crease = 0.0;
         }
-        // SAFETY: `i < src_values < src_values+1`, an in-range slot of the
-        // freshly pushed `dst.values.data`.
-        unsafe { *(dst.values().data as *mut Real).add(i) = crease };
+        dst_values.write_at(i, crease);
         i += 1;
     }
 
     // Write the crease at the vertex corner and zero (at `src_values`) on other ones
     let zero_index: u32 = src_values as u32;
+    let dst_indices = Run::from_list(dst.indices_view());
     // C: `ufbxi_nounroll for (size_t i = 0; i < src_indices; i++)`
     let mut i: usize = 0;
     while i < src_indices {
-        // SAFETY: `i < src_indices`, so `i*4` addresses a live 4-slot quad within
-        // the `src_indices*4`-element `dst.indices.data` push.
-        let quad: *mut u32 = unsafe { (dst.indices().data as *mut u32).add(i.wrapping_mul(4)) };
-        // SAFETY: `quad.add(0..=3)` are the four slots of this in-bounds quad;
-        // `i < src_indices` indexes the live `src.indices` array.
-        unsafe {
-            *quad.add(0) = *src.indices().data.add(i);
-            *quad.add(1) = zero_index;
-            *quad.add(2) = zero_index;
-            *quad.add(3) = zero_index;
-        }
+        let quad = i.wrapping_mul(4);
+        dst_indices.write_at(quad, src.indices_view().copy_at(i));
+        dst_indices.write_at(quad.wrapping_add(1), zero_index);
+        dst_indices.write_at(quad.wrapping_add(2), zero_index);
+        dst_indices.write_at(quad.wrapping_add(3), zero_index);
         i += 1;
     }
 
@@ -2206,10 +2197,10 @@ pub(crate) fn subdivide_vertex_crease<M: Mode>(
 // ufbx.c:29631-29925 `ufbxi_subdivide_mesh_level`
 // Stays `unsafe fn`: the mesh fields run through `MeshView`, but topology
 // construction and subdivision-weight propagation consume raw source runs
-// whose relational validity comes from the source mesh/subdivision data. The
-// per-face result writes at `index_offset + ci` likewise rely on the source
-// face ranges tiling `num_indices`; the narrow blocks below cite their local
-// obligations.
+// whose relational validity comes from the source mesh/subdivision data.
+// Source face ranges must also tile `num_indices` so topology construction is
+// valid and the optional replicated face-attribute runs are fully initialized;
+// the narrow blocks below cite their local obligations.
 #[cfg(feature = "subdivision")]
 #[inline(never)]
 pub(crate) unsafe fn subdivide_mesh_level(
@@ -2637,15 +2628,11 @@ pub(crate) unsafe fn subdivide_mesh_level(
     let vertex_indices: &ListView<u32> = result.vertex_indices_view();
     vertex_indices.set_data(result.vertex_position().indices().data);
     vertex_indices.set_count(result.num_indices());
-    // SAFETY: `vertices_raw()` addresses `result`'s own live `vertices` list
-    // field, carrying the context's write-capable provenance.
-    let vertices: &ListView<Vec3> = unsafe { ListView::from_ptr(result.vertices_raw()) };
+    let vertices: &ListView<Vec3> = result.vertices_view();
     vertices.set_data(result.vertex_position().values().data);
     vertices.set_count(result.num_vertices());
 
-    // SAFETY: `faces_raw()` addresses `result`'s own live `faces` list field,
-    // carrying the context's write-capable provenance.
-    let faces: &ListView<Face> = unsafe { ListView::from_ptr(result.faces_raw()) };
+    let faces: &ListView<Face> = result.faces_view();
     faces.set_count(result.num_faces());
     faces.set_data(sc.result_view().push::<Face>(result.num_faces()));
     ufbxi_check_err!(
@@ -2656,30 +2643,17 @@ pub(crate) unsafe fn subdivide_mesh_level(
 
     let mut i: usize = 0;
     while i < result.num_faces() {
-        // SAFETY: `i < num_faces`, so `faces.data().add(i)` is a live slot of the
-        // freshly pushed `num_faces`-element face array; one mint serves both
-        // field writes.
-        let face: &View<Face> =
-            unsafe { View::<Face>::from_ptr((faces.data() as *mut Face).add(i)) };
+        let face = faces.at(i);
         face.set_index_begin(i.wrapping_mul(4) as u32);
         face.set_num_indices(4);
         i += 1;
     }
 
     if !mesh.edges().data.is_null() {
-        // One `ListView` mint per result edge list, serving the pushes below and
-        // the per-edge/per-face fill loops.
-        // SAFETY: each `*_raw()` addresses one of `result`'s own live list
-        // fields, carrying the context's write-capable provenance.
-        let edges: &ListView<Edge> = unsafe { ListView::from_ptr(result.edges_raw()) };
+        let edges: &ListView<Edge> = result.edges_view();
         let edge_crease: &ListView<Real> = result.edge_crease_view();
-        // SAFETY: as above, for the smoothing and visibility lists.
-        let (edge_smoothing, edge_visibility): (&ListView<bool>, &ListView<bool>) = unsafe {
-            (
-                ListView::from_ptr(result.edge_smoothing_raw()),
-                ListView::from_ptr(result.edge_visibility_raw()),
-            )
-        };
+        let edge_smoothing: &ListView<bool> = result.edge_smoothing_view();
+        let edge_visibility: &ListView<bool> = result.edge_visibility_view();
 
         result.set_num_edges(
             mesh.num_edges()
@@ -2734,15 +2708,7 @@ pub(crate) unsafe fn subdivide_mesh_level(
             let a: u32 = (face.index_begin.wrapping_add(offset)).wrapping_mul(4);
             let b: u32 = (face.index_begin.wrapping_add(next)).wrapping_mul(4);
 
-            // SAFETY: `di`/`di+1` are within the result `edges` array (2 written
-            // per source edge, `num_edges` total capacity); one mint per element
-            // serves both of its field writes.
-            let (e0, e1) = unsafe {
-                (
-                    View::<Edge>::from_ptr((edges.data() as *mut Edge).add(di + 0)),
-                    View::<Edge>::from_ptr((edges.data() as *mut Edge).add(di + 1)),
-                )
-            };
+            let (e0, e1) = (edges.at(di + 0), edges.at(di + 1));
             e0.set_a(a);
             e0.set_b(a.wrapping_add(1));
             e1.set_a(b.wrapping_add(3));
@@ -2757,30 +2723,23 @@ pub(crate) unsafe fn subdivide_mesh_level(
                 if crease < 0.0 {
                     crease = 0.0;
                 }
-                // SAFETY: `di`/`di+1` are in-range slots of the `num_edges`-sized
-                // result crease array pushed above.
-                unsafe {
-                    *(edge_crease.data() as *mut Real).add(di + 0) = crease;
-                    *(edge_crease.data() as *mut Real).add(di + 1) = crease;
-                }
+                let run = Run::from_list(edge_crease);
+                run.write_at(di + 0, crease);
+                run.write_at(di + 1, crease);
             }
 
             if !mesh.edge_smoothing().data.is_null() {
                 let smoothing = mesh.edge_smoothing_view().copy_at(i);
-                // SAFETY: `di`/`di+1` are in-range result slots.
-                unsafe {
-                    *(edge_smoothing.data() as *mut bool).add(di + 0) = smoothing;
-                    *(edge_smoothing.data() as *mut bool).add(di + 1) = smoothing;
-                }
+                let run = Run::from_list(edge_smoothing);
+                run.write_at(di + 0, smoothing);
+                run.write_at(di + 1, smoothing);
             }
 
             if !mesh.edge_visibility().data.is_null() {
                 let visibility = mesh.edge_visibility_view().copy_at(i);
-                // SAFETY: `di`/`di+1` are in-range result slots.
-                unsafe {
-                    *(edge_visibility.data() as *mut bool).add(di + 0) = visibility;
-                    *(edge_visibility.data() as *mut bool).add(di + 1) = visibility;
-                }
+                let run = Run::from_list(edge_visibility);
+                run.write_at(di + 0, visibility);
+                run.write_at(di + 1, visibility);
             }
 
             di += 2;
@@ -2789,28 +2748,20 @@ pub(crate) unsafe fn subdivide_mesh_level(
 
         let mut fi: usize = 0;
         while fi < result.num_faces() {
-            // SAFETY: `di` continues past the `2*num_edges` per-edge writes with
-            // one slot per face, staying within the `num_edges` result `edges`
-            // capacity (`= 2*num_edges + num_faces`); one mint serves both field
-            // writes.
-            let e: &View<Edge> =
-                unsafe { View::<Edge>::from_ptr((edges.data() as *mut Edge).add(di)) };
+            let e = edges.at(di);
             e.set_a(fi.wrapping_mul(4).wrapping_add(1) as u32);
             e.set_b(fi.wrapping_mul(4).wrapping_add(2) as u32);
 
             if !edge_crease.data().is_null() {
-                // SAFETY: `di` is an in-range slot of the result crease array.
-                unsafe { *(edge_crease.data() as *mut Real).add(di) = 0.0 };
+                Run::from_list(edge_crease).write_at(di, 0.0);
             }
 
             if !edge_smoothing.data().is_null() {
-                // SAFETY: `di` is an in-range slot of the result smoothing array.
-                unsafe { *(edge_smoothing.data() as *mut bool).add(di + 0) = true };
+                Run::from_list(edge_smoothing).write_at(di + 0, true);
             }
 
             if !edge_visibility.data().is_null() {
-                // SAFETY: `di` is an in-range slot of the result visibility array.
-                unsafe { *(edge_visibility.data() as *mut bool).add(di + 0) = false };
+                Run::from_list(edge_visibility).write_at(di + 0, false);
             }
 
             di += 1;
@@ -2818,18 +2769,10 @@ pub(crate) unsafe fn subdivide_mesh_level(
         }
     }
 
-    // One `ListView` mint per result face list, serving the pushes below and the
-    // per-face fill loop.
-    // SAFETY: each `*_raw()` addresses one of `result`'s own live list fields,
-    // carrying the context's write-capable provenance.
-    let (face_material, face_smoothing, face_group, face_hole) = unsafe {
-        (
-            ListView::from_ptr(result.face_material_raw()),
-            ListView::from_ptr(result.face_smoothing_raw()),
-            ListView::from_ptr(result.face_group_raw()),
-            ListView::from_ptr(result.face_hole_raw()),
-        )
-    };
+    let face_material: &ListView<u32> = result.face_material_view();
+    let face_smoothing: &ListView<bool> = result.face_smoothing_view();
+    let face_group: &ListView<u32> = result.face_group_view();
+    let face_hole: &ListView<bool> = result.face_hole_view();
 
     if !mesh.face_material().data.is_null() {
         face_material.set_count(result.num_faces());
@@ -2869,10 +2812,7 @@ pub(crate) unsafe fn subdivide_mesh_level(
     }
 
     if result.material_parts().count > 0 {
-        // SAFETY: `material_parts_raw()` addresses `result`'s own live list
-        // field, carrying the context's write-capable provenance.
-        let material_parts: &ListView<MeshPart> =
-            unsafe { ListView::from_ptr(result.material_parts_raw()) };
+        let material_parts: &ListView<MeshPart> = result.material_parts_view();
         material_parts.set_data(
             sc.result_view()
                 .push_zero::<MeshPart>(material_parts.count()),
@@ -2894,14 +2834,10 @@ pub(crate) unsafe fn subdivide_mesh_level(
         let mut mat: u32 = 0;
         if !mesh.face_material().data.is_null() {
             mat = mesh.face_material_view().copy_at(i);
+            let run = Run::from_list(face_material);
             let mut ci: usize = 0;
             while ci < face.num_indices as usize {
-                // SAFETY: `index_offset + ci` addresses this face's contiguous
-                // run within the `num_faces`-slot result array (face index ranges
-                // tile the total, source-mesh consistency).
-                unsafe {
-                    *(face_material.data() as *mut u32).add(index_offset.wrapping_add(ci)) = mat;
-                }
+                run.write_at(index_offset.wrapping_add(ci), mat);
                 ci += 1;
             }
         }
@@ -2909,34 +2845,28 @@ pub(crate) unsafe fn subdivide_mesh_level(
         let _ = mat;
         if !mesh.face_smoothing().data.is_null() {
             let flag = mesh.face_smoothing_view().copy_at(i);
+            let run = Run::from_list(face_smoothing);
             let mut ci: usize = 0;
             while ci < face.num_indices as usize {
-                // SAFETY: `index_offset + ci` is within this face's result run.
-                unsafe {
-                    *(face_smoothing.data() as *mut bool).add(index_offset.wrapping_add(ci)) = flag;
-                }
+                run.write_at(index_offset.wrapping_add(ci), flag);
                 ci += 1;
             }
         }
         if !mesh.face_group().data.is_null() {
             let group = mesh.face_group_view().copy_at(i);
+            let run = Run::from_list(face_group);
             let mut ci: usize = 0;
             while ci < face.num_indices as usize {
-                // SAFETY: `index_offset + ci` is within this face's result run.
-                unsafe {
-                    *(face_group.data() as *mut u32).add(index_offset.wrapping_add(ci)) = group;
-                }
+                run.write_at(index_offset.wrapping_add(ci), group);
                 ci += 1;
             }
         }
         if !mesh.face_hole().data.is_null() {
             let flag = mesh.face_hole_view().copy_at(i);
+            let run = Run::from_list(face_hole);
             let mut ci: usize = 0;
             while ci < face.num_indices as usize {
-                // SAFETY: `index_offset + ci` is within this face's result run.
-                unsafe {
-                    *(face_hole.data() as *mut bool).add(index_offset.wrapping_add(ci)) = flag;
-                }
+                run.write_at(index_offset.wrapping_add(ci), flag);
                 ci += 1;
             }
         }
