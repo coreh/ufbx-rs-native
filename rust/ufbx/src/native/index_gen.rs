@@ -24,7 +24,9 @@ use crate::native::allocator::{
     align_to_mask, alloc, free, free_ator, init_ator, size_align_mask, Allocator, AllocatorView,
 };
 #[cfg(feature = "index-gen")]
-use crate::native::error::{clear_error, fix_error_type, ufbxi_fmt_err_info, ufbxi_report_err_msg};
+use crate::native::error::{
+    clear_error, fix_error_type, ufbxi_fmt_err_info, ufbxi_report_err_msg, ErrorView,
+};
 #[cfg(not(feature = "index-gen"))]
 use crate::native::error::{ufbxi_fmt_err_info, ufbxi_report_err_msg};
 #[cfg(feature = "index-gen")]
@@ -34,7 +36,7 @@ use crate::native::hash::{
 #[cfg(feature = "index-gen")]
 use crate::native::platform::{add_ptr, to_size, ufbx_assert};
 #[cfg(feature = "index-gen")]
-use crate::native::view::{Const, View};
+use crate::native::view::{view_read_shared, view_write, Const, Mode, Run, View};
 #[cfg(feature = "index-gen")]
 use core::ffi::c_void;
 use core::mem::size_of;
@@ -57,15 +59,21 @@ unsafe extern "C" fn map_cmp_vertex(
     let size: usize = unsafe { *(user as *mut usize) };
     #[cfg(feature = "regression")]
     ufbx_assert!(size % 8 == 0);
+    // SAFETY: the map comparator contract gives `va`/`vb` as packed vertices
+    // of `size` bytes each. `size` is a multiple of eight
+    // (`align_to_mask(packed_size, 7)`), and both blocks are `u64`-aligned:
+    // map items sit at an eight-multiple offset from an allocation base, and
+    // the probe key is a `u64` array or allocation.
+    let (a_words, b_words) = unsafe {
+        (
+            Run::<u64, Const>::from_const_raw_parts(va.cast(), size / 8),
+            Run::<u64, Const>::from_const_raw_parts(vb.cast(), size / 8),
+        )
+    };
     let mut i: usize = 0;
     while i < size {
-        // SAFETY: the map comparator contract gives `va`/`vb` as packed vertices
-        // of `size` bytes each; `i + 8 <= size` since `size` is a multiple of 8
-        // (`align_to_mask(packed_size, 7)`), and both blocks are 8-aligned (map
-        // items sit at an 8-multiple offset from an `ufbxi_alloc` base, the probe
-        // key is a `uint64_t` array or allocation).
-        let a: u64 = unsafe { *((va as *const u8).add(i) as *const u64) };
-        let b: u64 = unsafe { *((vb as *const u8).add(i) as *const u64) };
+        let a = a_words.copy_at(i / 8);
+        let b = b_words.copy_at(i / 8);
         if a != b {
             return if a < b { -1 } else { 1 };
         }
@@ -83,6 +91,70 @@ pub(crate) struct VertexStream {
     pub ptr: *mut u8,
     pub vertex_size: usize,
     pub packed_offset: usize,
+}
+
+#[cfg(feature = "index-gen")]
+impl<M: Mode> View<RawVertexStream, M> {
+    #[inline(always)]
+    pub(crate) fn data(&self) -> *mut c_void {
+        view_read_shared!(self, data)
+    }
+
+    #[inline(always)]
+    pub(crate) fn vertex_count(&self) -> usize {
+        view_read_shared!(self, vertex_count)
+    }
+
+    #[inline(always)]
+    pub(crate) fn vertex_size(&self) -> usize {
+        view_read_shared!(self, vertex_size)
+    }
+}
+
+#[cfg(feature = "index-gen")]
+impl<M: Mode> View<VertexStream, M> {
+    #[inline(always)]
+    pub(crate) fn begin(&self) -> *mut u8 {
+        view_read_shared!(self, begin)
+    }
+
+    #[inline(always)]
+    pub(crate) fn ptr(&self) -> *mut u8 {
+        view_read_shared!(self, ptr)
+    }
+
+    #[inline(always)]
+    pub(crate) fn vertex_size(&self) -> usize {
+        view_read_shared!(self, vertex_size)
+    }
+
+    #[inline(always)]
+    pub(crate) fn packed_offset(&self) -> usize {
+        view_read_shared!(self, packed_offset)
+    }
+}
+
+#[cfg(feature = "index-gen")]
+impl View<VertexStream> {
+    #[inline(always)]
+    pub(crate) fn set_begin(&self, begin: *mut u8) {
+        view_write!(self, begin, begin)
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_ptr(&self, ptr: *mut u8) {
+        view_write!(self, ptr, ptr)
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_vertex_size(&self, vertex_size: usize) {
+        view_write!(self, vertex_size, vertex_size)
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_packed_offset(&self, packed_offset: usize) {
+        view_write!(self, packed_offset, packed_offset)
+    }
 }
 
 // ufbx.c:30118 `ufbxi_arraycount(local_streams)`
@@ -114,6 +186,15 @@ pub(crate) unsafe fn generate_indices(
     // `RawAllocatorOpts` (`None` when zeroed, via the null-fn niche), matching
     // the C zero-initializer.
     let mut ator: Allocator = unsafe { MaybeUninit::<Allocator>::zeroed().assume_init() };
+    // SAFETY: `error` is the caller's live working error slot and `ator` is
+    // this frame's live, unmoved allocator local. Both carry write-capable
+    // provenance for the duration of this function.
+    let (error, ator_view) = unsafe {
+        (
+            ErrorView::from_ptr(error),
+            AllocatorView::from_ptr(&raw mut ator),
+        )
+    };
     // SAFETY: a non-null `allocator` is the caller's live, initialized options
     // struct (this `unsafe fn`'s contract), written nowhere while the
     // read-only view is held; null is C's NULL, which `init_ator` answers with
@@ -123,14 +204,7 @@ pub(crate) unsafe fn generate_indices(
     } else {
         Some(unsafe { View::<RawAllocatorOpts, Const>::from_ptr(allocator) })
     };
-    init_ator(
-        error,
-        // SAFETY: the zeroed allocator above is this frame's live, unmoved
-        // local.
-        unsafe { AllocatorView::from_ptr(&raw mut ator) },
-        allocator,
-        c"allocator",
-    );
+    init_ator(error.get(), ator_view, allocator, c"allocator");
 
     let mut local_streams = MaybeUninit::<[VertexStream; LOCAL_STREAMS_COUNT]>::uninit(); // ufbxi_uninit
     let mut local_packed_vertex = MaybeUninit::<[u64; LOCAL_PACKED_VERTEX_COUNT]>::uninit(); // ufbxi_uninit
@@ -139,44 +213,43 @@ pub(crate) unsafe fn generate_indices(
 
     let mut streams: *mut VertexStream = core::ptr::null_mut();
     if num_streams > LOCAL_STREAMS_COUNT {
-        // SAFETY: `ator` is this frame's live, unmoved allocator, initialized
-        // above.
-        streams = alloc::<VertexStream>(
-            unsafe { AllocatorView::from_ptr(&raw mut ator) },
-            num_streams,
-        );
+        streams = alloc::<VertexStream>(ator_view, num_streams);
         if streams.is_null() {
             fail = true;
         }
     } else {
         streams = local_streams_ptr;
     }
+    // SAFETY: on the successful branch `streams` is either this frame's
+    // `LOCAL_STREAMS_COUNT`-slot local storage (`num_streams` fits) or the
+    // checked heap allocation of exactly `num_streams` slots. Allocation
+    // failure carries no non-empty capability into later guarded phases.
+    let streams_write = if fail {
+        Run::<VertexStream>::empty()
+    } else {
+        unsafe { Run::<VertexStream>::from_raw_parts(streams, num_streams) }
+    };
 
     // C-parity: `packed_size` is a local whose ADDRESS is handed to
     // `ufbxi_map_init` as the comparator's user pointer (ufbx.c:30163), so the
     // comparator reads the final value through that pointer.
     let mut packed_size: usize = 0;
     if !fail {
+        // SAFETY: the raw parameter contract supplies `num_streams` readable,
+        // initialized descriptors. This frozen descriptor epoch ends after
+        // initialization, before nested stream data is compacted in place.
+        let user_streams = unsafe {
+            Run::<RawVertexStream, Const>::from_const_raw_parts(user_streams, num_streams)
+        };
         let mut i: usize = 0;
         while i < num_streams {
-            // SAFETY (this read and the field reads below): `user_streams`
-            // addresses `num_streams` streams (fn raw-param contract) and
-            // `i < num_streams`.
-            if unsafe { (*user_streams.add(i)).vertex_count } < num_indices {
-                // SAFETY: `error` is non-null and points at a live `Error` —
-                // the sole caller (`api::generate_indices`) substitutes a local
-                // error slot for null — so this is a write-capable mint of the
-                // caller's slot; the single `%zu` conversion is matched by the
-                // `usize` argument.
-                unsafe {
-                    ufbxi_fmt_err_info!(
-                        Some(crate::native::error::ErrorView::from_ptr(error)),
-                        "%zu",
-                        i
-                    )
-                };
+            let user_stream = user_streams.at(i);
+            if user_stream.vertex_count() < num_indices {
+                // The single `%zu` conversion is matched by the `usize`
+                // argument; `error` is the caller's working slot view.
+                unsafe { ufbxi_fmt_err_info!(Some(error), "%zu", i) };
                 ufbxi_report_err_msg!(
-                    unsafe { crate::native::error::ErrorView::from_ptr(error) },
+                    error,
                     "user_streams[i].vertex_count < num_indices",
                     "Truncated vertex stream"
                 );
@@ -184,19 +257,16 @@ pub(crate) unsafe fn generate_indices(
                 break;
             }
 
-            let vertex_size: usize = unsafe { (*user_streams.add(i)).vertex_size };
+            let vertex_size = user_stream.vertex_size();
             let align: usize = size_align_mask(vertex_size);
             packed_size = align_to_mask(packed_size, align);
             // C: `streams[i].ptr = streams[i].begin = (char*)user_streams[i].data;`
-            let begin: *mut u8 = unsafe { (*user_streams.add(i)).data as *mut u8 };
-            // SAFETY (these four writes): `streams` addresses `num_streams`
-            // `VertexStream` slots — either the local array (`num_streams <=
-            // LOCAL_STREAMS_COUNT`) or the allocation checked non-null above —
-            // and `i < num_streams`.
-            unsafe { (*streams.add(i)).begin = begin };
-            unsafe { (*streams.add(i)).ptr = begin };
-            unsafe { (*streams.add(i)).vertex_size = vertex_size };
-            unsafe { (*streams.add(i)).packed_offset = packed_size };
+            let begin = user_stream.data() as *mut u8;
+            let stream = streams_write.at(i);
+            stream.set_begin(begin);
+            stream.set_ptr(begin);
+            stream.set_vertex_size(vertex_size);
+            stream.set_packed_offset(packed_size);
             packed_size = packed_size.wrapping_add(vertex_size);
             i += 1;
         }
@@ -204,11 +274,7 @@ pub(crate) unsafe fn generate_indices(
     }
 
     if !fail && packed_size == 0 {
-        ufbxi_report_err_msg!(
-            unsafe { crate::native::error::ErrorView::from_ptr(error) },
-            "packed_size != 0",
-            "Zero vertex size"
-        );
+        ufbxi_report_err_msg!(error, "packed_size != 0", "Zero vertex size");
         fail = true;
     }
 
@@ -216,12 +282,7 @@ pub(crate) unsafe fn generate_indices(
     if !fail {
         if packed_size > size_of::<[u64; LOCAL_PACKED_VERTEX_COUNT]>() {
             ufbx_assert!(packed_size % 8 == 0);
-            // SAFETY: `ator` is this frame's live, unmoved allocator,
-            // initialized above.
-            packed_vertex = alloc::<u64>(
-                unsafe { AllocatorView::from_ptr(&raw mut ator) },
-                packed_size / 8,
-            ) as *mut u8;
+            packed_vertex = alloc::<u64>(ator_view, packed_size / 8) as *mut u8;
             if packed_vertex.is_null() {
                 fail = true;
             }
@@ -236,18 +297,17 @@ pub(crate) unsafe fn generate_indices(
     // (`Option<CmpFn>`, `None` when zeroed via the null-fn niche), matching the
     // C zero-initializer.
     let mut map: Map = unsafe { MaybeUninit::<Map>::zeroed().assume_init() };
-    // SAFETY: the allocator view is minted over the initialized local, which
-    // outlives every use of the map below. The user pointer identifies
+    // SAFETY: the allocator view covers the initialized local, which outlives
+    // every use of the map below. The user pointer identifies
     // `packed_size`, a live `usize` — the type `map_cmp_vertex` reads through
     // it — and a local that outlives every comparator call (all of which happen
-    // below, before this fn returns). The allocator address is taken with
-    // `&raw mut`, not `&mut`: `map_init` stores it in `map.ator`, which the map
-    // uses past the end of any borrow (through `map_free` below), so every
-    // `ator` mint in this fn stays a raw address-of.
+    // below, before this fn returns). `map_init` stores the allocator address
+    // in `map.ator`, and the same raw-address-derived view remains valid
+    // through `map_free` below.
     unsafe {
         map_init(
             MapView::from_mut(&mut map),
-            AllocatorView::from_ptr(&raw mut ator),
+            ator_view,
             map_cmp_vertex,
             (&raw mut packed_size).cast::<c_void>(),
         );
@@ -263,40 +323,55 @@ pub(crate) unsafe fn generate_indices(
 
     if !fail {
         ufbx_assert!(!packed_vertex.is_null());
-        // SAFETY: `packed_vertex` addresses `packed_size` writable bytes — the
-        // local buffer when `packed_size` fits it, else the allocation checked
-        // non-null above.
-        unsafe { core::ptr::write_bytes(packed_vertex, 0, packed_size) };
+        // SAFETY: scratch selection above supplies exactly `packed_size`
+        // stable, write-capable bytes (local or checked heap allocation). The
+        // raw output parameter contract supplies `num_indices` stable,
+        // write-capable slots; insertion failure leaves a dense initialized
+        // prefix, which Mut mode permits.
+        let (packed_vertex_write, indices_write) = unsafe {
+            (
+                Run::<u8>::from_raw_parts(packed_vertex, packed_size),
+                Run::<u32>::from_raw_parts(indices, num_indices),
+            )
+        };
+        // SAFETY: the bounded scratch run is write-capable and covers exactly
+        // the selected local buffer or checked allocation.
+        unsafe { core::ptr::write_bytes(packed_vertex_write.as_mut_ptr(), 0, packed_size) };
 
         let mut i: usize = 0;
         while i < num_indices {
             let mut si: usize = 0;
             while si < num_streams {
-                // SAFETY (these three reads and the write below): `streams`
-                // addresses `num_streams` filled `VertexStream` slots and
-                // `si < num_streams`.
-                let size: usize = unsafe { (*streams.add(si)).vertex_size };
-                let offset: usize = unsafe { (*streams.add(si)).packed_offset };
-                let ptr: *mut u8 = unsafe { (*streams.add(si)).ptr };
+                let stream = streams_write.at(si);
+                let size = stream.vertex_size();
+                let offset = stream.packed_offset();
+                let ptr = stream.ptr();
                 // SAFETY: `ptr` walks the caller's stream, which holds at least
                 // `num_indices` vertices of `size` bytes (checked above) and
                 // `i < num_indices`; the destination sits at `offset` in the
                 // `packed_size`-byte packed vertex, where `offset + size <=
                 // packed_size` by construction of the offsets. The two blocks are
                 // distinct allocations, hence non-overlapping.
-                unsafe { core::ptr::copy_nonoverlapping(ptr, packed_vertex.add(offset), size) };
+                unsafe {
+                    core::ptr::copy_nonoverlapping(
+                        ptr,
+                        packed_vertex_write.subrun(offset, size).as_mut_ptr(),
+                        size,
+                    )
+                };
                 // SAFETY: the advanced pointer stays within the stream (one
                 // vertex per index, `i < num_indices <= vertex_count`), at worst
                 // one past its end after the final index.
-                unsafe { (*streams.add(si)).ptr = ptr.add(size) };
+                stream.set_ptr(unsafe { ptr.add(size) });
                 si += 1;
             }
 
             // SAFETY: `packed_vertex` addresses `packed_size` readable bytes,
             // all initialized — zeroed by the `write_bytes` above, with the
             // stream loop overwriting the non-padding ranges each iteration.
-            let hash: u32 =
-                hash_string(unsafe { crate::prelude::slice_from_ptr(packed_vertex, packed_size) });
+            let hash: u32 = hash_string(unsafe {
+                crate::prelude::slice_from_ptr(packed_vertex_write.as_ptr(), packed_size)
+            });
             // SAFETY: the map's item size is the `packed_size` it was grown with,
             // and the key addresses `packed_size` readable bytes.
             let mut entry: *mut c_void = unsafe {
@@ -304,7 +379,7 @@ pub(crate) unsafe fn generate_indices(
                     MapView::from_mut(&mut map),
                     packed_size,
                     hash,
-                    packed_vertex as *const c_void,
+                    packed_vertex_write.as_ptr() as *const c_void,
                 )
             };
             if entry.is_null() {
@@ -314,7 +389,7 @@ pub(crate) unsafe fn generate_indices(
                         MapView::from_mut(&mut map),
                         packed_size,
                         hash,
-                        packed_vertex as *const c_void,
+                        packed_vertex_write.as_ptr() as *const c_void,
                     )
                 };
                 if entry.is_null() {
@@ -325,7 +400,11 @@ pub(crate) unsafe fn generate_indices(
                 // `packed_size`-byte item inside the map's own item block,
                 // disjoint from the packed vertex buffer.
                 unsafe {
-                    core::ptr::copy_nonoverlapping(packed_vertex, entry as *mut u8, packed_size)
+                    core::ptr::copy_nonoverlapping(
+                        packed_vertex_write.as_ptr(),
+                        entry as *mut u8,
+                        packed_size,
+                    )
                 };
             }
             // SAFETY: `entry` points into the map's item block, which starts at
@@ -333,9 +412,7 @@ pub(crate) unsafe fn generate_indices(
             let index: u32 =
                 (to_size(unsafe { (entry as *mut u8).offset_from(map.items as *mut u8) })
                     / packed_size) as u32;
-            // SAFETY: `indices` addresses `num_indices` writable `u32`s (fn
-            // raw-param contract) and `i < num_indices`.
-            unsafe { *indices.add(i) = index };
+            indices_write.write_at(i, index);
             i += 1;
         }
     }
@@ -346,13 +423,10 @@ pub(crate) unsafe fn generate_indices(
 
         let mut si: usize = 0;
         while si < num_streams {
-            // SAFETY (these three field reads): `streams` addresses
-            // `num_streams` filled `VertexStream` slots and `si < num_streams`.
-            let vertex_size: usize = unsafe { (*streams.add(si)).vertex_size };
-            let mut dst: *mut u8 = unsafe { (*streams.add(si)).begin };
-            let mut src: *mut u8 = add_ptr(map.items as *mut u8, unsafe {
-                (*streams.add(si)).packed_offset
-            });
+            let stream = streams_write.at(si);
+            let vertex_size = stream.vertex_size();
+            let mut dst = stream.begin();
+            let mut src = add_ptr(map.items as *mut u8, stream.packed_offset());
             let mut i: usize = 0;
             while i < result_vertices {
                 // SAFETY: `src` walks the map's `result_vertices` items of
@@ -373,44 +447,24 @@ pub(crate) unsafe fn generate_indices(
             si += 1;
         }
 
-        // SAFETY: `error` is non-null and points at a live `Error` — the sole
-        // caller (`api::generate_indices`) substitutes a local error slot for
-        // null — so this is a write-capable mint of the caller's slot.
-        let err = unsafe { crate::native::error::ErrorView::from_ptr(error) };
-        clear_error(Some(err));
+        clear_error(Some(error));
     } else {
-        // SAFETY: `error` is non-null and points at a live `Error` — the sole
-        // caller (`api::generate_indices`) substitutes a local error slot for
-        // null — so this is a write-capable mint of the caller's slot.
-        let err = unsafe { crate::native::error::ErrorView::from_ptr(error) };
-        fix_error_type(err, b"Failed to generate indices\0", None);
+        fix_error_type(error, b"Failed to generate indices\0", None);
     }
 
     if !streams.is_null() && streams != local_streams_ptr {
         // SAFETY: `ator` is this frame's live, unmoved `Allocator` local, and
-        // the guards single out the `alloc::<VertexStream>(&raw mut ator,
-        // num_streams)` result above, returned to the same allocator with the
-        // count it was allocated with.
-        unsafe {
-            free::<VertexStream>(
-                Some(AllocatorView::from_ptr(&raw mut ator)),
-                streams,
-                num_streams,
-            )
-        };
+        // the guards single out the `alloc::<VertexStream>(ator_view,
+        // num_streams)` result, returned to the same allocator with the count
+        // it was allocated with.
+        unsafe { free::<VertexStream>(Some(ator_view), streams, num_streams) };
     }
     if !packed_vertex.is_null() && packed_vertex != local_packed_vertex_ptr {
         // SAFETY: `ator` is this frame's live, unmoved `Allocator` local, and
-        // the guards single out the `alloc::<u64>(&raw mut ator,
-        // packed_size / 8)` result above, returned to the same allocator with the
-        // count it was allocated with (`packed_size` is unchanged since).
-        unsafe {
-            free::<u64>(
-                Some(AllocatorView::from_ptr(&raw mut ator)),
-                packed_vertex as *mut u64,
-                packed_size / 8,
-            )
-        };
+        // the guards single out the `alloc::<u64>(ator_view, packed_size / 8)`
+        // result, returned to the same allocator with the count it was
+        // allocated with (`packed_size` is unchanged since).
+        unsafe { free::<u64>(Some(ator_view), packed_vertex as *mut u64, packed_size / 8) };
     }
 
     // The map is freed through the allocator that owns its storage before that
@@ -418,7 +472,7 @@ pub(crate) unsafe fn generate_indices(
     map_free(MapView::from_mut(&mut map));
     // SAFETY: `ator` is that same live, unmoved local allocator, torn down
     // exactly once here.
-    unsafe { free_ator(AllocatorView::from_ptr(&raw mut ator)) };
+    unsafe { free_ator(ator_view) };
 
     result_vertices
 }
