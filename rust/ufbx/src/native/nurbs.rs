@@ -56,10 +56,10 @@ use crate::native::scene_process::finalize_mesh_material;
 use crate::native::string_pool::slow_normalize3;
 #[cfg(feature = "tessellation")]
 use crate::native::view::view_raw_mut;
-#[cfg(feature = "tessellation")]
-use crate::native::view::Const;
 use crate::native::view::View;
 use crate::native::view::{view_project, view_read, view_write};
+#[cfg(feature = "tessellation")]
+use crate::native::view::{Const, Run};
 use crate::prelude::Real;
 #[cfg(feature = "tessellation")]
 use crate::prelude::Ref;
@@ -542,14 +542,14 @@ pub(crate) fn tessellate_nurbs_curve_imp(
     }
     let num_sub: usize = tc.opts_view().span_subdivision();
 
-    let curve: *const NurbsCurve = tc.curve();
-    let line: *mut LineCurve = tc.line_mut_ptr();
+    let curve = tc.curve();
+    let line = tc.line_mut_ptr();
+    // SAFETY: the context was constructed around this live input curve, whose
+    // bytes remain read-only for the tessellation call.
+    let curve_view = unsafe { View::<NurbsCurve, Const>::from_ptr(curve) };
     ufbxi_check_err_msg!(
         tc.error_view(),
-        // SAFETY: `tc.curve()` is the curve the context was built around (tc
-        // construction invariant), so reading its basis/control points is a
-        // read of a live scene element.
-        unsafe { (*curve).basis.valid && (*curve).control_points.count > 0 },
+        curve_view.basis().valid() && curve_view.control_points_view().count() > 0,
         "Bad NURBS geometry",
         "curve->basis.valid && curve->control_points.count > 0"
     );
@@ -573,8 +573,7 @@ pub(crate) fn tessellate_nurbs_curve_imp(
     tc.result_view().set_unordered(true);
     tc.result_view().set_ator(tc.ator_result_mut_ptr());
 
-    // SAFETY: reading the live curve's basis (tc construction invariant).
-    let num_spans: usize = unsafe { (*curve).basis.spans.count };
+    let num_spans = curve_view.basis().spans_view().count();
 
     // Check conservatively that we don't overflow anything
     {
@@ -587,8 +586,7 @@ pub(crate) fn tessellate_nurbs_curve_imp(
         );
     }
 
-    // SAFETY: reading the live curve's basis (tc construction invariant).
-    let is_open: bool = unsafe { (*curve).basis.topology } == NurbsTopology::Open;
+    let is_open = curve_view.basis().topology() == NurbsTopology::Open;
 
     let num_indices: usize = num_spans.wrapping_add(
         num_spans
@@ -602,7 +600,7 @@ pub(crate) fn tessellate_nurbs_curve_imp(
         "num_indices <= INT32_MAX"
     );
 
-    // The counts were just overflow-checked above.
+    // Each result-buffer push checks its own element-size/count product.
     let (indices, vertices, segments): (*mut u32, *mut Vec3, *mut LineSegment) = (
         tc.result_view().push::<u32>(num_indices),
         tc.result_view().push::<Vec3>(num_vertices),
@@ -613,6 +611,18 @@ pub(crate) fn tessellate_nurbs_curve_imp(
         !indices.is_null() && !vertices.is_null() && !segments.is_null(),
         "indices && vertices && segments"
     );
+    let spans_data = curve_view.basis().spans_view().data();
+    // SAFETY: the frozen curve view keeps the earlier `num_spans` header value
+    // paired with `spans_data`. Each successful push checked its own byte size,
+    // and the combined check above establishes all three fresh allocations.
+    let (spans, indices_write, vertices_write, segments_write) = unsafe {
+        (
+            Run::<Real, Const>::from_const_raw_parts(spans_data, num_spans),
+            Run::<u32>::from_raw_parts(indices, num_indices),
+            Run::<Vec3>::from_raw_parts(vertices, num_vertices),
+            Run::<LineSegment>::from_raw_parts(segments, 1),
+        )
+    };
 
     for span_ix in 0..num_spans {
         let num_splits: usize = if span_ix + 1 == num_spans { 1 } else { num_sub };
@@ -621,59 +631,54 @@ pub(crate) fn tessellate_nurbs_curve_imp(
             let ix: usize = span_ix * num_sub + sub_ix;
 
             if ix < num_vertices {
-                // SAFETY: `span_ix < num_spans == basis.spans.count`, and the
-                // `sub_ix > 0` arm only runs for a non-final span (the final
-                // span has `num_splits == 1`), so `span_ix + 1` is in bounds
-                // of the same span run. `ix < num_vertices <= num_indices`
-                // keeps both stores within the fresh pushes above.
-                unsafe {
-                    let mut u: Real = *(*curve).basis.spans.data.add(span_ix);
-                    if sub_ix > 0 {
-                        let t: Real = sub_ix as Real / num_sub as Real;
-                        u = u * (1.0f32 as Real - t)
-                            + t * *(*curve).basis.spans.data.add(span_ix + 1);
-                    }
-
-                    let point: CurvePoint = evaluate_nurbs_curve(curve, u);
-                    *vertices.add(ix) = point.position;
-                    *indices.add(ix) = ix as u32;
+                let mut u = spans.copy_at(span_ix);
+                if sub_ix > 0 {
+                    let t: Real = sub_ix as Real / num_sub as Real;
+                    u = u * (1.0f32 as Real - t) + t * spans.copy_at(span_ix + 1);
                 }
+
+                // SAFETY: `u` comes from this live curve's own bounded span
+                // run; the evaluator's control-point/basis relation remains a
+                // raw internal contract.
+                let point: CurvePoint = unsafe { evaluate_nurbs_curve(curve, u) };
+                vertices_write.write_at(ix, point.position);
+                indices_write.write_at(ix, ix as u32);
             } else {
-                // SAFETY: `ix` peaks at `(num_spans - 1) * num_sub`, which is
-                // `num_indices - 1`, so this stays inside the index push.
-                unsafe { *indices.add(ix) = 0 };
+                indices_write.write_at(ix, 0);
             }
         }
     }
 
-    // SAFETY: `segments` is the fresh non-null single-element push above.
-    unsafe {
-        (*segments.add(0)).index_begin = 0;
-        (*segments.add(0)).num_indices = num_indices as u32;
-    }
+    let segment = segments_write.at(0);
+    segment.set_index_begin(0);
+    segment.set_num_indices(num_indices as u32);
 
-    // SAFETY: `line` is tc's own output `LineCurve` slot (tc construction
-    // invariant). Raw writes preserve C's field-address semantics without
-    // manufacturing an exclusive reference from the context pointer.
-    unsafe {
-        (*line).element.name.data = EMPTY_CHAR.as_ptr();
-        (*line).element.type_ = ElementType::LineCurve;
-        (*line).element.typed_id = u32::MAX;
-        (*line).element.element_id = u32::MAX;
+    // SAFETY: `line` is the context's live, zero-initialized output slot; its
+    // nested color field has the same write-capable provenance and lifetime.
+    let (line_view, color) = unsafe {
+        let line_view = View::<LineCurve>::from_ptr(line);
+        (line_view, View::<Vec3>::from_ptr(line_view.color_raw()))
+    };
+    line_view
+        .element()
+        .name_view()
+        .set_data(EMPTY_CHAR.as_ptr());
+    line_view.element().set_type(ElementType::LineCurve);
+    line_view.element().set_typed_id(u32::MAX);
+    line_view.element().set_element_id(u32::MAX);
 
-        (*line).color.x = 1.0f32 as Real;
-        (*line).color.y = 1.0f32 as Real;
-        (*line).color.z = 1.0f32 as Real;
+    color.set_x(1.0f32 as Real);
+    color.set_y(1.0f32 as Real);
+    color.set_z(1.0f32 as Real);
 
-        (*line).control_points.data = vertices as *const Vec3;
-        (*line).control_points.count = num_vertices;
-        (*line).point_indices.data = indices as *const u32;
-        (*line).point_indices.count = num_indices;
-        (*line).segments.data = segments as *const LineSegment;
-        (*line).segments.count = 1;
+    line_view.control_points_view().set_data(vertices);
+    line_view.control_points_view().set_count(num_vertices);
+    line_view.point_indices_view().set_data(indices);
+    line_view.point_indices_view().set_count(num_indices);
+    line_view.segments_view().set_data(segments);
+    line_view.segments_view().set_count(1);
 
-        (*line).from_tessellated_nurbs = true;
-    }
+    line_view.set_from_tessellated_nurbs(true);
 
     tc.set_imp(tc.result_view().push::<LineCurveImp>(1));
     ufbxi_check_err!(tc.error_view(), !tc.imp().is_null(), "tc->imp");
@@ -693,14 +698,8 @@ pub(crate) fn tessellate_nurbs_curve_imp(
     let finished_imp = unsafe {
         finish_imp(
             tc.imp(),
-            ImpHandle::<SceneImp>::from_payload(
-                View::<NurbsCurve, Const>::from_ptr(curve)
-                    .element()
-                    .scene()
-                    .ptr(),
-            )
-            .refcount_ptr(),
-            tc.line_mut_ptr(),
+            ImpHandle::<SceneImp>::from_payload(curve_view.element().scene().ptr()).refcount_ptr(),
+            line,
             tc.ator_result(),
             tc.take_result(),
         )

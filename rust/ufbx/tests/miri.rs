@@ -286,6 +286,25 @@ fn evaluate_and_bake_animation() {
 /// NURBS: basis evaluation and curve tessellation into a line curve.
 #[test]
 fn tessellate_nurbs_curve() {
+    fn check_line(curve: &ufbx::NurbsCurve, line: &ufbx::LineCurve, num_sub: usize) {
+        let num_spans = curve.basis.spans.len();
+        let num_indices = num_spans + (num_spans - 1) * (num_sub - 1);
+        let is_open = curve.basis.topology == ufbx::NurbsTopology::Open;
+        let num_vertices = num_indices - usize::from(!is_open);
+
+        assert_eq!(line.control_points.len(), num_vertices);
+        assert_eq!(line.point_indices.len(), num_indices);
+        assert_eq!(line.segments.len(), 1);
+        assert_eq!(line.segments[0].index_begin, 0);
+        assert_eq!(line.segments[0].num_indices as usize, num_indices);
+        for index in 0..num_vertices {
+            assert_eq!(line.point_indices[index] as usize, index);
+        }
+        if !is_open {
+            assert_eq!(line.point_indices[num_vertices], 0);
+        }
+    }
+
     let scene = load("maya_nurbs_curve_form_7700_binary.fbx");
     assert!(!scene.nurbs_curves.is_empty());
     let mut acc = 0.0f64;
@@ -295,10 +314,22 @@ fn tessellate_nurbs_curve() {
         }
         let line = ufbx::tessellate_nurbs_curve(curve, Default::default())
             .expect("tessellate_nurbs_curve failed");
+        check_line(curve, &line, 4);
         acc += line.control_points.len() as f64;
         for &i in &line.point_indices {
             acc += i as f64;
         }
+
+        let line_sub3 = ufbx::tessellate_nurbs_curve(
+            curve,
+            ufbx::TessellateCurveOpts {
+                span_subdivision: 3,
+                ..Default::default()
+            },
+        )
+        .expect("tessellate_nurbs_curve with subdivision 3 failed");
+        check_line(curve, &line_sub3, 3);
+        acc += line_sub3.control_points.len() as f64;
     }
     assert!(acc.is_finite());
 }
