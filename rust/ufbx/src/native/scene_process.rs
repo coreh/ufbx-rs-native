@@ -7511,17 +7511,15 @@ pub(crate) fn postprocess_scene(uc: &Context) {
 
 // ufbx.c:21358-21366 `ufbxi_next_path_segment`
 #[inline(never)]
-pub(crate) unsafe fn next_path_segment(data: *const u8, begin: usize, length: usize) -> usize {
+pub(crate) fn next_path_segment(data: &[u8], begin: usize) -> usize {
     let mut i: usize = begin;
-    while i < length {
-        // SAFETY: `data` addresses `length` readable bytes (fn contract) and
-        // `i < length` keeps the offset inside that run.
-        if unsafe { *data.add(i) } == b'/' || unsafe { *data.add(i) } == b'\\' {
+    while i < data.len() {
+        if data[i] == b'/' || data[i] == b'\\' {
             return i;
         }
         i += 1;
     }
-    length
+    data.len()
 }
 
 // ufbx.c:21368-21435 `ufbxi_absolute_to_relative_path`
@@ -7594,12 +7592,8 @@ pub(crate) unsafe fn absolute_to_relative_path(
     let mut rel_begin: usize = 0;
     let mut src_begin: usize = 0;
     while rel_begin < rel_length && src_begin < src_length {
-        // SAFETY: `rel` addresses `rel_length` readable bytes and
-        // `rel_begin < rel_length`.
-        let rel_end: usize = unsafe { next_path_segment(rel, rel_begin, rel_length) };
-        // SAFETY: `src` addresses `src_length` readable bytes and
-        // `src_begin < src_length`.
-        let src_end: usize = unsafe { next_path_segment(src, src_begin, src_length) };
+        let rel_end: usize = next_path_segment(&rel_bytes[..rel_length], rel_begin);
+        let src_end: usize = next_path_segment(src_bytes, src_begin);
         let cmp_len = src_end - src_begin;
         if rel_end != src_end
             || memcmp(
@@ -7614,9 +7608,7 @@ pub(crate) unsafe fn absolute_to_relative_path(
     }
 
     while rel_begin < rel_length {
-        // SAFETY: `rel` addresses `rel_length` readable bytes and
-        // `rel_begin < rel_length`.
-        let rel_end: usize = unsafe { next_path_segment(rel, rel_begin, rel_length) };
+        let rel_end: usize = next_path_segment(&rel_bytes[..rel_length], rel_begin);
         // SAFETY: `tmp` is the grown tmp array of `max_length == 2 * rel_length
         // + src_length` bytes. Each iteration writes three bytes and advances
         // `rel_begin` past one `rel` segment plus its separator, so as long as
@@ -7640,9 +7632,7 @@ pub(crate) unsafe fn absolute_to_relative_path(
     }
 
     while src_begin < src_length {
-        // SAFETY: `src` addresses `src_length` readable bytes and
-        // `src_begin < src_length`.
-        let src_end: usize = unsafe { next_path_segment(src, src_begin, src_length) };
+        let src_end: usize = next_path_segment(src_bytes, src_begin);
         let len: usize = src_end - src_begin;
 
         // SAFETY: `[src_begin, src_end)` lies inside the `src` run; `tmp` is the

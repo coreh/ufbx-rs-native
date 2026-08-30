@@ -409,135 +409,95 @@ pub(crate) const PARSE_DOUBLE_AS_BINARY32: u32 = 0x2;
 // ufbx.c:1536-1543 `ufbxi_scan_ignorecase`
 // C `fmt` is a NUL-terminated literal scanned with `for (f = fmt; *f; f++, p++)`;
 // the Rust byte-slice iteration visits exactly the same characters.
-pub(crate) unsafe fn scan_ignorecase(p: *const u8, end: *const u8, fmt: &[u8]) -> bool {
-    let mut p = p;
-    for &f in fmt {
-        if p >= end {
+pub(crate) fn scan_ignorecase(input: &[u8], fmt: &[u8]) -> bool {
+    for (i, &f) in fmt.iter().enumerate() {
+        if i >= input.len() {
             return false;
         }
-        // SAFETY: `p < end` (checked just above) and `p`/`end` bracket the
-        // caller's readable input run, so `*p` reads a live byte.
-        if (unsafe { *p } | 0x20) != f {
+        if (input[i] | 0x20) != f {
             return false;
         }
-        // SAFETY: `p < end`, so advancing by one lands at or before `end`, the
-        // one-past-the-end of the caller's input run.
-        p = unsafe { p.add(1) };
     }
     true
 }
 
 // ufbx.c:1545-1599 `ufbxi_parse_inf_nan`
 #[inline(never)]
-pub(crate) unsafe fn parse_inf_nan(
-    p_result: *mut f64,
-    str_: *const u8,
-    max_length: usize,
-    p_end: *mut *const u8,
-) -> bool {
+pub(crate) fn parse_inf_nan(p_result: &mut f64, input: &[u8], p_end: &mut *const u8) -> bool {
     let mut negative = false;
-    let mut p = str_;
-    // SAFETY: the caller guarantees `str_` is readable for `max_length` bytes,
-    // so `str_ + max_length` is a valid one-past-the-end pointer.
-    let end = unsafe { p.add(max_length) };
-    // SAFETY: `p != end` guards the reads; `p`/`end` bound the input run, so
-    // `*p` reads a live byte and `p.add(1)` stays within `[str_, end]`.
-    if p != end && (unsafe { *p } == b'+' || unsafe { *p } == b'-') {
+    let mut p = 0usize;
+    let end = input.len();
+    if p != end && (input[p] == b'+' || input[p] == b'-') {
         // C: `negative = *p++ == '-';` — post-increment decomposed.
-        negative = unsafe { *p } == b'-';
-        p = unsafe { p.add(1) };
+        negative = input[p] == b'-';
+        p += 1;
     }
 
     let mut top_bits: u32 = 0;
     // C: `end - p >= 3` (ptrdiff comparison).
-    // SAFETY: `end - p >= 3` guards the reads, so `*p`, `*p.add(1)` and
-    // `*p.add(2)` all address live bytes within the input run.
-    if end as usize - p as usize >= 3
-        && (unsafe { *p } >= b'0' && unsafe { *p } <= b'9')
-        && unsafe { *p.add(1) } == b'.'
-        && unsafe { *p.add(2) } == b'#'
+    if end - p >= 3
+        && (input[p] >= b'0' && input[p] <= b'9')
+        && input[p + 1] == b'.'
+        && input[p + 2] == b'#'
     {
         // Legacy MSVC 1.#NAN
-        // SAFETY: the `>= 3` check leaves at least 3 bytes, so `p.add(3)` stays
-        // within `[str_, end]`.
-        p = unsafe { p.add(3) };
-        // SAFETY: `p`/`end` bound the input run for the scan; each matched scan
-        // guarantees 3 readable bytes, so the following `p.add(3)` is in bounds.
-        if unsafe { scan_ignorecase(p, end, b"inf") } {
-            p = unsafe { p.add(3) };
+        p += 3;
+        if scan_ignorecase(&input[p..], b"inf") {
+            p += 3;
             top_bits = 0x7ff0;
-        } else if unsafe { scan_ignorecase(p, end, b"nan") }
-            || unsafe { scan_ignorecase(p, end, b"ind") }
-        {
-            p = unsafe { p.add(3) };
+        } else if scan_ignorecase(&input[p..], b"nan") || scan_ignorecase(&input[p..], b"ind") {
+            p += 3;
             top_bits = 0x7ff8;
         } else {
             return false;
         }
-        // SAFETY: `p != end` guards the read; advancing by one stays in bounds.
-        while p != end && unsafe { *p } >= b'0' && unsafe { *p } <= b'9' {
-            p = unsafe { p.add(1) };
+        while p != end && input[p] >= b'0' && input[p] <= b'9' {
+            p += 1;
         }
     } else {
         // Standard
-        // SAFETY: `p`/`end` bound the input run for the scan; a matched `nan`
-        // scan guarantees 3 readable bytes, so `p.add(3)` is in bounds.
-        if unsafe { scan_ignorecase(p, end, b"nan") } {
-            p = unsafe { p.add(3) };
+        if scan_ignorecase(&input[p..], b"nan") {
+            p += 3;
             top_bits = 0x7ff8;
-            // SAFETY: `p != end` guards the read.
-            if p != end && unsafe { *p } == b'(' {
-                p = unsafe { p.add(1) };
-                // SAFETY: `p != end` guards each read; `p` stays within `[str_, end]`.
-                while p != end && unsafe { *p } != b')' {
-                    let c = unsafe { *p };
+            if p != end && input[p] == b'(' {
+                p += 1;
+                while p != end && input[p] != b')' {
+                    let c = input[p];
                     if !((c >= b'0' && c <= b'9')
                         || (c >= b'a' && c <= b'z')
                         || (c >= b'A' && c <= b'Z'))
                     {
                         return false;
                     }
-                    p = unsafe { p.add(1) };
+                    p += 1;
                 }
                 if p == end {
                     return false;
                 }
-                p = unsafe { p.add(1) };
+                p += 1;
             }
-        } else if unsafe { scan_ignorecase(p, end, b"inf") } {
-            // SAFETY: `p`/`end` bound the input run; the `inf` scan matched, so
-            // `p + 3 <= end` for the inner `p.add(3)` scan, and the outer advance
-            // of 8 (inf + inity) or 3 (inf) is over bytes those scans verified.
-            p = unsafe {
-                p.add(if scan_ignorecase(p.add(3), end, b"inity") {
-                    8
-                } else {
-                    3
-                })
+        } else if scan_ignorecase(&input[p..], b"inf") {
+            p += if scan_ignorecase(&input[p + 3..], b"inity") {
+                8
+            } else {
+                3
             };
             top_bits = 0x7ff0;
         }
     }
 
-    // SAFETY: `p_end` is a live `*mut *const u8` out-param the caller owns.
-    unsafe { *p_end = p };
+    *p_end = input.as_ptr().wrapping_add(p);
     top_bits |= if negative { 0x8000 } else { 0 };
     let bits = (top_bits as u64) << 48;
     // C: `ufbxi_bit_cast(double, result, uint64_t, bits);`
     let result = f64::from_bits(bits);
-    // SAFETY: `p_result` is a live `*mut f64` out-param the caller owns.
-    unsafe { *p_result = result };
+    *p_result = result;
     true
 }
 
 // ufbx.c:1601-1793 `ufbxi_parse_double`
 #[inline(never)]
-pub(crate) unsafe fn parse_double(
-    str_: *const u8,
-    max_length: usize,
-    p_end: *mut *const u8,
-    flags: u32,
-) -> f64 {
+pub(crate) fn parse_double(input: &[u8], p_end: &mut *const u8, flags: u32) -> f64 {
     let max_limbs: u32 = 14;
 
     // C: `ufbxi_bigint_limb mantissa_limbs[42], divisor_limbs[42],
@@ -558,19 +518,15 @@ pub(crate) unsafe fn parse_double(
     let mut digits: u64 = 0;
     let mut num_digits: u32 = 0;
 
-    let mut p = str_;
-    // SAFETY: the caller guarantees `str_` is readable for `max_length` bytes,
-    // so `str_ + max_length` is a valid one-past-the-end pointer.
-    let end = unsafe { p.add(max_length) };
-    // SAFETY: `p != end` guards the reads; `p`/`end` bound the input run.
-    if p != end && (unsafe { *p } == b'+' || unsafe { *p } == b'-') {
+    let mut p = 0usize;
+    let end = input.len();
+    if p != end && (input[p] == b'+' || input[p] == b'-') {
         // C: `negative = *p++ == '-';` — post-increment decomposed.
-        negative = unsafe { *p } == b'-';
-        p = unsafe { p.add(1) };
+        negative = input[p] == b'-';
+        p += 1;
     }
     while p != end {
-        // SAFETY: `p != end` (loop guard), so `*p` reads a live byte.
-        let c = unsafe { *p };
+        let c = input[p];
         if c >= b'0' && c <= b'9' {
             if big_mantissa.length < max_limbs {
                 digits = digits * 10 + (c - b'0') as u64;
@@ -597,33 +553,26 @@ pub(crate) unsafe fn parse_double(
                 // C: `dec_exponent += 1 - has_dot;` — same wrapping note.
                 dec_exponent = dec_exponent.wrapping_add(1 - has_dot);
             }
-            // SAFETY: `p != end`, so advancing by one stays within `[str_, end]`.
-            p = unsafe { p.add(1) };
+            p += 1;
         } else if c == b'.' && has_dot == 0 {
             has_dot = 1; // C: `has_dot = true;`
-                         // SAFETY: `p != end`, so advancing by one stays within `[str_, end]`.
-            p = unsafe { p.add(1) };
+            p += 1;
         } else {
             break;
         }
     }
-    // SAFETY: `p != end` guards the read.
-    if p != end && (unsafe { *p } == b'e' || unsafe { *p } == b'E') {
-        // SAFETY: `p != end`, so advancing by one stays within `[str_, end]`.
-        p = unsafe { p.add(1) };
+    if p != end && (input[p] == b'e' || input[p] == b'E') {
+        p += 1;
         let mut exp_negative = false;
-        // SAFETY: `p != end` guards the read.
-        if p != end && (unsafe { *p } == b'+' || unsafe { *p } == b'-') {
-            exp_negative = unsafe { *p } == b'-';
-            p = unsafe { p.add(1) };
+        if p != end && (input[p] == b'+' || input[p] == b'-') {
+            exp_negative = input[p] == b'-';
+            p += 1;
         }
         let mut exp: i32 = 0;
         while p != end {
-            // SAFETY: `p != end` (loop guard), so `*p` reads a live byte.
-            let c = unsafe { *p };
+            let c = input[p];
             if c >= b'0' && c <= b'9' {
-                // SAFETY: `p != end`, so advancing by one stays within `[str_, end]`.
-                p = unsafe { p.add(1) };
+                p += 1;
                 exp = exp * 10 + (c - b'0') as i32;
                 if exp >= 10000 {
                     break;
@@ -637,21 +586,17 @@ pub(crate) unsafe fn parse_double(
     }
 
     if p != end {
-        // SAFETY: `p != end`, so `*p` reads a live byte.
-        let c = unsafe { *p };
+        let c = input[p];
         if c == b'#' || c == b'i' || c == b'I' || c == b'n' || c == b'N' {
             // C: `double result;` (uninitialized; written before the read).
             let mut result: f64 = 0.0;
-            // SAFETY: `str_`/`max_length` describe the caller's input run; `p_end`
-            // is the caller's live out-param.
-            if unsafe { parse_inf_nan(&mut result, str_, max_length, p_end) } {
+            if parse_inf_nan(&mut result, input, p_end) {
                 return result;
             }
         }
     }
 
-    // SAFETY: `p_end` is a live `*mut *const u8` out-param the caller owns.
-    unsafe { *p_end = p };
+    *p_end = input.as_ptr().wrapping_add(p);
 
     // Both power of 10 and integer are exactly representable as doubles
     // Powers of 10 are factored as 2*5, and 2^N can be always exactly represented.
@@ -1458,16 +1403,9 @@ mod tests {
             prefix.parse().unwrap()
         };
         let mut end: *const u8 = core::ptr::null();
-        // SAFETY: `b` is `s`'s byte slice, so the pointer/length pair passed
-        // to each parse describes exactly one live run; `end` is an unaliased
-        // local out-param.
-        let (slow_d, fast_d, slow_f) = unsafe {
-            (
-                parse_double(b.as_ptr(), b.len(), &mut end, 0),
-                parse_double(b.as_ptr(), b.len(), &mut end, PARSE_DOUBLE_ALLOW_FAST_PATH),
-                parse_double(b.as_ptr(), b.len(), &mut end, PARSE_DOUBLE_AS_BINARY32) as f32,
-            )
-        };
+        let slow_d = parse_double(b, &mut end, 0);
+        let fast_d = parse_double(b, &mut end, PARSE_DOUBLE_ALLOW_FAST_PATH);
+        let slow_f = parse_double(b, &mut end, PARSE_DOUBLE_AS_BINARY32) as f32;
 
         if ref_d.is_finite() {
             assert!(
@@ -1506,19 +1444,11 @@ mod tests {
         let b = s.as_bytes();
         let mut end_d: *const u8 = core::ptr::null();
         let mut end_f: *const u8 = core::ptr::null();
-        // SAFETY: `b` is `s`'s byte slice — one live run described exactly by
-        // the pointer/length pair; `end_d`/`end_f` are unaliased local
-        // out-params.
-        let (slow_d, slow_f) = unsafe {
-            (
-                parse_double(b.as_ptr(), b.len(), &mut end_d, 0),
-                parse_double(b.as_ptr(), b.len(), &mut end_f, PARSE_DOUBLE_AS_BINARY32) as f32,
-            )
-        };
+        let slow_d = parse_double(b, &mut end_d, 0);
+        let slow_f = parse_double(b, &mut end_f, PARSE_DOUBLE_AS_BINARY32) as f32;
         assert!(slow_d.is_nan());
         assert!(slow_f.is_nan());
-        // SAFETY: one-past-the-end of `b` is an in-bounds `add` for the slice.
-        let b_end = unsafe { b.as_ptr().add(b.len()) };
+        let b_end = b.as_ptr().wrapping_add(b.len());
         assert!(end_d == b_end);
         assert!(end_f == b_end);
     }
@@ -1528,23 +1458,15 @@ mod tests {
         let b = s.as_bytes();
         let mut end_d: *const u8 = core::ptr::null();
         let mut end_f: *const u8 = core::ptr::null();
-        // SAFETY: `b` is `s`'s byte slice — one live run described exactly by
-        // the pointer/length pair; `end_d`/`end_f` are unaliased local
-        // out-params.
-        let (slow_d, slow_f) = unsafe {
-            (
-                parse_double(b.as_ptr(), b.len(), &mut end_d, 0),
-                parse_double(b.as_ptr(), b.len(), &mut end_f, PARSE_DOUBLE_AS_BINARY32) as f32,
-            )
-        };
+        let slow_d = parse_double(b, &mut end_d, 0);
+        let slow_f = parse_double(b, &mut end_f, PARSE_DOUBLE_AS_BINARY32) as f32;
         assert!(slow_d.is_infinite());
         assert!(slow_f.is_infinite());
         // C: `slow_d < 0 == sign < 0`
         assert!((slow_d < 0.0) == (sign < 0));
         assert!((slow_f < 0.0) == (sign < 0));
         assert!(slow_f.is_infinite());
-        // SAFETY: one-past-the-end of `b` is an in-bounds `add` for the slice.
-        let b_end = unsafe { b.as_ptr().add(b.len()) };
+        let b_end = b.as_ptr().wrapping_add(b.len());
         assert!(end_d == b_end);
         assert!(end_f == b_end);
     }

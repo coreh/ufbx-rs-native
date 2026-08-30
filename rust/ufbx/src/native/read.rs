@@ -9068,13 +9068,9 @@ pub(crate) fn read_legacy_settings(uc: &Context, node: &NodeView) -> Result<(), 
                 if let Some(Checked(str_)) = get_val1::<Checked<String>>(frame_rate) {
                     // C: `char *end;` — written by `ufbxi_parse_double()`.
                     let mut end: *const u8 = core::ptr::null();
-                    let val: f64 = parse_double(
-                        str_.data,
-                        str_.length,
-                        &raw mut end,
-                        uc.double_parse_flags(),
-                    );
-                    if end == str_.data.add(str_.length) {
+                    let input = str_.as_bytes();
+                    let val: f64 = parse_double(input, &mut end, uc.double_parse_flags());
+                    if end == input.as_ptr().wrapping_add(input.len()) {
                         fps = val;
                     }
                 }

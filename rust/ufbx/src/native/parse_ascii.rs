@@ -733,10 +733,10 @@ pub(crate) fn ascii_next_token(uc: &Context, token: &AsciiTokenView) -> Result<(
                 flags = PARSE_DOUBLE_AS_BINARY32;
             }
             // SAFETY: `token->str_data`/`str_len` describe its NUL-terminated
-            // number buffer; `parse_double` scans it and stores its end in `end`.
-            token.set_value_f64(unsafe {
-                parse_double(token.str_data(), token.str_len(), &raw mut end, flags)
-            });
+            // number buffer.
+            let input =
+                unsafe { crate::prelude::slice_from_ptr(token.str_data(), token.str_len()) };
+            token.set_value_f64(parse_double(input, &mut end, flags));
             ufbxi_check!(
                 uc,
                 // SAFETY: as in the int branch — `str_data + str_len - 1` is the
@@ -1104,17 +1104,7 @@ pub(crate) unsafe fn ascii_array_task_parse_floats(
 
         // Try to parse the next value, we don't commit this until we find a comma after it above.
         let mut num_end: *const u8 = core::ptr::null();
-        // SAFETY: `src[src_ix..]` is a readable run of `src.len() - src_ix`
-        // bytes; `parse_double` scans at most that many and stores its end into
-        // `num_end`, which therefore lands inside `src`.
-        let val: f64 = unsafe {
-            parse_double(
-                src[src_ix..].as_ptr(),
-                src.len() - src_ix,
-                &raw mut num_end,
-                parse_flags,
-            )
-        };
+        let val: f64 = parse_double(&src[src_ix..], &mut num_end, parse_flags);
         if num_end.is_null() {
             return Some(src_begin);
         }
@@ -1550,9 +1540,12 @@ pub(crate) fn ascii_read_float_array(
         // Try to parse the next value, we don't commit this until we find a comma after it above.
         let mut num_end: *const u8 = core::ptr::null();
         let left: usize = to_size(end as isize - src_scan as isize);
-        // SAFETY: `left` is the readable `src_scan..src_yield` run; `parse_double`
-        // scans at most that many bytes and stores its end into `num_end`.
-        val = unsafe { parse_double(src_scan, left, &raw mut num_end, parse_flags) };
+        // SAFETY: `src_scan` is a non-null cursor in the source buffer and
+        // `left` is its readable tail length. `from_raw_parts` preserves the
+        // cursor as the base of the zero-length one-past span, which the C-style
+        // end pointer below must retain.
+        let input = unsafe { core::slice::from_raw_parts(src_scan, left) };
+        val = parse_double(input, &mut num_end, parse_flags);
         if num_end.is_null() || num_end == src_scan || num_end >= end {
             break;
         }
@@ -2247,11 +2240,10 @@ fn ascii_parse_node_rec(
                     }
                     let mut inf_nan: f64 = 0.0;
                     let mut end: *const u8 = core::ptr::null();
-                    // SAFETY: `str_data` holds `str_len` bytes plus a trailing NUL;
-                    // `parse_inf_nan` scans it and stores its end into `end`, and
-                    // `str_data + str_len` is the NUL slot within the local buffer.
-                    if unsafe { parse_inf_nan(&raw mut inf_nan, str_data, str_len, &raw mut end) }
-                        && end == unsafe { str_data.add(str_len) }
+                    // SAFETY: `str_data` holds the `str_len` copied bytes.
+                    let input = unsafe { crate::prelude::slice_from_ptr(str_data, str_len) };
+                    if parse_inf_nan(&mut inf_nan, input, &mut end)
+                        && end == input.as_ptr().wrapping_add(input.len())
                     {
                         val = 0;
                         val_f = inf_nan;

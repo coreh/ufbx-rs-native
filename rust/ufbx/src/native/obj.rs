@@ -777,10 +777,11 @@ pub(crate) fn obj_parse_vertex(uc: &Context, attrib: ObjAttrib, offset: usize) -
             let str_: String = *uc.obj().tokens().add(offset + i);
             // C: `char *end; // ufbxi_uninit`
             let mut end: *const u8 = core::ptr::null(); // ufbxi_uninit
-            let val: f64 = parse_double(str_.data, str_.length, &raw mut end, parse_flags);
+            let input = str_.as_bytes();
+            let val: f64 = parse_double(input, &mut end, parse_flags);
             ufbxi_check!(
                 uc,
-                end == str_.data.add(str_.length),
+                end == input.as_ptr().wrapping_add(input.len()),
                 "end == str.data + str.length"
             );
             *vals.add(i) = val as Real;
@@ -2130,13 +2131,11 @@ pub(crate) unsafe fn obj_parse_prop(
         let tok: String = unsafe { *uc.obj().tokens().add(start + num_reals) };
 
         // C: `char *end; // ufbxi_uninit`
-        let mut end: *const u8 = core::ptr::null(); // ufbxi_uninit
-                                                    // SAFETY: `tok.data .. + length` is that token's own span and `end` is
-                                                    // an unaliased local out-param.
-        let val: f64 =
-            unsafe { parse_double(tok.data, tok.length, &raw mut end, uc.double_parse_flags()) };
-        // SAFETY: one past the same token span.
-        if end != unsafe { tok.data.add(tok.length) } {
+        let mut end: *const u8 = core::ptr::null();
+        // SAFETY: `tok.data .. + length` is that token's own readable span.
+        let input = unsafe { tok.as_bytes() };
+        let val: f64 = parse_double(input, &mut end, uc.double_parse_flags());
+        if end != input.as_ptr().wrapping_add(input.len()) {
             break;
         }
 
