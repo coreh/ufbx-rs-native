@@ -883,36 +883,26 @@ pub(crate) static REAL_SUM_FNS: [Option<SubdivideSumFn>; 4] = [
 #[cfg(feature = "subdivision")]
 #[inline(never)]
 /// # Safety
-/// `topo` addresses a live `TopoEdge` run holding every corner index this call
-/// can reach — `index`, `topo[index].next`, `topo[index].twin` and that twin's
-/// `.next`. The run's length is a caller promise the parameter types cannot
-/// carry, so this stays an `unsafe fn`.
+/// `input.indices` covers every corner reached through `topo`, and each stored
+/// index addresses a `stride`-byte value in `input.values`. Those buffer lengths
+/// are caller promises the parameter types cannot carry.
 pub(crate) unsafe fn is_edge_split(
     input: &View<SubdivideLayerInput, Const>,
-    topo: *const TopoEdge,
+    topo: Run<'_, TopoEdge, Const>,
     index: u32,
 ) -> bool {
-    // SAFETY: the caller passes `index` as a corner index within `topo`'s live
-    // `TopoEdge` array, so `topo.add(index)` is in-bounds.
-    let twin: u32 = unsafe { (*topo.add(index as usize)).twin };
+    let topo_edge = topo.at(index as usize);
+    let twin = topo_edge.twin();
     if twin != NO_INDEX {
         // SAFETY: `input.indices()` is an array indexed by corner; `index` is an
         // in-range corner, so `.add(index)` is in-bounds.
         let a0: u32 = unsafe { *input.indices().add(index as usize) };
-        // SAFETY: `topo.add(index)` is in-bounds (as above); its `.next` is a
-        // sibling corner index in range for `input`'s `indices` array.
-        let a1: u32 = unsafe {
-            *input
-                .indices()
-                .add((*topo.add(index as usize)).next as usize)
-        };
-        // SAFETY: `twin != NO_INDEX` is a valid corner index, so `topo.add(twin)`
-        // is in-bounds; its `.next` is a corner index in range for `indices`.
-        let b0: u32 = unsafe {
-            *input
-                .indices()
-                .add((*topo.add(twin as usize)).next as usize)
-        };
+        // SAFETY: the topology `.next` values index `input.indices` by the
+        // function contract.
+        let a1: u32 = unsafe { *input.indices().add(topo_edge.next() as usize) };
+        let twin_topo = topo.at(twin as usize);
+        // SAFETY: as above for the twin corner's `.next` value.
+        let b0: u32 = unsafe { *input.indices().add(twin_topo.next() as usize) };
         // SAFETY: `twin` is a valid corner index in range for `indices`.
         let b1: u32 = unsafe { *input.indices().add(twin as usize) };
         if a0 == b0 && a1 == b1 {
@@ -958,35 +948,24 @@ pub(crate) unsafe fn is_edge_split(
 
 // ufbx.c:29036-29042 `ufbxi_edge_crease`
 #[cfg(feature = "subdivision")]
-pub(crate) unsafe fn edge_crease(
+pub(crate) fn edge_crease(
     mesh: &MeshView,
     split: bool,
-    topo: *const TopoEdge,
+    topo: Run<'_, TopoEdge, Const>,
     index: u32,
 ) -> Real {
-    // SAFETY: the caller passes `index` as a corner index within `topo`'s live
-    // `TopoEdge` array, so `topo.add(index)` is in-bounds.
-    if unsafe { (*topo.add(index as usize)).twin } == NO_INDEX {
+    let topo_edge = topo.at(index as usize);
+    if topo_edge.twin() == NO_INDEX {
         return 1.0;
     }
     if split {
         return 1.0;
     }
-    // SAFETY: `topo.add(index)` is in-bounds (as above).
-    if !mesh.edge_crease_view().data().is_null()
-        && unsafe { (*topo.add(index as usize)).edge } != NO_INDEX
-    {
-        // SAFETY: the guard proved `edge_crease` data is non-null and this
-        // corner's `.edge != NO_INDEX`; a non-sentinel `.edge` is an in-range
-        // edge index by topology/mesh consistency (`compute_topology` fills
-        // `.edge` from the source mesh's edge list, and `edge_crease` spans
-        // `num_edges`), so the `.add(edge)` read is in-bounds.
-        return unsafe {
-            *mesh
-                .edge_crease_view()
-                .data()
-                .add((*topo.add(index as usize)).edge as usize)
-        } * (10.0 as Real);
+    if !mesh.edge_crease_view().data().is_null() {
+        let edge = topo_edge.edge();
+        if edge != NO_INDEX {
+            return mesh.edge_crease_view().copy_at(edge as usize) * (10.0 as Real);
+        }
     }
     0.0
 }
@@ -1020,8 +999,9 @@ pub(crate) fn subdivide_layer(
     let mut ix: u32 = 0;
     while ix < mesh.num_indices() as u32 {
         let twin = topo_view.at(ix as usize).twin();
-        // SAFETY: `topo` is live and `ix` is an in-range corner index.
-        if twin < ix && !unsafe { is_edge_split(input, topo, ix) } {
+        // SAFETY: the layer input's index/value buffers cover every topology
+        // corner reached from `ix`.
+        if twin < ix && !unsafe { is_edge_split(input, topo_view, ix) } {
             // SAFETY: `edge_indices` holds `num_indices` live slots; `ix` and
             // `twin < ix` are both in-range corner indices.
             unsafe { *edge_indices.add(ix as usize) = *edge_indices.add(twin as usize) };
@@ -1179,8 +1159,9 @@ pub(crate) fn subdivide_layer(
 
         let topo_edge = topo_view.at(ix as usize);
         let twin = topo_edge.twin();
-        // SAFETY: `topo` is live, `ix` an in-range corner index.
-        let split: bool = unsafe { is_edge_split(input, topo, ix) };
+        // SAFETY: the layer input's index/value buffers cover every topology
+        // corner reached from `ix`.
+        let split: bool = unsafe { is_edge_split(input, topo_view, ix) };
 
         if split || topo_edge.flags().has_any(TopoFlags::NON_MANIFOLD) {
             output.set_unique_per_vertex(false);
@@ -1190,12 +1171,7 @@ pub(crate) fn subdivide_layer(
         if split || twin == NO_INDEX {
             crease = 1.0;
         } else if topo_edge.edge() != NO_INDEX && !mesh.edge_crease().data.is_null() {
-            // SAFETY: the guard proved this corner's `.edge != NO_INDEX` and
-            // `edge_crease.data` is non-null; a non-sentinel `.edge` is an
-            // in-range edge index by topology/mesh consistency (`edge_crease`
-            // spans `num_edges`), so the `.add(edge)` read is in-bounds.
-            crease =
-                unsafe { *mesh.edge_crease().data.add(topo_edge.edge() as usize) } * (10.0 as Real);
+            crease = mesh.edge_crease_view().copy_at(topo_edge.edge() as usize) * (10.0 as Real);
         }
         if sharp_all {
             crease = 1.0;
@@ -1320,8 +1296,9 @@ pub(crate) fn subdivide_layer(
                 start = cur;
                 break;
             } // Topological boundary: Stop and use as start
-              // SAFETY: `topo` is live; `prev` is an in-range corner index.
-            if unsafe { is_edge_split(input, topo, prev) } {
+              // SAFETY: the layer input's index/value buffers cover every
+              // topology corner reached from `prev`.
+            if unsafe { is_edge_split(input, topo_view, prev) } {
                 start = cur;
             } // Split edge: Consider as start
             if prev == original_start {
@@ -1363,18 +1340,14 @@ pub(crate) fn subdivide_layer(
             let mut crease_input_indices: [usize; 2] = [0, 0]; // ufbxi_uninit
 
             // At start we always have two edges and a single face
-            // SAFETY: `start` is a valid vertex corner index into the live `topo`.
-            let start_prev: u32 = unsafe { (*topo.add(start as usize)).prev };
-            // SAFETY: `start_prev` is a sibling corner index, in range for `topo`.
-            let end_edge: u32 = unsafe { (*topo.add(start_prev as usize)).twin };
+            let start_topo = topo_view.at(start as usize);
+            let start_prev = start_topo.prev();
+            let start_prev_topo = topo_view.at(start_prev as usize);
+            let end_edge = start_prev_topo.twin();
             let mut valence: usize = 2;
 
-            // SAFETY: `topo.add(start)` is in-bounds; `.flags` is read by value.
-            non_manifold |=
-                unsafe { (*topo.add(start as usize)).flags }.has_any(TopoFlags::NON_MANIFOLD);
-            // SAFETY: `topo.add(start_prev)` is in-bounds; `.flags` read by value.
-            non_manifold |=
-                unsafe { (*topo.add(start_prev as usize)).flags }.has_any(TopoFlags::NON_MANIFOLD);
+            non_manifold |= start_topo.flags().has_any(TopoFlags::NON_MANIFOLD);
+            non_manifold |= start_prev_topo.flags().has_any(TopoFlags::NON_MANIFOLD);
 
             // SAFETY: `input`'s buffers are live; `indices[start]` is an
             // in-range index into the value array whose `stride`-sized entry the
@@ -1393,10 +1366,7 @@ pub(crate) fn subdivide_layer(
                 let (e0, e1) = unsafe {
                     (
                         (input.values() as *const u8).add(
-                            (*input
-                                .indices()
-                                .add((*topo.add(start as usize)).next as usize)
-                                as usize)
+                            (*input.indices().add(start_topo.next() as usize) as usize)
                                 .wrapping_mul(stride),
                         ),
                         (input.values() as *const u8).add(
@@ -1407,10 +1377,8 @@ pub(crate) fn subdivide_layer(
                 };
                 // SAFETY: this corner's `.face` is an in-range face index, so
                 // `face*stride` stays within the face segment of `values`.
-                let f0: *const u8 = unsafe {
-                    face_values
-                        .add(((*topo.add(start as usize)).face as usize).wrapping_mul(stride))
-                };
+                let f0: *const u8 =
+                    unsafe { face_values.add((start_topo.face() as usize).wrapping_mul(stride)) };
                 // SAFETY: `inputs` holds at least 4 live slots; these are the
                 // first four sum-fn inputs.
                 unsafe {
@@ -1421,26 +1389,24 @@ pub(crate) fn subdivide_layer(
                 }
             }
 
-            // SAFETY: `topo` is live; `start` is an in-range corner index, and
-            // the short-circuiting `end_edge != NO_INDEX` guard keeps the second
-            // call's corner index in range too.
+            // SAFETY: the layer input's index/value buffers cover every
+            // topology corner reached from `start` and the non-sentinel
+            // `end_edge`.
             let (start_split, prev_split) = unsafe {
                 (
-                    is_edge_split(input, topo, start),
-                    end_edge != NO_INDEX && is_edge_split(input, topo, end_edge),
+                    is_edge_split(input, topo_view, start),
+                    end_edge != NO_INDEX && is_edge_split(input, topo_view, end_edge),
                 )
             };
 
             // Either of the first two edges may be creased
-            // SAFETY: `topo` live; `start` is an in-range corner index.
-            let start_crease: Real = unsafe { edge_crease(mesh, start_split, topo, start) };
+            let start_crease = edge_crease(mesh, start_split, topo_view, start);
             if start_crease > 0.0 {
                 total_crease += start_crease;
                 crease_input_indices[num_crease] = 1;
                 num_crease += 1;
             }
-            // SAFETY: as above, using `start_prev` as the in-range corner index.
-            let prev_crease: Real = unsafe { edge_crease(mesh, prev_split, topo, start_prev) };
+            let prev_crease = edge_crease(mesh, prev_split, topo_view, start_prev);
             if prev_crease > 0.0 {
                 total_crease += prev_crease;
                 crease_input_indices[num_crease] = 2;
@@ -1483,11 +1449,9 @@ pub(crate) fn subdivide_layer(
                         start = NO_INDEX;
                         break;
                     }
+                    let cur_topo = topo_view.at(cur as usize);
 
-                    // SAFETY: `cur != NO_INDEX` is an in-range corner into `topo`;
-                    // `.flags` is read by value.
-                    non_manifold |=
-                        unsafe { (*topo.add(cur as usize)).flags }.has_any(TopoFlags::NON_MANIFOLD);
+                    non_manifold |= cur_topo.flags().has_any(TopoFlags::NON_MANIFOLD);
                     ufbxi_check_err!(
                         sc.error_view(),
                         // SAFETY: `cur` is an in-range corner slot of `vertex_indices`.
@@ -1497,8 +1461,9 @@ pub(crate) fn subdivide_layer(
                     // SAFETY: `cur` is an in-range corner slot of `vertex_indices`.
                     unsafe { *vertex_indices.add(cur as usize) = value_index };
 
-                    // SAFETY: `topo` is live; `cur` is an in-range corner.
-                    let split: bool = unsafe { is_edge_split(input, topo, cur) };
+                    // SAFETY: the layer input's index/value buffers cover every
+                    // topology corner reached from `cur`.
+                    let split: bool = unsafe { is_edge_split(input, topo_view, cur) };
 
                     // Looped: Add the face from the other side still if not split
                     if cur == end_edge && !split {
@@ -1519,8 +1484,7 @@ pub(crate) fn subdivide_layer(
                         // SAFETY: `cur`'s `.face` is an in-range face index, so
                         // `face*stride` stays within the face segment of `values`.
                         let f0: *const u8 = unsafe {
-                            face_values
-                                .add(((*topo.add(cur as usize)).face as usize).wrapping_mul(stride))
+                            face_values.add((cur_topo.face() as usize).wrapping_mul(stride))
                         };
                         // C-parity: C does NOT refresh the local `inputs` from
                         // `sc->inputs` after this grow (unlike the paired grow
@@ -1541,8 +1505,7 @@ pub(crate) fn subdivide_layer(
 
                     // Add the edge crease, this also handles boundaries as they
                     // have an implicit crease of 1.0 using `ufbxi_edge_crease()`
-                    // SAFETY: `topo` live; `cur` is an in-range corner.
-                    let cur_crease: Real = unsafe { edge_crease(mesh, split, topo, cur) };
+                    let cur_crease = edge_crease(mesh, split, topo_view, cur);
                     if cur_crease > 0.0 {
                         total_crease += cur_crease;
                         if num_crease < 2 {
@@ -1575,16 +1538,14 @@ pub(crate) fn subdivide_layer(
                         // `stride`-sized entry in `values`.
                         let e0: *const u8 = unsafe {
                             (input.values() as *const u8).add(
-                                (*input.indices().add((*topo.add(cur as usize)).next as usize)
-                                    as usize)
+                                (*input.indices().add(cur_topo.next() as usize) as usize)
                                     .wrapping_mul(stride),
                             )
                         };
                         // SAFETY: `cur`'s `.face` is an in-range face index, so
                         // `face*stride` stays within the face segment of `values`.
                         let f0: *const u8 = unsafe {
-                            face_values
-                                .add(((*topo.add(cur as usize)).face as usize).wrapping_mul(stride))
+                            face_values.add((cur_topo.face() as usize).wrapping_mul(stride))
                         };
                         // SAFETY: the grow above ensured `inputs` holds at least
                         // `num_inputs + 2` slots, so both slots are live.
