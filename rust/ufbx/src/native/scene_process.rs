@@ -7969,12 +7969,13 @@ pub(crate) fn validate_indices(
     indices_view: &ListView<u32>,
     max_index: usize,
 ) -> Result<(), Fail> {
-    let indices: *mut List<u32> = indices_view.get();
     if max_index == 0 && uc.opts_view().index_error_handling() == IndexErrorHandling::Clamp {
-        // SAFETY: `indices` is the view's own live `ufbx_uint32_list` header —
-        // the attribute index list being validated.
+        let indices = indices_view.get();
+        // SAFETY: `indices` is this view's own live list header. C clears the
+        // pointer before the count; no list operation observes the intermediate
+        // header state.
         unsafe {
-            (*indices).data = ptr::null_mut();
+            (*indices).data = ptr::null();
             (*indices).count = 0;
         }
         return Ok(());
@@ -7982,25 +7983,13 @@ pub(crate) fn validate_indices(
 
     // C: `ufbxi_nounroll ufbxi_for_list(uint32_t, p_ix, *indices)` — the
     // no-unroll pragma is optimizer-only and has no Rust analogue.
-    // SAFETY: `indices` is live (see above), so its own list header is readable.
-    // `data`/`count` describe one arena run.
-    let (mut p_ix, p_ix_count) = unsafe { ((*indices).data as *mut u32, (*indices).count) };
-    let p_ix_end: *mut u32 = add_ptr(p_ix, p_ix_count);
-    while p_ix != p_ix_end {
-        // SAFETY: `p_ix != p_ix_end`, so it addresses a live, initialized entry of
-        // the index run.
-        let ix: u32 = unsafe { *p_ix };
+    let num_indices = indices_view.count();
+    for i in 0..num_indices {
+        let ix = indices_view.copy_at(i);
         // C: `ix >= max_index` — `ix` is promoted to `size_t` for the compare.
         if ix as usize >= max_index {
-            // SAFETY: `p_ix` addresses a live, write-capable entry of the index
-            // run (see above) — an adequate mint for the `Mut` index-slot view;
-            // `ix` is the value just read from it.
-            let p_dst: &View<u32> = unsafe { View::<u32, Mut>::from_ptr(p_ix) };
-            fix_index(uc, p_dst, ix, max_index)?;
+            fix_index(uc, indices_view.at(i), ix, max_index)?;
         }
-        // SAFETY: `p_ix != p_ix_end`, so the advance lands at or before the run's
-        // one-past-the-end pointer.
-        p_ix = unsafe { p_ix.add(1) };
     }
 
     Ok(())

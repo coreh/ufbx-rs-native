@@ -278,6 +278,57 @@ fn load_lod_groups() {
     }
 }
 
+/// Selection-node vertex, edge and face lists are validated against their
+/// target mesh before the scene publishes them.
+#[test]
+fn load_selection_sets() {
+    let scene = load("max_selection_sets_6100_binary.fbx");
+    assert_eq!(scene.selection_sets.len(), 9);
+    assert_eq!(scene.selection_nodes.len(), 9);
+
+    let mut seen = 0u16;
+    for set in &scene.selection_sets {
+        assert_eq!(set.nodes.len(), 1);
+        let selection = &set.nodes[0];
+        let mesh = selection
+            .target_mesh
+            .as_ref()
+            .expect("selection has no mesh");
+        assert!(selection.target_node.is_some());
+
+        let (bit, include_node, vertices, edges, faces): (u16, bool, &[u32], &[u32], &[u32]) =
+            match set.element.name.as_ref() {
+                "ObjectCube" => (1 << 0, true, &[], &[], &[]),
+                "Box001_TopVerts_Vertex" => (1 << 1, false, &[4, 5, 6, 7], &[], &[]),
+                "Box001_BottomVerts_Vertex" => (1 << 2, false, &[0, 1, 2, 3], &[], &[]),
+                "Box001_TopEdges_Edge" => (1 << 3, false, &[], &[5, 6, 8, 9], &[]),
+                "Box001_BottomEdges_Edge" => (1 << 4, false, &[], &[0, 1, 3, 4], &[]),
+                "Box001_TopFace_Face" => (1 << 5, false, &[], &[], &[2, 3]),
+                "Box001_SideFaces_Face" => (1 << 6, false, &[], &[], &[4, 5, 6, 7, 8, 9, 10, 11]),
+                "Box001_BottomFace_Face" => (1 << 7, false, &[], &[], &[0, 1]),
+                "Box001_FullCube_Face" => (
+                    1 << 8,
+                    false,
+                    &[],
+                    &[],
+                    &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
+                ),
+                name => panic!("unexpected selection set {name:?}"),
+            };
+
+        assert_eq!(selection.include_node, include_node);
+        assert_eq!(selection.vertices.as_ref(), vertices);
+        assert_eq!(selection.edges.as_ref(), edges);
+        assert_eq!(selection.faces.as_ref(), faces);
+        assert!(vertices.iter().all(|&ix| (ix as usize) < mesh.num_vertices));
+        assert!(edges.iter().all(|&ix| (ix as usize) < mesh.num_edges));
+        assert!(faces.iter().all(|&ix| (ix as usize) < mesh.num_faces));
+        assert_eq!(seen & bit, 0, "duplicate selection set");
+        seen |= bit;
+    }
+    assert_eq!(seen, (1 << 9) - 1);
+}
+
 /// Skin deformers: clusters, weights and the bind-pose matrices.
 #[test]
 fn load_skinned() {
