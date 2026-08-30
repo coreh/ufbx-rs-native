@@ -31,8 +31,8 @@ use crate::native::platform::{math, max_real, min_real, stable_sort, ufbxi_ignor
 #[cfg(feature = "triangulation")]
 use crate::native::string_pool::{distsq2, dot3, length3, mul3, slow_normalized_cross3};
 #[cfg(feature = "triangulation")]
-use crate::native::view::{view_raw_mut, view_read, view_write};
-use crate::native::view::{Mode, View};
+use crate::native::view::{view_raw_mut, view_read};
+use crate::native::view::{view_read_shared, view_write, Mode, Run, View};
 #[cfg(feature = "triangulation")]
 use crate::prelude::as_f64;
 #[cfg(feature = "triangulation")]
@@ -1067,6 +1067,58 @@ pub(crate) unsafe fn triangulate_ngon(
 
 // -- Topology (ufbx.c:28692-28819, ungated)
 
+pub(crate) type TopoEdgeView = View<TopoEdge>;
+
+impl<M: Mode> View<TopoEdge, M> {
+    #[inline(always)]
+    pub(crate) fn index(&self) -> u32 {
+        view_read_shared!(self, index)
+    }
+    #[inline(always)]
+    pub(crate) fn next(&self) -> u32 {
+        view_read_shared!(self, next)
+    }
+    #[inline(always)]
+    pub(crate) fn prev(&self) -> u32 {
+        view_read_shared!(self, prev)
+    }
+    #[inline(always)]
+    pub(crate) fn flags(&self) -> TopoFlags {
+        view_read_shared!(self, flags)
+    }
+}
+
+impl TopoEdgeView {
+    #[inline(always)]
+    pub(crate) fn set_index(&self, value: u32) {
+        view_write!(self, index, value)
+    }
+    #[inline(always)]
+    pub(crate) fn set_next(&self, value: u32) {
+        view_write!(self, next, value)
+    }
+    #[inline(always)]
+    pub(crate) fn set_prev(&self, value: u32) {
+        view_write!(self, prev, value)
+    }
+    #[inline(always)]
+    pub(crate) fn set_twin(&self, value: u32) {
+        view_write!(self, twin, value)
+    }
+    #[inline(always)]
+    pub(crate) fn set_face(&self, value: u32) {
+        view_write!(self, face, value)
+    }
+    #[inline(always)]
+    pub(crate) fn set_edge(&self, value: u32) {
+        view_write!(self, edge, value)
+    }
+    #[inline(always)]
+    pub(crate) fn set_flags(&self, value: TopoFlags) {
+        view_write!(self, flags, value)
+    }
+}
+
 // ufbx.c:28692-28698 `ufbxi_topo_less_index_prev_next`
 pub(crate) unsafe extern "C" fn topo_less_index_prev_next(
     user: *mut c_void,
@@ -1103,52 +1155,40 @@ pub(crate) unsafe extern "C" fn topo_less_index_index(
 }
 
 // ufbx.c:28707-28784 `ufbxi_compute_topology`
+// Stays `unsafe fn`: `Run` carries the output allocation and bounds, but the
+// mesh must still have face ranges that tile `0..num_indices`. That relation
+// ensures every topology slot is initialized before the first sort reads it.
 #[inline(never)]
-pub(crate) unsafe fn compute_topology<M: Mode>(mesh: &View<Mesh, M>, topo: *mut TopoEdge) {
+pub(crate) unsafe fn compute_topology<M: Mode>(mesh: &View<Mesh, M>, topo: Run<'_, TopoEdge>) {
     let num_indices: usize = mesh.num_indices();
+    assert_eq!(topo.len(), num_indices);
+    let topo_ptr = topo.as_mut_ptr();
 
     // Temporarily use `prev` and `next` for vertices
     let mut fi: u32 = 0;
     while (fi as usize) < mesh.num_faces() {
-        // SAFETY: `fi < num_faces`, so `faces.data[fi]` is a live face.
-        let face: Face = unsafe { *mesh.faces().data.add(fi as usize) };
+        let face: Face = mesh.faces_view().copy_at(fi as usize);
         let mut pi: u32 = 0;
         while pi < face.num_indices {
-            // SAFETY: `topo` addresses `num_indices` live `TopoEdge`s and
-            // `index_begin + pi < num_indices` for a valid face, so the offset
-            // is in bounds; this only computes the address.
-            let te: *mut TopoEdge = unsafe { topo.add(face.index_begin.wrapping_add(pi) as usize) };
+            let te = topo.at(face.index_begin.wrapping_add(pi) as usize);
             let ni: u32 = pi.wrapping_add(1) % face.num_indices;
-            // SAFETY: `index_begin + pi` is a live `vertex_indices` slot for the
-            // face (as above); `mesh` owns that array.
-            let mut va: u32 = unsafe {
-                *mesh
-                    .vertex_indices()
-                    .data
-                    .add(face.index_begin.wrapping_add(pi) as usize)
-            };
-            // SAFETY: `ni < face.num_indices`, so `index_begin + ni` is a live
-            // `vertex_indices` slot for the face.
-            let mut vb: u32 = unsafe {
-                *mesh
-                    .vertex_indices()
-                    .data
-                    .add(face.index_begin.wrapping_add(ni) as usize)
-            };
+            let mut va: u32 = mesh
+                .vertex_indices_view()
+                .copy_at(face.index_begin.wrapping_add(pi) as usize);
+            let mut vb: u32 = mesh
+                .vertex_indices_view()
+                .copy_at(face.index_begin.wrapping_add(ni) as usize);
 
             if vb < va {
                 std::mem::swap(&mut va, &mut vb);
             }
-            // SAFETY: `te` addresses a live `TopoEdge` slot (computed above).
-            unsafe {
-                (*te).index = face.index_begin.wrapping_add(pi);
-                (*te).twin = NO_INDEX;
-                (*te).edge = NO_INDEX;
-                (*te).prev = va;
-                (*te).next = vb;
-                (*te).face = fi;
-                (*te).flags = TopoFlags::from_raw(0);
-            }
+            te.set_index(face.index_begin.wrapping_add(pi));
+            te.set_twin(NO_INDEX);
+            te.set_edge(NO_INDEX);
+            te.set_prev(va);
+            te.set_next(vb);
+            te.set_face(fi);
+            te.set_flags(TopoFlags::from_raw(0));
             pi = pi.wrapping_add(1);
         }
         fi = fi.wrapping_add(1);
@@ -1158,7 +1198,7 @@ pub(crate) unsafe fn compute_topology<M: Mode>(mesh: &View<Mesh, M>, topo: *mut 
     // and comparator match that type, and the comparator takes no `user` data.
     unsafe {
         unstable_sort(
-            topo as *mut c_void,
+            topo_ptr as *mut c_void,
             num_indices,
             size_of::<TopoEdge>(),
             topo_less_index_prev_next,
@@ -1166,19 +1206,12 @@ pub(crate) unsafe fn compute_topology<M: Mode>(mesh: &View<Mesh, M>, topo: *mut 
         );
     }
 
-    if !mesh.edges().data.is_null() {
+    if !mesh.edges_view().data().is_null() {
         let mut ei: u32 = 0;
         while (ei as usize) < mesh.num_edges() {
-            // SAFETY: `ei < num_edges`, so `edges.data[ei]` is a live edge.
-            let edge: Edge = unsafe { *mesh.edges().data.add(ei as usize) };
-            // SAFETY: `edge.a`/`edge.b` index the mesh's own `vertex_indices`
-            // array, live for a mesh whose `edges` are populated.
-            let (mut va, mut vb) = unsafe {
-                (
-                    *mesh.vertex_indices().data.add(edge.a as usize),
-                    *mesh.vertex_indices().data.add(edge.b as usize),
-                )
-            };
+            let edge: Edge = mesh.edges_view().copy_at(ei as usize);
+            let mut va = mesh.vertex_indices_view().copy_at(edge.a as usize);
+            let mut vb = mesh.vertex_indices_view().copy_at(edge.b as usize);
             if vb < va {
                 std::mem::swap(&mut va, &mut vb);
             }
@@ -1192,7 +1225,7 @@ pub(crate) unsafe fn compute_topology<M: Mode>(mesh: &View<Mesh, M>, topo: *mut 
                 macro_lower_bound_eq::<TopoEdge>(
                     32,
                     &mut ix,
-                    topo,
+                    topo_ptr,
                     0,
                     num_indices,
                     // C: `(a->prev == va ? a->next < vb : a->prev < va)`
@@ -1208,15 +1241,8 @@ pub(crate) unsafe fn compute_topology<M: Mode>(mesh: &View<Mesh, M>, topo: *mut 
                 );
             }
 
-            // SAFETY: `topo.add(ix)` with `ix < num_indices` is a live `TopoEdge`.
-            while ix < num_indices
-                && unsafe { (*topo.add(ix)).prev } == va
-                && unsafe { (*topo.add(ix)).next } == vb
-            {
-                // SAFETY: `ix < num_indices`, so `topo.add(ix)` is live.
-                unsafe {
-                    (*topo.add(ix)).edge = ei;
-                }
+            while ix < num_indices && topo.at(ix).prev() == va && topo.at(ix).next() == vb {
+                topo.at(ix).set_edge(ei);
                 ix += 1;
             }
             ei = ei.wrapping_add(1);
@@ -1228,31 +1254,21 @@ pub(crate) unsafe fn compute_topology<M: Mode>(mesh: &View<Mesh, M>, topo: *mut 
     while i0 < num_indices {
         let mut i1: usize = i0;
 
-        // SAFETY: `i0 < num_indices`, so `topo.add(i0)` is a live `TopoEdge`.
-        let (a, b) = unsafe { ((*topo.add(i0)).prev, (*topo.add(i0)).next) };
-        // SAFETY: the guard keeps `i1 + 1 < num_indices`, so `topo.add(i1 + 1)`
-        // is a live `TopoEdge`.
-        while i1 + 1 < num_indices
-            && unsafe { (*topo.add(i1 + 1)).prev } == a
-            && unsafe { (*topo.add(i1 + 1)).next } == b
-        {
+        let (a, b) = (topo.at(i0).prev(), topo.at(i0).next());
+        while i1 + 1 < num_indices && topo.at(i1 + 1).prev() == a && topo.at(i1 + 1).next() == b {
             i1 += 1;
         }
 
         if i1 == i0 + 1 {
-            // SAFETY: `i0`/`i1` are both `< num_indices` here, so both
-            // `topo.add(..)` are live `TopoEdge`s.
-            unsafe {
-                (*topo.add(i0)).twin = (*topo.add(i1)).index;
-                (*topo.add(i1)).twin = (*topo.add(i0)).index;
-            }
+            let index0 = topo.at(i0).index();
+            let index1 = topo.at(i1).index();
+            topo.at(i0).set_twin(index1);
+            topo.at(i1).set_twin(index0);
         } else if i1 > i0 + 1 {
             let mut i: usize = i0;
             while i <= i1 {
-                // SAFETY: `i <= i1 < num_indices`, so `topo.add(i)` is live.
-                unsafe {
-                    (*topo.add(i)).flags = (*topo.add(i)).flags | TopoFlags::NON_MANIFOLD;
-                }
+                topo.at(i)
+                    .set_flags(topo.at(i).flags() | TopoFlags::NON_MANIFOLD);
                 i += 1;
             }
         }
@@ -1264,7 +1280,7 @@ pub(crate) unsafe fn compute_topology<M: Mode>(mesh: &View<Mesh, M>, topo: *mut 
     // and comparator match that type, and the comparator takes no `user` data.
     unsafe {
         unstable_sort(
-            topo as *mut c_void,
+            topo_ptr as *mut c_void,
             num_indices,
             size_of::<TopoEdge>(),
             topo_less_index_index,
@@ -1275,22 +1291,17 @@ pub(crate) unsafe fn compute_topology<M: Mode>(mesh: &View<Mesh, M>, topo: *mut 
     // Fix `prev` and `next` to the actual index values
     let mut fi: u32 = 0;
     while (fi as usize) < mesh.num_faces() {
-        // SAFETY: `fi < num_faces`, so `faces.data[fi]` is a live face.
-        let face: Face = unsafe { *mesh.faces().data.add(fi as usize) };
+        let face: Face = mesh.faces_view().copy_at(fi as usize);
         let mut i: u32 = 0;
         while i < face.num_indices {
-            // SAFETY: `index_begin + i < num_indices` for a valid face, so the
-            // offset is in bounds for the `num_indices`-element `topo`.
-            let to: *mut TopoEdge = unsafe { topo.add(face.index_begin.wrapping_add(i) as usize) };
-            // SAFETY: `to` addresses a live `TopoEdge` slot (computed above).
-            unsafe {
-                (*to).prev = face.index_begin.wrapping_add(
-                    (i.wrapping_add(face.num_indices).wrapping_sub(1)) % face.num_indices,
-                );
-                (*to).next = face
-                    .index_begin
-                    .wrapping_add(i.wrapping_add(1) % face.num_indices);
-            }
+            let to = topo.at(face.index_begin.wrapping_add(i) as usize);
+            to.set_prev(face.index_begin.wrapping_add(
+                (i.wrapping_add(face.num_indices).wrapping_sub(1)) % face.num_indices,
+            ));
+            to.set_next(
+                face.index_begin
+                    .wrapping_add(i.wrapping_add(1) % face.num_indices),
+            );
             i = i.wrapping_add(1);
         }
         fi = fi.wrapping_add(1);

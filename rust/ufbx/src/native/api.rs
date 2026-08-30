@@ -101,7 +101,7 @@ use crate::native::platform::{min64, to_size, MAX_SKIP_SIZE};
 use crate::native::read::ref_ptr;
 use crate::native::thread::ThreadPool;
 use crate::native::view::view_read_shared;
-use crate::native::view::{Const, Mode, Mut, View};
+use crate::native::view::{Const, Mode, Mut, Run, View};
 // Used by the feature-enabled arms of `ufbx_bake_anim` /
 // `ufbx_tessellate_nurbs_curve` / `_surface` and unconditionally by
 // `ufbx_subdivide_mesh` / `ufbx_load_geometry_cache_len`.
@@ -4857,9 +4857,12 @@ pub(crate) unsafe fn catch_compute_topology<M: Mode>(
         return;
     }
 
-    // SAFETY: `indices` has `num_indices >= mesh.num_indices` `TopoEdge` slots
-    // (guarded above) for `compute_topology` to fill.
-    unsafe { crate::native::topology::compute_topology(mesh, indices) };
+    // SAFETY: `indices` has `num_indices >= mesh.num_indices` write-capable
+    // `TopoEdge` slots (guarded above); the exact prefix may be uninitialized
+    // and remains live for the call. A loaded mesh's face ranges tile its
+    // index run, so `compute_topology` initializes the prefix before sorting.
+    let topo = unsafe { Run::from_raw_parts(indices, mesh.num_indices()) };
+    unsafe { crate::native::topology::compute_topology(mesh, topo) };
 }
 
 // ufbx.c:32484-32492 `ufbx_catch_topo_next_vertex_edge`
