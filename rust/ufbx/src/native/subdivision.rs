@@ -49,7 +49,7 @@ use crate::native::view::view_raw_mut;
 use crate::native::view::view_read_shared;
 use crate::native::view::{view_project, view_read, view_write};
 #[cfg(feature = "subdivision")]
-use crate::native::view::{Const, Mode, Run, SliceViewIter, View};
+use crate::native::view::{Const, Mode, Run, View};
 #[cfg(feature = "subdivision")]
 use crate::prelude::{List, ListView, Real};
 #[cfg(feature = "subdivision")]
@@ -66,6 +66,19 @@ use core::mem::{size_of, MaybeUninit};
 pub(crate) struct SubdivideInput {
     pub data: *const c_void,
     pub weight: Real,
+}
+
+#[cfg(feature = "subdivision")]
+impl<M: Mode> View<SubdivideInput, M> {
+    #[inline(always)]
+    pub(crate) fn data(&self) -> *const c_void {
+        view_read_shared!(self, data)
+    }
+
+    #[inline(always)]
+    pub(crate) fn weight(&self) -> Real {
+        view_read_shared!(self, weight)
+    }
 }
 
 // ufbx.c:28830 `typedef int ufbxi_subdivide_sum_fn(void *user, void *output,
@@ -209,6 +222,19 @@ impl<M: Mode> View<SubdivisionWeightRange, M> {
     #[inline(always)]
     pub(crate) fn num_weights(&self) -> u32 {
         view_read_shared!(self, num_weights)
+    }
+}
+
+#[cfg(feature = "subdivision")]
+impl<M: Mode> View<SubdivisionWeight, M> {
+    #[inline(always)]
+    pub(crate) fn weight(&self) -> Real {
+        view_read_shared!(self, weight)
+    }
+
+    #[inline(always)]
+    pub(crate) fn index(&self) -> u32 {
+        view_read_shared!(self, index)
     }
 }
 
@@ -630,26 +656,34 @@ pub(crate) unsafe extern "C" fn subdivide_sum_vec2(
 ) -> i32 {
     let _ = user;
     let mut dst: Vec2 = Vec2 { x: 0.0, y: 0.0 };
+    // SAFETY: the callback contract supplies `num_inputs` initialized, aligned
+    // input records that stay stable and frozen through the walk, plus one
+    // stable, aligned and write-capable `Vec2` output slot. The record span and
+    // output slot are distinct.
+    let (inputs, output) = unsafe {
+        (
+            Run::<SubdivideInput, Const>::from_const_raw_parts(inputs, num_inputs),
+            Run::<Vec2>::from_raw_parts(output.cast::<Vec2>(), 1),
+        )
+    };
     // C: `ufbxi_nounroll for (size_t i = 0; i != num_inputs; i++)`
     let mut i: usize = 0;
     while i != num_inputs {
-        // SAFETY: the sum-fn callback contract guarantees `inputs` points to
-        // `num_inputs` live `SubdivideInput` entries and `i < num_inputs`, so
-        // `inputs.add(i)` is in-bounds; each entry's `.data` points to a live
-        // `Vec2` (this fn is registered as the vec2 summer), read through `src`.
-        let src: *const Vec2 = unsafe { (*inputs.add(i)).data } as *const Vec2;
-        // SAFETY: `i < num_inputs`, so `inputs.add(i)` is an in-bounds live entry.
-        let weight: Real = unsafe { (*inputs.add(i)).weight };
-        // SAFETY: `src` points to a live `Vec2` per the entry's `.data` contract.
-        unsafe {
-            dst.x += (*src).x * weight;
-            dst.y += (*src).y * weight;
-        }
+        let input = inputs.at(i);
+        let src_ptr = input.data().cast::<Vec2>();
+        let weight = input.weight();
+        // SAFETY: each type-erased data pointer addresses one initialized,
+        // aligned `Vec2` that stays stable and frozen through this scoped copy
+        // because this is the registered Vec2 sum callback.
+        let src = {
+            let src = unsafe { Run::<Vec2, Const>::from_const_raw_parts(src_ptr, 1) };
+            src.copy_at(0)
+        };
+        dst.x += src.x * weight;
+        dst.y += src.y * weight;
         i += 1;
     }
-    // SAFETY: the callback contract guarantees `output` points to a writable
-    // `Vec2` sized destination.
-    unsafe { *(output as *mut Vec2) = dst };
+    output.write_at(0, dst);
 
     1
 }
@@ -668,27 +702,35 @@ pub(crate) unsafe extern "C" fn subdivide_sum_vec3(
         y: 0.0,
         z: 0.0,
     };
+    // SAFETY: the callback contract supplies `num_inputs` initialized, aligned
+    // input records that stay stable and frozen through the walk, plus one
+    // stable, aligned and write-capable `Vec3` output slot. The record span and
+    // output slot are distinct.
+    let (inputs, output) = unsafe {
+        (
+            Run::<SubdivideInput, Const>::from_const_raw_parts(inputs, num_inputs),
+            Run::<Vec3>::from_raw_parts(output.cast::<Vec3>(), 1),
+        )
+    };
     // C: `ufbxi_nounroll for (size_t i = 0; i != num_inputs; i++)`
     let mut i: usize = 0;
     while i != num_inputs {
-        // SAFETY: the sum-fn callback contract guarantees `inputs` points to
-        // `num_inputs` live `SubdivideInput` entries and `i < num_inputs`, so
-        // `inputs.add(i)` is in-bounds; each entry's `.data` points to a live
-        // `Vec3` (this fn is registered as the vec3 summer), read through `src`.
-        let src: *const Vec3 = unsafe { (*inputs.add(i)).data } as *const Vec3;
-        // SAFETY: `i < num_inputs`, so `inputs.add(i)` is an in-bounds live entry.
-        let weight: Real = unsafe { (*inputs.add(i)).weight };
-        // SAFETY: `src` points to a live `Vec3` per the entry's `.data` contract.
-        unsafe {
-            dst.x += (*src).x * weight;
-            dst.y += (*src).y * weight;
-            dst.z += (*src).z * weight;
-        }
+        let input = inputs.at(i);
+        let src_ptr = input.data().cast::<Vec3>();
+        let weight = input.weight();
+        // SAFETY: each type-erased data pointer addresses one initialized,
+        // aligned `Vec3` that stays stable and frozen through this scoped copy
+        // because this is the registered Vec3 sum callback.
+        let src = {
+            let src = unsafe { Run::<Vec3, Const>::from_const_raw_parts(src_ptr, 1) };
+            src.copy_at(0)
+        };
+        dst.x += src.x * weight;
+        dst.y += src.y * weight;
+        dst.z += src.z * weight;
         i += 1;
     }
-    // SAFETY: the callback contract guarantees `output` points to a writable
-    // `Vec3` sized destination.
-    unsafe { *(output as *mut Vec3) = dst };
+    output.write_at(0, dst);
 
     1
 }
@@ -708,28 +750,36 @@ pub(crate) unsafe extern "C" fn subdivide_sum_vec4(
         z: 0.0,
         w: 0.0,
     };
+    // SAFETY: the callback contract supplies `num_inputs` initialized, aligned
+    // input records that stay stable and frozen through the walk, plus one
+    // stable, aligned and write-capable `Vec4` output slot. The record span and
+    // output slot are distinct.
+    let (inputs, output) = unsafe {
+        (
+            Run::<SubdivideInput, Const>::from_const_raw_parts(inputs, num_inputs),
+            Run::<Vec4>::from_raw_parts(output.cast::<Vec4>(), 1),
+        )
+    };
     // C: `ufbxi_nounroll for (size_t i = 0; i != num_inputs; i++)`
     let mut i: usize = 0;
     while i != num_inputs {
-        // SAFETY: the sum-fn callback contract guarantees `inputs` points to
-        // `num_inputs` live `SubdivideInput` entries and `i < num_inputs`, so
-        // `inputs.add(i)` is in-bounds; each entry's `.data` points to a live
-        // `Vec4` (this fn is registered as the vec4 summer), read through `src`.
-        let src: *const Vec4 = unsafe { (*inputs.add(i)).data } as *const Vec4;
-        // SAFETY: `i < num_inputs`, so `inputs.add(i)` is an in-bounds live entry.
-        let weight: Real = unsafe { (*inputs.add(i)).weight };
-        // SAFETY: `src` points to a live `Vec4` per the entry's `.data` contract.
-        unsafe {
-            dst.x += (*src).x * weight;
-            dst.y += (*src).y * weight;
-            dst.z += (*src).z * weight;
-            dst.w += (*src).w * weight;
-        }
+        let input = inputs.at(i);
+        let src_ptr = input.data().cast::<Vec4>();
+        let weight = input.weight();
+        // SAFETY: each type-erased data pointer addresses one initialized,
+        // aligned `Vec4` that stays stable and frozen through this scoped copy
+        // because this is the registered Vec4 sum callback.
+        let src = {
+            let src = unsafe { Run::<Vec4, Const>::from_const_raw_parts(src_ptr, 1) };
+            src.copy_at(0)
+        };
+        dst.x += src.x * weight;
+        dst.y += src.y * weight;
+        dst.z += src.z * weight;
+        dst.w += src.w * weight;
         i += 1;
     }
-    // SAFETY: the callback contract guarantees `output` points to a writable
-    // `Vec4` sized destination.
-    unsafe { *(output as *mut Vec4) = dst };
+    output.write_at(0, dst);
 
     1
 }
@@ -766,9 +816,15 @@ pub(crate) unsafe extern "C" fn subdivide_sum_vertex_weights(
     inputs: *const SubdivideInput,
     num_inputs: usize,
 ) -> i32 {
-    // SAFETY: the sum-fn callback contract passes the `SubdivideContext` as
-    // `user`, so `user` points to a live `SubdivideContext` for this call.
-    let sc: &SubdivideContext = unsafe { &*(user as *const SubdivideContext) };
+    // SAFETY: the callback contract supplies a live `SubdivideContext` and
+    // `num_inputs` initialized, aligned input records that stay stable and
+    // frozen through the walk.
+    let (sc, inputs) = unsafe {
+        (
+            &*(user as *const SubdivideContext),
+            Run::<SubdivideInput, Const>::from_const_raw_parts(inputs, num_inputs),
+        )
+    };
 
     let vertex_weights: *mut Real = sc.tmp_vertex_weights();
     let tmp_weights: *mut SubdivisionWeight = sc.tmp_weights();
@@ -777,21 +833,31 @@ pub(crate) unsafe extern "C" fn subdivide_sum_vertex_weights(
     // C: `ufbxi_nounroll for (size_t input_ix = 0; input_ix != num_inputs; input_ix++)`
     let mut input_ix: usize = 0;
     while input_ix != num_inputs {
-        // SAFETY: the callback contract guarantees `inputs` points to
-        // `num_inputs` live entries and `input_ix < num_inputs`, so
-        // `inputs.add(input_ix)` is in-bounds; its `.data` points to a live
-        // `SubdivisionVertexWeights` (this fn is the vertex-weights summer),
-        // copied out by value.
-        let src: SubdivisionVertexWeights =
-            unsafe { *((*inputs.add(input_ix)).data as *const SubdivisionVertexWeights) };
-        // SAFETY: `input_ix < num_inputs`, so `inputs.add(input_ix)` is live.
-        let input_weight: Real = unsafe { (*inputs.add(input_ix)).weight };
+        let input = inputs.at(input_ix);
+        // SAFETY: this callback's type-erased input data addresses one
+        // initialized, aligned `SubdivisionVertexWeights` record that stays
+        // stable and frozen through this scoped copy.
+        let src = {
+            let src = unsafe {
+                Run::<SubdivisionVertexWeights, Const>::from_const_raw_parts(
+                    input.data().cast::<SubdivisionVertexWeights>(),
+                    1,
+                )
+            };
+            src.copy_at(0)
+        };
+        let input_weight = input.weight();
+        // SAFETY: the source record describes an initialized, aligned weight
+        // run that stays stable and frozen for this input's accumulation. It
+        // does not overlap the mutable callback scratch or output slot.
+        let src_weights = unsafe {
+            Run::<SubdivisionWeight, Const>::from_const_raw_parts(src.weights, src.num_weights)
+        };
 
         let mut weight_ix: usize = 0;
         while weight_ix < src.num_weights {
-            // SAFETY: `src.weights` points to `src.num_weights` live entries and
-            // `weight_ix < src.num_weights`, so `.add(weight_ix)` is in-bounds.
-            let weight: Real = input_weight * unsafe { (*src.weights.add(weight_ix)).weight };
+            let src_weight = src_weights.at(weight_ix);
+            let weight: Real = input_weight * src_weight.weight();
             // C: `if (weight < 1.175494351e-38f) continue;` — a `float` literal
             // widened to `ufbx_real`.
             if weight < 1.175494351e-38f32 as Real {
@@ -799,8 +865,7 @@ pub(crate) unsafe extern "C" fn subdivide_sum_vertex_weights(
                 continue;
             }
 
-            // SAFETY: `weight_ix < src.num_weights`, so `.add(weight_ix)` is live.
-            let vx: u32 = unsafe { (*src.weights.add(weight_ix)).index };
+            let vx: u32 = src_weight.index();
             ufbxi_dev_assert!((vx as usize) < sc.src_mesh_view().num_vertices());
 
             // SAFETY: `vx` is `< num_vertices` by loaded-data consistency —
@@ -886,13 +951,18 @@ pub(crate) unsafe extern "C" fn subdivide_sum_vertex_weights(
     // so the C macro's `return 0` is a plain 0 here.
     ufbxi_check_return_err!(sc.error_view(), !weights.is_null(), 0, "weights");
 
-    let dst: *mut SubdivisionVertexWeights = output as *mut SubdivisionVertexWeights;
-    // SAFETY: the callback contract guarantees `output` points to a writable
-    // `SubdivisionVertexWeights` destination.
-    unsafe {
-        (*dst).weights = weights;
-        (*dst).num_weights = num_weights;
-    }
+    // SAFETY: after the fallible allocation succeeds, the callback contract
+    // supplies one stable, aligned, write-capable output slot. It is distinct
+    // from the input records, source weight runs and callback scratch.
+    let output = unsafe {
+        Run::<SubdivisionVertexWeights>::from_raw_parts(
+            output.cast::<SubdivisionVertexWeights>(),
+            1,
+        )
+    };
+    let dst = output.at(0);
+    dst.set_weights(weights);
+    dst.set_num_weights(num_weights);
 
     1
 }
@@ -2225,6 +2295,18 @@ pub(crate) fn subdivide_vertex_crease<M: Mode>(
     Ok(())
 }
 
+// Normal arrays are initialized mutable list runs. Read each value by copy
+// before replacing the same slot, matching the element-at-a-time C walk.
+#[cfg(feature = "subdivision")]
+fn normalize_vec3_list(values: &ListView<Vec3>) {
+    let dst = Run::from_list(values);
+    let mut i: usize = 0;
+    while i < dst.len() {
+        dst.write_at(i, slow_normalize3(&values.copy_at(i)));
+        i += 1;
+    }
+}
+
 // ufbx.c:29631-29925 `ufbxi_subdivide_mesh_level`
 // Stays `unsafe fn`: the mesh fields run through `MeshView`, but topology
 // construction and subdivision-weight propagation consume raw source runs
@@ -2295,16 +2377,10 @@ pub(crate) unsafe fn subdivide_mesh_level(
         );
     }
 
-    // One `ListView` mint per set list, serving the copy below, the
-    // `ufbxi_for_list` walk and the `[0]` reads.
-    // SAFETY: `uv_sets_raw()`/`color_sets_raw()` address `result`'s own live
-    // list fields, carrying the context's write-capable provenance.
-    let (uv_sets, color_sets) = unsafe {
-        (
-            ListView::from_ptr(result.uv_sets_raw()),
-            ListView::from_ptr(result.color_sets_raw()),
-        )
-    };
+    // The set-list views serve the arena copies, checked walks and guarded
+    // first-element reads below.
+    let uv_sets = result.uv_sets_view();
+    let color_sets = result.color_sets_view();
 
     // SAFETY: `uv_sets` describes `result`'s live UV-set array, copied into
     // `sc`'s result arena via `push_copy`.
@@ -2332,12 +2408,7 @@ pub(crate) unsafe fn subdivide_mesh_level(
 
     // C: `ufbxi_for_list(ufbx_uv_set, set, result->uv_sets)`
     {
-        // SAFETY: `uv_sets` describes the contiguous run just copied into `sc`'s
-        // result arena, live and unmoved for this call.
-        let sets = unsafe {
-            SliceViewIter::<UvSet>::from_raw_parts(uv_sets.data() as *mut UvSet, uv_sets.count())
-        };
-        for set in sets {
+        for set in Run::from_list(uv_sets).iter() {
             subdivide_attrib(
                 sc,
                 // SAFETY: `vertex_uv_raw()` addresses this live `UvSet`'s own
@@ -2384,15 +2455,7 @@ pub(crate) unsafe fn subdivide_mesh_level(
 
     // C: `ufbxi_for_list(ufbx_color_set, set, result->color_sets)`
     {
-        // SAFETY: `color_sets` describes the contiguous run just copied into
-        // `sc`'s result arena, live and unmoved for this call.
-        let sets = unsafe {
-            SliceViewIter::<ColorSet>::from_raw_parts(
-                color_sets.data() as *mut ColorSet,
-                color_sets.count(),
-            )
-        };
-        for set in sets {
+        for set in Run::from_list(color_sets).iter() {
             subdivide_attrib(
                 sc,
                 // SAFETY: `vertex_color_raw()` addresses this live `ColorSet`'s
@@ -2409,16 +2472,16 @@ pub(crate) unsafe fn subdivide_mesh_level(
         // SAFETY: the count is > 0, so element 0 of the run is live; each
         // destination `*_raw()` is a distinct live field of `result`, so every
         // one-element copy is non-overlapping.
+        let set0 = uv_sets.at(0);
         unsafe {
-            let set0: &View<UvSet> = View::<UvSet>::from_ptr(uv_sets.data() as *mut UvSet);
-            core::ptr::copy_nonoverlapping(set0.vertex_uv_raw(), result.vertex_uv_raw(), 1);
+            core::ptr::copy_nonoverlapping(set0.vertex_uv_ptr(), result.vertex_uv_raw(), 1);
             core::ptr::copy_nonoverlapping(
-                set0.vertex_bitangent_raw(),
+                set0.vertex_bitangent_ptr(),
                 result.vertex_bitangent_raw(),
                 1,
             );
             core::ptr::copy_nonoverlapping(
-                set0.vertex_tangent_raw(),
+                set0.vertex_tangent_ptr(),
                 result.vertex_tangent_raw(),
                 1,
             );
@@ -2428,10 +2491,9 @@ pub(crate) unsafe fn subdivide_mesh_level(
         // SAFETY: the count is > 0, so element 0 of the run is live; the
         // destination is a distinct live field of `result`, so the copy is
         // non-overlapping.
+        let set0 = color_sets.at(0);
         unsafe {
-            let set0: &View<ColorSet> =
-                View::<ColorSet>::from_ptr(color_sets.data() as *mut ColorSet);
-            core::ptr::copy_nonoverlapping(set0.vertex_color_raw(), result.vertex_color_raw(), 1);
+            core::ptr::copy_nonoverlapping(set0.vertex_color_ptr(), result.vertex_color_raw(), 1);
         }
     }
 
@@ -2445,20 +2507,7 @@ pub(crate) unsafe fn subdivide_mesh_level(
             true,
         )?;
         // C: `ufbxi_for_list(ufbx_vec3, normal, result->vertex_normal.values)`
-        {
-            let values = result.vertex_normal().values();
-            // SAFETY: `values.data`/`.count` describe the live normal array, so
-            // `normal..normal_end` spans it.
-            let mut normal: *mut Vec3 = values.data as *mut Vec3;
-            let normal_end: *mut Vec3 = unsafe { normal.add(values.count) };
-            while normal != normal_end {
-                // SAFETY: `normal` is an in-range live `Vec3`; the copy read
-                // feeds `slow_normalize3` and the result is stored back in place.
-                unsafe { *normal = slow_normalize3(&{ *normal }) };
-                // SAFETY: `normal != normal_end`, so advancing stays in the array.
-                normal = unsafe { normal.add(1) };
-            }
-        }
+        normalize_vec3_list(result.vertex_normal().values_view());
         if mesh.skinned_normal().values().data == mesh.vertex_normal().values().data {
             // SAFETY: `vertex_normal`/`skinned_normal` are two distinct live
             // fields of `result`, so the one-element copy is non-overlapping.
@@ -2479,18 +2528,7 @@ pub(crate) unsafe fn subdivide_mesh_level(
                 true,
             )?;
             // C: `ufbxi_for_list(ufbx_vec3, normal, result->skinned_normal.values)`
-            let values = result.skinned_normal().values();
-            // SAFETY: `values.data`/`.count` describe the live array, so
-            // `normal..normal_end` spans it.
-            let mut normal: *mut Vec3 = values.data as *mut Vec3;
-            let normal_end: *mut Vec3 = unsafe { normal.add(values.count) };
-            while normal != normal_end {
-                // SAFETY: `normal` is an in-range live `Vec3`, read as a copy
-                // and normalized in place.
-                unsafe { *normal = slow_normalize3(&{ *normal }) };
-                // SAFETY: `normal != normal_end`, so advancing stays in the array.
-                normal = unsafe { normal.add(1) };
-            }
+            normalize_vec3_list(result.skinned_normal().values_view());
         }
     }
 
