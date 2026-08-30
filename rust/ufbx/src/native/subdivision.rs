@@ -10,7 +10,7 @@
 #![cfg_attr(not(all(feature = "c-abi", feature = "dev")), allow(dead_code))]
 #[cfg(feature = "subdivision")]
 use crate::generated::{
-    ColorSet, Edge, Error, Face, Mesh, MeshPart, RawSubdivideOpts, SkinDeformer, SkinWeight,
+    ColorSet, Edge, Error, Face, Mesh, MeshPart, RawSubdivideOpts, SkinDeformer,
     SubdivisionBoundary, SubdivisionResult, SubdivisionWeight, SubdivisionWeightRange, TopoEdge,
     TopoFlags, UvSet, VertexAttrib, VertexReal, VertexVec3,
 };
@@ -172,8 +172,32 @@ pub(crate) struct SubdivideLayerOutput {
     pub unique_per_vertex: bool,
 }
 
-// Write accessors over a `SubdivideLayerOutput` view: `ufbxi_subdivide_layer`
-// only ever stores into the out-struct, so the setters are the whole surface.
+// Checked read/write surface over the subdivision layer out-struct. Callers
+// read these fields only after a successful `subdivide_layer()` initializes
+// them; the layer itself writes them in C statement order through the setters.
+#[cfg(feature = "subdivision")]
+impl<M: Mode> View<SubdivideLayerOutput, M> {
+    #[inline(always)]
+    pub(crate) fn values(&self) -> *mut c_void {
+        view_read_shared!(self, values)
+    }
+
+    #[inline(always)]
+    pub(crate) fn num_values(&self) -> usize {
+        view_read_shared!(self, num_values)
+    }
+
+    #[inline(always)]
+    pub(crate) fn indices(&self) -> *mut u32 {
+        view_read_shared!(self, indices)
+    }
+
+    #[inline(always)]
+    pub(crate) fn num_indices(&self) -> usize {
+        view_read_shared!(self, num_indices)
+    }
+}
+
 #[cfg(feature = "subdivision")]
 impl View<SubdivideLayerOutput> {
     #[inline(always)]
@@ -211,7 +235,7 @@ pub(crate) struct SubdivisionVertexWeights {
     pub num_weights: usize,
 }
 
-// Checked read/write surfaces for the two subdivision-only weight carriers.
+// Checked read/write surfaces for the subdivision-only weight carriers.
 #[cfg(feature = "subdivision")]
 impl<M: Mode> View<SubdivisionWeightRange, M> {
     #[inline(always)]
@@ -235,6 +259,19 @@ impl<M: Mode> View<SubdivisionWeight, M> {
     #[inline(always)]
     pub(crate) fn index(&self) -> u32 {
         view_read_shared!(self, index)
+    }
+}
+
+#[cfg(feature = "subdivision")]
+impl View<SubdivisionWeight> {
+    #[inline(always)]
+    pub(crate) fn set_weight(&self, weight: Real) {
+        view_write!(self, weight, weight)
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_index(&self, index: u32) {
+        view_write!(self, index, index)
     }
 }
 
@@ -1927,10 +1964,9 @@ unsafe fn attrib_view<'a, T>(ptr: *mut T) -> &'a View<VertexAttrib> {
 }
 
 // ufbx.c:29464-29489 `ufbxi_subdivide_attrib`
-// Safe `fn`: the attribute arrives as a view; the residual raw ops address the
-// two `MaybeUninit` locals this fn owns, the viewed attribute's list headers
-// via `values_raw()`/`indices_raw()`, and the runs `subdivide_layer` walks —
-// each vouched at its own block.
+// Safe `fn`: the attribute arrives as a view; the residual raw ops initialize
+// and mint views over the two `MaybeUninit` locals this fn owns. Completed
+// output fields and attribute list headers use checked view accessors.
 #[cfg(feature = "subdivision")]
 #[inline(never)]
 pub(crate) fn subdivide_attrib(
@@ -1976,15 +2012,10 @@ pub(crate) fn subdivide_attrib(
     };
     subdivide_layer(sc, output_view, input_view)?;
 
-    // SAFETY: `output` addresses the fully-populated `output_mem` after a
-    // successful `subdivide_layer`; `values_raw()`/`indices_raw()` address the
-    // viewed attribute's own list headers.
-    unsafe {
-        (*attrib.values_raw()).data = (*output).values;
-        (*attrib.indices_raw()).data = (*output).indices;
-        (*attrib.values_raw()).count = (*output).num_values;
-        (*attrib.indices_raw()).count = (*output).num_indices;
-    }
+    attrib.values_view().set_data(output_view.values());
+    attrib.indices_view().set_data(output_view.indices());
+    attrib.values_view().set_count(output_view.num_values());
+    attrib.indices_view().set_count(output_view.num_indices());
 
     Ok(())
 }
@@ -2048,20 +2079,25 @@ pub(crate) fn init_source_vertex_weights(
         core::ptr::null_mut(),
         "dst && weights"
     );
+    // SAFETY: both checked tmp-arena pushes own `num_vertices` stable,
+    // write-capable slots. This loop initializes every destination record and
+    // weight entry in C field-assignment order.
+    let (dst_run, weights_run) = unsafe {
+        (
+            Run::<SubdivisionVertexWeights>::from_raw_parts(dst, num_vertices),
+            Run::<SubdivisionWeight>::from_raw_parts(weights, num_vertices),
+        )
+    };
 
     // C: `ufbxi_nounroll for (size_t i = 0; i != num_vertices; i++)`
     let mut i: usize = 0;
     while i != num_vertices {
-        // SAFETY: `i < num_vertices`, and both `dst` and `weights` are fresh
-        // non-null `num_vertices`-element pushes (checked above), so each
-        // element write is in bounds; the stored `weights.add(i)` points into
-        // the same tmp arena `dst` lives in.
-        unsafe {
-            (*dst.add(i)).weights = weights.add(i);
-            (*dst.add(i)).num_weights = 1;
-            (*weights.add(i)).index = i as u32;
-            (*weights.add(i)).weight = 1.0;
-        }
+        let out = dst_run.at(i);
+        out.set_weights(weights_run.subrun(i, 1).as_mut_ptr());
+        out.set_num_weights(1);
+        let weight = weights_run.at(i);
+        weight.set_index(i as u32);
+        weight.set_weight(1.0);
         i += 1;
     }
 
@@ -2084,9 +2120,12 @@ pub(crate) fn init_skin_weights<M: Mode>(
         core::ptr::null_mut(),
         "dst"
     );
+    // SAFETY: the checked tmp-arena push owns `num_vertices` stable,
+    // write-capable destination slots. Each loop iteration initializes one.
+    let dst_run = unsafe { Run::<SubdivisionVertexWeights>::from_raw_parts(dst, num_vertices) };
 
     let vertices = skin.vertices_view();
-    let source_weights = skin.weights_view();
+    let source_weights = Run::from_list(skin.weights_view());
     assert!(num_vertices <= vertices.count());
 
     let mut i: usize = 0;
@@ -2104,33 +2143,30 @@ pub(crate) fn init_skin_weights<M: Mode>(
             core::ptr::null_mut(),
             "weights"
         );
+        // SAFETY: the checked per-vertex tmp-arena push owns `num_weights`
+        // stable, write-capable entries initialized by the inner loop.
+        let weights_run = unsafe { Run::<SubdivisionWeight>::from_raw_parts(weights, num_weights) };
 
         let weight_begin = vertex.weight_begin as usize;
-        assert!(weight_begin <= source_weights.count());
-        assert!(num_weights <= source_weights.count() - weight_begin);
+        let source_span = source_weights.subrun(weight_begin, num_weights);
 
-        // SAFETY: `dst` is a fresh `num_vertices`-element push and `i` is in
-        // range, so slot `i` is live.
-        unsafe {
-            (*dst.add(i)).weights = weights;
-            (*dst.add(i)).num_weights = num_weights;
-        }
+        let out = dst_run.at(i);
+        out.set_weights(weights_run.as_mut_ptr());
+        out.set_num_weights(num_weights);
         // C: `ufbxi_nounroll for (size_t wi = 0; wi != num_weights; wi++)`
         let mut wi: usize = 0;
         while wi != num_weights {
-            let skin_weight: SkinWeight = source_weights.copy_at(weight_begin + wi);
+            let skin_weight = source_span.at(wi);
+            let cluster_index = skin_weight.cluster_index();
             ufbxi_check_return_err!(
                 sc.error_view(),
-                skin_weight.cluster_index <= i32::MAX as u32,
+                cluster_index <= i32::MAX as u32,
                 core::ptr::null_mut(),
                 "skin_weights[wi].cluster_index <= INT32_MAX"
             );
-            // SAFETY: `wi < num_weights`, in range for the fresh
-            // `num_weights`-element `weights` push.
-            unsafe {
-                (*weights.add(wi)).index = skin_weight.cluster_index;
-                (*weights.add(wi)).weight = skin_weight.weight;
-            }
+            let weight = weights_run.at(wi);
+            weight.set_index(skin_weight.cluster_index());
+            weight.set_weight(skin_weight.weight());
             wi += 1;
         }
         i += 1;
@@ -2143,11 +2179,13 @@ pub(crate) fn init_skin_weights<M: Mode>(
 #[cfg(feature = "subdivision")]
 #[inline(never)]
 /// # Safety
-/// `src` addresses a live `SubdivisionVertexWeights` run covering every source
-/// vertex the layer subdivision reaches — `sc.src_mesh.vertex_indices` indexes
-/// it at `size_of::<SubdivisionVertexWeights>()` stride — and each element's
-/// `weights` addresses a live `num_weights` run. Those lengths are a caller
-/// promise the parameter types cannot carry, so this stays an `unsafe fn`.
+/// `src` must address at least `sc.src_mesh.num_vertices` contiguous initialized
+/// `SubdivisionVertexWeights` records that stay alive, unmoved and frozen
+/// throughout layer subdivision. `sc.src_mesh.vertex_indices` indexes that run
+/// at `size_of::<SubdivisionVertexWeights>()` stride. Each record's `weights`
+/// must likewise address `num_weights` contiguous initialized entries that stay
+/// alive, unmoved and frozen while the weight callback reads them. These nested
+/// relational promises are not carried by the parameter types.
 pub(crate) unsafe fn subdivide_weights(
     sc: &SubdivideContext,
     ranges: &ListView<SubdivisionWeightRange>,
@@ -2155,6 +2193,14 @@ pub(crate) unsafe fn subdivide_weights(
     src: *const SubdivisionVertexWeights,
 ) -> Result<(), crate::native::error::Fail> {
     ufbxi_check_err!(sc.error_view(), !src.is_null(), "src");
+    // SAFETY: the function contract supplies one initialized source record per
+    // source vertex, stable and frozen throughout layer subdivision.
+    let src_run = unsafe {
+        Run::<SubdivisionVertexWeights, Const>::from_const_raw_parts(
+            src,
+            sc.src_mesh_view().num_vertices(),
+        )
+    };
 
     let mut input_mem = MaybeUninit::<SubdivideLayerInput>::uninit(); // ufbxi_uninit
     let input: *mut SubdivideLayerInput = input_mem.as_mut_ptr();
@@ -2163,7 +2209,7 @@ pub(crate) unsafe fn subdivide_weights(
     unsafe {
         (*input).sum_fn = Some(subdivide_sum_vertex_weights);
         (*input).sum_user = (sc as *const SubdivideContext) as *mut c_void;
-        (*input).values = src as *const c_void;
+        (*input).values = src_run.as_ptr().cast::<c_void>();
         (*input).indices = sc.src_mesh_view().vertex_indices_view().data();
         (*input).stride = size_of::<SubdivisionVertexWeights>();
         (*input).boundary = sc.opts_view().boundary();
@@ -2188,8 +2234,7 @@ pub(crate) unsafe fn subdivide_weights(
     };
     subdivide_layer(sc, output_view, input_view)?;
 
-    // SAFETY: `output` addresses the populated `output_mem` after success.
-    let num_vertices: usize = unsafe { (*output).num_values };
+    let num_vertices: usize = output_view.num_values();
     ufbx_assert!(
         num_vertices
             == sc
@@ -2210,17 +2255,21 @@ pub(crate) unsafe fn subdivide_weights(
     // sites pass the address of a list field, so the condition holds for every
     // caller and the reference parameters carry it in the type.
 
-    // SAFETY: `output` addresses the populated `output_mem`; its `values` is the
-    // `num_vertices`-element `SubdivisionVertexWeights` buffer `subdivide_layer`
-    // produced.
-    let src_weights: *mut SubdivisionVertexWeights =
-        unsafe { (*output).values as *mut SubdivisionVertexWeights };
+    // SAFETY: after successful layer subdivision, `output.values` addresses the
+    // initialized `num_vertices`-element `SubdivisionVertexWeights` result run.
+    // That region stays stable and unwritten throughout this copy phase; the
+    // destination pushes above occupy distinct result-arena regions.
+    let src_weights = unsafe {
+        Run::<SubdivisionVertexWeights, Const>::from_const_raw_parts(
+            output_view.values().cast::<SubdivisionVertexWeights>(),
+            num_vertices,
+        )
+    };
 
     let mut weight_offset: usize = 0;
     let mut vi: usize = 0;
     while vi < num_vertices {
-        // SAFETY: `vi < num_vertices`, in range for the `src_weights` buffer.
-        let ws: SubdivisionVertexWeights = unsafe { *src_weights.add(vi) };
+        let ws = src_weights.copy_at(vi);
         ufbxi_check_err!(
             sc.error_view(),
             (u32::MAX as usize).wrapping_sub(weight_offset) >= ws.num_weights,
@@ -2656,11 +2705,12 @@ pub(crate) unsafe fn subdivide_mesh_level(
                 weights = init_source_vertex_weights(sc, mesh.num_vertices());
             }
 
-            // SAFETY: `weights` is the per-vertex weight array built just above
-            // — a live run covering every source vertex, each element's own
-            // weight run live — `subdivide_weights`' contract. The out-param
-            // views are safe projections of `result_sub_view`, so their liveness
-            // and write provenance need no further argument here.
+            // SAFETY: `weights` has `mesh.num_vertices()` initialized records:
+            // either the fresh initializer's exact count or the previous
+            // subdivision result's per-level range-count invariant. The record
+            // run and every nested weight span stay stable and frozen while
+            // `subdivide_weights` reads them. The out-param views are safe
+            // projections of the distinct fresh `result_sub_view`.
             unsafe {
                 subdivide_weights(
                     sc,
@@ -2691,11 +2741,12 @@ pub(crate) unsafe fn subdivide_mesh_level(
                 weights = init_skin_weights(sc, mesh.num_vertices(), skin_view);
             }
 
-            // SAFETY: `weights` is the per-vertex weight array built just above
-            // — a live run covering every source vertex, each element's own
-            // weight run live — `subdivide_weights`' contract. The out-param
-            // views are safe projections of `result_sub_view`, so their liveness
-            // and write provenance need no further argument here.
+            // SAFETY: `weights` has `mesh.num_vertices()` initialized records:
+            // either the fresh initializer's exact count or the previous
+            // subdivision result's per-level skin-range-count invariant. The
+            // record run and every nested weight span stay stable and frozen
+            // while `subdivide_weights` reads them. The out-param views are safe
+            // projections of the distinct fresh `result_sub_view`.
             unsafe {
                 subdivide_weights(
                     sc,

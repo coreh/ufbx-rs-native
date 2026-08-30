@@ -331,6 +331,33 @@ fn subdivide() {
     assert!(walk_mesh(&subdivided).is_finite());
 }
 
+/// Subdivision weight propagation: source-vertex and skin-cluster weights use
+/// the type-erased vertex-weight summer and publish one range per output vertex.
+#[test]
+fn subdivide_with_weights() {
+    let scene = load("blender_293_half_skinned_7400_binary.fbx");
+    let mesh = scene
+        .meshes
+        .iter()
+        .find(|mesh| !mesh.skin_deformers.is_empty())
+        .expect("no skinned mesh");
+    let opts = ufbx::SubdivideOpts {
+        evaluate_source_vertices: true,
+        evaluate_skin_weights: true,
+        ..Default::default()
+    };
+    let subdivided = ufbx::subdivide_mesh(mesh, 2, opts).expect("subdivide_mesh failed");
+    let result = subdivided
+        .subdivision_result
+        .as_ref()
+        .expect("no subdivision result");
+    assert_eq!(result.source_vertex_ranges.len(), subdivided.num_vertices);
+    assert_eq!(result.skin_cluster_ranges.len(), subdivided.num_vertices);
+    assert!(!result.source_vertex_weights.is_empty());
+    assert!(!result.skin_cluster_weights.is_empty());
+    assert!(walk_mesh(&subdivided).is_finite());
+}
+
 /// Topology, triangulation and index generation: the three helper APIs that
 /// write into caller-provided buffers.
 #[test]
