@@ -927,16 +927,27 @@ pub(crate) unsafe fn is_edge_split(
         // which maps corners to indices into that value array (not to mesh
         // vertices), so every `.add(ix*stride)` byte offset stays within the buffer.
         let (da0, da1, db0, db1) = unsafe {
+            let values = input.values() as *const u8;
             (
-                (input.values() as *const u8).add((a0 as usize).wrapping_mul(stride)),
-                (input.values() as *const u8).add((a1 as usize).wrapping_mul(stride)),
-                (input.values() as *const u8).add((b0 as usize).wrapping_mul(stride)),
-                (input.values() as *const u8).add((b1 as usize).wrapping_mul(stride)),
+                crate::prelude::slice_from_ptr(
+                    values.add((a0 as usize).wrapping_mul(stride)),
+                    stride,
+                ),
+                crate::prelude::slice_from_ptr(
+                    values.add((a1 as usize).wrapping_mul(stride)),
+                    stride,
+                ),
+                crate::prelude::slice_from_ptr(
+                    values.add((b0 as usize).wrapping_mul(stride)),
+                    stride,
+                ),
+                crate::prelude::slice_from_ptr(
+                    values.add((b1 as usize).wrapping_mul(stride)),
+                    stride,
+                ),
             )
         };
-        // SAFETY: `da0`/`db0` and `da1`/`db1` each point to `stride` live bytes
-        // within `input.values`, the length `memcmp` compares.
-        if unsafe { memcmp(da0, db0, stride) == 0 && memcmp(da1, db1, stride) == 0 } {
+        if memcmp(da0, db0) == 0 && memcmp(da1, db1) == 0 {
             return false;
         }
         return true;

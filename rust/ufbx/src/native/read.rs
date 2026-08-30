@@ -918,7 +918,7 @@ pub(crate) fn read_definitions(uc: &Context) -> Result<(), Fail> {
 
                     // HACK: LOD groups use LODGroup for Template, LodGroup for Object?
                     if (*tmpl).sub_type.length == 8
-                        && memcmp((*tmpl).sub_type.data, b"LODGroup\0".as_ptr(), 8) == 0
+                        && memcmp(slice_from_ptr((*tmpl).sub_type.data, 8), b"LODGroup") == 0
                     {
                         (*tmpl).sub_type.data = LOD_GROUP.as_ptr();
                     }
@@ -4676,10 +4676,11 @@ pub(crate) fn read_mesh(uc: &Context, node: &NodeView, info: &ElementInfoView) -
         } else if unsafe { strncmp(n.name(), b"LayerElement\0".as_ptr(), 12) } == 0 {
             // Make sure the name has no internal zero bytes
             // SAFETY: `n.name()` spans `n.name_len()` readable bytes before its
-            // terminator — the run `memchr` scans.
+            // terminator.
+            let name_bytes = unsafe { slice_from_ptr(n.name(), n.name_len() as usize) };
             ufbxi_check!(
                 uc,
-                unsafe { memchr(n.name(), b'\0', n.name_len() as usize) }.is_null(),
+                memchr(name_bytes, b'\0').is_null(),
                 "!memchr(n->name, '\\0', n->name_len)"
             );
 
@@ -7472,17 +7473,19 @@ pub(crate) fn read_object(uc: &Context, node: &NodeView) -> Result<(), Fail> {
     }
 
     // Remove the "Fbx" prefix from sub-types, remember to re-intern!
-    // SAFETY: `sub_type_str` was filled by the reads above, so it is a pooled
-    // string of `length` bytes; the compare and the 3-byte advance are guarded
-    // by the `length > 3` check.
-    if unsafe { sub_type_str.length > 3 && memcmp(sub_type_str.data, b"Fbx".as_ptr(), 3) == 0 } {
-        sub_type_str.data = unsafe { sub_type_str.data.add(3) };
-        sub_type_str.length -= 3;
-        push_string_place_str(
-            uc.string_pool_view(),
-            StringView::from_mut(&mut sub_type_str),
-            false,
-        )?;
+    if sub_type_str.length > 3 {
+        // SAFETY: `sub_type_str` was filled by the reads above, so it is a
+        // pooled string of `length` readable bytes.
+        let sub_type_bytes = unsafe { slice_from_ptr(sub_type_str.data, sub_type_str.length) };
+        if memcmp(&sub_type_bytes[..3], b"Fbx") == 0 {
+            sub_type_str.data = unsafe { sub_type_str.data.add(3) };
+            sub_type_str.length -= 3;
+            push_string_place_str(
+                uc.string_pool_view(),
+                StringView::from_mut(&mut sub_type_str),
+                false,
+            )?;
+        }
     }
 
     // C: `ufbx_string type_str;` — fully written by `ufbxi_split_type_and_name`.
@@ -8702,23 +8705,12 @@ unsafe fn read_take_prop_channel_rec(
     } else {
         // Pre-6000 FBX files store blend shape keys with a " (Shape)" suffix
         if uc.version() < 6000 {
-            let suffix: *const u8 = b" (Shape)\0".as_ptr();
-            // SAFETY: `suffix` is a NUL-terminated literal, so `strlen` walks to
-            // its terminator.
-            let suffix_len: usize = unsafe { strlen(suffix) };
+            let suffix = b" (Shape)";
+            let suffix_len = suffix.len();
+            // SAFETY: `name` is a live parser string readable for its length.
+            let name_bytes = unsafe { name.as_bytes() };
             if name.length > suffix_len
-                // SAFETY: `name.data` spans `name.length` readable bytes (fn
-                // contract) and `name.length > suffix_len` (checked first), so the
-                // compared range is that string's last `suffix_len` bytes;
-                // `suffix` spans `suffix_len` bytes by construction.
-                && unsafe {
-                    memcmp(
-                        add_ptr(name.data as *mut u8, name.length).wrapping_sub(suffix_len)
-                            as *const u8,
-                        suffix,
-                        suffix_len,
-                    )
-                } == 0
+                && memcmp(&name_bytes[name.length - suffix_len..], suffix) == 0
             {
                 name.length -= suffix_len;
                 // `name` is a live local whose `data` spans the shortened

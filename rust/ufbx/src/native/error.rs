@@ -164,16 +164,14 @@ pub(crate) fn c_strcmp(a: &[u8], b: &[u8]) -> i32 {
     }
 }
 
-// C `memcmp` semantics: lexicographic compare of `n` bytes as unsigned chars;
+// C `memcmp` semantics: lexicographic compare of equal byte spans as unsigned chars;
 // returns the difference at the first mismatch.
-pub(crate) unsafe fn memcmp(a: *const u8, b: *const u8, n: usize) -> i32 {
+pub(crate) fn memcmp(a: &[u8], b: &[u8]) -> i32 {
+    assert_eq!(a.len(), b.len());
     let mut i: usize = 0;
-    while i < n {
-        // SAFETY: the caller's contract is that `a` and `b` each address at
-        // least `n` readable bytes, and the loop condition holds `i < n`.
-        let ca = unsafe { *a.add(i) };
-        // SAFETY: same `n`-byte contract, on `b`.
-        let cb = unsafe { *b.add(i) };
+    while i < a.len() {
+        let ca = a[i];
+        let cb = b[i];
         if ca != cb {
             return ca as i32 - cb as i32;
         }
@@ -183,15 +181,12 @@ pub(crate) unsafe fn memcmp(a: *const u8, b: *const u8, n: usize) -> i32 {
 }
 
 // C `memchr` semantics: return a pointer to the first occurrence of `c` in the
-// first `n` bytes of `s`, or NULL if there is none.
-pub(crate) unsafe fn memchr(s: *const u8, c: u8, n: usize) -> *const u8 {
+// byte span `s`, or NULL if there is none.
+pub(crate) fn memchr(s: &[u8], c: u8) -> *const u8 {
     let mut i: usize = 0;
-    while i < n {
-        // SAFETY: the caller's contract is that `s` addresses at least `n`
-        // readable bytes, and the loop condition holds `i < n`.
-        if unsafe { *s.add(i) } == c {
-            // SAFETY: same `n`-byte contract; `i < n` keeps the offset in range.
-            return unsafe { s.add(i) };
+    while i < s.len() {
+        if s[i] == c {
+            return s.as_ptr().wrapping_add(i);
         }
         i += 1;
     }
@@ -1707,7 +1702,7 @@ mod tests {
     }
 
     #[test]
-    fn test_strlen_strcmp() {
+    fn test_libc_string_and_memory_shims() {
         unsafe {
             assert_eq!(strlen(b"\0".as_ptr()), 0);
             assert_eq!(strlen(b"abc\0".as_ptr()), 3);
@@ -1717,5 +1712,15 @@ mod tests {
             assert!(strcmp(b"ab\0".as_ptr(), b"abc\0".as_ptr()) < 0);
             assert!(strcmp(b"abc\0".as_ptr(), b"ab\0".as_ptr()) > 0);
         }
+
+        assert_eq!(memcmp(b"abc", b"abc"), 0);
+        assert_eq!(memcmp(b"abc", b"abd"), -1);
+        assert_eq!(memcmp(b"\xff", b"\x00"), 255);
+        assert_eq!(memcmp(b"", b""), 0);
+        let bytes = b"abca";
+        assert_eq!(memchr(bytes, b'a'), bytes.as_ptr());
+        assert_eq!(memchr(bytes, b'c'), bytes.as_ptr().wrapping_add(2));
+        assert!(memchr(bytes, b'x').is_null());
+        assert!(memchr(b"", b'x').is_null());
     }
 }

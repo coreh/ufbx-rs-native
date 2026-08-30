@@ -1574,13 +1574,13 @@ pub(crate) unsafe fn cache_load_file(cc: &CacheContext, filename: String) -> Res
 
     cc.set_file_offset(0);
 
-    // SAFETY (all three): the checks above established that the read filled 16
-    // bytes of `cc`'s buffer, so the 11 and 4 byte compares are in bounds; the
-    // right-hand operands are byte literals at least that long.
-    if unsafe { crate::native::error::memcmp(cc.buffer_ptr(), b"POINTCACHE2".as_ptr(), 11) } == 0 {
+    // SAFETY: the checks above established that the read filled 16 bytes of
+    // `cc`'s buffer.
+    let magic = unsafe { crate::prelude::slice_from_ptr(cc.buffer_ptr(), 16) };
+    if crate::native::error::memcmp(&magic[..11], b"POINTCACHE2") == 0 {
         cache_load_pc2(cc)?;
-    } else if unsafe { crate::native::error::memcmp(cc.buffer_ptr(), b"FOR4".as_ptr(), 4) } == 0
-        || unsafe { crate::native::error::memcmp(cc.buffer_ptr(), b"FOR8".as_ptr(), 4) } == 0
+    } else if crate::native::error::memcmp(&magic[..4], b"FOR4") == 0
+        || crate::native::error::memcmp(&magic[..4], b"FOR8") == 0
     {
         cache_load_mc(cc)?;
     } else {

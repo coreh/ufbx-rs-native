@@ -7552,20 +7552,17 @@ pub(crate) unsafe fn absolute_to_relative_path(
     if rel_length == 0 || src_length == 0 {
         return Ok(());
     }
+    // SAFETY: the viewed strblobs above supply their selected data extents.
+    let rel_bytes = unsafe { slice_from_ptr(rel, rel_length) };
+    let src_bytes = unsafe { slice_from_ptr(src, src_length) };
 
     // Absolute paths must start with the same character (either drive or '/')
-    // SAFETY: `rel`/`src` address `rel_length`/`src_length` readable bytes, and
-    // both lengths are non-zero here, so byte `0` of each is inside its run.
-    if unsafe { *rel.add(0) != *src.add(0) } {
+    if rel_bytes[0] != src_bytes[0] {
         return Ok(());
     }
 
     // Find the last directory of the path we want to be relative to
-    // SAFETY: `rel` addresses `rel_length` readable bytes — the strblob's own
-    // string — and the loop only reads while `rel_length > 0`, so
-    // `rel_length - 1` indexes inside that run.
-    while rel_length > 0
-        && unsafe { *rel.add(rel_length - 1) != b'/' && *rel.add(rel_length - 1) != b'\\' }
+    while rel_length > 0 && rel_bytes[rel_length - 1] != b'/' && rel_bytes[rel_length - 1] != b'\\'
     {
         rel_length -= 1;
     }
@@ -7573,9 +7570,7 @@ pub(crate) unsafe fn absolute_to_relative_path(
     if rel_length == 0 {
         return Ok(());
     }
-    // SAFETY: `rel_length > 0` and it only shrank from the strblob's own length,
-    // so `rel_length - 1` indexes inside the `rel` run.
-    let separator: u8 = unsafe { *rel.add(rel_length - 1) };
+    let separator: u8 = rel_bytes[rel_length - 1];
 
     let max_length: usize = rel_length.wrapping_mul(2).wrapping_add(src_length);
 
@@ -7605,12 +7600,12 @@ pub(crate) unsafe fn absolute_to_relative_path(
         // SAFETY: `src` addresses `src_length` readable bytes and
         // `src_begin < src_length`.
         let src_end: usize = unsafe { next_path_segment(src, src_begin, src_length) };
+        let cmp_len = src_end - src_begin;
         if rel_end != src_end
-            // SAFETY: `next_path_segment` returns an index in
-            // `[begin, length]`, so `[rel_begin, src_end)` and
-            // `[src_begin, src_end)` — equal-length spans, since
-            // `rel_end == src_end` here — stay inside the two runs.
-            || unsafe { memcmp(rel.add(rel_begin), src.add(src_begin), src_end - src_begin) } != 0
+            || memcmp(
+                &rel_bytes[rel_begin..rel_begin + cmp_len],
+                &src_bytes[src_begin..src_end],
+            ) != 0
         {
             break;
         }

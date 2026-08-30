@@ -506,7 +506,9 @@ pub(crate) fn obj_read_line(uc: &Context) -> Result<(), Fail> {
         // only ever advances to a scanned line end within it, so the remaining
         // `data_size - offset` bytes searched are in bounds.
         let end: *const u8 = if !begin.is_null() {
-            unsafe { memchr(begin, b'\n', uc.data_size() - offset) }
+            let remaining =
+                unsafe { crate::prelude::slice_from_ptr(begin, uc.data_size() - offset) };
+            memchr(remaining, b'\n')
         } else {
             core::ptr::null()
         };
@@ -2357,25 +2359,25 @@ pub(crate) fn obj_parse_mtl(uc: &Context) -> Result<(), Fail> {
         // SAFETY: `num_tokens > 0` past the guard above, so token 0 is in the
         // stored token run and every comparison below reads at most
         // `cmd.length` bytes of its own span (guarded by the length tests);
-        // the literals are NUL-terminated for `str_c`, and the fallback
-        // property parse gets that same readable token 0 span as its name and
-        // takes no out-param.
+        // the fallback property parse gets that same readable token 0 span as
+        // its name and takes no out-param.
         unsafe {
             let cmd: String = *uc.obj().tokens().add(0);
-            if str_equal(cmd.as_bytes(), b"newmtl") {
+            let cmd_bytes = cmd.as_bytes();
+            if str_equal(cmd_bytes, b"newmtl") {
                 // HACK: Reuse mesh material parsing, but don't allow for empty material name
                 ufbxi_check!(uc, uc.obj().num_tokens() >= 2, "uc->obj.num_tokens >= 2");
                 obj_flush_material(uc)?;
                 obj_parse_material(uc)?;
-            } else if cmd.length > 4 && memcmp(cmd.data, b"map_".as_ptr(), 4) == 0 {
+            } else if cmd.length > 4 && memcmp(&cmd_bytes[..4], b"map_") == 0 {
                 obj_parse_mtl_map(uc, 4)?;
             } else if cmd.length == 4
-                && (memcmp(cmd.data, b"bump".as_ptr(), 4) == 0
-                    || memcmp(cmd.data, b"disp".as_ptr(), 4) == 0
-                    || memcmp(cmd.data, b"norm".as_ptr(), 4) == 0)
+                && (memcmp(cmd_bytes, b"bump") == 0
+                    || memcmp(cmd_bytes, b"disp") == 0
+                    || memcmp(cmd_bytes, b"norm") == 0)
             {
                 obj_parse_mtl_map(uc, 0)?;
-            } else if cmd.length == 1 && *cmd.data.add(0) == b'#' {
+            } else if cmd.length == 1 && cmd_bytes[0] == b'#' {
                 // Implement .mtl magic comment handling here if necessary
             } else {
                 obj_parse_prop(uc, *uc.obj().tokens().add(0), 1, true, None)?;

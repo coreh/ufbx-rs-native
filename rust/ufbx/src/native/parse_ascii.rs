@@ -362,12 +362,7 @@ pub(crate) fn ascii_skip_whitespace(uc: &Context) -> u8 {
                         c = ascii_next(uc);
                     }
 
-                    // SAFETY: `line_len >= 19` bytes of the 32-byte local
-                    // `line` are filled, and the literal is 19 bytes long.
-                    if line_len >= 19
-                        && unsafe { memcmp(line.as_ptr(), b" Created by Blender".as_ptr(), 19) }
-                            == 0
-                    {
+                    if line_len >= 19 && memcmp(&line[..19], b" Created by Blender") == 0 {
                         uc.set_exporter(Exporter::BlenderAscii);
                     }
                 }
@@ -480,7 +475,8 @@ pub(crate) fn ascii_skip_until(uc: &Context, dst: u8) -> Result<(), Fail> {
         // `memchr` returns a pointer inside it, and the `else` advance by
         // `buffered` lands on `src_yield`.
         unsafe {
-            let match_: *const u8 = memchr(ua.src(), dst, buffered);
+            let buffered_bytes = crate::prelude::slice_from_ptr(ua.src(), buffered);
+            let match_: *const u8 = memchr(buffered_bytes, dst);
             if !match_.is_null() {
                 ua.set_src(match_);
                 break;
@@ -533,8 +529,9 @@ pub(crate) unsafe fn ascii_store_array(uc: &Context, tmp_buf: &BufView) -> Resul
         let begin: *const u8 = unsafe { (*ua).src };
         let end: *const u8;
         // SAFETY: `begin` is the live `src` cursor and `buffered` is the readable
-        // `src..src_yield` run, so `memchr` scans in-bounds bytes.
-        let match_: *const u8 = unsafe { memchr(begin, b'}', buffered) };
+        // `src..src_yield` run.
+        let buffered_bytes = unsafe { crate::prelude::slice_from_ptr(begin, buffered) };
+        let match_: *const u8 = memchr(buffered_bytes, b'}');
         if !match_.is_null() {
             end = match_;
         } else {
@@ -765,16 +762,18 @@ pub(crate) fn ascii_next_token(uc: &Context, token: &AsciiTokenView) -> Result<(
                 let begin: *const u8 = unsafe { (*ua).src };
                 let mut end: *const u8 = unsafe { (*ua).src_yield };
                 // SAFETY: `[begin, end)` is a sub-run of the readable source
-                // window, so `memchr` scans in-bounds bytes.
-                let quot: *const u8 =
-                    unsafe { memchr(begin, b'"', to_size(end as isize - begin as isize)) };
+                // window.
+                let bytes = unsafe {
+                    crate::prelude::slice_from_ptr(begin, to_size(end as isize - begin as isize))
+                };
+                let quot: *const u8 = memchr(bytes, b'"');
                 if !quot.is_null() {
                     end = quot;
                 }
-                // SAFETY: `end` only shrank toward `begin`, so `[begin, end)`
-                // remains a readable sub-run for `memchr` to scan.
-                let esc: *const u8 =
-                    unsafe { memchr(begin, b'&', to_size(end as isize - begin as isize)) };
+                // `end` only shrank toward `begin`, so the prefix remains a
+                // readable sub-run.
+                let esc_len = to_size(end as isize - begin as isize);
+                let esc: *const u8 = memchr(&bytes[..esc_len], b'&');
                 if !esc.is_null() {
                     end = esc;
                 }

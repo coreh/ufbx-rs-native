@@ -6549,20 +6549,21 @@ pub(crate) unsafe fn r#match(str_: &[u8], fmt: *const u8) -> bool {
 
 // ufbx.c:11096-11128 `ufbxi_is_format`
 #[inline(never)]
-pub(crate) unsafe fn is_format(data: *const u8, size: usize, format: FileFormat) -> bool {
+pub(crate) fn is_format(data: &[u8], format: FileFormat) -> bool {
+    let size = data.len();
     // C: `ufbx_string line, buf = { data, size };` — `line` is written by
     // `ufbxi_next_line` before any read.
     let mut line: String = String::new_c(core::ptr::null(), 0);
-    let mut buf: String = String::new_c(data, size);
+    let mut buf: String = String::new_c(data.as_ptr(), size);
     let line = StringView::from_mut(&mut line);
     let buf = StringView::from_mut(&mut buf);
 
     if format == FileFormat::Fbx {
-        // SAFETY: guarded by `size >= BINARY_MAGIC_SIZE`, so `data` and the
-        // literal both span at least `BINARY_MAGIC_SIZE` bytes — `memcmp`'s
-        // contract.
         if size >= BINARY_MAGIC_SIZE
-            && unsafe { memcmp(data, BINARY_MAGIC.as_ptr(), BINARY_MAGIC_SIZE) } == 0
+            && memcmp(
+                &data[..BINARY_MAGIC_SIZE],
+                &BINARY_MAGIC[..BINARY_MAGIC_SIZE],
+            ) == 0
         {
             return true;
         }
@@ -6640,17 +6641,18 @@ pub(crate) fn determine_format(uc: &Context) -> Result<(), Fail> {
 
             let data_size: usize = min_sz(lookahead, uc.data_size());
             ufbxi_check_msg!(uc, data_size > 0, "Empty file");
+            // SAFETY: `data_size <= uc.data_size()` (clamped above), so this is
+            // a prefix of the buffered read window.
+            let data = unsafe { crate::prelude::slice_from_ptr(uc.data(), data_size) };
 
             // C: `for (uint32_t fmt = UFBX_FILE_FORMAT_FBX; fmt < UFBX_FILE_FORMAT_COUNT; fmt++)`
             let mut fmt: u32 = FileFormat::Fbx as u32;
             while fmt < FILE_FORMAT_COUNT {
-                // SAFETY: `data_size <= uc.data_size()` (clamped above), so
-                // `is_format` reads only inside the buffered read window; `fmt`
-                // ranges over `Fbx..FILE_FORMAT_COUNT`, every one of which is a
-                // valid `FileFormat` discriminant.
+                // SAFETY: `fmt` ranges over `Fbx..FILE_FORMAT_COUNT`, every one
+                // of which is a valid `FileFormat` discriminant.
                 unsafe {
                     let fmt_enum: FileFormat = core::mem::transmute::<u32, FileFormat>(fmt);
-                    if is_format(uc.data(), data_size, fmt_enum) {
+                    if is_format(data, fmt_enum) {
                         format = fmt_enum;
                         break;
                     }
@@ -7566,9 +7568,7 @@ pub(crate) fn name_key_less<M: Mode>(prop: &View<Prop, M>, data: &[u8], key: u32
 
     let prop_len: usize = prop.name().length;
     let len: usize = min_sz(prop_len, name_len);
-    // SAFETY: `prop.name.data` spans `prop_len` bytes and `data` spans `name_len`;
-    // `len` is their min, so both reads stay in bounds — `memcmp`'s contract.
-    let cmp: i32 = unsafe { memcmp(prop.name().data, data.as_ptr(), len) };
+    let cmp: i32 = memcmp(&prop.name_view().bytes()[..len], &data[..len]);
     if cmp != 0 {
         return cmp < 0;
     }
