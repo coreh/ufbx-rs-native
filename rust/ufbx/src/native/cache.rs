@@ -2749,16 +2749,13 @@ pub(crate) fn transform_to_axes(uc: &Context, dst_axes: CoordinateAxes) {
         return;
     }
     // SAFETY: `axis_matrix_mut_ptr()` projects uc's own live, initialized,
-    // write-capable `axis_matrix` storage. The axis contract holds: the source
-    // axes passed `coordinate_axes_valid` above, and `dst_axes` is the caller's
-    // validated conversion target.
-    if !unsafe {
-        axis_matrix(
-            View::<Matrix>::from_ptr(uc.axis_matrix_mut_ptr()),
-            uc.scene_view().settings_view().axes(),
-            dst_axes,
-        )
-    } {
+    // write-capable `axis_matrix` storage.
+    let axis_matrix_view = unsafe { View::<Matrix>::from_ptr(uc.axis_matrix_mut_ptr()) };
+    if !axis_matrix(
+        axis_matrix_view,
+        uc.scene_view().settings_view().axes(),
+        dst_axes,
+    ) {
         return;
     }
 

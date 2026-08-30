@@ -1572,17 +1572,13 @@ const _: () =
 
 // ufbx.c:18638-18646 `ufbxi_cmp_connection_less`
 // Comparator over views: the sort adapter mints them (PORTING.md "Sorting").
-//
-// # Safety
-// `index` must be 0 or 1: it selects between the two adjacent element refs
-// (and the two adjacent strings) of one unpadded `ufbx_connection`, a bound
-// the parameter type cannot carry.
 #[inline(always)]
-pub(crate) unsafe fn cmp_connection_less<M: Mode>(
+pub(crate) fn cmp_connection_less<M: Mode>(
     a: &View<Connection, M>,
     b: &View<Connection, M>,
     index: usize,
 ) -> bool {
+    ufbx_assert!(index < 2);
     // C-parity: `(&a->src)[index]` / `(&a->src_prop)[index]` index across the
     // two adjacent element pointers and the two adjacent strings of
     // `ufbx_connection`, which the static assert above pins as unpadded; both
@@ -1590,7 +1586,7 @@ pub(crate) unsafe fn cmp_connection_less<M: Mode>(
     // (PORTING.md "Raw pointers from places").
     let a_src: *const Ref<Element> = a.src_ptr();
     let b_src: *const Ref<Element> = b.src_ptr();
-    // SAFETY: `index` is 0 or 1 (fn contract), so the offset stays inside the
+    // SAFETY: `index` is 0 or 1 (asserted above), so the offset stays inside the
     // viewed connection, where a live, initialized `Ref<Element>` sits.
     let a_elem: *mut Element = unsafe { ptr::read(a_src.add(index)) }.ptr();
     // SAFETY: as above, for `b`.
@@ -1600,7 +1596,7 @@ pub(crate) unsafe fn cmp_connection_less<M: Mode>(
     }
     let a_prop: *const String = a.src_prop_ptr();
     let b_prop: *const String = b.src_prop_ptr();
-    // SAFETY: `index` is 0 or 1 (fn contract), so both offsets stay inside the
+    // SAFETY: `index` is 0 or 1 (asserted above), so both offsets stay inside the
     // two adjacent `src_prop`/`dst_prop` strings of their connection; each is
     // an interned string-pool span, hence NUL-terminated for `strcmp`.
     let mut cmp: i32 = unsafe { strcmp((*a_prop.add(index)).data, (*b_prop.add(index)).data) };
@@ -1645,9 +1641,6 @@ pub(crate) unsafe fn sort_connections(
             connections,
             uc.tmp_arr() as *mut Connection,
             count,
-            // The comparator call is covered by the enclosing block: `index` is
-            // the caller's 0-or-1 field selector, which is
-            // `cmp_connection_less`'s contract.
             |a, b| cmp_connection_less(a, b, index),
         )
     };
@@ -10702,22 +10695,17 @@ pub(crate) fn mul_inv_rotate(t: &mut Transform, v: Vec3, order: RotationOrder) {
 // C indexes the `ufbx_vec3` value union's `ufbx_real v[3]` view; the generated
 // struct keeps only `x`/`y`/`z`, so the index is pointer arithmetic from the
 // struct base (same device as `ufbxi_mirror_vec3_list` above).
-//
-// # Safety
-//
-// `axis` must be one of `X`/`Y`/`Z`: the C indexes `v[axis - 1]`, which reads
-// out of bounds for `UFBX_MIRROR_AXIS_NONE`. The parameter type admits `None`,
-// so the obligation stays with the caller (C states it as `ufbxi_dev_assert`).
 #[inline(always)]
-pub(crate) unsafe fn mirror_translation(p_vec: &mut Vec3, axis: MirrorAxis) {
+pub(crate) fn mirror_translation(p_vec: &mut Vec3, axis: MirrorAxis) {
+    ufbx_assert!(axis != MirrorAxis::None);
     // C: `ufbxi_dev_assert(axis);` — enum truthiness.
     ufbxi_dev_assert!(axis != MirrorAxis::None);
     let v: *mut Real = ptr::from_mut(p_vec).cast::<Real>();
     // C: `axis - 1` — the enum is promoted to `int` before the subtraction.
     let i: usize = (axis as i32 - 1) as usize;
     // SAFETY: `p_vec` borrows a live, initialized, writable `ufbx_vec3`, which
-    // is three consecutive `ufbx_real`s, and `axis` is one of `X`/`Y`/`Z` (fn
-    // contract, asserted above) so `i = axis - 1` is in `0..3`.
+    // is three consecutive `ufbx_real`s, and `axis` is one of `X`/`Y`/`Z`
+    // (asserted above) so `i = axis - 1` is in `0..3`.
     unsafe { *v.add(i) = -*v.add(i) };
 }
 
@@ -10781,9 +10769,7 @@ pub(crate) fn get_geometry_transform(props: &PropsView, node: &NodeView) -> Tran
     }
 
     if node.adjust_mirror_axis() != MirrorAxis::None {
-        // SAFETY: the branch condition established that the axis is not `None`,
-        // which is `ufbxi_mirror_translation`'s contract.
-        unsafe { mirror_translation(&mut t.translation, node.adjust_mirror_axis()) };
+        mirror_translation(&mut t.translation, node.adjust_mirror_axis());
         mirror_rotation(&mut t.rotation, node.adjust_mirror_axis());
     }
 
@@ -10976,9 +10962,7 @@ pub(crate) fn get_transform<M: Mode>(
 
     // C: `if (node->adjust_mirror_axis)` — enum truthiness.
     if node.adjust_mirror_axis() != MirrorAxis::None {
-        // SAFETY: the branch condition established that the axis is not `None`,
-        // which is `ufbxi_mirror_translation`'s contract.
-        unsafe { mirror_translation(&mut t.translation, node.adjust_mirror_axis()) };
+        mirror_translation(&mut t.translation, node.adjust_mirror_axis());
         mirror_rotation(&mut t.rotation, node.adjust_mirror_axis());
     }
 
@@ -12704,21 +12688,10 @@ static TIME_MODE_FPS: [Real; 18] = [
 
 // ufbx.c:23655-23674 `ufbxi_axis_matrix`
 // Returns whether a non-identity matrix was needed
-///
-/// # Safety
-/// `src` and `dst` must both be valid coordinate axes (`coordinate_axes_valid`,
-/// i.e. every member in `UFBX_COORDINATE_AXIS_POSITIVE_X ..=
-/// UFBX_COORDINATE_AXIS_NEGATIVE_Z`, never `UFBX_COORDINATE_AXIS_UNKNOWN`), as
-/// every C call site checks. The column/element indices below are `axis >> 1`
-/// with no clamping, so an `UNKNOWN` (6) member indexes one past the matrix's
-/// twelve `ufbx_real`s. The `CoordinateAxis` enum cannot express the bound, so
-/// it stays a caller obligation.
 #[inline(never)]
-pub(crate) unsafe fn axis_matrix(
-    mat: &View<Matrix>,
-    src: CoordinateAxes,
-    dst: CoordinateAxes,
-) -> bool {
+pub(crate) fn axis_matrix(mat: &View<Matrix>, src: CoordinateAxes, dst: CoordinateAxes) -> bool {
+    ufbx_assert!(coordinate_axes_valid(src));
+    ufbx_assert!(coordinate_axes_valid(dst));
     let src_x: u32 = src.right as u32;
     let dst_x: u32 = dst.right as u32;
     let src_y: u32 = src.up as u32;
@@ -12738,9 +12711,9 @@ pub(crate) unsafe fn axis_matrix(
     // C: `mat->cols[i].v[j]` — the `cols[4]` / `v[3]` union overlay.
     let cols: *mut Vec3 = mat.get() as *mut Vec3;
     // SAFETY: the view covers writable `ufbx_matrix` storage laid out as four
-    // consecutive `ufbx_vec3` columns, and `src`/`dst` carry real axes (fn
-    // contract: not `UFBX_COORDINATE_AXIS_UNKNOWN`), so `src_x >> 1` is in
-    // `0..3` and selects a column in bounds.
+    // consecutive `ufbx_vec3` columns, and `src`/`dst` carry real axes
+    // (asserted above), so `src_x >> 1` is in `0..3` and selects a column in
+    // bounds.
     let cx: *mut Real = unsafe { cols.add((src_x >> 1) as usize) } as *mut Real;
     // SAFETY: the column `cx` addresses is three consecutive `ufbx_real`s and
     // `dst_x >> 1` is in `0..3` (see above), so the element is in bounds — and
@@ -12820,9 +12793,7 @@ pub(crate) fn update_adjust_transforms<'a>(uc: &'a Context, scene: &'a SceneView
         // write-capable and stays valid for the call, and the `Mut` view's
         // `MaybeUninit` storage tolerates the uninitialized pointee;
         // `axis_matrix` fully writes it before returning true, so the reads
-        // below are of initialized memory. Its axis contract holds: the source
-        // axes passed `coordinate_axes_valid` above and `light_axes` is a
-        // literal of real axes.
+        // below are of initialized memory.
         unsafe {
             if axis_matrix(
                 View::<Matrix>::from_ptr(mat),
@@ -12850,9 +12821,7 @@ pub(crate) fn update_adjust_transforms<'a>(uc: &'a Context, scene: &'a SceneView
         // write-capable and stays valid for the call, and the `Mut` view's
         // `MaybeUninit` storage tolerates the uninitialized pointee;
         // `axis_matrix` fully writes it before returning true, so the read
-        // below is of initialized memory. Its axis contract holds: the source
-        // axes passed `coordinate_axes_valid` above and `camera_axes` is a
-        // literal of real axes.
+        // below is of initialized memory.
         unsafe {
             if axis_matrix(
                 View::<Matrix>::from_ptr(mat),
