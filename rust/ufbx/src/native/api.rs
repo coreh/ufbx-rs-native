@@ -3830,7 +3830,7 @@ pub(crate) fn get_blend_shape_vertex_offset_view<M: Mode>(
         .copy_at(index as usize)
 }
 
-// Raw adapter for the generated Rust wrapper and C ABI shim.
+// Raw adapter for the C ABI shim.
 #[inline(always)]
 pub(crate) unsafe fn get_blend_shape_vertex_offset(
     shape: *const BlendShape,
@@ -3885,7 +3885,7 @@ pub(crate) fn get_blend_vertex_offset_view<M: Mode>(
     offset
 }
 
-// Raw adapter for the generated Rust wrapper and C ABI shim.
+// Raw adapter for the C ABI shim.
 #[inline(always)]
 pub(crate) unsafe fn get_blend_vertex_offset(blend: *const BlendDeformer, vertex: usize) -> Vec3 {
     // SAFETY: this adapter's raw contract makes `blend` null or a live,

@@ -5261,18 +5261,12 @@ pub fn find_baked_element<'a>(
     result.map(|elem| unsafe { &*elem.as_ptr() })
 }
 
-#[allow(clippy::let_and_return)]
 pub fn evaluate_baked_vec3(keyframes: &[BakedVec3], time: f64) -> Vec3 {
-    let result =
-        unsafe { crate::native::api::evaluate_baked_vec3(List::from_slice(keyframes), time) };
-    result
+    crate::native::api::evaluate_baked_vec3_slice(keyframes, time)
 }
 
-#[allow(clippy::let_and_return)]
 pub fn evaluate_baked_quat(keyframes: &[BakedQuat], time: f64) -> Quat {
-    let result =
-        unsafe { crate::native::api::evaluate_baked_quat(List::from_slice(keyframes), time) };
-    result
+    crate::native::api::evaluate_baked_quat_slice(keyframes, time)
 }
 
 #[allow(clippy::needless_lifetimes)]
@@ -5286,14 +5280,10 @@ pub fn get_bone_pose<'a>(pose: &'a Pose, node: &Node) -> Option<&'a BonePose> {
 
 #[allow(clippy::needless_lifetimes)]
 pub fn find_prop_texture<'a>(material: &'a Material, name: &str) -> Option<&'a Texture> {
-    let result = unsafe {
-        crate::native::api::find_prop_texture_len(material as *const Material, name.as_bytes())
-    };
-    if result.is_null() {
-        None
-    } else {
-        unsafe { Some(&*result) }
-    }
+    let material =
+        crate::native::view::View::<Material, crate::native::view::Const>::from_ref(material);
+    let result = crate::native::api::find_prop_texture_entry(Some(material), name.as_bytes());
+    result.map(|entry| unsafe { &*entry.texture_view().as_ptr() })
 }
 
 pub fn find_shader_prop<'a>(shader: &'a Shader, name: &str) -> &'a str {
@@ -5460,20 +5450,16 @@ pub fn get_blend_shape_offset_index(shape: &BlendShape, vertex: usize) -> u32 {
     crate::native::api::get_blend_shape_offset_index(Some(shape), vertex)
 }
 
-#[allow(clippy::let_and_return)]
 pub fn get_blend_shape_vertex_offset(shape: &BlendShape, vertex: usize) -> Vec3 {
-    let result = unsafe {
-        crate::native::api::get_blend_shape_vertex_offset(shape as *const BlendShape, vertex)
-    };
-    result
+    let shape =
+        crate::native::view::View::<BlendShape, crate::native::view::Const>::from_ref(shape);
+    crate::native::api::get_blend_shape_vertex_offset_view(Some(shape), vertex)
 }
 
-#[allow(clippy::let_and_return)]
 pub fn get_blend_vertex_offset(blend: &BlendDeformer, vertex: usize) -> Vec3 {
-    let result = unsafe {
-        crate::native::api::get_blend_vertex_offset(blend as *const BlendDeformer, vertex)
-    };
-    result
+    let blend =
+        crate::native::view::View::<BlendDeformer, crate::native::view::Const>::from_ref(blend);
+    crate::native::api::get_blend_vertex_offset_view(Some(blend), vertex)
 }
 
 pub fn add_blend_shape_vertex_offsets(shape: &BlendShape, vertices: &mut [Vec3], weight: Real) {

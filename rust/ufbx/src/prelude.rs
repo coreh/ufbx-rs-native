@@ -55,6 +55,7 @@ pub struct List<T> {
 }
 
 impl<T> List<T> {
+    #[cfg(test)]
     pub(crate) unsafe fn from_slice(slice: &[T]) -> List<T> {
         List {
             data: slice.as_ptr(),

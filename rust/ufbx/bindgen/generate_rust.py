@@ -770,6 +770,22 @@ pub fn get_blend_shape_offset_index(shape: &BlendShape, vertex: usize) -> u32 {
 }
 """
 
+# Shared references can mint the read-only views consumed by the safe lookup
+# cores directly. The nullable raw-pointer adapters remain C-ABI boundaries.
+override_functions["ufbx_get_blend_shape_vertex_offset"] = """
+pub fn get_blend_shape_vertex_offset(shape: &BlendShape, vertex: usize) -> Vec3 {
+    let shape = crate::native::view::View::<BlendShape, crate::native::view::Const>::from_ref(shape);
+    crate::native::api::get_blend_shape_vertex_offset_view(Some(shape), vertex)
+}
+"""
+
+override_functions["ufbx_get_blend_vertex_offset"] = """
+pub fn get_blend_vertex_offset(blend: &BlendDeformer, vertex: usize) -> Vec3 {
+    let blend = crate::native::view::View::<BlendDeformer, crate::native::view::Const>::from_ref(blend);
+    crate::native::api::get_blend_vertex_offset_view(Some(blend), vertex)
+}
+"""
+
 override_functions["ufbx_get_bone_pose"] = """
 #[allow(clippy::needless_lifetimes)]
 pub fn get_bone_pose<'a>(pose: &'a Pose, node: &Node) -> Option<&'a BonePose> {
@@ -902,6 +918,34 @@ pub fn find_baked_element<'a>(
         Some(crate::native::view::View::<Element, crate::native::view::Const>::from_ref(element)),
     );
     result.map(|elem| unsafe { &*elem.as_ptr() })
+}
+"""
+
+# The safe Rust baked evaluators already receive validated slices; call the
+# slice cores directly. The `List<T>` adapters in native/api.rs remain unsafe
+# C-ABI boundaries for raw callers that supply an unchecked `(data, count)`.
+override_functions["ufbx_evaluate_baked_vec3"] = """
+pub fn evaluate_baked_vec3(keyframes: &[BakedVec3], time: f64) -> Vec3 {
+    crate::native::api::evaluate_baked_vec3_slice(keyframes, time)
+}
+"""
+
+override_functions["ufbx_evaluate_baked_quat"] = """
+pub fn evaluate_baked_quat(keyframes: &[BakedQuat], time: f64) -> Quat {
+    crate::native::api::evaluate_baked_quat_slice(keyframes, time)
+}
+"""
+
+# A `Material` reference can mint the read-only search view directly. A hit is
+# a stored `Ref<Texture>` reached through that view; only converting its raw
+# address back to the public reference needs an unsafe operation. The nullable
+# raw adapter remains the C-ABI boundary.
+override_functions["ufbx_find_prop_texture_len"] = """
+#[allow(clippy::needless_lifetimes)]
+pub fn find_prop_texture<'a>(material: &'a Material, name: &str) -> Option<&'a Texture> {
+    let material = crate::native::view::View::<Material, crate::native::view::Const>::from_ref(material);
+    let result = crate::native::api::find_prop_texture_entry(Some(material), name.as_bytes());
+    result.map(|entry| unsafe { &*entry.texture_view().as_ptr() })
 }
 """
 
