@@ -5109,33 +5109,34 @@ where
             anim as *const Anim,
             element as *const Element,
             time,
-            buffer.as_ptr() as *mut Prop,
+            buffer.as_mut_ptr().cast::<Prop>(),
             buffer.len(),
         )
     };
     unsafe { ExternalRef::new(result) }
 }
 
-#[allow(clippy::let_and_return)]
-pub fn evaluate_props_flags(
-    anim: &Anim,
-    element: &Element,
+pub fn evaluate_props_flags<'a, 'b>(
+    anim: &'a Anim,
+    element: &'a Element,
     time: f64,
-    buffer: &mut Prop,
-    buffer_size: usize,
+    buffer: &'b mut [ExternalRef<'b, Prop>],
     flags: u32,
-) -> Props {
+) -> ExternalRef<'b, Props>
+where
+    'a: 'b,
+{
     let result = unsafe {
-        crate::native::api::evaluate_props_flags(
+        ufbx_evaluate_props_flags(
             anim as *const Anim,
             element as *const Element,
             time,
-            buffer as *mut Prop,
-            buffer_size,
+            buffer.as_mut_ptr().cast::<Prop>(),
+            buffer.len(),
             flags,
         )
     };
-    result
+    unsafe { ExternalRef::new(result) }
 }
 
 #[allow(clippy::let_and_return)]
@@ -5261,67 +5262,49 @@ pub fn bake_anim(scene: &Scene, anim: &Anim, opts: BakeOpts) -> Result<BakedAnim
     unsafe { bake_anim_raw(scene, anim, &opts_raw) }
 }
 
-pub fn find_baked_node_by_typed_id<'a>(
-    bake: &mut BakedAnim,
-    typed_id: u32,
-) -> Option<&'a BakedNode> {
+pub fn find_baked_node_by_typed_id(bake: &mut BakedAnim, typed_id: u32) -> Option<&BakedNode> {
     let result = crate::native::api::find_baked_node_by_typed_id(
-        unsafe {
-            crate::native::view::View::<BakedAnim, crate::native::view::Const>::from_ptr(
-                bake as *const BakedAnim,
-            )
-        },
+        crate::native::view::View::<BakedAnim, crate::native::view::Const>::from_ref(bake),
         typed_id,
     );
     result.map(|node| unsafe { &*node.as_ptr() })
 }
 
-pub fn find_baked_node<'a>(bake: &mut BakedAnim, node: &'a mut Node) -> Option<&'a BakedNode> {
+pub fn find_baked_node<'a>(bake: &'a mut BakedAnim, node: &mut Node) -> Option<&'a BakedNode> {
     let result = crate::native::api::find_baked_node(
-        Some(unsafe {
-            crate::native::view::View::<BakedAnim, crate::native::view::Const>::from_ptr(
-                bake as *const BakedAnim,
-            )
-        }),
-        Some(unsafe {
-            crate::native::view::View::<Node, crate::native::view::Const>::from_ptr(
-                node as *const Node,
-            )
-        }),
+        Some(crate::native::view::View::<
+            BakedAnim,
+            crate::native::view::Const,
+        >::from_ref(bake)),
+        Some(crate::native::view::View::<Node, crate::native::view::Const>::from_ref(node)),
     );
     result.map(|node| unsafe { &*node.as_ptr() })
 }
 
-pub fn find_baked_element_by_element_id<'a>(
+pub fn find_baked_element_by_element_id(
     bake: &mut BakedAnim,
     element_id: u32,
-) -> Option<&'a BakedElement> {
+) -> Option<&BakedElement> {
     let result = crate::native::api::find_baked_element_by_element_id(
-        unsafe {
-            crate::native::view::View::<BakedAnim, crate::native::view::Const>::from_ptr(
-                bake as *const BakedAnim,
-            )
-        },
+        crate::native::view::View::<BakedAnim, crate::native::view::Const>::from_ref(bake),
         element_id,
     );
     result.map(|elem| unsafe { &*elem.as_ptr() })
 }
 
 pub fn find_baked_element<'a>(
-    bake: &mut BakedAnim,
-    element: &'a mut Element,
+    bake: &'a mut BakedAnim,
+    element: &mut Element,
 ) -> Option<&'a BakedElement> {
     let result = crate::native::api::find_baked_element(
-        Some(unsafe {
-            crate::native::view::View::<BakedAnim, crate::native::view::Const>::from_ptr(
-                bake as *const BakedAnim,
-            )
-        }),
-        Some(unsafe {
-            crate::native::view::View::<Element, crate::native::view::Const>::from_ptr(
-                element as *const Element,
-            )
-        }),
+        Some(crate::native::view::View::<
+            BakedAnim,
+            crate::native::view::Const,
+        >::from_ref(bake)),
+        Some(crate::native::view::View::<
+            Element,
+            crate::native::view::Const,
+        >::from_ref(element)),
     );
     result.map(|elem| unsafe { &*elem.as_ptr() })
 }

@@ -558,19 +558,17 @@ impl<T, M: crate::native::view::Mode> crate::native::view::View<List<T>, M> {
         begin: usize,
         mut eq: impl FnMut(&crate::native::view::View<T, M>) -> bool,
     ) -> usize {
+        // Snapshot the list's stored data/count pair once, matching the C
+        // macro's local `mi_data`/`mi_hi` values for the whole search.
+        let run = crate::native::view::Run::from_list(self);
         let mut end: usize = begin;
-        // SAFETY: as for `lower_bound_eq` — every probe stays within the
-        // list's own `[data, data + count)` run.
-        unsafe {
-            crate::native::platform::macro_upper_bound_eq::<T>(
-                linear_size,
-                &mut end,
-                self.data(),
-                begin,
-                self.count(),
-                |a| eq(crate::native::view::View::mint(a.cast_mut())),
-            );
-        }
+        crate::native::platform::macro_upper_bound_eq(
+            linear_size,
+            &mut end,
+            begin,
+            run.len(),
+            |index| eq(run.at(index)),
+        );
         end
     }
 }

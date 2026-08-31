@@ -896,6 +896,67 @@ fn evaluate_and_bake_animation() {
     assert!(acc.is_finite());
 }
 
+/// Generated baked lookup wrappers return entries owned by the baked header,
+/// while the node/element arguments are lookup keys with independent borrows.
+#[test]
+fn public_baked_finders_from_owned_header() {
+    let scene = load("maya_cube_7500_binary.fbx");
+    let source_node: &ufbx::Node = scene
+        .nodes
+        .first()
+        .expect("cube scene has no node")
+        .as_ref();
+
+    // SAFETY: `Node`/`Element` are C-compatible arena headers with no destructor
+    // or ownership-bearing fields. The copied headers' stored references keep
+    // pointing into `scene`, which stays live for the complete test. All-zero is
+    // valid for the baked result records: their lists are null/empty pointer-count
+    // pairs and every other field is a scalar, boolean, or float.
+    let (node_key, element_key, mut baked_node, mut baked_element, mut bake): (
+        ufbx::Node,
+        ufbx::Element,
+        ufbx::BakedNode,
+        ufbx::BakedElement,
+        ufbx::BakedAnim,
+    ) = unsafe {
+        (
+            std::ptr::read(source_node),
+            std::ptr::read(&source_node.element),
+            std::mem::MaybeUninit::zeroed().assume_init(),
+            std::mem::MaybeUninit::zeroed().assume_init(),
+            std::mem::MaybeUninit::zeroed().assume_init(),
+        )
+    };
+
+    baked_node.typed_id = source_node.element.typed_id;
+    baked_node.element_id = source_node.element.element_id;
+    baked_element.element_id = source_node.element.element_id;
+    bake.nodes.data = &baked_node;
+    bake.nodes.count = 1;
+    bake.elements.data = &baked_element;
+    bake.elements.count = 1;
+
+    let found = ufbx::find_baked_node_by_typed_id(&mut bake, baked_node.typed_id)
+        .expect("baked node by typed ID");
+    assert!(std::ptr::eq(found, &baked_node));
+
+    let found = {
+        let mut key = node_key;
+        ufbx::find_baked_node(&mut bake, &mut key).expect("baked node by node")
+    };
+    assert!(std::ptr::eq(found, &baked_node));
+
+    let found = ufbx::find_baked_element_by_element_id(&mut bake, baked_element.element_id)
+        .expect("baked element by element ID");
+    assert!(std::ptr::eq(found, &baked_element));
+
+    let found = {
+        let mut key = element_key;
+        ufbx::find_baked_element(&mut bake, &mut key).expect("baked element by element")
+    };
+    assert!(std::ptr::eq(found, &baked_element));
+}
+
 /// Animated layer weights are evaluated through the layer's own anim-value
 /// reference before the layer is blended into each output property.
 #[test]
@@ -1543,9 +1604,7 @@ fn public_downcasts_from_narrowed_element_refs() {
 // Not coverable from safe code (upstream signature quirks, noted here so the
 // gap is deliberate): `find_baked_node`/`find_baked_element`(+`_by_*_id`)
 // take `&mut BakedAnim` (no `DerefMut` on `BakedAnimRoot`), `find_face_index`
-// takes `&mut Mesh`, and `evaluate_props` needs a `&mut [ExternalRef<Prop>]`
-// buffer that safe code cannot construct (`ExternalRef::new` is unsafe and
-// `Prop` has no public constructor).
+// takes `&mut Mesh`.
 
 /// DOM retention: `dom_find` navigation and the typed `dom_as_*` array reads,
 /// all through `&DomNode`s reached from the scene's retained DOM root.
@@ -1625,6 +1684,46 @@ fn public_anim_eval_from_shared_refs() {
             }
         }
     }
+
+    // Seed non-empty output capabilities through the safe per-property API.
+    // Both wrappers derive their raw capacity from a one-entry slice and return
+    // a header whose animated prefix remains tied to that storage.
+    let animated_prop = scene
+        .anim_layers
+        .iter()
+        .flat_map(|layer| layer.anim_props.as_ref())
+        .next()
+        .expect("fixture has no animated properties");
+    let animated_element: &ufbx::Element = animated_prop.element.as_ref();
+    {
+        let seed = ufbx::evaluate_prop(
+            anim,
+            animated_element,
+            animated_prop.prop_name.as_ref(),
+            0.25,
+        );
+        let mut buffer = [seed];
+        let props = ufbx::evaluate_props(anim, animated_element, 0.25, &mut buffer);
+        assert_eq!(props.num_animated, 1);
+        assert_eq!(props.props.len(), 1);
+        assert!(props.defaults.is_some());
+        acc += props.props[0].value_vec4.x as f64;
+    }
+    {
+        let seed = ufbx::evaluate_prop(
+            anim,
+            animated_element,
+            animated_prop.prop_name.as_ref(),
+            0.25,
+        );
+        let mut buffer = [seed];
+        let props = ufbx::evaluate_props_flags(anim, animated_element, 0.25, &mut buffer, 0);
+        assert_eq!(props.num_animated, 1);
+        assert_eq!(props.props.len(), 1);
+        assert!(props.defaults.is_some());
+        acc += props.props[0].value_vec4.x as f64;
+    }
+
     if let Some(stack) = ufbx::find_anim_stack(scene, "Take 001") {
         acc += stack.time_end;
     }

@@ -919,26 +919,23 @@ pub(crate) unsafe fn macro_lower_bound_eq<T>(
 // ufbx.c:1206-1229 `ufbxi_macro_upper_bound_eq(m_type, m_linear_size,
 // m_result_ptr, m_data, m_begin, m_size, m_eq_lambda)`.
 // ALWAYS writes `*result_ptr` (contrast with `macro_lower_bound_eq`).
-pub(crate) unsafe fn macro_upper_bound_eq<T>(
+pub(crate) fn macro_upper_bound_eq(
     linear_size: usize,
-    result_ptr: *mut usize,
-    data: *const T,
+    result: &mut usize,
     begin: usize,
     size: usize,
-    mut eq_lambda: impl FnMut(*const T) -> bool,
+    mut eq_at: impl FnMut(usize) -> bool,
 ) {
     let mut lo = begin;
     let mut hi = size;
     let linear_size = clamp_linear_threshold(linear_size);
     ufbx_assert!(linear_size > 1);
+    assert!(begin <= size);
     // Linearly scan with galloping
     let mut step = 1usize;
     while step < 100 && hi - lo > step {
-        // SAFETY: caller contract — `data` addresses `size` readable `T`s and
-        // `begin <= size`; with `lo <= hi <= size`, `hi - lo > step` (loop
-        // condition) gives `lo + step < hi <= size`.
-        let a: *const T = unsafe { data.add(lo + step) };
-        if !eq_lambda(a) {
+        // `begin <= size` and the loop condition keep `lo + step < hi <= size`.
+        if !eq_at(lo + step) {
             hi = lo + step;
             break;
         }
@@ -948,11 +945,9 @@ pub(crate) unsafe fn macro_upper_bound_eq<T>(
     // Binary search until we get down to `m_linear_size` elements
     while hi - lo > linear_size {
         let mid = lo + (hi - lo) / 2;
-        // SAFETY: caller contract — `data` addresses `size` readable `T`s and
-        // `begin <= size`; `lo <= hi <= size` is preserved by both updates, so
-        // `hi - lo > linear_size >= 2` here gives `mid < hi <= size`.
-        let a: *const T = unsafe { data.add(mid) };
-        if eq_lambda(a) {
+        // `lo <= hi <= size` is preserved by both updates, and the loop
+        // condition gives `mid < hi <= size`.
+        if eq_at(mid) {
             lo = mid + 1;
         } else {
             hi = mid + 1;
@@ -960,16 +955,13 @@ pub(crate) unsafe fn macro_upper_bound_eq<T>(
     }
     // Linearly scan until we find the edge
     while lo < hi {
-        // SAFETY: caller contract as above; `lo < hi <= size` is the loop
-        // condition.
-        let a: *const T = unsafe { data.add(lo) };
-        if !eq_lambda(a) {
+        // The loop condition keeps the callback index below `hi <= size`.
+        if !eq_at(lo) {
             break;
         }
         lo += 1;
     }
-    // SAFETY: caller contract — `result_ptr` is a writable `usize` out-param.
-    unsafe { *result_ptr = lo };
+    *result = lo;
 }
 
 // Port-local adapters over `macro_stable_sort`: the ONE place where the raw
@@ -2168,16 +2160,9 @@ mod utility_tests {
     // test/unit_tests.c:121-126 `find_uint_end`
     fn find_uint_end(linear_size: usize, data: &[u32], begin: usize, value: u32) -> usize {
         let mut index = usize::MAX;
-        unsafe {
-            macro_upper_bound_eq(
-                linear_size,
-                &mut index,
-                data.as_ptr(),
-                begin,
-                data.len(),
-                |a| *a == value,
-            );
-        }
+        macro_upper_bound_eq(linear_size, &mut index, begin, data.len(), |ix| {
+            data[ix] == value
+        });
         index
     }
 
@@ -2412,15 +2397,29 @@ mod utility_tests {
         }
         assert_eq!(index, 12345); // untouched on miss
         let mut end = 12345usize;
-        unsafe {
-            macro_upper_bound_eq(2, &mut end, data.as_ptr(), 0, 4, |a| *a == 5);
-        }
+        macro_upper_bound_eq(2, &mut end, 0, data.len(), |ix| data[ix] == 5);
         assert_eq!(end, 0); // always written
         let mut end2 = 12345usize;
-        unsafe {
-            macro_upper_bound_eq(2, &mut end2, data.as_ptr(), 1, 4, |a| *a == 3);
-        }
+        macro_upper_bound_eq(2, &mut end2, 1, data.len(), |ix| data[ix] == 3);
         assert_eq!(end2, 3);
+
+        // Pin the C macro's exact gallop -> binary -> linear probe order,
+        // including its intentionally asymmetric `hi = mid + 1` update.
+        let mut probes = Vec::new();
+        let mut ordered_end = 12345usize;
+        macro_upper_bound_eq(2, &mut ordered_end, 0, 32, |ix| {
+            probes.push(ix);
+            ix < 10
+        });
+        assert_eq!(ordered_end, 10);
+        assert_eq!(probes, [1, 3, 7, 15, 11, 9, 10]);
+
+        // An empty range performs no probe but still publishes its end.
+        let mut empty_end = 12345usize;
+        macro_upper_bound_eq(2, &mut empty_end, 0, 0, |_| {
+            panic!("empty range must not be probed")
+        });
+        assert_eq!(empty_end, 0);
     }
 
     #[test]
