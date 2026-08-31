@@ -494,6 +494,39 @@ fn load_instancing() {
     assert!(acc > 0.0);
 }
 
+/// Legacy geometry transforms can be baked into each independently instanced
+/// mesh without helper nodes.
+#[test]
+fn load_geometry_transform_modify() {
+    let name = "max_geometry_transform_instances_6100_binary.fbx";
+    let data = read_data(name);
+    let scene = ufbx::load_memory(
+        &data,
+        LoadOpts {
+            geometry_transform_handling: ufbx::GeometryTransformHandling::ModifyGeometry,
+            ..Default::default()
+        },
+    )
+    .unwrap_or_else(|e| panic!("failed to load {}: {:?}", name, e));
+
+    assert_eq!(scene.meshes.len(), 4);
+    assert_eq!(scene.nodes.len(), 5);
+    let vertex = scene.meshes[0]
+        .vertices
+        .first()
+        .expect("mesh has no vertices");
+    let epsilon = 0.0001f32 as ufbx::Real;
+    assert!((vertex.x - 30.0).abs() <= epsilon);
+    assert!((vertex.y + 10.0).abs() <= epsilon);
+    assert!((vertex.z + 10.0).abs() <= epsilon);
+    for node in scene.nodes.iter().skip(1) {
+        assert!(!node.has_geometry_transform);
+        assert!(node.mesh.is_some());
+        assert!(!node.is_geometry_transform_helper);
+        assert!(node.geometry_transform_helper.is_none());
+    }
+}
+
 /// Mesh connection fetches advance only after scanning the current element:
 /// materials stop at the first instance hit, while legacy deformers continue
 /// through a geometry-transform helper to its parent.

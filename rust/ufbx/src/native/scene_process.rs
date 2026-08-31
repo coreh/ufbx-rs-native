@@ -2509,16 +2509,16 @@ struct ElementFlags<'a> {
 }
 
 impl<'a> ElementFlags<'a> {
-    /// # Safety
-    /// `uc.tmp_element_flag()` must address `count` initialized, writable bytes
-    /// that remain live and unmoved for `'a`.
+    /// Allocate and publish the zeroed flag run for one finalization pass.
     #[inline(always)]
-    unsafe fn from_context(uc: &'a Context, count: usize) -> Self {
-        Self {
+    fn push_zero(uc: &'a Context, count: usize) -> Result<Self, Fail> {
+        uc.set_tmp_element_flag(uc.tmp_view().push_zero::<u8>(count));
+        ufbxi_check!(uc, !uc.tmp_element_flag().is_null(), "uc->tmp_element_flag");
+        Ok(Self {
             data: uc.tmp_element_flag(),
             count,
             _context: uc,
-        }
+        })
     }
 
     #[inline(always)]
@@ -6257,12 +6257,18 @@ pub(crate) unsafe extern "C" fn ordered_texture_less_order(
 }
 
 // ufbx.c:20838-20867 `ufbxi_deduplicate_textures`
+//
+// # Safety
+//
+// `uc.tmp_stack_view()` must be ordered and hold at least `count` initialized
+// `OrderedTexture` items at its top. `dst_buf` must be distinct from that
+// source buffer so the transfer cannot interleave their header updates.
 #[inline(never)]
-pub(crate) unsafe fn deduplicate_textures(
+unsafe fn deduplicate_textures(
     uc: &Context,
     dst_buf: &BufView,
-    p_dst: *mut *mut OrderedTexture,
-    p_dst_count: *mut usize,
+    p_dst: &mut MaybeUninit<*mut OrderedTexture>,
+    p_dst_count: &mut usize,
     count: usize,
 ) -> Result<(), Fail> {
     let textures: *mut OrderedTexture = dst_buf.push_pop(uc.tmp_stack_view(), count);
@@ -6334,11 +6340,8 @@ pub(crate) unsafe fn deduplicate_textures(
         )
     };
 
-    // SAFETY: `p_dst_count` and `p_dst` are the caller's out-parameter slots (fn
-    // contract).
-    unsafe { *p_dst_count = new_count };
-    // SAFETY: as above; `textures` is the arena run that outlives the caller.
-    unsafe { *p_dst = textures };
+    *p_dst_count = new_count;
+    p_dst.write(textures);
 
     Ok(())
 }
@@ -6473,12 +6476,13 @@ pub(crate) fn fetch_file_textures(uc: &Context) -> Result<(), Fail> {
                 // writes it before the first read (no `// ufbxi_uninit` marker
                 // upstream), so the port keeps it genuinely uninitialized.
                 let mut deps: MaybeUninit<*mut OrderedTexture> = MaybeUninit::uninit();
+                let input_count: usize = num_deps;
                 deduplicate_textures(
                     uc,
                     uc.tmp_parse_view(),
-                    deps.as_mut_ptr(),
-                    &raw mut num_deps,
-                    num_deps,
+                    &mut deps,
+                    &mut num_deps,
+                    input_count,
                 )?;
                 let deps: *mut OrderedTexture = deps.assume_init();
 
@@ -6517,12 +6521,13 @@ pub(crate) fn fetch_file_textures(uc: &Context) -> Result<(), Fail> {
 
                     // Deduplicate the file textures
                     let mut files: MaybeUninit<*mut OrderedTexture> = MaybeUninit::uninit();
+                    let input_count: usize = num_files;
                     deduplicate_textures(
                         uc,
                         uc.tmp_parse_view(),
-                        files.as_mut_ptr(),
-                        &raw mut num_files,
-                        num_files,
+                        &mut files,
+                        &mut num_files,
+                        input_count,
                     )?;
                     let files: *mut OrderedTexture = files.assume_init();
 
@@ -6628,11 +6633,9 @@ pub(crate) fn fetch_file_textures(uc: &Context) -> Result<(), Fail> {
 #[must_use]
 pub(crate) fn get_geometry_transform_node(element: &ElementView) -> *mut Node {
     if element.instances().count == 1 {
-        // SAFETY: `count == 1`, so index `0` is in bounds of the element's own
-        // instance run, whose entries are non-nullable node references.
-        let node: Ref<Node> = unsafe { ptr::read(element.instances().data.add(0)) };
-        if node.view::<Mut>().has_geometry_transform() {
-            return node.ptr();
+        let node: &View<Node> = element.instances_view().at(0);
+        if node.has_geometry_transform() {
+            return node.get();
         }
     }
     ptr::null_mut()
@@ -8227,12 +8230,7 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
     buf_free(uc.tmp_element_offsets_view());
     buf_free(uc.tmp_elements_view());
 
-    uc.set_tmp_element_flag(uc.tmp_view().push_zero::<u8>(num_elements));
-    ufbxi_check!(uc, !uc.tmp_element_flag().is_null(), "uc->tmp_element_flag");
-    // SAFETY: `push_zero` returned `num_elements` initialized bytes in the
-    // context's stable temporary arena, and the non-null failure sentinel was
-    // checked above.
-    let element_flags = unsafe { ElementFlags::from_context(uc, num_elements) };
+    let element_flags = ElementFlags::push_zero(uc, num_elements)?;
 
     uc.scene_view()
         .metadata_view()
