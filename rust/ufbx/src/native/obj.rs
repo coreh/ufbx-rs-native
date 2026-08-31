@@ -370,28 +370,33 @@ pub(crate) fn obj_init(uc: &Context) -> Result<(), Fail> {
     uc.obj().set_initialized(true);
 
     // C: `ufbxi_nounroll for (size_t i = 0; i < UFBXI_OBJ_NUM_ATTRIBS_EXT; i++)`
-    for i in 0..OBJ_NUM_ATTRIBS_EXT {
-        uc.obj().tmp_vertices_at(i).set_ator(uc.ator_tmp_mut_ptr());
-        uc.obj().tmp_indices_at(i).set_ator(uc.ator_tmp_mut_ptr());
+    // SAFETY: these empty OBJ scratch buffers are context fields published to
+    // the context's initialized temp allocator. The context keeps that
+    // allocator live and unmoved until every buffer is freed in `obj_free()`.
+    unsafe {
+        for i in 0..OBJ_NUM_ATTRIBS_EXT {
+            uc.obj().tmp_vertices_at(i).set_ator(uc.ator_tmp_mut_ptr());
+            uc.obj().tmp_indices_at(i).set_ator(uc.ator_tmp_mut_ptr());
+        }
+        uc.obj()
+            .tmp_color_valid_view()
+            .set_ator(uc.ator_tmp_mut_ptr());
+        uc.obj().tmp_faces_view().set_ator(uc.ator_tmp_mut_ptr());
+        uc.obj()
+            .tmp_face_material_view()
+            .set_ator(uc.ator_tmp_mut_ptr());
+        uc.obj()
+            .tmp_face_smoothing_view()
+            .set_ator(uc.ator_tmp_mut_ptr());
+        uc.obj()
+            .tmp_face_group_view()
+            .set_ator(uc.ator_tmp_mut_ptr());
+        uc.obj()
+            .tmp_face_group_infos_view()
+            .set_ator(uc.ator_tmp_mut_ptr());
+        uc.obj().tmp_meshes_view().set_ator(uc.ator_tmp_mut_ptr());
+        uc.obj().tmp_props_view().set_ator(uc.ator_tmp_mut_ptr());
     }
-    uc.obj()
-        .tmp_color_valid_view()
-        .set_ator(uc.ator_tmp_mut_ptr());
-    uc.obj().tmp_faces_view().set_ator(uc.ator_tmp_mut_ptr());
-    uc.obj()
-        .tmp_face_material_view()
-        .set_ator(uc.ator_tmp_mut_ptr());
-    uc.obj()
-        .tmp_face_smoothing_view()
-        .set_ator(uc.ator_tmp_mut_ptr());
-    uc.obj()
-        .tmp_face_group_view()
-        .set_ator(uc.ator_tmp_mut_ptr());
-    uc.obj()
-        .tmp_face_group_infos_view()
-        .set_ator(uc.ator_tmp_mut_ptr());
-    uc.obj().tmp_meshes_view().set_ator(uc.ator_tmp_mut_ptr());
-    uc.obj().tmp_props_view().set_ator(uc.ator_tmp_mut_ptr());
 
     // .obj parsing does its own yield logic
     uc.set_data_size(uc.data_size() + uc.yield_size());

@@ -588,7 +588,10 @@ pub(crate) fn tessellate_nurbs_curve_imp(
     );
 
     tc.result_view().set_unordered(true);
-    tc.result_view().set_ator(tc.ator_result_mut_ptr());
+    // SAFETY: the empty result buffer and initialized result allocator are
+    // fields of `tc`; the allocator remains live through result publication or
+    // failure teardown, and all chunks are transferred with its state.
+    unsafe { tc.result_view().set_ator(tc.ator_result_mut_ptr()) };
 
     let num_spans = curve_view.basis().spans_view().count();
 
@@ -774,8 +777,13 @@ pub(crate) fn tessellate_nurbs_surface_imp(
     tc.result_view().set_unordered(true);
     tc.tmp_view().set_unordered(true);
 
-    tc.result_view().set_ator(tc.ator_result_mut_ptr());
-    tc.tmp_view().set_ator(tc.ator_tmp_mut_ptr());
+    // SAFETY: these empty context-owned buffers are wired to their initialized
+    // sibling allocators, which remain live through result transfer or failure
+    // teardown. Each buffer's chunks are owned by the allocator stored here.
+    unsafe {
+        tc.result_view().set_ator(tc.ator_result_mut_ptr());
+        tc.tmp_view().set_ator(tc.ator_tmp_mut_ptr());
+    }
 
     let (open_u, open_v, spans_u, spans_v) = (
         surface_view.basis_u().topology() == NurbsTopology::Open,

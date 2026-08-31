@@ -540,9 +540,7 @@ pub(crate) fn read_thumbnail(
     let custom_width: i64 = api_find_int_len(props, b"CustomWidth", 0);
     let custom_height: i64 = api_find_int_len(props, b"CustomHeight", 0);
 
-    // SAFETY: the name is a NUL-terminated literal — `find_child_strcmp`'s
-    // contract.
-    let format_node = unsafe { find_child_strcmp(node, b"Format\0".as_ptr()) };
+    let format_node = find_child_strcmp(node, b"Format");
     // C: `format_node && ufbxi_get_val1(format_node, "I", &format)` — the
     // `&&` short-circuit becomes `and_then`.
     if let Some(format) = format_node.and_then(get_val1::<i32>) {
@@ -8986,9 +8984,7 @@ pub(crate) fn read_legacy_settings(uc: &Context, node: &NodeView) -> Result<(), 
     let mut tmp_props: [Prop; 2] = unsafe { core::mem::zeroed() };
     let mut num_props: u32 = 0;
 
-    // SAFETY: `node` is a parse-tree NodeView; the name is a NUL-terminated
-    // literal, which is what the by-content child search compares against.
-    let frame_rate = unsafe { find_child_strcmp(node, b"FrameRate\0".as_ptr()) };
+    let frame_rate = find_child_strcmp(node, b"FrameRate");
     if let Some(frame_rate) = frame_rate {
         let mut fps: f64 = 0.0;
         // SAFETY: `frame_rate` is a child NodeView of `node`; `fps` and `str_`
@@ -9262,9 +9258,7 @@ pub(crate) fn read_root(uc: &Context) -> Result<(), Fail> {
     // SAFETY: static pooled section name (see above).
     unsafe { parse_toplevel(uc, sp::Version5.as_ptr())? };
     if let Some(top_node) = uc.top_node_view() {
-        // SAFETY: `top_node` is the parsed top-level NodeView; the name is a
-        // NUL-terminated literal for the by-content child search.
-        let settings = unsafe { find_child_strcmp(top_node, b"Settings\0".as_ptr()) };
+        let settings = find_child_strcmp(top_node, b"Settings");
         if let Some(settings) = settings {
             read_legacy_settings(uc, settings)?;
         }
@@ -9296,6 +9290,13 @@ pub(crate) struct LegacyProp {
 unsafe impl Sync for LegacyProp {}
 
 impl LegacyProp {
+    #[inline(always)]
+    fn node_name_bytes(&self) -> &[u8] {
+        // SAFETY: the type invariant makes `node_name` an immutable
+        // NUL-terminated string.
+        unsafe { slice_from_ptr(self.node_name, strlen(self.node_name)) }
+    }
+
     #[inline(always)]
     fn format(&self) -> &[u8] {
         // SAFETY: the type invariant makes `node_fmt` an immutable
@@ -9604,9 +9605,7 @@ pub(crate) fn read_legacy_props(
     assert!(props.len() >= legacy_props.len());
     let mut num_props: usize = 0;
     for legacy_prop in legacy_props {
-        // SAFETY: `LegacyProp`'s invariant makes `node_name` a NUL-terminated
-        // immutable string.
-        let n: &NodeView = match unsafe { find_child_strcmp(node, legacy_prop.node_name) } {
+        let n: &NodeView = match find_child_strcmp(node, legacy_prop.node_name_bytes()) {
             Some(n) => n,
             None => continue,
         };
@@ -9864,8 +9863,7 @@ pub(crate) fn read_legacy_limb_node(
     let mut tmp_props: [Prop; LEGACY_BONE_PROPS_COUNT] = unsafe { core::mem::zeroed() };
     let mut num_props: usize = 0;
 
-    // SAFETY: the name is a NUL-terminated literal.
-    let prop_node = unsafe { find_child_strcmp(node, b"Properties\0".as_ptr()) };
+    let prop_node = find_child_strcmp(node, b"Properties");
     if let Some(prop_node) = prop_node {
         num_props = read_legacy_props(prop_node, &mut tmp_props, &LEGACY_BONE_PROPS);
     }

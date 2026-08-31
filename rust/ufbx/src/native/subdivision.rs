@@ -3164,12 +3164,19 @@ pub(crate) fn subdivide_mesh_imp(
     sc.source_view().set_unordered(true);
     sc.tmp_view().set_unordered(true);
 
-    sc.source_view().set_ator(sc.ator_tmp_mut_ptr());
-    sc.tmp_view().set_ator(sc.ator_tmp_mut_ptr());
+    // SAFETY: both empty scratch buffers are owned by `sc` and use its live,
+    // initialized temp allocator until teardown.
+    unsafe {
+        sc.source_view().set_ator(sc.ator_tmp_mut_ptr());
+        sc.tmp_view().set_ator(sc.ator_tmp_mut_ptr());
+    }
 
     let mut i: usize = 1;
     while i < level {
-        sc.result_view().set_ator(sc.ator_tmp_mut_ptr());
+        // SAFETY: `result` is empty at the start of this level. Its allocations
+        // are moved into `source` before the header is zeroed and reused; the
+        // temp allocator stays live through that ownership rotation.
+        unsafe { sc.result_view().set_ator(sc.ator_tmp_mut_ptr()) };
 
         // SAFETY: `sc` is a valid subdivide context (construction invariant);
         // its `src_mesh`/`dst_mesh` slots are two distinct fields of that
@@ -3190,7 +3197,10 @@ pub(crate) fn subdivide_mesh_imp(
         i += 1;
     }
 
-    sc.result_view().set_ator(sc.ator_result_mut_ptr());
+    // SAFETY: the prior intermediate result was moved to `source` and this
+    // result header was zeroed. Final-level chunks are owned by the live result
+    // allocator and transferred together with its state into the result imp.
+    unsafe { sc.result_view().set_ator(sc.ator_result_mut_ptr()) };
     // SAFETY: the final level acts on sc's own state (construction invariant).
     unsafe { subdivide_mesh_level(sc)? };
     buf_free(sc.tmp_view());

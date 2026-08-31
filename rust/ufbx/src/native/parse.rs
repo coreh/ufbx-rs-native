@@ -165,7 +165,8 @@ pub(crate) union NodeContent {
 // a contiguous `push_pop` run walked in C by `ufbxi_for`, so `SliceViewIter` over
 // `(children, num_children)` is the safe navigation form. `View<Node>` supplies
 // `get()` / `from_ptr()`; the accessors below are the per-struct residue. `name`
-// is POOLED — it is compared with `==` by pointer value and never dereferenced.
+// is POOLED: identity searches compare its pointer, while content searches read
+// exactly the immutable `name_len`-byte run it addresses.
 pub(crate) type NodeView = crate::native::view::View<Node>;
 
 impl NodeView {
@@ -180,6 +181,13 @@ impl NodeView {
     #[inline(always)]
     pub(crate) fn name_len(&self) -> u8 {
         view_read!(self, name_len)
+    }
+    #[inline(always)]
+    pub(crate) fn name_bytes(&self) -> &[u8] {
+        // SAFETY: a live parse node's pooled name addresses exactly
+        // `name_len` immutable bytes for the lifetime of the node; the empty
+        // case does not dereference the stored pointer.
+        unsafe { crate::prelude::slice_from_ptr(self.name(), self.name_len() as usize) }
     }
     #[inline(always)]
     pub(crate) fn value_type_mask(&self) -> u16 {
@@ -4592,27 +4600,19 @@ pub(crate) fn find_array(node: &NodeView, name: *const u8, fmt: u8) -> *mut Valu
 }
 
 // ufbx.c:7869-7877 `ufbxi_find_child_strcmp`
-// Stays `unsafe fn`: it DEREFERENCES `name` (leading byte + `strcmp`). Returns
-// `Option<&NodeView>` so results thread as views to `&NodeView`-taking callers.
 #[allow(clippy::manual_find)]
-pub(crate) unsafe fn find_child_strcmp<'a>(
-    node: &'a NodeView,
-    name: *const u8,
-) -> Option<&'a NodeView> {
-    // SAFETY: `name` points to a NUL-terminated C string (fn contract), so its
-    // leading byte is readable.
-    let leading: u8 = unsafe { *name.add(0) };
+pub(crate) fn find_child_strcmp<'a>(node: &'a NodeView, name: &[u8]) -> Option<&'a NodeView> {
+    // Preserve C evaluation order: read `name[0]` before the child run fields.
+    // Slice exhaustion represents the terminating NUL for C-string comparison.
+    let leading: u8 = name.first().copied().unwrap_or(0);
     // C: `ufbxi_for(ufbxi_node, c, node->children, node->num_children)`
     let children: SliceViewIter<'a, Node> = node.children_iter();
     for c in children {
-        // SAFETY: `c.name()` is a NUL-terminated interned name; its leading byte
-        // is readable.
-        if unsafe { *c.name().add(0) } != leading {
+        let child_name = c.name_bytes();
+        if child_name.first().copied().unwrap_or(0) != leading {
             continue;
         }
-        // SAFETY: both `c.name()` and `name` are NUL-terminated C strings, which
-        // is `strcmp`'s contract.
-        if unsafe { strcmp(c.name(), name) } == 0 {
+        if c_strcmp(child_name, name) == 0 {
             return Some(c);
         }
     }
@@ -8000,7 +8000,9 @@ mod tests {
         };
         let mut children: [Node; 2] = unsafe { core::mem::zeroed() };
         children[0].name = name_a.as_ptr();
+        children[0].name_len = 1;
         children[1].name = name_b.as_ptr();
+        children[1].name_len = 1;
         children[1].value_type_mask = ValueType::Array as u16;
         children[1].content.array = &mut array;
         let mut node: Node = unsafe { core::mem::zeroed() };
@@ -8019,7 +8021,7 @@ mod tests {
             assert!(find_child(node, name_b_copy.as_ptr()).is_none());
             // ...while the strcmp variant does.
             assert_eq!(
-                find_child_strcmp(node, name_b_copy.as_ptr()).map(NodeView::get),
+                find_child_strcmp(node, &name_b_copy[..1]).map(NodeView::get),
                 Some(children.as_mut_ptr().add(1))
             );
 

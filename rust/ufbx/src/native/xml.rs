@@ -376,8 +376,17 @@ impl XmlContext {
         view_read!(self, ator)
     }
 
+    /// Publish the allocator used by XML parsing and document storage.
+    ///
+    /// # Safety
+    ///
+    /// `ator` must be non-null, retain write-capable provenance, and address a
+    /// live, initialized, unmoved `Allocator` throughout parsing. On success
+    /// it must remain valid until the returned document is passed to
+    /// `free_xml()`, because that document retains the result buffer allocated
+    /// through this pointer.
     #[inline(always)]
-    pub(crate) fn set_ator(&self, ator: *mut Allocator) {
+    pub(crate) unsafe fn set_ator(&self, ator: *mut Allocator) {
         view_write!(self, ator, ator)
     }
 }
@@ -992,6 +1001,15 @@ pub(crate) struct XmlLoadOpts {
 }
 
 // ufbx.c:7620-7654 `ufbxi_load_xml`
+///
+/// # Safety
+///
+/// `opts` must point to a live, initialized `XmlLoadOpts` and `error` must be
+/// null or writable for one initialized `Error`. `(*opts).ator` must be
+/// non-null, retain write-capable provenance, and address the allocator that
+/// owns this parse for the whole operation. On success that allocator must
+/// remain live and unmoved until the returned document is passed to
+/// `free_xml()`, because the document owns the transferred result buffer.
 #[inline(never)]
 pub(crate) unsafe fn load_xml(opts: *mut XmlLoadOpts, error: *mut Error) -> *mut XmlDocument {
     // C: `ufbxi_xml_context xc = { UFBX_ERROR_NONE };` — the aggregate
@@ -1001,15 +1019,23 @@ pub(crate) unsafe fn load_xml(opts: *mut XmlLoadOpts, error: *mut Error) -> *mut
     // pointer, POD array or zeroable `Buf`).
     let xc: XmlContext = unsafe { core::mem::zeroed() };
     // SAFETY: `opts` points at a live `XmlLoadOpts` the caller owns for the
-    // duration of the call (fn raw-param contract).
+    // duration of the call. Its allocator meets this function's non-null,
+    // write-provenance, and lifetime contract, including remaining live until
+    // `free_xml()` on success. The field reads preserve C publication order.
     unsafe {
         xc.set_ator((*opts).ator);
         xc.set_read_fn((*opts).read_fn);
         xc.set_read_user((*opts).read_user);
     }
 
-    xc.tmp_stack_view().set_ator(xc.ator());
-    xc.result_view().set_ator(xc.ator());
+    // SAFETY: `xc.ator()` is the live allocator vouched by this function's
+    // contract. Both buffers are empty here; tmp is freed before return, while
+    // result and the same allocator lifetime are transferred to the returned
+    // document on success.
+    unsafe {
+        xc.tmp_stack_view().set_ator(xc.ator());
+        xc.result_view().set_ator(xc.ator());
+    }
 
     xc.result_view().set_unordered(true);
 

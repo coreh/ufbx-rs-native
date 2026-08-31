@@ -753,8 +753,18 @@ impl CacheContext {
         view_read!(self, ator_tmp)
     }
 
+    /// Publish the temporary allocator used by cache allocation and teardown.
+    ///
+    /// # Safety
+    ///
+    /// `ator_tmp` must be non-null, retain write-capable provenance, and
+    /// address a live, initialized, unmoved `Allocator` for every later cache
+    /// operation, including retries and teardown. Allocations reached through
+    /// this pointer must be owned by that allocator. `owned_by_scene` controls
+    /// whether the cache frees the allocator itself; it does not relax these
+    /// validity or lifetime requirements.
     #[inline(always)]
-    pub(crate) fn set_ator_tmp(&self, ator_tmp: *mut Allocator) {
+    pub(crate) unsafe fn set_ator_tmp(&self, ator_tmp: *mut Allocator) {
         view_write!(self, ator_tmp, ator_tmp)
     }
 
@@ -2033,8 +2043,14 @@ unsafe fn cache_load_imp(
     cc: &CacheContext,
     filename: &[u8],
 ) -> Result<crate::native::parse::FinishedImp<GeometryCacheImp>, Fail> {
-    cc.tmp_view().set_ator(cc.ator_tmp());
-    cc.tmp_stack_view().set_ator(cc.ator_tmp());
+    // SAFETY: an active cache-load phase provides a non-null temp allocator
+    // that remains live and write-capable through both scratch buffers' use
+    // and teardown. Both buffers are empty when this phase publishes it, and
+    // every chunk they acquire belongs to that allocator.
+    unsafe {
+        cc.tmp_view().set_ator(cc.ator_tmp());
+        cc.tmp_stack_view().set_ator(cc.ator_tmp());
+    }
 
     cc.channel_name_view().set_data(EMPTY_CHAR.as_ptr());
 
@@ -2217,7 +2233,11 @@ pub(crate) unsafe fn load_geometry_cache(
         )),
         c"result",
     );
-    cc.set_ator_tmp(&raw mut ator_tmp);
+    // SAFETY: `ator_tmp` was initialized above and remains live, unmoved, and
+    // write-capable through cache loading and teardown. This context owns it,
+    // so allocations reached through the published pointer are freed through
+    // the same allocator before the local goes out of scope.
+    unsafe { cc.set_ator_tmp(&raw mut ator_tmp) };
 
     // SAFETY: `&opts` is a live local; the read copies this plain-data struct,
     // which stays valid to use afterwards.
@@ -2239,12 +2259,20 @@ pub(crate) unsafe fn load_geometry_cache(
             core::ptr::null_mut(),
         );
     }
-    cc.string_pool_view()
-        .buf_view()
-        .set_ator(cc.ator_result_mut_ptr());
+    // SAFETY: the empty string buffer is owned by `cc` and uses its initialized
+    // result allocator. The allocator remains live until the buffer is moved
+    // into the cache imp or freed on failure.
+    unsafe {
+        cc.string_pool_view()
+            .buf_view()
+            .set_ator(cc.ator_result_mut_ptr())
+    };
     cc.string_pool_view().buf_view().set_unordered(true);
     cc.string_pool_view().set_initial_size(64);
-    cc.result_view().set_ator(cc.ator_result_mut_ptr());
+    // SAFETY: the empty result buffer uses the same live result allocator;
+    // successful finalization transfers its chunks and allocator state
+    // together, while failure frees the buffer before the allocator.
+    unsafe { cc.result_view().set_ator(cc.ator_result_mut_ptr()) };
 
     cc.set_frames_per_second(if opts.frames_per_second > 0.0 {
         opts.frames_per_second
@@ -2477,7 +2505,11 @@ pub(crate) fn load_external_cache(uc: &Context, file: &ExternalFileView) -> Resu
     cc.set_frames_per_second(uc.scene_view().settings_view().frames_per_second());
 
     // Temporarily "borrow" allocators for the geometry cache
-    cc.set_ator_tmp(uc.ator_tmp_mut_ptr());
+    // SAFETY: the pointer addresses `uc`'s live, unmoved temporary allocator,
+    // which remains write-capable through both cache-load attempts and their
+    // teardown. `owned_by_scene` keeps `cc` from freeing the borrowed
+    // allocator, and the borrowed buffer state is returned to `uc` below.
+    unsafe { cc.set_ator_tmp(uc.ator_tmp_mut_ptr()) };
     cc.set_string_pool(uc.take_string_pool());
     cc.set_result(uc.take_result());
 

@@ -403,8 +403,24 @@ impl BufView {
 }
 
 impl BufView {
+    /// Publish the allocator back-pointer used by all allocating and teardown
+    /// operations on this buffer.
+    ///
+    /// # Safety
+    ///
+    /// Normally `ator` must be non-null, retain write-capable provenance, and
+    /// address a live, unmoved `Allocator` for every later buffer operation
+    /// that may dereference it. Every existing chunk must have been allocated
+    /// by that allocator. Retargeting a populated buffer is only valid when
+    /// ownership of those chunks and the corresponding allocator state are
+    /// deliberately translated together.
+    ///
+    /// A null pointer is permitted only while the buffer owns no chunks and is
+    /// restricted to paths that do not dereference the allocator, such as
+    /// `buf_free()`/`buf_free_unused()` on an empty buffer. In particular,
+    /// `buf_clear()` requires a live allocator even for an empty buffer.
     #[inline(always)]
-    pub(crate) fn set_ator(&self, ator: *mut Allocator) {
+    pub(crate) unsafe fn set_ator(&self, ator: *mut Allocator) {
         view_write!(self, ator, ator)
     }
     #[inline(always)]
@@ -1520,6 +1536,20 @@ mod tests {
     fn test_chunk_header_layout() {
         assert_eq!(size_of::<BufChunk>(), 8 * size_of::<usize>());
         assert_eq!(size_of::<BufChunk>() % 8, 0);
+    }
+
+    #[test]
+    fn test_buf_free_empty_without_allocator() {
+        // SAFETY: `Buf` is a pointer/integer/bool aggregate, so all-zero is a
+        // valid empty buffer. This pins the narrow null-allocator exception in
+        // `BufView::set_ator`'s contract: teardown observes no chunk and must
+        // not dereference the null back-pointer.
+        let mut buf = unsafe { MaybeUninit::<Buf>::zeroed().assume_init() };
+        buf_free(BufView::from_mut(&mut buf));
+        assert!(buf.chunks.iter().all(|chunk| chunk.is_null()));
+        assert_eq!(buf.pos, 0);
+        assert_eq!(buf.size, 0);
+        assert_eq!(buf.num_items, 0);
     }
 
     #[test]

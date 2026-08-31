@@ -1145,9 +1145,16 @@ pub(crate) unsafe fn load_imp(uc: &Context) -> Result<(), Fail> {
     // so the projection stays inside that allocation.
     let imp_ator: *mut Allocator = unsafe { &raw mut (*imp).refcount.ator };
     imp_view.refcount_view().set_buf(uc.take_result());
-    imp_view.refcount_view().buf_view().set_ator(imp_ator);
+    // SAFETY: the populated result buffer was just moved into the imp, and
+    // `imp_ator` points to the allocator state copied into the same stable imp
+    // header above. The imp outlives the buffer, so ownership of every existing
+    // chunk and its allocator state are translated together.
+    unsafe { imp_view.refcount_view().buf_view().set_ator(imp_ator) };
     imp_view.set_string_buf(uc.string_pool_view().take_buf());
-    imp_view.string_buf_view().set_ator(imp_ator);
+    // SAFETY: the populated string buffer was just moved into the same imp and
+    // is retargeted to that identical retained allocator state before any
+    // buffer operation. The allocator remains live until imp teardown.
+    unsafe { imp_view.string_buf_view().set_ator(imp_ator) };
 
     let ator_tmp: &AllocatorView = uc.ator_tmp_view();
     imp_view
@@ -1405,9 +1412,14 @@ pub(crate) unsafe fn load(
             ptr::null_mut(),
         );
     }
-    uc.string_pool_view()
-        .buf_view()
-        .set_ator(uc.ator_result_mut_ptr());
+    // SAFETY: the empty string buffer is owned by `uc` and wired to its live,
+    // initialized result allocator; the allocator outlives all pool use and
+    // teardown, and all chunks are allocated through this stored pointer.
+    unsafe {
+        uc.string_pool_view()
+            .buf_view()
+            .set_ator(uc.ator_result_mut_ptr())
+    };
     uc.string_pool_view().buf_view().set_unordered(true);
     uc.string_pool_view().set_initial_size(1024);
     uc.string_pool_view()
@@ -1466,34 +1478,40 @@ pub(crate) unsafe fn load(
         );
     }
 
-    uc.tmp_view().set_ator(uc.ator_tmp_mut_ptr());
-    uc.tmp_parse_view().set_ator(uc.ator_tmp_mut_ptr());
-    uc.tmp_stack_view().set_ator(uc.ator_tmp_mut_ptr());
-    uc.tmp_connections_view().set_ator(uc.ator_tmp_mut_ptr());
-    uc.tmp_node_ids_view().set_ator(uc.ator_tmp_mut_ptr());
-    uc.tmp_elements_view().set_ator(uc.ator_tmp_mut_ptr());
-    uc.tmp_element_offsets_view()
-        .set_ator(uc.ator_tmp_mut_ptr());
-    uc.tmp_element_fbx_ids_view()
-        .set_ator(uc.ator_tmp_mut_ptr());
-    uc.tmp_element_ptrs_view().set_ator(uc.ator_tmp_mut_ptr());
-    for i in 0..ELEMENT_TYPE_COUNT {
-        uc.tmp_typed_element_offsets_at(i)
+    // SAFETY: every buffer below is an empty field of the live, unmoved load
+    // context. Scratch buffers use the initialized temp allocator and result
+    // uses the initialized result allocator; both sibling allocators outlive
+    // all buffer operations and are torn down only after their buffers.
+    unsafe {
+        uc.tmp_view().set_ator(uc.ator_tmp_mut_ptr());
+        uc.tmp_parse_view().set_ator(uc.ator_tmp_mut_ptr());
+        uc.tmp_stack_view().set_ator(uc.ator_tmp_mut_ptr());
+        uc.tmp_connections_view().set_ator(uc.ator_tmp_mut_ptr());
+        uc.tmp_node_ids_view().set_ator(uc.ator_tmp_mut_ptr());
+        uc.tmp_elements_view().set_ator(uc.ator_tmp_mut_ptr());
+        uc.tmp_element_offsets_view()
             .set_ator(uc.ator_tmp_mut_ptr());
-    }
-    uc.tmp_mesh_textures_view().set_ator(uc.ator_tmp_mut_ptr());
-    uc.tmp_full_weights_view().set_ator(uc.ator_tmp_mut_ptr());
-    uc.tmp_dom_nodes_view().set_ator(uc.ator_tmp_mut_ptr());
-    uc.tmp_element_id_view().set_ator(uc.ator_tmp_mut_ptr());
-    uc.tmp_ascii_spans_view().set_ator(uc.ator_tmp_mut_ptr());
+        uc.tmp_element_fbx_ids_view()
+            .set_ator(uc.ator_tmp_mut_ptr());
+        uc.tmp_element_ptrs_view().set_ator(uc.ator_tmp_mut_ptr());
+        for i in 0..ELEMENT_TYPE_COUNT {
+            uc.tmp_typed_element_offsets_at(i)
+                .set_ator(uc.ator_tmp_mut_ptr());
+        }
+        uc.tmp_mesh_textures_view().set_ator(uc.ator_tmp_mut_ptr());
+        uc.tmp_full_weights_view().set_ator(uc.ator_tmp_mut_ptr());
+        uc.tmp_dom_nodes_view().set_ator(uc.ator_tmp_mut_ptr());
+        uc.tmp_element_id_view().set_ator(uc.ator_tmp_mut_ptr());
+        uc.tmp_ascii_spans_view().set_ator(uc.ator_tmp_mut_ptr());
 
-    for i in 0..THREAD_GROUP_COUNT {
-        uc.tmp_thread_parse_at(i).set_ator(uc.ator_tmp_mut_ptr());
-        uc.tmp_thread_parse_at(i).set_unordered(true);
-        uc.tmp_thread_parse_at(i).set_clearable(true);
-    }
+        for i in 0..THREAD_GROUP_COUNT {
+            uc.tmp_thread_parse_at(i).set_ator(uc.ator_tmp_mut_ptr());
+            uc.tmp_thread_parse_at(i).set_unordered(true);
+            uc.tmp_thread_parse_at(i).set_clearable(true);
+        }
 
-    uc.result_view().set_ator(uc.ator_result_mut_ptr());
+        uc.result_view().set_ator(uc.ator_result_mut_ptr());
+    }
 
     uc.tmp_view().set_unordered(true);
     uc.tmp_parse_view().set_unordered(true);
@@ -1507,9 +1525,13 @@ pub(crate) unsafe fn load(
         uc.warnings_view().set_error(uc.error_mut_ptr());
         uc.warnings_view().set_result(uc.result_mut_ptr());
     }
-    uc.warnings_view()
-        .tmp_stack_view()
-        .set_ator(uc.ator_tmp_mut_ptr());
+    // SAFETY: the empty warning stack is owned by the same context and uses
+    // its live temp allocator until warning teardown.
+    unsafe {
+        uc.warnings_view()
+            .tmp_stack_view()
+            .set_ator(uc.ator_tmp_mut_ptr())
+    };
     // SAFETY: the context-owned warnings sink stays live, unmoved, and
     // write-capable for every later use of the context-owned string pool.
     unsafe { uc.string_pool_view().set_warnings(uc.warnings_mut_ptr()) };
@@ -4407,7 +4429,11 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
     }
 
     ec.set_scene_imp(imp);
-    ec.result_view().set_ator(ec.ator_result_mut_ptr());
+    // SAFETY: `result` has just been moved into the retained imp. This write
+    // only restores the moved-from context header's allocator back-pointer to
+    // its still-live sibling allocator; the moved-from buffer is not operated
+    // on or freed afterwards.
+    unsafe { ec.result_view().set_ator(ec.ator_result_mut_ptr()) };
 
     Ok(())
 }
@@ -4474,8 +4500,13 @@ pub(crate) unsafe fn evaluate_scene(
         c"result",
     );
 
-    ec.result_view().set_ator(ec.ator_result_mut_ptr());
-    ec.tmp_view().set_ator(ec.ator_tmp_mut_ptr());
+    // SAFETY: the empty evaluation buffers are context fields wired to their
+    // initialized sibling allocators. Each allocator remains live until its
+    // buffer is transferred or freed on the matching success/failure path.
+    unsafe {
+        ec.result_view().set_ator(ec.ator_result_mut_ptr());
+        ec.tmp_view().set_ator(ec.ator_tmp_mut_ptr());
+    }
 
     ec.result_view().set_unordered(true);
     ec.tmp_view().set_unordered(true);
@@ -4877,7 +4908,10 @@ pub(crate) fn create_anim_imp(ac: &CreateAnimContext) -> Result<FinishedImp<Anim
         c"result",
     );
     ac.result_view().set_unordered(true);
-    ac.result_view().set_ator(ac.ator_result_mut_ptr());
+    // SAFETY: this empty result buffer and its initialized allocator are
+    // sibling fields of the stable create-anim context; chunks and allocator
+    // state are transferred together into the finished imp.
+    unsafe { ac.result_view().set_ator(ac.ator_result_mut_ptr()) };
 
     anim.set_ignore_connections(ac.opts_view().ignore_connections());
     anim.set_custom(true);
@@ -8007,22 +8041,28 @@ pub(crate) unsafe fn bake_anim_imp(bc: &BakeContext, anim: *const Anim) -> Resul
         c"result",
     );
 
-    bc.result_view().set_unordered(true);
-    bc.result_view().set_ator(bc.ator_result_mut_ptr());
+    // SAFETY: all buffers below are empty fields of the stable bake context.
+    // `result` uses the initialized result allocator and every scratch buffer
+    // uses the initialized temp allocator; each allocator outlives buffer use
+    // and teardown, and result chunks move with allocator state into the imp.
+    unsafe {
+        bc.result_view().set_unordered(true);
+        bc.result_view().set_ator(bc.ator_result_mut_ptr());
 
-    bc.tmp_view().set_unordered(true);
-    bc.tmp_view().set_ator(bc.ator_tmp_mut_ptr());
+        bc.tmp_view().set_unordered(true);
+        bc.tmp_view().set_ator(bc.ator_tmp_mut_ptr());
 
-    bc.tmp_prop_view().set_ator(bc.ator_tmp_mut_ptr());
-    bc.tmp_prop_view().set_unordered(true);
-    bc.tmp_prop_view().set_clearable(true);
+        bc.tmp_prop_view().set_ator(bc.ator_tmp_mut_ptr());
+        bc.tmp_prop_view().set_unordered(true);
+        bc.tmp_prop_view().set_clearable(true);
 
-    bc.tmp_times_view().set_ator(bc.ator_tmp_mut_ptr());
-    bc.tmp_bake_props_view().set_ator(bc.ator_tmp_mut_ptr());
-    bc.tmp_nodes_view().set_ator(bc.ator_tmp_mut_ptr());
-    bc.tmp_elements_view().set_ator(bc.ator_tmp_mut_ptr());
-    bc.tmp_props_view().set_ator(bc.ator_tmp_mut_ptr());
-    bc.tmp_bake_stack_view().set_ator(bc.ator_tmp_mut_ptr());
+        bc.tmp_times_view().set_ator(bc.ator_tmp_mut_ptr());
+        bc.tmp_bake_props_view().set_ator(bc.ator_tmp_mut_ptr());
+        bc.tmp_nodes_view().set_ator(bc.ator_tmp_mut_ptr());
+        bc.tmp_elements_view().set_ator(bc.ator_tmp_mut_ptr());
+        bc.tmp_props_view().set_ator(bc.ator_tmp_mut_ptr());
+        bc.tmp_bake_stack_view().set_ator(bc.ator_tmp_mut_ptr());
+    }
 
     bc.set_anim(anim);
     // SAFETY (this condition and the block it guards): `anim` is the caller's

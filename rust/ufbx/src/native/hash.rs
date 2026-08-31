@@ -456,6 +456,12 @@ impl MapView {
 //
 // # Safety
 //
+// `ator` must retain write-capable provenance and remain live and unmoved until
+// `map_free()`: the map stores it for its entry allocation, and outside
+// regression builds its `aa_buf` stores the same pointer for overflow nodes.
+// In regression builds the separately allocated AA-buffer allocator has that
+// lifetime established internally below.
+//
 // `cmp_user` must be null or address a live value of the type `cmp_fn`
 // dereferences it as, valid for reads for as long as the map is used.
 #[inline(never)]
@@ -494,12 +500,18 @@ pub(crate) unsafe fn map_init(
                 (*regression_ator).max_allocs = usize::MAX;
                 (*regression_ator).chunk_max = 0x1000000;
             }
-            map.aa_buf_view().set_ator(regression_ator);
+            // SAFETY: the freshly allocated regression allocator remains live
+            // until `map_free()`, which frees `aa_buf` before freeing it; the
+            // zeroed buffer owns no chunks at publication time.
+            unsafe { map.aa_buf_view().set_ator(regression_ator) };
         }
     }
     #[cfg(not(feature = "regression"))]
     {
-        map.aa_buf_view().set_ator(ator.get());
+        // SAFETY: `ator` is the map's live allocator and must outlive the map
+        // by `map_init`'s construction contract; `aa_buf` is empty here and
+        // every later chunk is allocated and freed through this pointer.
+        unsafe { map.aa_buf_view().set_ator(ator.get()) };
     }
     map.set_cmp_fn(Some(cmp_fn));
     map.set_cmp_user(cmp_user);
