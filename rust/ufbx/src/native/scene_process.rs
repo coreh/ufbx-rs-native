@@ -2783,6 +2783,35 @@ pub(crate) fn fetch_dst_element_header<M: Mode>(
     ptr::null_mut()
 }
 
+/// Find the first Node source connected to an element's default property.
+#[inline(always)]
+#[must_use]
+fn fetch_dst_node_header(element: &View<Element>) -> Option<Ref<Node>> {
+    let node = fetch_dst_element_header(
+        element,
+        ConnectionPropKey::from_option(None),
+        ElementType::Node,
+    );
+    // SAFETY: the lookup returns null or re-reads a stored scene Ref<Element>
+    // after checking Node; that Ref preserves stable, write-capable whole-object
+    // provenance.
+    unsafe { opt_ref(node.cast::<Node>()) }
+}
+
+/// Find the first Texture source connected to one element header.
+#[inline(always)]
+#[must_use]
+fn fetch_dst_texture_header(
+    element: &View<Element>,
+    prop: ConnectionPropKey<'_>,
+) -> Option<Ref<Texture>> {
+    let texture = fetch_dst_element_header(element, prop, ElementType::Texture);
+    // SAFETY: the lookup returns null or re-reads a stored scene Ref<Element>
+    // after checking Texture; that Ref preserves stable, write-capable
+    // whole-object provenance.
+    unsafe { opt_ref(texture.cast::<Texture>()) }
+}
+
 /// Find the first destination of `dst_type` connected to one element header.
 ///
 /// Every C caller of `ufbxi_fetch_src_element` passes `search_node == false`,
@@ -2836,6 +2865,26 @@ fn fetch_dst_element(
     }
 
     ptr::null_mut()
+}
+
+/// Find one named Camera endpoint of a StereoCamera.
+#[inline(always)]
+#[must_use]
+fn fetch_stereo_camera_endpoint(
+    stereo: &View<StereoCamera>,
+    search_node: bool,
+    prop: &[u8],
+) -> Option<Ref<Camera>> {
+    let camera = fetch_dst_element(
+        ElementNodeWalk::from_stereo_camera(stereo),
+        search_node,
+        Some(prop),
+        ElementType::Camera,
+    );
+    // SAFETY: the lookup returns null or re-reads a stored scene Ref<Element>
+    // after checking Camera; that Ref preserves stable, write-capable
+    // whole-object provenance.
+    unsafe { opt_ref(camera.cast::<Camera>()) }
 }
 
 // ufbx.c:19151-19173 `ufbxi_fetch_textures`
@@ -5589,16 +5638,13 @@ pub(crate) fn update_shader_texture(texture_view: &TextureView, shader_view: &Sh
             // C re-reads `input->prop`; a missing value produces null without
             // searching, while a present prop preserves its interned name
             // pointer as the connection key.
-            let tex: *mut Texture = input.prop().map_or(ptr::null_mut(), |prop| {
-                fetch_dst_element_header(
+            let tex: Option<Ref<Texture>> = input.prop().and_then(|prop| {
+                fetch_dst_texture_header(
                     texture_view.element(),
                     ConnectionPropKey::from_string(prop.view::<Const>().name_view()),
-                    ElementType::Texture,
-                ) as *mut Texture
+                )
             });
-            // SAFETY: the lookup returns null or the live element it found,
-            // here the `ufbx_texture` its element type pins it to.
-            input.set_texture(unsafe { opt_ref(tex) });
+            input.set_texture(tex);
         }
 
         // C: `prop = input->texture_prop;`
@@ -5611,16 +5657,14 @@ pub(crate) fn update_shader_texture(texture_view: &TextureView, shader_view: &Sh
             input.set_texture_prop(found.map(|p| unsafe { p.to_ref() }));
             // A missing prop yields null before any connection lookup; a hit
             // carries both the name bytes and its stored interned pointer.
-            let tex: *mut Texture = found.map_or(ptr::null_mut(), |prop| {
-                fetch_dst_element_header(
+            let tex: Option<Ref<Texture>> = found.and_then(|prop| {
+                fetch_dst_texture_header(
                     texture_view.element(),
                     ConnectionPropKey::from_string(prop.name_view()),
-                    ElementType::Texture,
-                ) as *mut Texture
+                )
             });
-            if !tex.is_null() {
-                // SAFETY: `tex` is non-null (checked) and a live `ufbx_texture`.
-                input.set_texture(unsafe { opt_ref(tex) });
+            if let Some(tex) = tex {
+                input.set_texture(Some(tex));
             }
         }
 
@@ -8542,15 +8586,7 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
     let scene_skin_clusters: &RefListView<SkinCluster> = uc.scene_view().skin_clusters_view();
     for cluster_ix in 0..scene_skin_clusters.count() {
         let cluster: &View<SkinCluster> = scene_skin_clusters.at(cluster_ix);
-        // SAFETY: the fetched pointer is null or a live `ufbx_node`, as pinned
-        // by the requested element type; the scene arena outlives the stored ref.
-        cluster.set_bone_node(unsafe {
-            opt_ref(fetch_dst_element_header(
-                cluster.element(),
-                ConnectionPropKey::from_option(None),
-                ElementType::Node,
-            ) as *mut Node)
-        });
+        cluster.set_bone_node(fetch_dst_node_header(cluster.element()));
     }
 
     // C: `ufbxi_for_ptr_list(ufbx_skin_deformer, p_skin, uc->scene.skin_deformers)`
@@ -9225,25 +9261,16 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
     let stereo_cameras: &RefListView<StereoCamera> = uc.scene_view().stereo_cameras_view();
     for stereo_ix in 0..stereo_cameras.count() {
         let stereo: &View<StereoCamera> = stereo_cameras.at(stereo_ix);
-        // SAFETY: the fetched destination is null or a live `ufbx_camera`, as
-        // established by the checked source element type.
-        stereo.set_left(unsafe {
-            opt_ref(fetch_dst_element(
-                ElementNodeWalk::from_stereo_camera(stereo),
-                search_node,
-                Some(&sp::LeftCamera[..]),
-                ElementType::Camera,
-            ) as *mut Camera)
-        });
-        // SAFETY: as above, for the right camera.
-        stereo.set_right(unsafe {
-            opt_ref(fetch_dst_element(
-                ElementNodeWalk::from_stereo_camera(stereo),
-                search_node,
-                Some(&sp::RightCamera[..]),
-                ElementType::Camera,
-            ) as *mut Camera)
-        });
+        stereo.set_left(fetch_stereo_camera_endpoint(
+            stereo,
+            search_node,
+            &sp::LeftCamera[..],
+        ));
+        stereo.set_right(fetch_stereo_camera_endpoint(
+            stereo,
+            search_node,
+            &sp::RightCamera[..],
+        ));
     }
 
     // C: `ufbxi_for_ptr_list(ufbx_nurbs_curve, p_curve, uc->scene.nurbs_curves)`
@@ -10046,16 +10073,10 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
     let scene_selection_nodes: &RefListView<SelectionNode> = uc.scene_view().selection_nodes_view();
     for node_ix in 0..scene_selection_nodes.count() {
         let node: &View<SelectionNode> = scene_selection_nodes.at(node_ix);
-        // SAFETY: the fetched pointer is null or a live `ufbx_node`, as pinned
-        // by the requested element type; the scene arena outlives it.
-        node.set_target_node(unsafe {
-            opt_ref(fetch_dst_element_header(
-                node.element(),
-                ConnectionPropKey::from_option(None),
-                ElementType::Node,
-            ) as *mut Node)
-        });
-        // SAFETY: as above, for a null-or-live `ufbx_mesh` destination.
+        node.set_target_node(fetch_dst_node_header(node.element()));
+        // SAFETY: the lookup returns null or re-reads a stored scene Ref<Element>
+        // after checking Mesh; that Ref preserves stable, write-capable
+        // whole-object provenance.
         node.set_target_mesh(unsafe {
             opt_ref(fetch_dst_element_header(
                 node.element(),

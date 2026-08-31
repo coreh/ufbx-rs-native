@@ -197,24 +197,19 @@ fn load_attribute_zoo_6100_binary() {
         .stereo_cameras
         .first()
         .expect("attribute zoo has no stereo camera");
-    assert_eq!(
-        stereo
-            .left
-            .as_ref()
-            .expect("stereo camera has no left camera")
-            .element
-            .type_,
-        ufbx::ElementType::Camera
-    );
-    assert_eq!(
-        stereo
-            .right
-            .as_ref()
-            .expect("stereo camera has no right camera")
-            .element
-            .type_,
-        ufbx::ElementType::Camera
-    );
+    let left = stereo
+        .left
+        .as_ref()
+        .expect("stereo camera has no left camera");
+    let right = stereo
+        .right
+        .as_ref()
+        .expect("stereo camera has no right camera");
+    assert_eq!(left.element.type_, ufbx::ElementType::Camera);
+    assert_eq!(right.element.type_, ufbx::ElementType::Camera);
+    assert_eq!(left.element.name.as_ref(), "StereoLeftShape");
+    assert_eq!(right.element.name.as_ref(), "StereoRightShape");
+    assert_ne!(left.element.element_id, right.element.element_id);
 }
 
 /// Shader-texture property prefixes are discovered from both explicit compound
@@ -456,6 +451,7 @@ fn load_skinned() {
     let mut acc = 0.0f64;
     for skin in &scene.skin_deformers {
         for cluster in &skin.clusters {
+            assert!(cluster.bone_node.is_some());
             acc += cluster.weights.len() as f64;
             for w in &cluster.weights {
                 acc += *w as f64;
