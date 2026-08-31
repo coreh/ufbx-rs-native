@@ -1632,6 +1632,9 @@ fn public_downcasts_from_narrowed_element_refs() {
     let mut saw_mesh = false;
     let mut saw_node = false;
     let mut saw_anim_layer = false;
+    let mut saw_anim_stack = false;
+    let mut saw_anim_value = false;
+    let mut saw_anim_curve = false;
     for elem in &scene.elements {
         let e: &ufbx::Element = elem;
         if let Some(mesh) = ufbx::as_mesh(e) {
@@ -1648,15 +1651,44 @@ fn public_downcasts_from_narrowed_element_refs() {
         }
         if let Some(stack) = ufbx::as_anim_stack(e) {
             acc += stack.time_end;
+            saw_anim_stack = true;
+        }
+        if let Some(value) = ufbx::as_anim_value(e) {
+            acc += value.default_value.x as f64;
+            saw_anim_value = true;
+        }
+        if let Some(curve) = ufbx::as_anim_curve(e) {
+            acc += curve.keyframes.len() as f64;
+            saw_anim_curve = true;
         }
     }
     assert!(saw_mesh && saw_node && saw_anim_layer);
+    assert!(saw_anim_stack && saw_anim_value && saw_anim_curve);
 
     let node_element: &ufbx::Element = &scene.root_node.element;
     assert!(ufbx::as_mesh(node_element).is_none());
     assert!(ufbx::as_anim_layer(node_element).is_none());
     let mesh_element: &ufbx::Element = &scene.meshes.first().expect("mesh element").element;
     assert!(ufbx::as_node(mesh_element).is_none());
+
+    let stack_element: &ufbx::Element = &scene
+        .anim_stacks
+        .first()
+        .expect("animation stack element")
+        .element;
+    let value_element: &ufbx::Element = &scene
+        .anim_values
+        .first()
+        .expect("animation value element")
+        .element;
+    let curve_element: &ufbx::Element = &scene
+        .anim_curves
+        .first()
+        .expect("animation curve element")
+        .element;
+    assert!(ufbx::as_anim_stack(value_element).is_none());
+    assert!(ufbx::as_anim_value(curve_element).is_none());
+    assert!(ufbx::as_anim_curve(stack_element).is_none());
 
     assert!(acc.is_finite());
 }

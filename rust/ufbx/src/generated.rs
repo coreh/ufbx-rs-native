@@ -6260,7 +6260,7 @@ pub fn as_shader_binding<'a>(element: &'a Element) -> Option<&'a ShaderBinding> 
 
 #[allow(clippy::needless_lifetimes)]
 pub fn as_anim_stack<'a>(element: &'a Element) -> Option<&'a AnimStack> {
-    let result = unsafe { crate::native::api::as_anim_stack(element as *const Element) };
+    let result = crate::native::api::downcast_element::<AnimStack>(element, ElementType::AnimStack);
     if result.is_null() {
         None
     } else {
@@ -6280,7 +6280,7 @@ pub fn as_anim_layer<'a>(element: &'a Element) -> Option<&'a AnimLayer> {
 
 #[allow(clippy::needless_lifetimes)]
 pub fn as_anim_value<'a>(element: &'a Element) -> Option<&'a AnimValue> {
-    let result = unsafe { crate::native::api::as_anim_value(element as *const Element) };
+    let result = crate::native::api::downcast_element::<AnimValue>(element, ElementType::AnimValue);
     if result.is_null() {
         None
     } else {
@@ -6290,7 +6290,7 @@ pub fn as_anim_value<'a>(element: &'a Element) -> Option<&'a AnimValue> {
 
 #[allow(clippy::needless_lifetimes)]
 pub fn as_anim_curve<'a>(element: &'a Element) -> Option<&'a AnimCurve> {
-    let result = unsafe { crate::native::api::as_anim_curve(element as *const Element) };
+    let result = crate::native::api::downcast_element::<AnimCurve>(element, ElementType::AnimCurve);
     if result.is_null() {
         None
     } else {

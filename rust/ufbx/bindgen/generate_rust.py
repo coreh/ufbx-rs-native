@@ -1227,6 +1227,42 @@ pub fn as_anim_layer<'a>(element: &'a Element) -> Option<&'a AnimLayer> {
 }
 """
 
+override_functions["ufbx_as_anim_stack"] = """
+#[allow(clippy::needless_lifetimes)]
+pub fn as_anim_stack<'a>(element: &'a Element) -> Option<&'a AnimStack> {
+    let result = crate::native::api::downcast_element::<AnimStack>(element, ElementType::AnimStack);
+    if result.is_null() {
+        None
+    } else {
+        unsafe { Some(&*result) }
+    }
+}
+"""
+
+override_functions["ufbx_as_anim_value"] = """
+#[allow(clippy::needless_lifetimes)]
+pub fn as_anim_value<'a>(element: &'a Element) -> Option<&'a AnimValue> {
+    let result = crate::native::api::downcast_element::<AnimValue>(element, ElementType::AnimValue);
+    if result.is_null() {
+        None
+    } else {
+        unsafe { Some(&*result) }
+    }
+}
+"""
+
+override_functions["ufbx_as_anim_curve"] = """
+#[allow(clippy::needless_lifetimes)]
+pub fn as_anim_curve<'a>(element: &'a Element) -> Option<&'a AnimCurve> {
+    let result = crate::native::api::downcast_element::<AnimCurve>(element, ElementType::AnimCurve);
+    if result.is_null() {
+        None
+    } else {
+        unsafe { Some(&*result) }
+    }
+}
+"""
+
 override_functions["ufbx_evaluate_props"] = """
 pub fn evaluate_props<'a, 'b>(anim: &'a Anim, element: &'a Element, time: f64, buffer: &'b mut [ExternalRef<'b, Prop>]) -> ExternalRef<'b, Props>
     where 'a: 'b
