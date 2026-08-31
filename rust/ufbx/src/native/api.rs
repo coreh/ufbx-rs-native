@@ -624,8 +624,11 @@ pub(crate) unsafe fn open_memory_ctx(
             (*mem).parent_ator = fc.parent_ator();
         }
     } else {
-        // SAFETY: the raw field address identifies the live `mem`'s own
-        // allocator field, adopted as the file context's parent allocator.
+        // SAFETY: the raw field address identifies initialized, writable
+        // allocator storage inside the live, unmoved `mem`. It remains valid
+        // through `end_file_context()`, which writes the allocator state owning
+        // the stream block into it; `memory_close()` copies that embedded state
+        // before releasing the block.
         unsafe { fc.set_parent_ator(&raw mut (*mem).local_ator) };
     }
 

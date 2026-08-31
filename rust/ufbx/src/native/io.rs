@@ -487,8 +487,20 @@ impl FileContext {
         view_read!(self, parent_ator)
     }
 
+    /// Publish the allocator storage from which this file context copies state
+    /// and to which `end_file_context()` writes the updated state back.
+    ///
+    /// # Safety
+    ///
+    /// `parent_ator` must be non-null, retain write-capable provenance, and
+    /// address live, initialized, unmoved `Allocator` storage through
+    /// `end_file_context()`. It must either hold the allocator state whose
+    /// allocations this context operates on or be the designated destination
+    /// that receives that state before those allocations are freed. If the
+    /// pointer is also transplanted into a `MemoryStream`, its allocator must
+    /// own the stream allocation and remain live until `memory_close()`.
     #[inline(always)]
-    pub(crate) fn set_parent_ator(&self, parent_ator: *mut Allocator) {
+    pub(crate) unsafe fn set_parent_ator(&self, parent_ator: *mut Allocator) {
         view_write!(self, parent_ator, parent_ator)
     }
 }
@@ -505,7 +517,12 @@ pub(crate) unsafe fn begin_file_context(
     // bytes are writable there (C: `memset(fc, 0, sizeof(*fc))`).
     unsafe { core::ptr::write_bytes(fc.get() as *mut u8, 0, size_of::<InnerFileContext>()) };
     if ctx != 0 {
-        fc.set_parent_ator(ctx as *mut Allocator);
+        // SAFETY: non-zero `ctx` is the caller-owned allocator handle supplied
+        // for this file operation. It stays live, unmoved, and write-capable
+        // through state write-back in `end_file_context()`; when a memory
+        // stream retains it, that same allocator owns the stream block and
+        // remains live until the stream is closed.
+        unsafe { fc.set_parent_ator(ctx as *mut Allocator) };
         // SAFETY: a non-zero `OpenFileContext` is the live `*mut Allocator` the
         // library minted for the open-file callback (`ufbx_open_file_info.context`)
         // and that flowed back in through `ufbx_open_file_ctx`/`ufbx_open_memory_ctx`
@@ -532,10 +549,10 @@ pub(crate) unsafe fn begin_file_context(
 #[inline(never)]
 pub(crate) unsafe fn end_file_context(fc: &FileContext, ok: bool) -> Result<(), Error> {
     if !fc.parent_ator().is_null() {
-        // SAFETY: a non-null `parent_ator` is the live caller-owned `Allocator`
-        // `begin_file_context` was handed (checked non-null just above); its
-        // error sink remains live for the caller-owned allocator, and the
-        // write-back of the local copy targets that same live allocator.
+        // SAFETY: a non-null `parent_ator` is either the live caller-owned
+        // allocator supplied for this operation or the live embedded allocator
+        // destination of a memory stream. Its error sink remains live, and the
+        // write-back of the local copy targets that same storage.
         unsafe { fc.ator_view().set_error((*fc.parent_ator()).error) };
         unsafe { *fc.parent_ator() = fc.ator() };
     } else {

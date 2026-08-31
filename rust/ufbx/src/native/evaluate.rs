@@ -1548,7 +1548,13 @@ pub(crate) unsafe fn load(
 
     // NOTE: Though `inflate_retain` leaks out of the scope we don't use it outside this function.
     // cppcheck-suppress autoVariables
-    uc.set_inflate_retain(inflate_retain.as_mut_ptr());
+    // SAFETY: `inflate_retain` is an allocated, aligned stack place reached
+    // through its write-capable `MaybeUninit::as_mut_ptr`; its `initialized`
+    // leaf was written to the valid value `false` above. The local is not moved
+    // or dropped until after `load_imp` returns and `free_temp` has joined/freed
+    // the thread pool, so synchronous inflation and every deferred task that
+    // copies the pointer finish while the storage is live and unmoved.
+    unsafe { uc.set_inflate_retain(inflate_retain.as_mut_ptr()) };
 
     // SAFETY: `load_imp` takes the same `&Context` this fn was handed, now fully
     // initialized by the setup above.

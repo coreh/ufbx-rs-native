@@ -3378,8 +3378,18 @@ impl Context {
         view_read!(self, inflate_retain)
     }
 
+    /// Publish the retain scratch used by synchronous inflation and copied into
+    /// deferred binary-array tasks.
+    ///
+    /// # Safety
+    /// `inflate_retain` must be non-null and point to allocated, properly
+    /// aligned, write-capable `InflateRetain` storage. Its `initialized` leaf
+    /// must already hold a valid `bool`; the remaining leaves may stay
+    /// uninitialized until the inflate implementation initializes them. The
+    /// storage must remain alive and unmoved through `load_imp` and until every
+    /// deferred task that copied this pointer has completed.
     #[inline(always)]
-    pub(crate) fn set_inflate_retain(&self, inflate_retain: *mut InflateRetain) {
+    pub(crate) unsafe fn set_inflate_retain(&self, inflate_retain: *mut InflateRetain) {
         view_write!(self, inflate_retain, inflate_retain)
     }
 
