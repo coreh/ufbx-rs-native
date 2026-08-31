@@ -318,6 +318,53 @@ fn load_constraint_connections_6100_binary() {
     );
 }
 
+/// Face-group IDs, parts, and derived mesh metrics are finalized together.
+#[test]
+fn load_face_group_ids_6100_ascii() {
+    let scene = load("synthetic_face_group_id_6100_ascii.fbx");
+    assert!(walk(&scene).is_finite());
+
+    let node = scene
+        .nodes
+        .iter()
+        .find(|node| node.element.name.as_ref() == "20 Sided")
+        .expect("missing 20 Sided node");
+    let mesh = node.mesh.as_ref().expect("20 Sided has no mesh");
+    let expected = [
+        (i32::MIN, 1usize),
+        (-2000, 2),
+        (-2, 1),
+        (-1, 1),
+        (0, 3),
+        (1, 2),
+        (2, 2),
+        (10, 1),
+        (20, 1),
+        (30, 1),
+        (40, 1),
+        (50, 1),
+        (3000, 2),
+        (i32::MAX, 1),
+    ];
+    assert_eq!(mesh.face_groups.len(), expected.len());
+    assert_eq!(mesh.face_group_parts.len(), expected.len());
+    for ((group, part), &(id, num_faces)) in mesh
+        .face_groups
+        .iter()
+        .zip(mesh.face_group_parts.iter())
+        .zip(expected.iter())
+    {
+        assert_eq!(group.id, id);
+        assert_eq!(part.num_faces, num_faces);
+    }
+    assert_eq!(mesh.num_faces, 20);
+    assert_eq!(mesh.num_triangles, 20);
+    assert_eq!(mesh.max_face_triangles, 1);
+    assert_eq!(mesh.num_empty_faces, 0);
+    assert_eq!(mesh.num_point_faces, 0);
+    assert_eq!(mesh.num_line_faces, 0);
+}
+
 /// Shader-texture property prefixes are discovered from both explicit compound
 /// properties and legacy names, then interned with a trailing separator.
 #[test]

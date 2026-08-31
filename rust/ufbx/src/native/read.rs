@@ -3820,14 +3820,7 @@ pub(crate) fn update_face_groups(
 
     let mut part_index: u32 = 0;
     // C: `ufbxi_for_list(ufbx_mesh_part, part, mesh->face_group_parts)`
-    // SAFETY: `face_group_parts` is the mesh's own contiguous `count`-long run
-    // of `ufbx_mesh_part`, live for this call.
-    for part in unsafe {
-        SliceViewIter::<MeshPart>::from_raw_parts(
-            mesh.face_group_parts().data as *mut MeshPart,
-            mesh.face_group_parts().count,
-        )
-    } {
+    for part in Run::from_list(mesh.face_group_parts_view()).iter() {
         part.set_index(part_index);
         part_index = part_index.wrapping_add(1);
         // SAFETY: `face_indices_raw()` addresses the part's own index list;
@@ -4739,15 +4732,7 @@ pub(crate) fn read_mesh(uc: &Context, node: &NodeView, info: &ElementInfoView) -
 
             if type_ == sp::LayerElementUV.as_ptr() {
                 // C: `ufbxi_for(ufbx_uv_set, set, mesh->uv_sets.data, mesh->uv_sets.count)`
-                // SAFETY: `uv_sets` is the mesh's own `count`-long contiguous
-                // result-arena run of `ufbx_uv_set`, live and unmoved for the
-                // rest of this function.
-                for set in unsafe {
-                    SliceViewIter::from_raw_parts(
-                        mesh.uv_sets().data as *mut UvSet,
-                        mesh.uv_sets().count,
-                    )
-                } {
+                for set in Run::from_list(mesh.uv_sets_view()).iter() {
                     if set.index() == index {
                         uv_set = Some(set);
                         break;
@@ -10998,14 +10983,7 @@ pub(crate) fn finalize_mesh(
         let mut max_face_triangles: usize = 0;
         let mut num_bad_faces: [usize; 3] = [0; 3];
         // C: `ufbxi_nounroll ufbxi_for_list(ufbx_face, face, mesh->faces)`
-        // SAFETY: `faces` is the mesh's own contiguous `count`-long face run,
-        // live for this call.
-        for face in unsafe {
-            SliceViewIter::<Face>::from_raw_parts(
-                mesh.faces().data as *mut Face,
-                mesh.faces().count,
-            )
-        } {
+        for face in Run::from_list(mesh.faces_view()).iter() {
             if face.num_indices() >= 3 {
                 let tris: usize = face.num_indices() as usize - 2;
                 num_triangles = num_triangles.wrapping_add(tris);
