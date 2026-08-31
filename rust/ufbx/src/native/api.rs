@@ -1261,23 +1261,22 @@ pub(crate) fn find_anim_props<M: Mode>(
 
 // ufbx.c:30814-30825 `ufbx_get_compatible_matrix_for_normals`
 #[inline(never)]
-pub(crate) unsafe fn get_compatible_matrix_for_normals(node: *const Node) -> Matrix {
-    if node.is_null() {
+pub(crate) fn get_compatible_matrix_for_normals<M: Mode>(node: Option<&View<Node, M>>) -> Matrix {
+    let Some(node) = node else {
         return IDENTITY_MATRIX;
-    }
+    };
 
     let mut geom_rot: Transform = IDENTITY_TRANSFORM;
-    // SAFETY: `node` is non-null (checked) and points at a live `Node` — the
-    // raw-pointer contract of this `unsafe fn`; reading its own transform's
-    // rotation.
-    geom_rot.rotation = unsafe { (*node).geometry_transform.rotation };
+    // SAFETY: the pointer projects the viewed node's own transform. Read only
+    // its rotation leaf, matching C without broadening the initialized-read
+    // obligation to the whole transform.
+    geom_rot.rotation = unsafe { (*node.geometry_transform_ptr()).rotation };
     // SAFETY: `&geom_rot` addresses the fully-initialized local transform.
     let geom_rot_mat: Matrix = unsafe { transform_to_matrix(&geom_rot) };
 
-    // SAFETY: `&raw const (*node).node_to_world` addresses the live `node`'s own
-    // world matrix and `&geom_rot_mat` the local matrix just computed.
-    let mut norm_mat: Matrix =
-        unsafe { matrix_mul(&raw const (*node).node_to_world, &geom_rot_mat) };
+    // SAFETY: `node_to_world_ptr()` projects the viewed node's own world matrix,
+    // and `&geom_rot_mat` addresses the local matrix just computed.
+    let mut norm_mat: Matrix = unsafe { matrix_mul(node.node_to_world_ptr(), &geom_rot_mat) };
     // SAFETY: `&norm_mat` addresses the local matrix just computed.
     norm_mat = unsafe { matrix_for_normals(&norm_mat) };
     norm_mat
@@ -1637,9 +1636,17 @@ pub(crate) unsafe fn evaluate_prop_flags_len(
         };
     }
 
-    // SAFETY: `anim`/`element` are the live params and the raw address identifies the
-    // local prop, evaluated as a one-element buffer.
-    unsafe { evaluate::evaluate_props(anim, element, time, &raw mut result, 1, flags) };
+    // SAFETY: `anim`/`element` are the live params and the raw address identifies
+    // the initialized local prop as a write-capable one-element run.
+    unsafe {
+        evaluate::evaluate_props(
+            anim,
+            element,
+            time,
+            Run::from_raw_parts(&raw mut result, 1),
+            flags,
+        )
+    };
 
     result
 }
@@ -1752,9 +1759,20 @@ pub(crate) unsafe fn evaluate_props_flags(
         }
     }
 
-    // SAFETY: `anim`/`element` are the live params and `buffer` the caller's
-    // output array now holding `num_anim` initialized props.
-    unsafe { evaluate::evaluate_props(anim, element, time, buffer, num_anim, flags) };
+    // The raw output remains unviewed while it is filled above. At this
+    // checkpoint its first `num_anim` slots are initialized and stay live and
+    // unmoved through both evaluation passes.
+    // SAFETY: `anim`/`element` are the live params and `buffer` is the caller's
+    // write-capable output array now holding an initialized `num_anim` prefix.
+    unsafe {
+        evaluate::evaluate_props(
+            anim,
+            element,
+            time,
+            Run::from_raw_parts(buffer, num_anim),
+            flags,
+        )
+    };
 
     ret.props.data = buffer;
     // C: `ret.props.count = ret.num_animated = num_anim;`
@@ -7843,7 +7861,7 @@ mod tests {
         unsafe {
             // C: `if (!node) return ufbx_identity_matrix;`
             assert!(matrix_eq(
-                &get_compatible_matrix_for_normals(core::ptr::null()),
+                &get_compatible_matrix_for_normals::<Const>(None),
                 &IDENTITY_MATRIX
             ));
 
@@ -7851,7 +7869,7 @@ mod tests {
             node.node_to_world = IDENTITY_MATRIX;
             node.geometry_transform = IDENTITY_TRANSFORM;
             assert!(matrix_eq(
-                &get_compatible_matrix_for_normals(&node),
+                &get_compatible_matrix_for_normals(Some(View::<Node, Const>::from_ref(&node))),
                 &IDENTITY_MATRIX
             ));
 
@@ -7868,7 +7886,7 @@ mod tests {
                 z: 4.0,
             };
             assert!(matrix_eq(
-                &get_compatible_matrix_for_normals(&node),
+                &get_compatible_matrix_for_normals(Some(View::<Node, Const>::from_ref(&node))),
                 &IDENTITY_MATRIX
             ));
 
@@ -7877,7 +7895,7 @@ mod tests {
             node.node_to_world.m00 = 2.0;
             node.node_to_world.m11 = 4.0;
             node.node_to_world.m22 = 8.0;
-            let m = get_compatible_matrix_for_normals(&node);
+            let m = get_compatible_matrix_for_normals(Some(View::<Node, Const>::from_ref(&node)));
             let expected = matrix_for_normals(&node.node_to_world);
             assert!(matrix_eq(&m, &expected));
         }

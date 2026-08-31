@@ -838,10 +838,19 @@ pub unsafe extern "C" fn ufbx_find_anim_props(
 pub unsafe extern "C" fn ufbx_get_compatible_matrix_for_normals(
     node: *const crate::generated::Node,
 ) -> crate::generated::Matrix {
-    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
-    // own raw-pointer contract and are forwarded unchanged to the native impl,
-    // whose contract is identical.
-    unsafe { crate::native::api::get_compatible_matrix_for_normals(node) }
+    let node = if node.is_null() {
+        None
+    } else {
+        // SAFETY: the non-null raw ABI argument points at a live, readable node
+        // that remains frozen for this call.
+        Some(unsafe {
+            crate::native::view::View::<
+                crate::generated::Node,
+                crate::native::view::Const,
+            >::from_ptr(node)
+        })
+    };
+    crate::native::api::get_compatible_matrix_for_normals(node)
 }
 
 // ufbx.c:30827-30830 `ufbx_evaluate_curve` (impl: native/api.rs `evaluate_curve`)

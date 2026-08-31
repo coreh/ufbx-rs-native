@@ -122,7 +122,6 @@ use crate::native::string_pool::{
     map_cmp_string, push_string_place_str, str_equal, str_less, string_pool_temp_free, STRINGS,
 };
 use crate::native::thread::{thread_pool_free, thread_pool_init, THREAD_GROUP_COUNT};
-#[cfg(any(feature = "baking", feature = "scene-eval"))]
 use crate::native::view::Run;
 use crate::native::view::SliceViewIter;
 use crate::native::view::{
@@ -1977,8 +1976,7 @@ pub(crate) unsafe fn evaluate_props(
     anim: *const Anim,
     element: *const Element,
     time: f64,
-    props: *mut Prop,
-    num_props: usize,
+    props: Run<'_, Prop>,
     flags: u32,
 ) {
     // SAFETY: `anim` is the caller's live `ufbx_anim` — the raw-pointer contract
@@ -2068,9 +2066,7 @@ pub(crate) unsafe fn evaluate_props(
         }
 
         // C: `for (size_t i = 0; i < num_props; i++) { ufbx_prop *prop = &props[i]; ... }`
-        // SAFETY: `props`/`num_props` is the caller's contiguous `num_props`-element
-        // prop run, reached through `*mut` (write-capable provenance for `Mut`).
-        for prop in unsafe { SliceViewIter::<Prop>::from_raw_parts(props, num_props) } {
+        for prop in props.iter() {
             // Don't evaluate on top of overridden properties
             if (prop.flags().raw() & PropFlags::OVERRIDDEN.raw()) != 0 {
                 continue;
@@ -2156,9 +2152,7 @@ pub(crate) unsafe fn evaluate_props(
     }
 
     // C: `ufbxi_for(ufbx_prop, prop, props, num_props)`
-    // SAFETY: `props`/`num_props` is the caller's contiguous `num_props`-element
-    // prop run, reached through `*mut` (write-capable provenance for `Mut`).
-    for prop in unsafe { SliceViewIter::<Prop>::from_raw_parts(props, num_props) } {
+    for prop in props.iter() {
         if (prop.flags().raw() & PropFlags::OVERRIDDEN.raw()) != 0 {
             continue;
         }
@@ -2630,9 +2624,21 @@ pub(crate) unsafe fn evaluate_selected_props(
         }
     }
 
-    // SAFETY: `anim`/`element` are the caller's live scene objects and `props`
-    // now holds `num_props` initialized props written above.
-    unsafe { evaluate_props(anim, element, time, props, num_props, flags) };
+    // The raw destination remains unviewed while it is filled above. At this
+    // checkpoint its first `num_props` slots are initialized and stay live and
+    // unmoved through both evaluation passes.
+    // SAFETY: `props` is the caller's write-capable `max_props`-slot output run,
+    // and the loops above initialized exactly its `num_props`-slot prefix;
+    // `anim`/`element` are the caller's live scene objects.
+    unsafe {
+        evaluate_props(
+            anim,
+            element,
+            time,
+            Run::from_raw_parts(props, num_props),
+            flags,
+        )
+    };
 
     // C: `ufbx_props prop_list;` — every field is written below.
     // SAFETY: `ufbx_props` is C plain data — a pointer/count run, counts and a

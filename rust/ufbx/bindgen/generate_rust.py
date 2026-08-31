@@ -795,11 +795,17 @@ pub fn evaluate_anim_value_vec3_flags(anim_value: &AnimValue, time: f64, flags: 
 }
 """
 
+override_functions["ufbx_get_compatible_matrix_for_normals"] = """
+pub fn get_compatible_matrix_for_normals(node: &Node) -> Matrix {
+    let node = crate::native::view::View::<Node, crate::native::view::Const>::from_ref(node);
+    crate::native::api::get_compatible_matrix_for_normals(Some(node))
+}
+"""
+
 override_functions["ufbx_get_blend_shape_offset_index"] = """
 pub fn get_blend_shape_offset_index(shape: &BlendShape, vertex: usize) -> u32 {
-    crate::native::api::get_blend_shape_offset_index(Some(unsafe {
-        crate::native::view::View::<BlendShape, crate::native::view::Const>::from_ptr(shape as *const BlendShape)
-    }), vertex)
+    let shape = crate::native::view::View::<BlendShape, crate::native::view::Const>::from_ref(shape);
+    crate::native::api::get_blend_shape_offset_index(Some(shape), vertex)
 }
 """
 

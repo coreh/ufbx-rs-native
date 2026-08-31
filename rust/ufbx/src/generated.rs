@@ -4877,11 +4877,9 @@ pub fn find_anim_props<'a>(layer: &'a AnimLayer, element: &'a Element) -> &'a [A
     unsafe { result.as_static_ref() }
 }
 
-#[allow(clippy::let_and_return)]
 pub fn get_compatible_matrix_for_normals(node: &Node) -> Matrix {
-    let result =
-        unsafe { crate::native::api::get_compatible_matrix_for_normals(node as *const Node) };
-    result
+    let node = crate::native::view::View::<Node, crate::native::view::Const>::from_ref(node);
+    crate::native::api::get_compatible_matrix_for_normals(Some(node))
 }
 
 #[allow(clippy::let_and_return)]
@@ -5532,14 +5530,9 @@ pub fn get_skin_vertex_matrix(skin: &SkinDeformer, vertex: usize, fallback: &Mat
 }
 
 pub fn get_blend_shape_offset_index(shape: &BlendShape, vertex: usize) -> u32 {
-    crate::native::api::get_blend_shape_offset_index(
-        Some(unsafe {
-            crate::native::view::View::<BlendShape, crate::native::view::Const>::from_ptr(
-                shape as *const BlendShape,
-            )
-        }),
-        vertex,
-    )
+    let shape =
+        crate::native::view::View::<BlendShape, crate::native::view::Const>::from_ref(shape);
+    crate::native::api::get_blend_shape_offset_index(Some(shape), vertex)
 }
 
 #[allow(clippy::let_and_return)]
