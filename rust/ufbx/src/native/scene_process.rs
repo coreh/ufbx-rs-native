@@ -7659,8 +7659,24 @@ pub(crate) fn push_file_content(
 }
 
 // ufbx.c:21477-21488 `ufbxi_fetch_file_content`
+impl<M: Mode> View<FileContent, M> {
+    #[inline(always)]
+    pub(crate) fn absolute_filename_view(&self) -> &View<String, M> {
+        view_project!(self, absolute_filename)
+    }
+
+    #[inline(always)]
+    pub(crate) fn content(&self) -> Blob {
+        view_read_shared!(self, content)
+    }
+}
+
 #[inline(never)]
-pub(crate) fn fetch_file_content(uc: &Context, p_filename: &View<String>, p_data: &View<Blob>) {
+pub(crate) fn fetch_file_content(
+    file_content: Run<'_, FileContent>,
+    p_filename: &View<String>,
+    p_data: &View<Blob>,
+) {
     if p_data.size() > 0 {
         return;
     }
@@ -7669,37 +7685,23 @@ pub(crate) fn fetch_file_content(uc: &Context, p_filename: &View<String>, p_data
     // C: `ufbxi_macro_lower_bound_eq(ufbxi_file_content, 8, &index,
     // uc->file_content, 0, uc->num_file_content, ...)` — does NOT write
     // `index` on a miss, hence the `SIZE_MAX` pre-initialization above.
-    let cmp_lambda = |a: *const FileContent| {
-        // SAFETY: `macro_lower_bound_eq` only passes pointers to live, initialized
-        // elements of the run it was handed; both `absolute_filename`s are
-        // interned pool strings.
-        unsafe { str_less((*a).absolute_filename.as_bytes(), filename.as_bytes()) }
+    let cmp_lambda = |content_ix: usize| {
+        str_less(
+            file_content.at(content_ix).absolute_filename_view().bytes(),
+            View::<String, Const>::from_ref(&filename).bytes(),
+        )
     };
     // C-parity: the equality lambda compares interned string POINTERS, not the
     // bytes.
-    let eq_lambda = |a: *const FileContent| {
-        // SAFETY: as `cmp_lambda`.
-        (unsafe { (*a).absolute_filename.data }) == filename.data
+    let eq_lambda = |content_ix: usize| {
+        file_content.at(content_ix).absolute_filename_view().data() == filename.data
     };
-    // SAFETY: `uc.file_content()`/`num_file_content()` are `uc`'s own sorted
-    // file-content run and its length, and `&mut index` is a live local.
-    unsafe {
-        macro_lower_bound_eq(
-            8,
-            &mut index,
-            uc.file_content() as *const FileContent,
-            0,
-            uc.num_file_content(),
-            cmp_lambda,
-            eq_lambda,
-        )
-    };
+    macro_lower_bound_eq(8, &mut index, 0, file_content.len(), cmp_lambda, eq_lambda);
     if index != usize::MAX {
-        // SAFETY: `index != SIZE_MAX` means the search wrote a hit, which is an
-        // index below `num_file_content`, so the offset lands on a live element of
-        // `uc`'s file-content run; `p_data.get()` is that view's own write-capable
-        // `ufbx_blob` place.
-        unsafe { *p_data.get() = (*uc.file_content().add(index)).content };
+        // SAFETY: a hit is in bounds of `file_content`; `p_data` is the live
+        // writable destination Blob field supplied by the caller. Preserve
+        // C's whole-struct assignment as one publication.
+        unsafe { core::ptr::write(p_data.get(), file_content.at(index).content()) };
     }
 }
 
@@ -7803,14 +7805,22 @@ pub(crate) fn resolve_file_content<'a>(uc: &'a Context) -> Result<(), Fail> {
     let videos: &RefListView<Video> = uc.scene_view().videos_view();
     for video_ix in 0..videos.count() {
         let video: &View<Video> = videos.at(video_ix);
-        fetch_file_content(uc, video.absolute_filename_view(), video.content_view());
+        fetch_file_content(
+            file_content,
+            video.absolute_filename_view(),
+            video.content_view(),
+        );
     }
 
     // C: `ufbxi_for_ptr_list(ufbx_audio_clip, p_clip, uc->scene.audio_clips)`
     let audio_clips: &RefListView<AudioClip> = uc.scene_view().audio_clips_view();
     for clip_ix in 0..audio_clips.count() {
         let clip: &AudioClipView = audio_clips.at(clip_ix);
-        fetch_file_content(uc, clip.absolute_filename_view(), clip.content_view());
+        fetch_file_content(
+            file_content,
+            clip.absolute_filename_view(),
+            clip.content_view(),
+        );
     }
 
     Ok(())
@@ -10800,21 +10810,14 @@ pub(crate) fn update_node(node_view: &NodeView, overrides: &[TransformOverride])
             // C: `ufbxi_macro_lower_bound_eq(ufbx_transform_override, 16,
             // &override_ix, overrides, 0, num_overrides,
             // ( a->node_id < typed_id ), ( a->node_id == typed_id ));`
-            // SAFETY: the search spans exactly the `overrides` slice (sorted by
-            // `node_id` per the public evaluate contract, established at the
-            // `update_scene` boundary); `&mut override_ix` addresses a live
-            // local, and the lambdas are handed pointers into that same run.
-            unsafe {
-                macro_lower_bound_eq::<TransformOverride>(
-                    16,
-                    &mut override_ix,
-                    overrides.as_ptr(),
-                    0,
-                    overrides.len(),
-                    |a| (*a).node_id < typed_id,
-                    |a| (*a).node_id == typed_id,
-                )
-            };
+            macro_lower_bound_eq(
+                16,
+                &mut override_ix,
+                0,
+                overrides.len(),
+                |ix| overrides[ix].node_id < typed_id,
+                |ix| overrides[ix].node_id == typed_id,
+            );
             if override_ix != usize::MAX {
                 node_view.set_local_transform(overrides[override_ix].transform);
             }

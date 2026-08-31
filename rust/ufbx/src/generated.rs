@@ -5372,15 +5372,11 @@ pub fn find_shader_prop_bindings<'a>(shader: &'a Shader, name: &str) -> &'a [Sha
 }
 
 pub fn find_shader_texture_input<'a>(
-    shader: &ShaderTexture,
+    shader: &'a ShaderTexture,
     name: &str,
 ) -> Option<&'a ShaderTextureInput> {
     let result = crate::native::api::find_shader_texture_input_len(
-        unsafe {
-            crate::native::view::View::<ShaderTexture, crate::native::view::Const>::from_ptr(
-                shader as *const ShaderTexture,
-            )
-        },
+        crate::native::view::View::<ShaderTexture, crate::native::view::Const>::from_ref(shader),
         name.as_bytes(),
     );
     result.map(|input| unsafe { &*input.as_ptr() })
@@ -5940,15 +5936,11 @@ pub fn sample_geometry_cache_vec3(
     unsafe { sample_geometry_cache_vec3_raw(channel, time, data, &opts_raw) }
 }
 
-pub fn dom_find<'a>(parent: &DomNode, name: &str) -> Option<&'a DomNode> {
-    let result = unsafe {
-        crate::native::api::dom_find_len(
-            crate::native::view::View::<DomNode, crate::native::view::Const>::from_ptr(
-                parent as *const DomNode,
-            ),
-            name.as_bytes(),
-        )
-    };
+pub fn dom_find<'a>(parent: &'a DomNode, name: &str) -> Option<&'a DomNode> {
+    let result = crate::native::api::dom_find_len(
+        crate::native::view::View::<DomNode, crate::native::view::Const>::from_ref(parent),
+        name.as_bytes(),
+    );
     result.map(|node| unsafe { &*node.as_ptr() })
 }
 
@@ -6515,57 +6507,51 @@ pub fn dom_array_size(node: &DomNode) -> usize {
     }))
 }
 
-pub fn dom_as_int32_list<'a>(node: &DomNode) -> &'a [i32] {
-    let result = crate::native::api::dom_as_int32_list(Some(unsafe {
-        crate::native::view::View::<DomNode, crate::native::view::Const>::from_ptr(
-            node as *const DomNode,
-        )
-    }));
+pub fn dom_as_int32_list(node: &DomNode) -> &[i32] {
+    let result = crate::native::api::dom_as_int32_list(Some(crate::native::view::View::<
+        DomNode,
+        crate::native::view::Const,
+    >::from_ref(node)));
     unsafe { result.as_static_ref() }
 }
 
-pub fn dom_as_int64_list<'a>(node: &DomNode) -> &'a [i64] {
-    let result = crate::native::api::dom_as_int64_list(Some(unsafe {
-        crate::native::view::View::<DomNode, crate::native::view::Const>::from_ptr(
-            node as *const DomNode,
-        )
-    }));
+pub fn dom_as_int64_list(node: &DomNode) -> &[i64] {
+    let result = crate::native::api::dom_as_int64_list(Some(crate::native::view::View::<
+        DomNode,
+        crate::native::view::Const,
+    >::from_ref(node)));
     unsafe { result.as_static_ref() }
 }
 
-pub fn dom_as_float_list<'a>(node: &DomNode) -> &'a [f32] {
-    let result = crate::native::api::dom_as_float_list(Some(unsafe {
-        crate::native::view::View::<DomNode, crate::native::view::Const>::from_ptr(
-            node as *const DomNode,
-        )
-    }));
+pub fn dom_as_float_list(node: &DomNode) -> &[f32] {
+    let result = crate::native::api::dom_as_float_list(Some(crate::native::view::View::<
+        DomNode,
+        crate::native::view::Const,
+    >::from_ref(node)));
     unsafe { result.as_static_ref() }
 }
 
-pub fn dom_as_double_list<'a>(node: &DomNode) -> &'a [f64] {
-    let result = crate::native::api::dom_as_double_list(Some(unsafe {
-        crate::native::view::View::<DomNode, crate::native::view::Const>::from_ptr(
-            node as *const DomNode,
-        )
-    }));
+pub fn dom_as_double_list(node: &DomNode) -> &[f64] {
+    let result = crate::native::api::dom_as_double_list(Some(crate::native::view::View::<
+        DomNode,
+        crate::native::view::Const,
+    >::from_ref(node)));
     unsafe { result.as_static_ref() }
 }
 
-pub fn dom_as_real_list<'a>(node: &DomNode) -> &'a [Real] {
-    let result = crate::native::api::dom_as_real_list(Some(unsafe {
-        crate::native::view::View::<DomNode, crate::native::view::Const>::from_ptr(
-            node as *const DomNode,
-        )
-    }));
+pub fn dom_as_real_list(node: &DomNode) -> &[Real] {
+    let result = crate::native::api::dom_as_real_list(Some(crate::native::view::View::<
+        DomNode,
+        crate::native::view::Const,
+    >::from_ref(node)));
     unsafe { result.as_static_ref() }
 }
 
-pub fn dom_as_blob_list<'a>(node: &DomNode) -> &'a [Blob] {
-    let result = crate::native::api::dom_as_blob_list(Some(unsafe {
-        crate::native::view::View::<DomNode, crate::native::view::Const>::from_ptr(
-            node as *const DomNode,
-        )
-    }));
+pub fn dom_as_blob_list(node: &DomNode) -> &[Blob] {
+    let result = crate::native::api::dom_as_blob_list(Some(crate::native::view::View::<
+        DomNode,
+        crate::native::view::Const,
+    >::from_ref(node)));
     unsafe { result.as_static_ref() }
 }
 pub fn identity_matrix() -> Matrix {

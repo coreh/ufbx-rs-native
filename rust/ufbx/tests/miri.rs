@@ -434,7 +434,10 @@ fn load_shader_texture_prefixes() {
         .shader
         .as_ref()
         .expect("ColorTweak has no shader");
-    let input = ufbx::find_shader_texture_input(shader, "Input").expect("missing Input");
+    let input = {
+        let name = std::string::String::from("Input");
+        ufbx::find_shader_texture_input(shader, &name).expect("missing Input")
+    };
     let input_texture: &ufbx::Texture = input
         .texture
         .as_ref()
@@ -482,8 +485,10 @@ fn load_shader_texture_prefixes() {
             .expect("roughness shader has no main texture");
         assert_eq!(shader.main_texture_output_index, 6);
         assert_eq!(main.element.name.as_ref(), "Map #30");
-        let source =
-            ufbx::find_shader_texture_input(shader, "sourceMap").expect("missing sourceMap input");
+        let source = {
+            let name = std::string::String::from("sourceMap");
+            ufbx::find_shader_texture_input(shader, &name).expect("missing sourceMap input")
+        };
         assert_eq!(source.texture_output_index, 6);
         assert_eq!(
             source
@@ -1620,7 +1625,10 @@ fn public_dom_walkers_from_shared_refs() {
     let dom_root: &ufbx::DomNode = scene.dom_root.as_ref().expect("dom_root retained").as_ref();
 
     let mut acc = 0.0f64;
-    let objects = ufbx::dom_find(dom_root, "Objects").expect("Objects dom node");
+    let objects = {
+        let name = std::string::String::from("Objects");
+        ufbx::dom_find(dom_root, &name).expect("Objects dom node")
+    };
     for child in &objects.children {
         acc += child.name.as_ref().len() as f64;
         if ufbx::dom_is_array(child) {
@@ -1639,7 +1647,11 @@ fn public_dom_walkers_from_shared_refs() {
             .sum::<usize>() as f64;
         // One per node is enough for provenance coverage.
         if let Some(grandchild) = child.children.as_ref().first() {
-            if let Some(found) = ufbx::dom_find(child, grandchild.name.as_ref()) {
+            let found = {
+                let name = std::string::String::from(grandchild.name.as_ref());
+                ufbx::dom_find(child, &name)
+            };
+            if let Some(found) = found {
                 acc += found.values.len() as f64;
             }
         }

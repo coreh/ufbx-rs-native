@@ -1240,29 +1240,26 @@ pub(crate) unsafe fn compute_topology<M: Mode>(mesh: &View<Mesh, M>, topo: Run<'
             }
 
             let mut ix: usize = num_indices;
-            // SAFETY: `topo` addresses `num_indices` live `TopoEdge`s and
-            // `result_ptr` is the writable local `ix`; the two comparator
-            // closures (lexically inside this block) dereference only the
-            // in-range element pointer the search hands them.
-            unsafe {
-                macro_lower_bound_eq::<TopoEdge>(
-                    32,
-                    &mut ix,
-                    topo_ptr,
-                    0,
-                    num_indices,
-                    // C: `(a->prev == va ? a->next < vb : a->prev < va)`
-                    |a| {
-                        if (*a).prev == va {
-                            (*a).next < vb
-                        } else {
-                            (*a).prev < va
-                        }
-                    },
-                    // C: `(a->prev == va && a->next == vb)`
-                    |a| (*a).prev == va && (*a).next == vb,
-                );
-            }
+            macro_lower_bound_eq(
+                32,
+                &mut ix,
+                0,
+                num_indices,
+                // C: `(a->prev == va ? a->next < vb : a->prev < va)`
+                |edge_ix| {
+                    let edge = topo.at(edge_ix);
+                    if edge.prev() == va {
+                        edge.next() < vb
+                    } else {
+                        edge.prev() < va
+                    }
+                },
+                // C: `(a->prev == va && a->next == vb)`
+                |edge_ix| {
+                    let edge = topo.at(edge_ix);
+                    edge.prev() == va && edge.next() == vb
+                },
+            );
 
             while ix < num_indices && topo.at(ix).prev() == va && topo.at(ix).next() == vb {
                 topo.at(ix).set_edge(ei);

@@ -875,27 +875,23 @@ pub(crate) unsafe fn macro_stable_sort<T: Copy>(
 // Does NOT write `*result_ptr` on miss — callers pre-initialize (e.g.
 // `size_t index = SIZE_MAX;`, ufbx.c:13362). Keep the out-param shape; do NOT
 // return `Option` (PORTING.md "Sorting & searching").
-pub(crate) unsafe fn macro_lower_bound_eq<T>(
+pub(crate) fn macro_lower_bound_eq(
     linear_size: usize,
-    result_ptr: *mut usize,
-    data: *const T,
+    result: &mut usize,
     begin: usize,
     size: usize,
-    mut cmp_lambda: impl FnMut(*const T) -> bool,
-    mut eq_lambda: impl FnMut(*const T) -> bool,
+    mut cmp_lambda: impl FnMut(usize) -> bool,
+    mut eq_lambda: impl FnMut(usize) -> bool,
 ) {
     let mut lo = begin;
     let mut hi = size;
     let linear_size = clamp_linear_threshold(linear_size);
     ufbx_assert!(linear_size > 1);
+    ufbx_assert!(begin <= size);
     // Binary search until we get down to `m_linear_size` elements
     while hi - lo > linear_size {
         let mid = lo + (hi - lo) / 2;
-        // SAFETY: caller contract — `data` addresses `size` readable `T`s and
-        // `begin <= size`; `lo <= hi <= size` is preserved by both updates, so
-        // `hi - lo > linear_size >= 2` here gives `mid < hi <= size`.
-        let a: *const T = unsafe { data.add(mid) };
-        if cmp_lambda(a) {
+        if cmp_lambda(mid) {
             lo = mid + 1;
         } else {
             hi = mid + 1;
@@ -903,13 +899,8 @@ pub(crate) unsafe fn macro_lower_bound_eq<T>(
     }
     // Linearly scan until we find the edge
     while lo < hi {
-        // SAFETY: caller contract as above; `lo < hi <= size` is the loop
-        // condition.
-        let a: *const T = unsafe { data.add(lo) };
-        if eq_lambda(a) {
-            // SAFETY: caller contract — `result_ptr` is a writable `usize`
-            // out-param.
-            unsafe { *result_ptr = lo };
+        if eq_lambda(lo) {
+            *result = lo;
             break;
         }
         lo += 1;
@@ -2143,17 +2134,14 @@ mod utility_tests {
     // test/unit_tests.c:110-119 `find_uint`
     fn find_uint(linear_size: usize, data: &[u32], value: u32) -> usize {
         let mut index = usize::MAX;
-        unsafe {
-            macro_lower_bound_eq(
-                linear_size,
-                &mut index,
-                data.as_ptr(),
-                0,
-                data.len(),
-                |a| *a < value,
-                |a| *a == value,
-            );
-        }
+        macro_lower_bound_eq(
+            linear_size,
+            &mut index,
+            0,
+            data.len(),
+            |ix| data[ix] < value,
+            |ix| data[ix] == value,
+        );
         index
     }
 
@@ -2169,17 +2157,14 @@ mod utility_tests {
     // test/unit_tests.c:128-135 `find_pair_by_a`
     fn find_pair_by_a(linear_size: usize, data: &[UintPair], value: u32) -> usize {
         let mut pair_ix = usize::MAX;
-        unsafe {
-            macro_lower_bound_eq(
-                linear_size,
-                &mut pair_ix,
-                data.as_ptr(),
-                0,
-                data.len(),
-                |a| (*a).a < value,
-                |a| (*a).a == value,
-            );
-        }
+        macro_lower_bound_eq(
+            linear_size,
+            &mut pair_ix,
+            0,
+            data.len(),
+            |ix| data[ix].a < value,
+            |ix| data[ix].a == value,
+        );
         pair_ix
     }
 
@@ -2224,17 +2209,17 @@ mod utility_tests {
     fn find_first_string(linear_size: usize, data: &[*const c_char], s: &CString) -> usize {
         let mut str_index = usize::MAX;
         let sp = s.as_ptr();
-        unsafe {
-            macro_lower_bound_eq(
-                linear_size,
-                &mut str_index,
-                data.as_ptr(),
-                0,
-                data.len(),
-                |a| libc::strcmp(*a, sp) < 0,
-                |a| libc::strcmp(*a, sp) == 0,
-            );
-        }
+        macro_lower_bound_eq(
+            linear_size,
+            &mut str_index,
+            0,
+            data.len(),
+            // SAFETY: both pointers are live NUL-terminated strings supplied
+            // by this test helper's callers.
+            |ix| unsafe { libc::strcmp(data[ix], sp) < 0 },
+            // SAFETY: as above.
+            |ix| unsafe { libc::strcmp(data[ix], sp) == 0 },
+        );
         str_index
     }
 
@@ -2392,10 +2377,49 @@ mod utility_tests {
         // miss; upper_bound_eq ALWAYS writes.
         let data: [u32; 4] = [1, 3, 3, 7];
         let mut index = 12345usize;
-        unsafe {
-            macro_lower_bound_eq(2, &mut index, data.as_ptr(), 0, 4, |a| *a < 5, |a| *a == 5);
-        }
+        macro_lower_bound_eq(
+            2,
+            &mut index,
+            0,
+            data.len(),
+            |ix| data[ix] < 5,
+            |ix| data[ix] == 5,
+        );
         assert_eq!(index, 12345); // untouched on miss
+
+        // Pin the C macro's exact binary -> linear probe order, including its
+        // intentionally asymmetric `hi = mid + 1` update.
+        let mut less_probes = Vec::new();
+        let mut equal_probes = Vec::new();
+        let mut ordered_index = usize::MAX;
+        macro_lower_bound_eq(
+            2,
+            &mut ordered_index,
+            0,
+            32,
+            |ix| {
+                less_probes.push(ix);
+                ix < 10
+            },
+            |ix| {
+                equal_probes.push(ix);
+                ix == 10
+            },
+        );
+        assert_eq!(ordered_index, 10);
+        assert_eq!(less_probes, [16, 8, 13, 11, 10]);
+        assert_eq!(equal_probes, [9, 10]);
+
+        let mut empty_index = 12345usize;
+        macro_lower_bound_eq(
+            2,
+            &mut empty_index,
+            0,
+            0,
+            |_| panic!("empty range must not be compared"),
+            |_| panic!("empty range must not be tested for equality"),
+        );
+        assert_eq!(empty_index, 12345); // untouched on miss
         let mut end = 12345usize;
         macro_upper_bound_eq(2, &mut end, 0, data.len(), |ix| data[ix] == 5);
         assert_eq!(end, 0); // always written

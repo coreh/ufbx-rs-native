@@ -50,7 +50,9 @@ use crate::native::string_pool::{
     StringPool,
 };
 use crate::native::view::SliceViewIter;
-use crate::native::view::{view_project, view_read, view_write, Mut, Run, View};
+use crate::native::view::{
+    view_project, view_read, view_read_shared, view_write, Mode, Mut, Run, View,
+};
 #[cfg(feature = "geometry-cache")]
 use crate::native::view::{view_raw_const, view_raw_mut, Const};
 use crate::native::warnings::ufbxi_warnf;
@@ -60,7 +62,7 @@ use crate::native::xml::{
 };
 #[cfg(feature = "geometry-cache")]
 use crate::prelude::slice_from_ptr;
-use crate::prelude::{Real, Ref, String, StringView};
+use crate::prelude::{List, Real, Ref, String, StringView};
 
 // ufbx.c:23950-23957 `ufbxi_geometry_cache_imp` (UFBXI_FEATURE_GEOMETRY_CACHE)
 #[cfg(feature = "geometry-cache")]
@@ -2416,6 +2418,25 @@ pub(crate) struct ExternalFile {
 // type's mint instead of on a raw-pointer parameter.
 pub(crate) type ExternalFileView = View<ExternalFile>;
 
+impl<M: Mode> View<CacheChannel, M> {
+    #[inline(always)]
+    pub(crate) fn name(&self) -> String {
+        view_read_shared!(self, name)
+    }
+
+    #[inline(always)]
+    pub(crate) fn name_view(&self) -> &View<String, M> {
+        view_project!(self, name)
+    }
+}
+
+impl<M: Mode> View<GeometryCache, M> {
+    #[inline(always)]
+    pub(crate) fn channels_list_view(&self) -> &View<List<CacheChannel>, M> {
+        view_project!(self, channels)
+    }
+}
+
 impl ExternalFileView {
     #[inline(always)]
     pub(crate) fn type_(&self) -> ExternalFileType {
@@ -2604,34 +2625,19 @@ pub(crate) fn find_external_file<'a>(
     name: &[u8],
 ) -> Option<&'a ExternalFileView> {
     let mut ix: usize = usize::MAX;
-    let less = |a: *const ExternalFile| {
-        // SAFETY: the search only hands the predicate elements of `files`.
-        let a = unsafe { ExternalFileView::from_ptr(a.cast_mut()) };
+    let less = |file_ix: usize| {
+        let a = files.at(file_ix);
         if type_ != a.type_() {
             type_ < a.type_()
         } else {
             str_cmp(a.filename_view().bytes(), name) < 0
         }
     };
-    let equal = |a: *const ExternalFile| {
-        // SAFETY: the search only hands the predicate elements of `files`.
-        let a = unsafe { ExternalFileView::from_ptr(a.cast_mut()) };
+    let equal = |file_ix: usize| {
+        let a = files.at(file_ix);
         a.type_() == type_ && a.filename().data == name.as_ptr()
     };
-    // SAFETY: `files` carries the initialized run sorted by
-    // `less_external_file`; both predicates mint only in-bounds elements, and
-    // the search keeps every probe inside the run.
-    unsafe {
-        macro_lower_bound_eq::<ExternalFile>(
-            32,
-            &raw mut ix,
-            files.as_mut_ptr(),
-            0,
-            files.len(),
-            less,
-            equal,
-        );
-    }
+    macro_lower_bound_eq(32, &mut ix, 0, files.len(), less, equal);
     if ix != usize::MAX {
         Some(files.at(ix))
     } else {
@@ -2754,36 +2760,36 @@ pub(crate) fn load_external_files(uc: &Context) -> Result<(), Fail> {
                 p_deformer = p_deformer.add(1);
                 continue;
             };
-            let cache: *mut GeometryCache = cache_view.get();
             // `cache_view` views the file's retained external cache, which the
             // scene keeps alive for the deformer that stores the ref (`to_ref`
             // contract).
             deformer_view.set_external_cache(Some(cache_view.to_ref()));
+            let channels = Run::from_list(cache_view.channels_list_view());
 
             // HACK: It seems like channels may be connected even if the name is wrong
             // and they work when exporting from Marvelous to Maya...
-            if (*cache).channels.count == 1 {
-                (*deformer).external_channel = Some(Ref::from_ptr(
-                    ((*cache).channels.data as *mut CacheChannel).add(0),
-                ));
+            if channels.len() == 1 {
+                (*deformer).external_channel = Some(channels.at(0).to_ref());
             } else {
                 let channel: String = (*deformer).channel;
                 // C: `size_t ix = SIZE_MAX;` — pre-initialized because
                 // `ufbxi_macro_lower_bound_eq` does NOT write the out-param on a miss.
                 let mut ix: usize = usize::MAX;
-                macro_lower_bound_eq::<CacheChannel>(
+                macro_lower_bound_eq(
                     16,
                     &mut ix,
-                    (*cache).channels.data,
                     0,
-                    (*cache).channels.count,
-                    |a: *const CacheChannel| str_less((*a).name.as_bytes(), channel.as_bytes()),
-                    |a: *const CacheChannel| (*a).name.data == channel.data,
+                    channels.len(),
+                    |channel_ix| {
+                        str_less(
+                            channels.at(channel_ix).name_view().bytes(),
+                            channel.as_bytes(),
+                        )
+                    },
+                    |channel_ix| channels.at(channel_ix).name().data == channel.data,
                 );
                 if ix != usize::MAX {
-                    (*deformer).external_channel = Some(Ref::from_ptr(
-                        ((*cache).channels.data as *mut CacheChannel).add(ix),
-                    ));
+                    (*deformer).external_channel = Some(channels.at(ix).to_ref());
                 }
             }
             p_deformer = p_deformer.add(1);

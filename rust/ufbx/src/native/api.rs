@@ -100,7 +100,7 @@ use crate::native::platform::{min64, to_size, MAX_SKIP_SIZE};
 #[cfg(feature = "baking")]
 use crate::native::read::ref_ptr;
 use crate::native::thread::ThreadPool;
-use crate::native::view::view_read_shared;
+use crate::native::view::{view_project, view_read_shared};
 use crate::native::view::{Const, Mode, Mut, Run, View};
 // Used by the feature-enabled arms of `ufbx_bake_anim` /
 // `ufbx_tessellate_nurbs_curve` / `_surface` and unconditionally by
@@ -2457,24 +2457,12 @@ pub(crate) unsafe fn free_baked_anim(bake: *mut BakedAnim) {
 // Mode-generic read accessors for the baked-anim finders.
 impl<M: Mode> View<BakedAnim, M> {
     #[inline(always)]
-    pub(crate) fn nodes_data(&self) -> *mut BakedNode {
-        // SAFETY: reading the `nodes.data` run pointer (stored value).
-        unsafe { (*self.as_ptr()).nodes.data as *mut BakedNode }
+    pub(crate) fn nodes_list_view(&self) -> &View<List<BakedNode>, M> {
+        view_project!(self, nodes)
     }
     #[inline(always)]
-    pub(crate) fn nodes_count(&self) -> usize {
-        // SAFETY: reading the `nodes.count` field of a valid `BakedAnim`.
-        unsafe { (*self.as_ptr()).nodes.count }
-    }
-    #[inline(always)]
-    pub(crate) fn elements_data(&self) -> *mut BakedElement {
-        // SAFETY: reading the `elements.data` run pointer (stored value).
-        unsafe { (*self.as_ptr()).elements.data as *mut BakedElement }
-    }
-    #[inline(always)]
-    pub(crate) fn elements_count(&self) -> usize {
-        // SAFETY: reading the `elements.count` field of a valid `BakedAnim`.
-        unsafe { (*self.as_ptr()).elements.count }
+    pub(crate) fn elements_list_view(&self) -> &View<List<BakedElement>, M> {
+        view_project!(self, elements)
     }
 }
 
@@ -2490,24 +2478,18 @@ pub(crate) fn find_baked_node_by_typed_id<M: Mode>(
     bake: &View<BakedAnim, M>,
     typed_id: u32,
 ) -> Option<&View<BakedNode, M>> {
+    let nodes = Run::from_list(bake.nodes_list_view());
     let mut index: usize = usize::MAX;
-    // SAFETY: binary search over the stored `nodes` run of a valid `BakedAnim`
-    // (in-bounds derefs of the run macro_lower_bound_eq walks).
-    unsafe {
-        macro_lower_bound_eq::<BakedNode>(
-            8,
-            &mut index,
-            bake.nodes_data(),
-            0,
-            bake.nodes_count(),
-            |a| (*a).typed_id < typed_id,
-            |a| (*a).typed_id == typed_id,
-        );
-    }
+    macro_lower_bound_eq(
+        8,
+        &mut index,
+        0,
+        nodes.len(),
+        |ix| nodes.at(ix).typed_id() < typed_id,
+        |ix| nodes.at(ix).typed_id() == typed_id,
+    );
     if index < usize::MAX {
-        // SAFETY: in-bounds element of the stored (write-provenance) run,
-        // correlated to `bake`'s borrow; mode-generic mint.
-        Some(unsafe { View::<BakedNode, M>::mint(bake.nodes_data().add(index)) })
+        Some(nodes.at(index))
     } else {
         None
     }
@@ -2531,23 +2513,18 @@ pub(crate) fn find_baked_element_by_element_id<M: Mode>(
     bake: &View<BakedAnim, M>,
     element_id: u32,
 ) -> Option<&View<BakedElement, M>> {
+    let elements = Run::from_list(bake.elements_list_view());
     let mut index: usize = usize::MAX;
-    // SAFETY: binary search over the stored `elements` run of a valid
-    // `BakedAnim` (in-bounds derefs of the run macro_lower_bound_eq walks).
-    unsafe {
-        macro_lower_bound_eq::<BakedElement>(
-            8,
-            &mut index,
-            bake.elements_data(),
-            0,
-            bake.elements_count(),
-            |a| (*a).element_id < element_id,
-            |a| (*a).element_id == element_id,
-        );
-    }
+    macro_lower_bound_eq(
+        8,
+        &mut index,
+        0,
+        elements.len(),
+        |ix| elements.at(ix).element_id() < element_id,
+        |ix| elements.at(ix).element_id() == element_id,
+    );
     if index < usize::MAX {
-        // SAFETY: in-bounds element of the stored run; mode-generic mint.
-        Some(unsafe { View::<BakedElement, M>::mint(bake.elements_data().add(index)) })
+        Some(elements.at(index))
     } else {
         None
     }
@@ -3816,21 +3793,17 @@ pub(crate) fn get_blend_shape_offset_index<M: Mode>(
 
     let mut index: usize = usize::MAX;
     let vertex_ix: u32 = vertex as u32;
+    let offset_vertices = shape.offset_vertices();
+    let offset_vertices = offset_vertices.as_ref();
 
-    // SAFETY: `offset_vertices.data`/`num_offsets` are the viewed shape's own
-    // fields, so the list addresses `num_offsets` live `u32`s, and each closure
-    // derefs a `u32` the search keeps within `[0, num_offsets)`.
-    unsafe {
-        macro_lower_bound_eq::<u32>(
-            16,
-            &mut index,
-            shape.offset_vertices().data,
-            0,
-            shape.num_offsets(),
-            |a| *a < vertex_ix,
-            |a| *a == vertex_ix,
-        );
-    }
+    macro_lower_bound_eq(
+        16,
+        &mut index,
+        0,
+        shape.num_offsets(),
+        |ix| offset_vertices[ix] < vertex_ix,
+        |ix| offset_vertices[ix] == vertex_ix,
+    );
     // C: `if (index >= UINT32_MAX)` — `UINT32_MAX` widens to `size_t`.
     if index >= u32::MAX as usize {
         return NO_INDEX;
@@ -4121,21 +4094,16 @@ pub(crate) unsafe fn evaluate_nurbs_basis(
         knot = knots.len().wrapping_sub(degree).wrapping_sub(2);
         u = basis_view.t_max();
     } else {
-        // SAFETY: `knots` is the basis's live bounded knot run, and the search
-        // keeps each raw probe within `[0, len-1)`.
-        unsafe {
-            macro_lower_bound_eq::<Real>(
-                8,
-                &mut knot,
-                knots.as_ptr(),
-                0,
-                knots.len().wrapping_sub(1),
-                // C: `( a[1] <= u )`
-                |a| *a.add(1) <= u,
-                // C: `( a[0] <= u && u < a[1] )`
-                |a| *a.add(0) <= u && u < *a.add(1),
-            );
-        }
+        macro_lower_bound_eq(
+            8,
+            &mut knot,
+            0,
+            knots.len().wrapping_sub(1),
+            // C: `( a[1] <= u )`
+            |ix| knots.copy_at(ix.wrapping_add(1)) <= u,
+            // C: `( a[0] <= u && u < a[1] )`
+            |ix| knots.copy_at(ix) <= u && u < knots.copy_at(ix.wrapping_add(1)),
+        );
     }
 
     // The found effective control points are found left from `knot`, locally

@@ -525,22 +525,16 @@ impl<T, M: crate::native::view::Mode> crate::native::view::View<List<T>, M> {
         mut less: impl FnMut(&crate::native::view::View<T, M>) -> bool,
         mut eq: impl FnMut(&crate::native::view::View<T, M>) -> bool,
     ) -> Option<usize> {
+        let run = crate::native::view::Run::from_list(self);
         let mut index: usize = usize::MAX;
-        // SAFETY: `data`/`count` are this view's own list run — live and
-        // unmoved per the list invariant above — and the search keeps every
-        // probe pointer within `[data, data + count)`, so each probe mints an
-        // in-bounds element view whose stored provenance is adequate for `M`.
-        unsafe {
-            crate::native::platform::macro_lower_bound_eq::<T>(
-                linear_size,
-                &mut index,
-                self.data(),
-                0,
-                self.count(),
-                |a| less(crate::native::view::View::mint(a.cast_mut())),
-                |a| eq(crate::native::view::View::mint(a.cast_mut())),
-            );
-        }
+        crate::native::platform::macro_lower_bound_eq(
+            linear_size,
+            &mut index,
+            0,
+            run.len(),
+            |ix| less(run.at(ix)),
+            |ix| eq(run.at(ix)),
+        );
         if index != usize::MAX {
             Some(index)
         } else {
