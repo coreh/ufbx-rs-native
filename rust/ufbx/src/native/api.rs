@@ -3532,11 +3532,11 @@ pub(crate) fn matrix_to_transform<M: Mode>(m: &View<Matrix, M>) -> Transform {
 
 // ufbx.c:31928-32018 `ufbx_catch_get_skin_vertex_matrix`
 #[inline(never)]
-pub(crate) unsafe fn catch_get_skin_vertex_matrix<M: Mode>(
+pub(crate) fn catch_get_skin_vertex_matrix<M: Mode>(
     mut panic: Option<&mut Panic>,
     skin: &View<SkinDeformer, M>,
     vertex: usize,
-    fallback: *const Matrix,
+    fallback: Option<&View<Matrix, M>>,
 ) -> Matrix {
     ufbx_assert!(!skin.as_ptr().is_null());
     // C-parity: the panic guard dereferences `skin` BEFORE the `!skin` test on
@@ -3646,10 +3646,10 @@ pub(crate) unsafe fn catch_get_skin_vertex_matrix<M: Mode>(
     }
 
     if total_weight <= 0.0 {
-        if !fallback.is_null() {
-            // SAFETY: `fallback` is non-null here and points at a live `Matrix`
-            // per this fn's contract; reading it by value.
-            return unsafe { *fallback };
+        if let Some(fallback) = fallback {
+            // SAFETY: the view roots a live initialized `Matrix`; the copy stays
+            // in the same zero-total-weight branch as the C fallback read.
+            return unsafe { *fallback.as_ptr() };
         } else {
             return IDENTITY_MATRIX;
         }

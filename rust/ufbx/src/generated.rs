@@ -5440,14 +5440,15 @@ pub fn matrix_to_transform(m: &Matrix) -> Transform {
 
 pub fn get_skin_vertex_matrix(skin: &SkinDeformer, vertex: usize, fallback: &Matrix) -> Matrix {
     let mut panic: Panic = Default::default();
-    let result = unsafe {
-        crate::native::api::catch_get_skin_vertex_matrix(
-            Some(&mut panic),
-            crate::native::view::View::<SkinDeformer, crate::native::view::Const>::from_ref(skin),
-            vertex,
-            fallback as *const Matrix,
-        )
-    };
+    let result = crate::native::api::catch_get_skin_vertex_matrix(
+        Some(&mut panic),
+        crate::native::view::View::<SkinDeformer, crate::native::view::Const>::from_ref(skin),
+        vertex,
+        Some(crate::native::view::View::<
+            Matrix,
+            crate::native::view::Const,
+        >::from_ref(fallback)),
+    );
     if panic.did_panic {
         panic!("ufbx::get_skin_vertex_matrix() {}", panic.message());
     }

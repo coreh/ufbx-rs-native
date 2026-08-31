@@ -763,6 +763,25 @@ pub fn get_compatible_matrix_for_normals(node: &Node) -> Matrix {
 }
 """
 
+# The safe wrapper carries both shared references as frozen views. The raw C
+# shim owns nullable fallback conversion; the core reads fallback bytes only in
+# the zero-total-weight branch.
+override_functions["ufbx_catch_get_skin_vertex_matrix"] = """
+pub fn get_skin_vertex_matrix(skin: &SkinDeformer, vertex: usize, fallback: &Matrix) -> Matrix {
+    let mut panic: Panic = Default::default();
+    let result = crate::native::api::catch_get_skin_vertex_matrix(
+        Some(&mut panic),
+        crate::native::view::View::<SkinDeformer, crate::native::view::Const>::from_ref(skin),
+        vertex,
+        Some(crate::native::view::View::<Matrix, crate::native::view::Const>::from_ref(fallback)),
+    );
+    if panic.did_panic {
+        panic!("ufbx::get_skin_vertex_matrix() {}", panic.message());
+    }
+    result
+}
+"""
+
 override_functions["ufbx_get_blend_shape_offset_index"] = """
 pub fn get_blend_shape_offset_index(shape: &BlendShape, vertex: usize) -> u32 {
     let shape = crate::native::view::View::<BlendShape, crate::native::view::Const>::from_ref(shape);
@@ -2283,7 +2302,6 @@ const_view_args = {
     "ufbx_catch_get_vertex_vec3": {"v": "VertexVec3"},
     "ufbx_catch_get_vertex_vec4": {"v": "VertexVec4"},
     "ufbx_catch_get_vertex_w_vec3": {"v": "VertexVec3"},
-    "ufbx_catch_get_skin_vertex_matrix": {"skin": "SkinDeformer"},
     "ufbx_catch_triangulate_face": {"mesh": "Mesh"},
     "ufbx_catch_compute_topology": {"mesh": "Mesh"},
     "ufbx_catch_generate_normal_mapping": {"mesh": "Mesh"},

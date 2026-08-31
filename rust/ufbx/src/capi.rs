@@ -1798,18 +1798,30 @@ pub unsafe extern "C" fn ufbx_catch_get_skin_vertex_matrix(
     vertex: usize,
     fallback: *const crate::generated::Matrix,
 ) -> crate::generated::Matrix {
-    // SAFETY: an ABI shim; `skin` is bridged to a read-only `View<_, Const>`
-    // (sound for any readable provenance), `panic` is null or caller-owned with
-    // exclusive access for this call so `as_mut` is sound, and the remaining raw
-    // arguments carry this `unsafe fn`'s contract, forwarded to the native impl.
-    unsafe {
-        crate::native::api::catch_get_skin_vertex_matrix(
-        panic.as_mut(),
-        crate::native::view::View::<crate::generated::SkinDeformer, crate::native::view::Const>::from_ptr(skin),
-        vertex,
-        fallback,
-    )
-    }
+    // SAFETY: this ABI shim owns the raw argument bridges in argument order.
+    // `panic` is null or caller-owned exclusively, while non-null `skin` and
+    // `fallback` point to readable storage frozen for the call. Minting the
+    // fallback view does not read its bytes; the native core reads it only for
+    // a zero-total-weight vertex.
+    // SAFETY: covered by the argument-bridge invariants above; the ordered
+    // conversions stay in one raw boundary block.
+    let (panic, skin, fallback) = unsafe {
+        let panic = panic.as_mut();
+        let skin = crate::native::view::View::<
+            crate::generated::SkinDeformer,
+            crate::native::view::Const,
+        >::from_ptr(skin);
+        let fallback = if fallback.is_null() {
+            None
+        } else {
+            Some(crate::native::view::View::<
+                crate::generated::Matrix,
+                crate::native::view::Const,
+            >::from_ptr(fallback))
+        };
+        (panic, skin, fallback)
+    };
+    crate::native::api::catch_get_skin_vertex_matrix(panic, skin, vertex, fallback)
 }
 
 // ufbx.c:32020-32033 `ufbx_get_blend_shape_offset_index`

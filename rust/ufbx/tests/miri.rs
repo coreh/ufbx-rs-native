@@ -2312,6 +2312,13 @@ fn public_mesh_helpers_from_shared_refs() {
 /// offset lookups, blend-weight evaluation and bind-pose queries.
 #[test]
 fn public_deform_helpers_from_shared_refs() {
+    fn matrix_fields(matrix: &ufbx::Matrix) -> [ufbx::Real; 12] {
+        [
+            matrix.m00, matrix.m10, matrix.m20, matrix.m01, matrix.m11, matrix.m21, matrix.m02,
+            matrix.m12, matrix.m22, matrix.m03, matrix.m13, matrix.m23,
+        ]
+    }
+
     // Compile-shape regression: the returned entry belongs to `pose`; `node`
     // is only an independently borrowed search key.
     fn find_for_pose<'a>(pose: &'a ufbx::Pose, node: &ufbx::Node) -> Option<&'a ufbx::BonePose> {
@@ -2322,10 +2329,52 @@ fn public_deform_helpers_from_shared_refs() {
 
     let root = load("blender_293_half_skinned_7400_binary.fbx");
     let scene: &Scene = &root;
-    let identity = ufbx::Matrix::default();
+    let skin: &ufbx::SkinDeformer = scene
+        .skin_deformers
+        .first()
+        .expect("missing skin deformer")
+        .as_ref();
+    assert_eq!(skin.vertices.len(), 4);
+    assert_eq!(skin.vertices[0].num_weights, 1);
+    assert_eq!(skin.vertices[2].num_weights, 0);
+
+    let fallback = ufbx::Matrix {
+        m00: 2.0,
+        m10: 3.0,
+        m20: 4.0,
+        m01: 5.0,
+        m11: 6.0,
+        m21: 7.0,
+        m02: 8.0,
+        m12: 9.0,
+        m22: 10.0,
+        m03: 11.0,
+        m13: 12.0,
+        m23: 13.0,
+    };
+    let weighted = ufbx::get_skin_vertex_matrix(skin, 0, &fallback);
+    assert_ne!(matrix_fields(&weighted), matrix_fields(&fallback));
+    let copied = ufbx::get_skin_vertex_matrix(skin, 2, &fallback);
+    assert_eq!(matrix_fields(&copied), matrix_fields(&fallback));
+
+    let mut raw_panic = ufbx::Panic::default();
+    let no_fallback = unsafe {
+        ufbx::ufbx_catch_get_skin_vertex_matrix(&mut raw_panic, skin, 2, core::ptr::null())
+    };
+    assert!(!raw_panic.did_panic);
+    assert_eq!(
+        matrix_fields(&no_fallback),
+        [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0]
+    );
+
+    let oob = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        ufbx::get_skin_vertex_matrix(skin, skin.vertices.len(), &fallback)
+    }));
+    assert!(oob.is_err());
+
     for skin in &scene.skin_deformers {
         for vertex in 0..skin.vertices.len().min(4) {
-            acc += ufbx::get_skin_vertex_matrix(skin, vertex, &identity).m00 as f64;
+            acc += ufbx::get_skin_vertex_matrix(skin, vertex, &fallback).m00 as f64;
         }
     }
     for pose in &scene.poses {

@@ -380,24 +380,24 @@ pub(crate) fn evaluate_skinning(
                 // C: `ufbx_matrix *fallback = mesh->instances.count > 0 ? &mesh->instances.data[0]->geometry_to_world : NULL;`
                 // (`mesh->instances` reads through the anonymous `ufbx_element`
                 // union member; the generated bindings spell it out.)
-                let fallback: *mut Matrix = if mesh.element().instances_view().count() > 0 {
-                    mesh.element()
-                        .instances_view()
-                        .at(0)
-                        .geometry_to_world_raw()
+                let fallback: Option<&View<Matrix>> = if mesh.element().instances_view().count() > 0
+                {
+                    Some(view_project!(
+                        mesh.element().instances_view().at(0),
+                        geometry_to_world
+                    ))
                 } else {
-                    ptr::null_mut()
+                    None
                 };
                 let skin = mesh.skin_deformers_view().at(0);
                 for i in 0..num_vertices {
                     // C: `ufbx_get_skin_vertex_matrix(skin, i, fallback)` — the
                     // `ufbx_inline` wrapper in ufbx.h (5601-5603) forwarding to
                     // the catch impl with a NULL panic.
-                    // SAFETY: `fallback` is either null or the live instance
-                    // node's own matrix — `catch_get_skin_vertex_matrix`'s
-                    // raw-pointer contract (`skin` is a view, not a raw param).
-                    let mat: Matrix =
-                        unsafe { catch_get_skin_vertex_matrix(None, skin, i, fallback) };
+                    // The optional view projects the first instance node's own
+                    // matrix once before the loop; its bytes are read only if
+                    // the skin vertex has no effective weight.
+                    let mat: Matrix = catch_get_skin_vertex_matrix(None, skin, i, fallback);
                     // SAFETY: `i < num_vertices`, so `result_pos + i` is inside
                     // the pushed result allocation, readable and writable.
                     unsafe {
