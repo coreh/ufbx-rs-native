@@ -297,8 +297,9 @@ pub(crate) unsafe fn generate_indices(
     // (`Option<CmpFn>`, `None` when zeroed via the null-fn niche), matching the
     // C zero-initializer.
     let mut map: Map = unsafe { MaybeUninit::<Map>::zeroed().assume_init() };
-    // SAFETY: the allocator view covers the initialized local, which outlives
-    // every use of the map below. The user pointer identifies
+    // SAFETY: `map` is freshly zeroed and contains no live allocations. The
+    // allocator view covers the initialized local, which outlives every use of
+    // the map below. The user pointer identifies
     // `packed_size`, a live `usize` — the type `map_cmp_vertex` reads through
     // it — and a local that outlives every comparator call (all of which happen
     // below, before this fn returns). `map_init` stores the allocator address

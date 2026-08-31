@@ -8144,6 +8144,11 @@ mod tests {
             uc.string_pool.error = &mut uc.error;
             uc.string_pool.buf.ator = ator_tmp;
             uc.string_pool.initial_size = 64;
+            // SAFETY (both maps): the boxed context's maps are still fresh and
+            // empty. `ator_tmp` is its initialized allocator, live, unmoved,
+            // and write-capable until the matching string-pool/map teardowns
+            // below. Both comparators read no user data, so their null
+            // `cmp_user` pointers meet the contract.
             map_init(
                 MapView::from_ptr(&raw mut uc.string_pool.map),
                 AllocatorView::from_ptr(ator_tmp),

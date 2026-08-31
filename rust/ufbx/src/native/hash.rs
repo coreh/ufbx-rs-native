@@ -369,8 +369,19 @@ impl MapView {
     pub(crate) fn set_size(&self, size: u32) {
         view_write!(self, size, size)
     }
+    /// Publish the allocator back-pointer used for map entry allocation and
+    /// teardown.
+    ///
+    /// # Safety
+    ///
+    /// `ator` must be non-null, retain write-capable provenance, and address a
+    /// live, initialized, unmoved `Allocator` through every later map
+    /// operation and the final `map_free()`. Every entry/item block reachable
+    /// through this map must have been allocated by that allocator. The
+    /// overflow-node buffer stores its own allocator pointer, which may differ
+    /// from this one in regression builds.
     #[inline(always)]
-    pub(crate) fn set_ator(&self, ator: *mut Allocator) {
+    pub(crate) unsafe fn set_ator(&self, ator: *mut Allocator) {
         view_write!(self, ator, ator)
     }
     #[inline(always)]
@@ -456,11 +467,16 @@ impl MapView {
 //
 // # Safety
 //
-// `ator` must retain write-capable provenance and remain live and unmoved until
-// `map_free()`: the map stores it for its entry allocation, and outside
-// regression builds its `aa_buf` stores the same pointer for overflow nodes.
-// In regression builds the separately allocated AA-buffer allocator has that
-// lifetime established internally below.
+// `map` must contain no live entry, item, or AA-buffer allocations: it is
+// either in its fresh zero-initialized state or has completed `map_free()`.
+// Initialization replaces both allocator back-pointers.
+//
+// `ator` must be initialized and retain write-capable provenance, remain live
+// and unmoved through every map operation and the final `map_free()`, and own
+// every entry/item allocation the map publishes. Outside regression builds
+// its `aa_buf` stores the same pointer for overflow nodes. In regression builds
+// the separately allocated AA-buffer allocator has that lifetime established
+// internally below.
 //
 // `cmp_user` must be null or address a live value of the type `cmp_fn`
 // dereferences it as, valid for reads for as long as the map is used.
@@ -471,7 +487,11 @@ pub(crate) unsafe fn map_init(
     cmp_fn: CmpFn,
     cmp_user: *mut c_void,
 ) {
-    map.set_ator(ator.get());
+    // SAFETY: `map` has no live allocations and `ator` meets this function's
+    // provenance, ownership, and through-`map_free()` lifetime contract. This
+    // publication precedes every entry allocation and the AA-buffer allocator
+    // selection.
+    unsafe { map.set_ator(ator.get()) };
     #[cfg(feature = "regression")]
     {
         // HACK: Maps contain pointers that are not stable between runs, in regression
@@ -1343,14 +1363,19 @@ mod tests {
     use crate::native::error::ErrorView;
     use core::mem::MaybeUninit;
 
-    fn make_map(ator: &AllocatorView, cmp_fn: CmpFn) -> Map {
+    /// # Safety
+    ///
+    /// `ator` must remain live, unmoved, and write-capable through the returned
+    /// map's final `map_free()`.
+    unsafe fn make_map(ator: &AllocatorView, cmp_fn: CmpFn) -> Map {
         // C maps live inside zero-initialized contexts; `ufbxi_map_init` only
         // sets the fields it names.
         // SAFETY: an all-zero bit pattern is a valid `Map` (raw pointers null,
         // integers zero, `Option<CmpFn>` None).
         let mut map = unsafe { MaybeUninit::<Map>::zeroed().assume_init() };
-        // SAFETY: `map_init`'s `cmp_user` obligation is discharged by the null
-        // pointer — what the test comparators expect (they read no user data).
+        // SAFETY: `map` is freshly zeroed; the caller keeps `ator` live and
+        // unmoved through the returned map's teardown. The null `cmp_user` is
+        // what these test comparators expect, as they read no user data.
         unsafe {
             map_init(
                 MapView::from_mut(&mut map),
@@ -1388,8 +1413,9 @@ mod tests {
             // the whole view lifetime.
             let err = ErrorView::from_ptr(&raw mut err);
             let mut ator = make_test_ator(err);
-            // SAFETY: `ator` is the live local initialized by `make_test_ator`,
-            // owned exclusively by this test for the whole view lifetime.
+            // SAFETY: `ator` is the live, unmoved local initialized by
+            // `make_test_ator`, owned exclusively through `map_free()` below;
+            // this satisfies both the view mint and `make_map` contracts.
             let ator_view = AllocatorView::from_ptr(&raw mut ator);
             let mut map = make_map(ator_view, map_cmp_uint64);
             let map = MapView::from_mut(&mut map);
@@ -1430,8 +1456,9 @@ mod tests {
             // the whole view lifetime.
             let err = ErrorView::from_ptr(&raw mut err);
             let mut ator = make_test_ator(err);
-            // SAFETY: `ator` is the live local initialized by `make_test_ator`,
-            // owned exclusively by this test for the whole view lifetime.
+            // SAFETY: `ator` is the live, unmoved local initialized by
+            // `make_test_ator`, owned exclusively through `map_free()` below;
+            // this satisfies both the view mint and `make_map` contracts.
             let ator_view = AllocatorView::from_ptr(&raw mut ator);
             let mut map = make_map(ator_view, map_cmp_uint64);
             let map = MapView::from_mut(&mut map);
@@ -1459,8 +1486,9 @@ mod tests {
             // the whole view lifetime.
             let err = ErrorView::from_ptr(&raw mut err);
             let mut ator = make_test_ator(err);
-            // SAFETY: `ator` is the live local initialized by `make_test_ator`,
-            // owned exclusively by this test for the whole view lifetime.
+            // SAFETY: `ator` is the live, unmoved local initialized by
+            // `make_test_ator`, owned exclusively through `map_free()` below;
+            // this satisfies both the view mint and `make_map` contracts.
             let ator_view = AllocatorView::from_ptr(&raw mut ator);
             let mut map = make_map(ator_view, map_cmp_uint64);
             let map = MapView::from_mut(&mut map);
@@ -1494,8 +1522,9 @@ mod tests {
             // the whole view lifetime.
             let err = ErrorView::from_ptr(&raw mut err);
             let mut ator = make_test_ator(err);
-            // SAFETY: `ator` is the live local initialized by `make_test_ator`,
-            // owned exclusively by this test for the whole view lifetime.
+            // SAFETY: `ator` is the live, unmoved local initialized by
+            // `make_test_ator`, owned exclusively through `map_free()` below;
+            // this satisfies both the view mint and `make_map` contracts.
             let ator_view = AllocatorView::from_ptr(&raw mut ator);
             let mut map = make_map(ator_view, map_cmp_uint64);
             let map = MapView::from_mut(&mut map);
@@ -1513,8 +1542,9 @@ mod tests {
             // the whole view lifetime.
             let err = ErrorView::from_ptr(&raw mut err);
             let mut ator = make_test_ator(err);
-            // SAFETY: `ator` is the live local initialized by `make_test_ator`,
-            // owned exclusively by this test for the whole view lifetime.
+            // SAFETY: `ator` is the live, unmoved local initialized by
+            // `make_test_ator`, owned exclusively through `map_free()` below;
+            // this satisfies both the view mint and `make_map` contracts.
             let ator_view = AllocatorView::from_ptr(&raw mut ator);
             let mut map = make_map(ator_view, map_cmp_uint64);
             let map = MapView::from_mut(&mut map);

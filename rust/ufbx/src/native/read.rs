@@ -3272,63 +3272,61 @@ pub(crate) fn read_synthetic_blend_shapes(
 
 // ufbx.c:13139-13217 `ufbxi_process_indices`
 #[inline(never)]
-pub(crate) unsafe fn process_indices(
-    uc: &Context,
-    mesh: &View<Mesh>,
-    index_data: *mut u32,
-) -> Result<(), Fail> {
+pub(crate) fn process_indices(uc: &Context, mesh: &View<Mesh>) -> Result<(), Fail> {
+    // The mesh header describes the mutable polygon-index run installed by the
+    // reader; deriving the carrier here keeps its count tied to
+    // `mesh->num_indices` and preserves null-with-zero.
+    let index_list = mesh.vertex_indices_view();
+    let index_data = Run::from_list(index_list);
+
     // Count the number of faces and allocate the index list
     // Indices less than zero (~actual_index) ends a polygon
     let mut num_total_faces: usize = 0;
     // C: `ufbxi_for (uint32_t, p_ix, index_data, mesh->num_indices)`
-    let mut p_ix = index_data;
-    let p_ix_end = add_ptr(index_data, mesh.num_indices());
-    while p_ix != p_ix_end {
-        // SAFETY: `p_ix` walks `index_data..index_data + mesh->num_indices`, the
-        // caller's index run, and is short of `p_ix_end` here.
-        num_total_faces = num_total_faces.wrapping_add(if (unsafe { *p_ix } as i32) < 0 {
-            1usize
-        } else {
-            0usize
-        });
-        // SAFETY: `p_ix` is before `p_ix_end`, so the advance lands at most one
-        // past the run's end.
-        p_ix = unsafe { p_ix.add(1) };
+    let mut index_ix: usize = 0;
+    while index_ix < index_data.len() {
+        num_total_faces =
+            num_total_faces.wrapping_add(if (index_list.copy_at(index_ix) as i32) < 0 {
+                1usize
+            } else {
+                0usize
+            });
+        index_ix += 1;
     }
     mesh.faces_view()
         .set_data(uc.result_view().push::<Face>(num_total_faces));
     ufbxi_check!(uc, !mesh.faces().data.is_null(), "mesh->faces.data");
 
+    // SAFETY: `mesh.faces.data` is the checked result-arena allocation of
+    // `num_total_faces` contiguous, write-capable `Face` slots. The slots are
+    // deliberately still uninitialized: the local Run permits that, while
+    // `mesh.faces.count` remains unpublished until every slot is written.
+    let faces = unsafe {
+        Run::<Face, Mut>::from_raw_parts(mesh.faces().data as *mut Face, num_total_faces)
+    };
+
     let mut num_triangles: usize = 0;
     let mut max_face_triangles: usize = 0;
     let mut num_bad_faces: [usize; 3] = [0; 3];
 
-    // `faces.data` is the non-null `num_total_faces` run pushed above.
-    let mut dst_face: *mut Face = mesh.faces().data as *mut Face;
-    let mut p_face_begin: *mut u32 = index_data;
+    let mut face_ix: usize = 0;
+    let mut face_begin_ix: usize = 0;
     // C: `ufbxi_for (uint32_t, p_ix, index_data, mesh->num_indices)`
-    let mut p_ix = index_data;
-    let p_ix_end = add_ptr(index_data, mesh.num_indices());
-    while p_ix != p_ix_end {
-        // SAFETY: `p_ix` is inside the caller's index run, short of `p_ix_end`.
-        let mut ix: u32 = unsafe { *p_ix };
+    let mut index_ix: usize = 0;
+    while index_ix < index_data.len() {
+        let mut ix: u32 = index_list.copy_at(index_ix);
         // Un-negate final indices of polygons
         if (ix as i32) < 0 {
             ix = !ix;
-            // SAFETY: as above — `p_ix` addresses a live, writable index.
-            unsafe { *p_ix = ix };
-            // SAFETY: `p_face_begin` and `p_ix` are both inside the same
-            // `index_data` run (`p_face_begin` starts at its base and only ever
-            // advances to a position `p_ix` already reached).
-            let num_indices: u32 = (unsafe { p_ix.offset_from(p_face_begin) } + 1) as u32;
-            // SAFETY: `dst_face` walks the `num_total_faces` run pushed above,
-            // one slot per negative index, of which the first pass counted
-            // exactly `num_total_faces`; `p_face_begin` is inside the
-            // `index_data` run.
-            unsafe {
-                (*dst_face).index_begin = p_face_begin.offset_from(index_data) as u32;
-                (*dst_face).num_indices = num_indices;
-            }
+            index_data.write_at(index_ix, ix);
+            let num_indices: u32 = (index_ix - face_begin_ix + 1) as u32;
+            faces.write_at(
+                face_ix,
+                Face {
+                    index_begin: face_begin_ix as u32,
+                    num_indices,
+                },
+            );
             if num_indices >= 3 {
                 num_triangles = num_triangles.wrapping_add((num_indices - 2) as usize);
                 max_face_triangles = max_sz(max_face_triangles, (num_indices - 2) as usize);
@@ -3336,29 +3334,21 @@ pub(crate) unsafe fn process_indices(
                 num_bad_faces[num_indices as usize] =
                     num_bad_faces[num_indices as usize].wrapping_add(1);
             }
-            // SAFETY: this is the `num_total_faces`-th slot at the very latest,
-            // so the advance lands at most one past the face run's end.
-            dst_face = unsafe { dst_face.add(1) };
-            // SAFETY: `p_ix` is before `p_ix_end`, so the advance lands at most
-            // one past the index run's end.
-            p_face_begin = unsafe { p_ix.add(1) };
+            face_ix += 1;
+            face_begin_ix = index_ix + 1;
         }
         ufbxi_check!(
             uc,
             (ix as usize) < mesh.num_vertices(),
             "(size_t)ix < mesh->num_vertices"
         );
-        // SAFETY: `p_ix` is before `p_ix_end`, so the advance lands at most one
-        // past the index run's end.
-        p_ix = unsafe { p_ix.add(1) };
+        index_ix += 1;
     }
 
-    mesh.vertex_position().indices_view().set_data(index_data);
-    // SAFETY: `dst_face` and `faces.data` are one-past-the-last and the base of
-    // the same face run.
-    mesh.set_num_faces(to_size(unsafe {
-        dst_face.offset_from(mesh.faces().data as *mut Face)
-    }));
+    mesh.vertex_position()
+        .indices_view()
+        .set_data(index_data.as_ptr());
+    mesh.set_num_faces(to_size(face_ix as isize));
     mesh.faces_view().set_count(mesh.num_faces());
     mesh.set_num_triangles(num_triangles);
     mesh.set_max_face_triangles(max_face_triangles);
@@ -3377,42 +3367,26 @@ pub(crate) unsafe fn process_indices(
     );
 
     // C: `ufbxi_for_list(uint32_t, p_vx_ix, mesh->vertex_first_index)`
-    // `vertex_first_index` is the non-null `count`-long run pushed above.
-    let mut p_vx_ix = mesh.vertex_first_index().data as *mut u32;
-    let p_vx_ix_end = add_ptr(p_vx_ix, mesh.vertex_first_index().count);
-    while p_vx_ix != p_vx_ix_end {
-        // SAFETY: `p_vx_ix` is inside that run, short of `p_vx_ix_end`.
-        unsafe { *p_vx_ix = NO_INDEX };
-        // SAFETY: `p_vx_ix` is before `p_vx_ix_end`, so the advance lands at
-        // most one past the run's end.
-        p_vx_ix = unsafe { p_vx_ix.add(1) };
+    // The stored count/data pair is a checked result-arena run.
+    let vertex_first_index_list = mesh.vertex_first_index_view();
+    let vertex_first_index = Run::from_list(vertex_first_index_list);
+    let mut vertex_ix: usize = 0;
+    while vertex_ix < vertex_first_index.len() {
+        vertex_first_index.write_at(vertex_ix, NO_INDEX);
+        vertex_ix += 1;
     }
 
     {
-        // `vertex_indices` is the mesh's `num_indices`-long index run and
-        // `vertex_first_index` the `num_vertices`-long run pushed above.
-        let num_indices: usize = mesh.num_indices();
         let num_vertices: usize = mesh.num_vertices();
-        let vertex_indices: *mut u32 = mesh.vertex_indices().data as *mut u32;
-        let vertex_first_index: *mut u32 = mesh.vertex_first_index().data as *mut u32;
         let mut ix: usize = 0;
-        while ix < num_indices {
-            // SAFETY: `ix < num_indices` bounds the read in the index run.
-            let vx: u32 = unsafe { *vertex_indices.add(ix) };
+        while ix < index_data.len() {
+            let vx: u32 = index_list.copy_at(ix);
             if (vx as usize) < num_vertices {
-                // SAFETY: `vx < num_vertices` bounds both accesses in the
-                // `vertex_first_index` run.
-                if unsafe { *vertex_first_index.add(vx as usize) } == NO_INDEX {
-                    unsafe { *vertex_first_index.add(vx as usize) = ix as u32 };
+                if vertex_first_index_list.copy_at(vx as usize) == NO_INDEX {
+                    vertex_first_index.write_at(vx as usize, ix as u32);
                 }
             } else {
-                // SAFETY: `ix < num_indices` bounds the slot handed to
-                // `fix_index`: it is a live, write-capable entry of the mesh's
-                // own index run — an adequate mint for the `Mut` index-slot
-                // view.
-                let p_dst: &View<u32> =
-                    unsafe { View::<u32, Mut>::from_ptr(vertex_indices.add(ix)) };
-                fix_index(uc, p_dst, vx, mesh.num_vertices())?;
+                fix_index(uc, index_data.at(ix), vx, mesh.num_vertices())?;
             }
             ix += 1;
         }
@@ -4106,8 +4080,7 @@ pub(crate) fn read_mesh(uc: &Context, node: &NodeView, info: &ElementInfoView) -
         mesh.set_num_edges(mesh.edges().count);
     }
 
-    // SAFETY: `index_data` spans the mesh's `num_indices` `u32`s.
-    unsafe { process_indices(uc, mesh, index_data) }?;
+    process_indices(uc, mesh)?;
 
     // Count the number of UV/color sets
     let mut num_uv: usize = 0;
@@ -9992,9 +9965,7 @@ pub(crate) fn read_legacy_mesh(
         }
     }
 
-    // SAFETY: `index_data` is the mesh's `num_indices`-long index run,
-    // installed above.
-    unsafe { process_indices(uc, mesh, index_data) }?;
+    process_indices(uc, mesh)?;
 
     // Normals are either per-vertex or per-index in legacy FBX files?
     // If the version is 5000 prefer per-vertex, otherwise per-index...

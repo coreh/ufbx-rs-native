@@ -404,8 +404,10 @@ pub(crate) fn obj_init(uc: &Context) -> Result<(), Fail> {
     uc.obj().object_view().set_data(EMPTY_CHAR.as_ptr());
     uc.obj().group_view().set_data(EMPTY_CHAR.as_ptr());
 
-    // SAFETY: `map_cmp_const_char_ptr` reads no user data, so the null
-    // `cmp_user` meets its contract.
+    // SAFETY: the group map is still fresh and empty. `uc`'s initialized temp
+    // allocator remains live, unmoved, and write-capable until `obj_free()`
+    // releases this map through it; `map_cmp_const_char_ptr` reads no user
+    // data, so the null `cmp_user` meets its contract.
     unsafe {
         map_init(
             uc.obj().group_map_view(),

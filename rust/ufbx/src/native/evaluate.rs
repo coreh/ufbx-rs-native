@@ -1402,8 +1402,10 @@ pub(crate) unsafe fn load(
     // SAFETY: the pool and error sink are fields of the same live, unmoved
     // context; the error field remains write-capable for the pool's lifetime.
     unsafe { uc.string_pool_view().set_error(uc.error_mut_ptr()) };
-    // SAFETY: `map_cmp_string` reads no user data, so the null `cmp_user` meets
-    // its contract.
+    // SAFETY: the string map is still fresh and empty. `uc`'s initialized temp
+    // allocator remains live, unmoved, and write-capable until `free_temp()`
+    // releases this map through it; `map_cmp_string` reads no user data, so the
+    // null `cmp_user` meets its contract.
     unsafe {
         map_init(
             uc.string_pool_view().map_view(),
@@ -1425,8 +1427,10 @@ pub(crate) unsafe fn load(
     uc.string_pool_view()
         .set_error_handling(uc.opts_view().unicode_error_handling());
 
-    // SAFETY (every `map_init` below): each comparator reads no user data, so
-    // the null `cmp_user` meets its contract.
+    // SAFETY (every `map_init` below): these maps are still fresh and empty.
+    // `uc`'s initialized temp allocator remains live, unmoved, and
+    // write-capable until `free_temp()` releases every map through it. Each
+    // comparator reads no user data, so the null `cmp_user` meets its contract.
     unsafe {
         map_init(
             uc.prop_type_map_view(),

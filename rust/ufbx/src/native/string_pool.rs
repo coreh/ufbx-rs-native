@@ -1873,9 +1873,10 @@ mod tests {
         fx.pool.error = &mut fx.err;
         fx.pool.buf.ator = ator;
         // C: `ufbxi_map_init(&uc->string_pool.map, &uc->ator_tmp, &ufbxi_map_cmp_string, NULL)`
-        // SAFETY: the allocator is the fixture's own, live for the fixture's
-        // lifetime; `map_cmp_string` takes no user data, so the null `user` is
-        // what it expects.
+        // SAFETY: the boxed fixture's map is still fresh and empty. Its
+        // allocator is live, unmoved, and write-capable until `free_fixture()`
+        // releases the map through it; `map_cmp_string` takes no user data, so
+        // the null `user` is what it expects.
         unsafe {
             map_init(
                 MapView::from_mut(&mut fx.pool.map),

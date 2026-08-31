@@ -7864,42 +7864,18 @@ pub(crate) fn resolve_file_content<'a>(uc: &'a Context) -> Result<(), Fail> {
     let file_content = unsafe { Run::from_raw_parts(uc.file_content(), uc.num_file_content()) };
     sort_file_contents(uc, file_content)?;
 
-    // SAFETY: walks the stored `videos` element-pointer run of the uc-owned scene
-    // (`count` entries), minting views over each video's own filename/content
-    // fields for the lookup.
-    unsafe {
-        // C: `ufbxi_for_ptr_list(ufbx_video, p_video, uc->scene.videos)`
-        let mut p_video: *mut *mut Video = uc.scene_view().videos_view().data() as *mut *mut Video;
-        let p_video_end: *mut *mut Video = add_ptr(p_video, uc.scene_view().videos_view().count());
-        while p_video != p_video_end {
-            let video: *mut Video = *p_video;
-            fetch_file_content(
-                uc,
-                View::<String>::from_ptr(&raw mut (*video).absolute_filename),
-                View::<Blob>::from_ptr(&raw mut (*video).content),
-            );
-            p_video = p_video.add(1);
-        }
+    // C: `ufbxi_for_ptr_list(ufbx_video, p_video, uc->scene.videos)`
+    let videos: &RefListView<Video> = uc.scene_view().videos_view();
+    for video_ix in 0..videos.count() {
+        let video: &View<Video> = videos.at(video_ix);
+        fetch_file_content(uc, video.absolute_filename_view(), video.content_view());
     }
 
-    // SAFETY: walks the stored `audio_clips` element-pointer run of the uc-owned
-    // scene (`count` entries), minting views over each clip's own filename/content
-    // fields for the lookup.
-    unsafe {
-        // C: `ufbxi_for_ptr_list(ufbx_audio_clip, p_clip, uc->scene.audio_clips)`
-        let mut p_clip: *mut *mut AudioClip =
-            uc.scene_view().audio_clips_view().data() as *mut *mut AudioClip;
-        let p_clip_end: *mut *mut AudioClip =
-            add_ptr(p_clip, uc.scene_view().audio_clips_view().count());
-        while p_clip != p_clip_end {
-            let clip: *mut AudioClip = *p_clip;
-            fetch_file_content(
-                uc,
-                View::<String>::from_ptr(&raw mut (*clip).absolute_filename),
-                View::<Blob>::from_ptr(&raw mut (*clip).content),
-            );
-            p_clip = p_clip.add(1);
-        }
+    // C: `ufbxi_for_ptr_list(ufbx_audio_clip, p_clip, uc->scene.audio_clips)`
+    let audio_clips: &RefListView<AudioClip> = uc.scene_view().audio_clips_view();
+    for clip_ix in 0..audio_clips.count() {
+        let clip: &AudioClipView = audio_clips.at(clip_ix);
+        fetch_file_content(uc, clip.absolute_filename_view(), clip.content_view());
     }
 
     Ok(())

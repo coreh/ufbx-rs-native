@@ -2248,9 +2248,10 @@ pub(crate) unsafe fn load_geometry_cache(
     // SAFETY: the pool and error sink are fields of the same live, unmoved
     // cache context; the error field remains write-capable for the pool's use.
     unsafe { cc.string_pool_view().set_error(cc.error_mut_ptr()) };
-    // SAFETY: `cc.ator_tmp()` is `cc`'s temp allocator (initialized above), live
-    // and write-capable for the duration of the cache load; `map_cmp_string`
-    // reads no user data, so the null `cmp_user` meets its contract.
+    // SAFETY: the string map is still fresh and empty. `cc.ator_tmp()` is
+    // `cc`'s initialized temp allocator, live, unmoved, and write-capable until
+    // cache teardown releases this map through it; `map_cmp_string` reads no
+    // user data, so the null `cmp_user` meets its contract.
     unsafe {
         map_init(
             cc.string_pool_view().map_view(),
