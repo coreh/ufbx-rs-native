@@ -111,6 +111,7 @@ use crate::native::scene_process::{
     finalize_scene, find_anim_prop_start, find_prop_connection, modify_geometry, mul_quat,
     postprocess_scene, pre_finalize_scene, update_adjust_transforms, update_scene,
     update_scene_metadata, update_scene_settings, update_scene_settings_obj, AnimImp,
+    ConnectionPropKey,
 };
 #[cfg(feature = "scene-eval")]
 use crate::native::scene_process::{MATERIAL_FBX_MAP_COUNT, MATERIAL_PBR_MAP_COUNT};
@@ -2186,12 +2187,21 @@ pub(crate) unsafe fn evaluate_connected_prop(
     // through `*mut` (write-capable provenance for `Mut`); `anim`/`element` are
     // the caller's live anim and element, read-only for the whole call (nothing
     // below writes either), so they anchor frozen `Const` views. All three are
-    // this `unsafe fn`'s own raw-pointer contract. `name` stays raw: it is a
-    // NUL-terminated C string, an obligation no borrow type can carry, and the
-    // callee re-measures it off the pointer (see `find_prop_connection`).
+    // this `unsafe fn`'s own raw-pointer contract. `name` is measured once
+    // below under this function's NUL-terminated-string contract.
     let prop: &View<Prop, Mut> = unsafe { View::<Prop, Mut>::from_ptr(prop) };
     let anim: &View<Anim, Const> = unsafe { View::<Anim, Const>::from_ptr(anim) };
     let element: &View<Element, Const> = unsafe { View::<Element, Const>::from_ptr(element) };
+    // SAFETY: a non-null `name` is NUL-terminated by this unsafe function's
+    // caller contract. Forming the span directly preserves its base address
+    // for the connection lookup's interned-pointer identity check.
+    let name: ConnectionPropKey<'_> = if name.is_null() {
+        ConnectionPropKey::from_option(None)
+    } else {
+        ConnectionPropKey::from_option(Some(unsafe {
+            core::slice::from_raw_parts(name, strlen(name))
+        }))
+    };
 
     #[cfg(feature = "regression")]
     {
@@ -2202,76 +2212,32 @@ pub(crate) unsafe fn evaluate_connected_prop(
             ufbx_assert!(d.get() < 3);
             d.set(d.get() + 1);
         });
-        // SAFETY: `name` is forwarded unchanged from this fn's own parameters,
-        // so the callee inherits the caller's NUL-terminated-string contract.
-        unsafe { evaluate_connected_prop_rec(prop, anim, element, name, time, flags) };
+        evaluate_connected_prop_rec(prop, anim, element, name, time, flags);
         UFBXI_RECURSION_DEPTH.with(|d| d.set(d.get() - 1));
     }
-    // SAFETY: `name` is forwarded unchanged from this fn's own parameters, so
-    // the callee inherits the caller's NUL-terminated-string contract.
     #[cfg(not(feature = "regression"))]
-    unsafe {
-        evaluate_connected_prop_rec(prop, anim, element, name, time, flags)
-    }
+    evaluate_connected_prop_rec(prop, anim, element, name, time, flags)
 }
 
 // ufbx.c:25826-25845 `ufbxi_evaluate_connected_prop` body (the `_rec` half of
 // the `ufbxi_recursive_function` body; see the wrapper above)
-//
-// # Safety
-// `name` must be a NUL-terminated C string, as in C. `find_prop_connection`
-// measures it with `strlen` and matches interned prop names by ADDRESS, so the
-// search reads the terminator and runs off the pointer itself — a contract no
-// borrow type can carry, so the param stays raw (same as
-// `find_prop_connection`'s own `prop`).
 #[inline(never)]
-unsafe fn evaluate_connected_prop_rec(
+fn evaluate_connected_prop_rec(
     prop: &View<Prop, Mut>,
     anim: &View<Anim, Const>,
     element: &View<Element, Const>,
-    name: *const u8,
+    name: ConnectionPropKey<'_>,
     time: f64,
     flags: u32,
 ) {
-    // C: `if (!prop) prop = ufbxi_empty_char;` inside
-    // `ufbxi_find_prop_connection` — the null case travels as `None`.
-    // SAFETY: `name` is NUL-terminated per this `unsafe fn`'s contract, so the
-    // measure and the measured run are that same string; the span is formed
-    // directly (not via `slice_from_ptr`) so it keeps `name`'s own base
-    // address, which the callee's interned-identity probe compares.
-    let name_bytes: Option<&[u8]> = unsafe {
-        if name.is_null() {
-            None
-        } else {
-            Some(core::slice::from_raw_parts(name, strlen(name)))
-        }
-    };
-    let mut conn: *mut Connection = find_prop_connection(element, name_bytes);
+    let mut conn: Option<&View<Connection, Const>> = find_prop_connection(element, name);
 
     // C: `for (size_t i = 0; i < 1000 && conn; i++)`
     let mut i: usize = 0;
-    while i < 1000 && !conn.is_null() {
-        // SAFETY: `conn` is non-null (loop condition) and points to a
-        // scene-owned `ufbx_connection`, so `src` holds a scene-owned element
-        // — read-only for this search — and `src_prop` is its own
-        // NUL-terminated string-pool name, whose base address the callee's
-        // interned-identity probe compares.
-        let (src, src_prop): (&View<Element, Const>, Option<&[u8]>) = unsafe {
-            let src_prop_data: *const u8 = (*conn).src_prop.data;
-            (
-                ptr::read(&raw const (*conn).src).view::<Const>(),
-                if src_prop_data.is_null() {
-                    None
-                } else {
-                    Some(core::slice::from_raw_parts(
-                        src_prop_data,
-                        strlen(src_prop_data),
-                    ))
-                },
-            )
-        };
-        let next_conn: *mut Connection = find_prop_connection(src, src_prop);
-        if next_conn.is_null() {
+    while i < 1000 && conn.is_some() {
+        let current = conn.expect("connection checked by loop condition");
+        let next_conn = find_prop_connection(current.src_view(), connection_src_prop_key(current));
+        if next_conn.is_none() {
             break;
         }
         conn = next_conn;
@@ -2279,36 +2245,23 @@ unsafe fn evaluate_connected_prop_rec(
     }
 
     // Found a non-cyclic connection
-    if !conn.is_null() && {
-        // SAFETY: `conn` is non-null (checked first, and `&&`
-        // short-circuits) and points to a scene-owned connection, so
-        // `src`/`src_prop` are its own fields — the element read-only for
-        // this search, the name run NUL-terminated in the string pool.
-        let (src, src_prop): (&View<Element, Const>, Option<&[u8]>) = unsafe {
-            let src_prop_data: *const u8 = (*conn).src_prop.data;
-            (
-                ptr::read(&raw const (*conn).src).view::<Const>(),
-                if src_prop_data.is_null() {
-                    None
-                } else {
-                    Some(core::slice::from_raw_parts(
-                        src_prop_data,
-                        strlen(src_prop_data),
-                    ))
-                },
-            )
-        };
-        find_prop_connection(src, src_prop).is_null()
-    } {
-        // SAFETY: `anim` borrows the caller's live anim and `conn` is the
-        // scene-owned connection reached above, whose `src` element and
-        // `src_prop` name run are what the evaluation reads.
+    let terminal = match conn {
+        Some(conn) => {
+            find_prop_connection(conn.src_view(), connection_src_prop_key(conn)).is_none()
+        }
+        None => false,
+    };
+    if terminal {
+        let conn = conn.expect("terminal connection checked above");
+        // SAFETY: `anim` and `conn` borrow live scene-owned values. The source
+        // element and property name stored in `conn` remain live for the
+        // evaluation, and this call preserves C's fields and call structure.
         let ep: Prop = unsafe {
             evaluate_prop_flags_len(
                 anim.as_ptr(),
-                ptr::read(&raw const (*conn).src).ptr(),
-                (*conn).src_prop.data,
-                (*conn).src_prop.length,
+                conn.src().ptr(),
+                conn.src_prop().data,
+                conn.src_prop().length,
                 time,
                 flags,
             )
@@ -2322,6 +2275,16 @@ unsafe fn evaluate_connected_prop_rec(
         prop.set_flags(PropFlags::from_raw(
             prop.flags().raw() & !PropFlags::CONNECTED.raw(),
         ));
+    }
+}
+
+#[inline(always)]
+fn connection_src_prop_key<'a>(conn: &'a View<Connection, Const>) -> ConnectionPropKey<'a> {
+    let src_prop = conn.src_prop_view();
+    if src_prop.data().is_null() {
+        ConnectionPropKey::from_option(None)
+    } else {
+        ConnectionPropKey::from_string(src_prop)
     }
 }
 

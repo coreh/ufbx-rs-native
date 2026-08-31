@@ -1081,6 +1081,34 @@ fn load_cube_binary_from_file() {
     assert!(walk(&scene).is_finite());
 }
 
+// Cyclic property connections exhaust the bounded walk and retain each local
+// value because the terminal re-probe still finds another connection.
+#[test]
+#[cfg(not(miri))]
+fn recursive_connected_property_cycles_preserve_local_values() {
+    let scene = load("synthetic_recursive_connections_7700_ascii.fbx");
+
+    for (node_name, expected) in [("pCube1", [1.0, 0.0, 0.0]), ("pCube3", [0.0, 0.0, 1.0])] {
+        let node = scene.find_node(node_name).expect("missing connected node");
+        let stored = node
+            .element
+            .props
+            .find_prop("Lcl Translation")
+            .expect("missing connected property");
+        assert!(stored.flags.has_any(ufbx::PropFlags::CONNECTED));
+
+        let value = ufbx::evaluate_prop(&scene.anim, &node.element, "Lcl Translation", 0.5);
+        assert_eq!(
+            [
+                value.value_vec4.x as f64,
+                value.value_vec4.y as f64,
+                value.value_vec4.z as f64,
+            ],
+            expected
+        );
+    }
+}
+
 // Public-boundary provenance regression: every one of these entry points takes
 // a `&`-derived pointer (SharedReadOnly provenance) into memory the internal
 // view machinery navigates. They must route through read-only `Const` views —

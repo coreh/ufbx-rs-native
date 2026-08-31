@@ -2952,34 +2952,26 @@ pub(crate) unsafe fn fetch_deformers(
         // pass, `get_element_node`'s non-null result after that.
         let element_view: &ElementView = unsafe { ElementView::from_ptr(element) };
         // C: `ufbxi_for_list(ufbx_connection, conn, element->connections_dst)`
-        // — indexed here because the body `continue`s.
-        for conn_ix in 0..element_view.connections_dst().count {
-            // SAFETY: `conn_ix` is bounded by that element's own `connections_dst`
-            // count, so the offset stays inside its connection array.
-            let conn: *mut Connection =
-                unsafe { (element_view.connections_dst().data as *mut Connection).add(conn_ix) };
-            // SAFETY: `conn` points to a live `Connection`.
-            if unsafe { (*conn).src_prop.length } > 0 {
+        // — Run iteration preserves the C `for` increment when the body
+        // continues.
+        for conn in Run::from_list(element_view.connections_dst_view()).iter() {
+            if conn.src_prop_view().length() > 0 {
                 continue;
             }
-            // SAFETY: as above; the `src` ref names a live scene element.
-            let type_: ElementType = unsafe { ptr::read(&raw const (*conn).src) }
-                .view::<Mut>()
-                .type_();
+            let type_: ElementType = conn.src_view().type_();
             if type_ == ElementType::SkinDeformer
                 || type_ == ElementType::BlendDeformer
                 || type_ == ElementType::CacheDeformer
             {
                 ufbxi_check!(
                     uc,
-                    // SAFETY: `tmp_stack_mut_ptr()` is `uc`'s own live buffer, and
-                    // the source is the address of `conn`'s `src` ref — one live,
-                    // pointer-sized value, reinterpreted as the `*mut Element` it
-                    // holds.
+                    // SAFETY: `conn.src_ptr()` addresses one initialized
+                    // `Ref<Element>` in the result-owned connection run. The
+                    // destination is in the distinct tmp-stack buffer, so the
+                    // one-item source and destination runs cannot overlap.
                     !unsafe {
-                        uc.tmp_stack_view().push_copy_raw::<*mut Element>(1,
-                            &raw const (*conn).src as *const *mut Element,
-                        )
+                        uc.tmp_stack_view()
+                            .push_copy_raw::<Ref<Element>>(1, conn.src_ptr())
                     }
                     .is_null(),
                     "((ufbx_element**)ufbxi_push_size_copy((&uc->tmp_stack), sizeof(ufbx_element*), (1), (&conn->src)))"
@@ -3133,37 +3125,22 @@ pub(crate) fn prop_connection_less<M: crate::native::view::Mode>(
 }
 
 // ufbx.c:19271-19283 `ufbxi_find_prop_connection`
-// `element: &View<Element, Const>` carries C's `const ufbx_element *`;
-// `prop: Option<&[u8]>` carries C's nullable `const char *prop`: `None` is C's
-// `NULL`, `Some` the NUL-terminated interned name minted once by the caller
-// (see `find_dst_connections`).
+// The returned view is anchored to `element`'s destination-connection list;
+// `ConnectionPropKey` preserves both the bytes used for ordering and the
+// interned pointer identity used for equality.
 #[inline(never)]
 #[must_use]
-pub(crate) fn find_prop_connection(
-    element: &View<Element, Const>,
-    prop: Option<&[u8]>,
-) -> *mut Connection {
-    // C: `if (!prop) prop = ufbxi_empty_char;` — the empty span's base address
-    // is `ufbxi_empty_char` itself, which the identity probe below compares.
-    let prop: &[u8] = prop.unwrap_or(&EMPTY_CHAR[..0]);
-    // C compares `a->dst_prop.data == prop` by interned-pointer identity; the
-    // ordering probe compares the same span as bytes.
-    let prop_data: *const u8 = prop.as_ptr();
-
-    let index: Option<usize> = element.connections_dst_view().lower_bound_eq(
+pub(crate) fn find_prop_connection<'a>(
+    element: &'a View<Element, Const>,
+    prop: ConnectionPropKey<'_>,
+) -> Option<&'a View<Connection, Const>> {
+    let conns = element.connections_dst_view();
+    let index: Option<usize> = conns.lower_bound_eq(
         32,
-        |a| prop_connection_less(a, prop),
-        |a| a.dst_prop_view().data() == prop_data && a.src_prop_view().length() > 0,
+        |a| prop_connection_less(a, prop.bytes),
+        |a| a.dst_prop_view().data() == prop.data && a.src_prop_view().length() > 0,
     );
-
-    if let Some(index) = index {
-        // `index` is a hit position within `0..connections_dst.count`; the
-        // result is derived from the list's own base so it keeps whole-run
-        // provenance.
-        element.connections_dst_view().data().wrapping_add(index) as *mut Connection
-    } else {
-        ptr::null_mut()
-    }
+    index.map(|index| conns.at(index))
 }
 
 // ufbx.c:19285-19292 `ufbxi_patch_index_pointer`
