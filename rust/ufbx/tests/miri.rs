@@ -191,7 +191,30 @@ fn load_legacy_6100_ascii() {
 /// bytes, so this is deliberately a mid-sized file rather than the largest one.
 #[test]
 fn load_attribute_zoo_6100_binary() {
-    assert!(load_and_walk("maya_node_attribute_zoo_6100_binary.fbx").is_finite());
+    let scene = load("maya_node_attribute_zoo_6100_binary.fbx");
+    assert!(walk(&scene).is_finite());
+    let stereo = scene
+        .stereo_cameras
+        .first()
+        .expect("attribute zoo has no stereo camera");
+    assert_eq!(
+        stereo
+            .left
+            .as_ref()
+            .expect("stereo camera has no left camera")
+            .element
+            .type_,
+        ufbx::ElementType::Camera
+    );
+    assert_eq!(
+        stereo
+            .right
+            .as_ref()
+            .expect("stereo camera has no right camera")
+            .element
+            .type_,
+        ufbx::ElementType::Camera
+    );
 }
 
 /// Shader-texture property prefixes are discovered from both explicit compound
@@ -475,6 +498,55 @@ fn load_instancing() {
     assert!(acc > 0.0);
 }
 
+/// Mesh connection fetches advance only after scanning the current element:
+/// materials stop at the first instance hit, while legacy deformers continue
+/// through a geometry-transform helper to its parent.
+#[test]
+fn mesh_connection_fetches_follow_typed_node_walk() {
+    let scene = load("max_instanced_material_7700_binary.fbx");
+    let red = scene.find_node("Red").expect("missing Red node");
+    let green = scene.find_node("Green").expect("missing Green node");
+    let blue = scene.find_node("Blue").expect("missing Blue node");
+    let mesh = green.mesh.as_ref().expect("Green has no mesh");
+    assert!(core::ptr::eq(
+        mesh.as_ref(),
+        red.mesh.as_ref().expect("Red has no mesh").as_ref()
+    ));
+    assert!(core::ptr::eq(
+        mesh.as_ref(),
+        blue.mesh.as_ref().expect("Blue has no mesh").as_ref()
+    ));
+    for (node, material) in [(red, "RedMat"), (green, "GreenMat"), (blue, "BlueMat")] {
+        assert_eq!(node.materials.len(), 1);
+        assert_eq!(node.materials[0].element.name.as_ref(), material);
+    }
+    assert_eq!(mesh.materials.len(), 1);
+    assert_eq!(mesh.materials[0].element.name.as_ref(), "GreenMat");
+
+    let name = "max_transformed_skin_6100_binary.fbx";
+    let data = read_data(name);
+    let scene = ufbx::load_memory(
+        &data,
+        LoadOpts {
+            geometry_transform_handling: ufbx::GeometryTransformHandling::HelperNodes,
+            ..Default::default()
+        },
+    )
+    .unwrap_or_else(|e| panic!("failed to load {}: {:?}", name, e));
+    let parent = scene.find_node("Box001").expect("missing Box001");
+    assert!(parent.mesh.is_none());
+    let helper = parent
+        .geometry_transform_helper
+        .as_ref()
+        .expect("missing geometry-transform helper");
+    assert!(helper.is_geometry_transform_helper);
+    let mesh = helper.mesh.as_ref().expect("helper has no mesh");
+    assert!(!mesh.skin_deformers.is_empty());
+    assert_eq!(mesh.all_deformers.len(), 1);
+    let skin = &mesh.skin_deformers[0];
+    assert!(core::ptr::eq(&mesh.all_deformers[0], &skin.element));
+}
+
 /// Helper-node inherit handling follows parent, scale-helper and
 /// inherit-scale-node links while composing transforms.
 #[test]
@@ -537,6 +609,54 @@ fn load_embedded_textures() {
         acc += video.content.len() as f64;
     }
     assert!(acc.is_finite());
+}
+
+/// Layered textures retain the checked source texture Ref while deriving the
+/// blend mode and alpha from that same texture's properties.
+#[test]
+fn load_texture_layers() {
+    let scene = load("maya_texture_layers_7500_binary.fbx");
+    let node = scene.find_node("pCube1").expect("missing pCube1");
+    let mesh = node.mesh.as_ref().expect("pCube1 has no mesh");
+    assert_eq!(mesh.materials.len(), 1);
+    let layered = mesh.materials[0]
+        .fbx
+        .diffuse_color
+        .texture
+        .as_ref()
+        .expect("diffuse color has no layered texture");
+    assert_eq!(layered.type_, ufbx::TextureType::Layered);
+
+    let expected = [
+        (
+            ufbx::BlendMode::Multiply,
+            0.75,
+            "textures\\checkerboard_weight.png",
+        ),
+        (
+            ufbx::BlendMode::Over,
+            0.5,
+            "textures\\checkerboard_diffuse.png",
+        ),
+        (
+            ufbx::BlendMode::Additive,
+            1.0,
+            "textures\\checkerboard_ambient.png",
+        ),
+    ];
+    assert_eq!(layered.layers.len(), expected.len());
+    assert_eq!(layered.file_textures.len(), expected.len());
+    for (index, (layer, &(mode, alpha, filename))) in
+        layered.layers.iter().zip(expected.iter()).enumerate()
+    {
+        assert_eq!(layer.blend_mode, mode);
+        assert_eq!(layer.alpha as f64, alpha);
+        assert_eq!(layer.texture.relative_filename.as_ref(), filename);
+        assert!(core::ptr::eq(
+            layer.texture.as_ref(),
+            &layered.file_textures[index]
+        ));
+    }
 }
 
 // -- Post-load APIs
@@ -927,6 +1047,16 @@ fn tessellate_nurbs_surface() {
         .first()
         .expect("no flipped surface");
     assert!(flipped_surface.flip_normals);
+    assert_eq!(
+        flipped_surface
+            .material
+            .as_ref()
+            .expect("flipped surface has no material")
+            .element
+            .name
+            .as_ref(),
+        "lambert1"
+    );
     let flipped_mesh = ufbx::tessellate_nurbs_surface(
         flipped_surface,
         ufbx::TessellateSurfaceOpts {
