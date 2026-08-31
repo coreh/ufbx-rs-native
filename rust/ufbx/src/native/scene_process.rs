@@ -194,7 +194,7 @@ use crate::generated::{
     AspectMode, AudioClip, AudioLayer, BlendChannel, BlendDeformer, BlendKeyframe, BlendMode,
     BlendShape, Bone, BonePose, CacheDeformer, CacheFile, CacheFileFormat, Camera, ColorSet,
     Connection, Constraint, ConstraintAimUpType, ConstraintTarget, ConstraintType, CoordinateAxes,
-    CoordinateAxis, DisplayLayer, Edge, Element, ElementType, Exporter, Face, FileFormat, GateFit,
+    CoordinateAxis, DisplayLayer, Element, ElementType, Exporter, Face, FileFormat, GateFit,
     GeometryTransformHandling, IndexErrorHandling, InheritMode, InheritModeHandling, Light,
     LightAreaShape, LightDecay, LightType, LineCurve, LodDisplay, LodGroup, LodLevel, Material,
     MaterialFbxMap, MaterialFbxMaps, MaterialFeature, MaterialFeatureInfo, MaterialFeatures,
@@ -5602,17 +5602,7 @@ static FILE_SHADERS: [FileShader; 6] = [
 #[inline(never)]
 pub(crate) fn update_shader_texture(texture_view: &TextureView, shader_view: &ShaderTextureView) {
     // C: `ufbxi_for_list(ufbx_shader_texture_input, input, shader->inputs)`
-    let inputs: &ListView<ShaderTextureInput> = shader_view.inputs_view();
-    // SAFETY: `data`/`count` describe the shader's own input run — one
-    // contiguous arena allocation of live, initialized
-    // `ufbx_shader_texture_input`, arena-stable for the walk.
-    let input_iter = unsafe {
-        SliceViewIter::<ShaderTextureInput>::from_raw_parts(
-            inputs.data() as *mut ShaderTextureInput,
-            inputs.count(),
-        )
-    };
-    for input in input_iter {
+    for input in Run::from_list(shader_view.inputs_view()).iter() {
         // C: `ufbx_prop *prop = input->prop;`
         if let Some(prop) = input.prop() {
             let prop: &View<Prop, Const> = prop.view::<Const>();
@@ -6806,12 +6796,7 @@ pub(crate) unsafe fn flip_attrib_winding(
     // own or the result-arena copy pushed above.
     let data: *mut u32 = indices.data() as *mut u32;
     // C: `ufbxi_for_list(ufbx_face, face, mesh->faces)`
-    // SAFETY: `faces` describes one contiguous arena run of the mesh's own,
-    // initialized faces, live and unmoved for this call.
-    let faces = unsafe {
-        SliceViewIter::<Face>::from_raw_parts(mesh.faces().data as *mut Face, mesh.faces().count)
-    };
-    for face in faces {
+    for face in Run::from_list(mesh.faces_view()).iter() {
         if face.num_indices() == 0 {
             continue;
         }
@@ -6853,15 +6838,7 @@ pub(crate) unsafe fn flip_winding(uc: &Context, mesh: &View<Mesh>) -> Result<(),
     }
     if mesh.uv_sets().count > 0 {
         // C: `ufbxi_for_list(ufbx_uv_set, set, mesh->uv_sets)`
-        // SAFETY: `uv_sets` describes one contiguous arena run of the mesh's own
-        // UV sets, live and unmoved for this call.
-        let sets = unsafe {
-            SliceViewIter::<UvSet>::from_raw_parts(
-                mesh.uv_sets().data as *mut UvSet,
-                mesh.uv_sets().count,
-            )
-        };
-        for set in sets {
+        for set in Run::from_list(mesh.uv_sets_view()).iter() {
             // SAFETY: each `indices_view()` views this live `UvSet`'s own
             // attribute index list, whose span matches the mesh that owns the
             // set run.
@@ -6886,15 +6863,7 @@ pub(crate) unsafe fn flip_winding(uc: &Context, mesh: &View<Mesh>) -> Result<(),
     }
     if mesh.color_sets().count > 0 {
         // C: `ufbxi_for_list(ufbx_color_set, set, mesh->color_sets)`
-        // SAFETY: `color_sets` describes one contiguous arena run of the mesh's
-        // own color sets, live and unmoved for this call.
-        let sets = unsafe {
-            SliceViewIter::<ColorSet>::from_raw_parts(
-                mesh.color_sets().data as *mut ColorSet,
-                mesh.color_sets().count,
-            )
-        };
-        for set in sets {
+        for set in Run::from_list(mesh.color_sets_view()).iter() {
             // SAFETY: `indices_view()` views this live `ColorSet`'s own attribute
             // index list, whose span matches the mesh that owns the set run.
             unsafe { flip_attrib_winding(uc, mesh, set.vertex_color().indices_view(), false) }?;
@@ -6940,15 +6909,7 @@ pub(crate) unsafe fn flip_winding(uc: &Context, mesh: &View<Mesh>) -> Result<(),
         // so index `-1` is that array's first element.
         unsafe { *index_mapping.offset(-1) = NO_INDEX };
         // C: `ufbxi_for_list(ufbx_face, face, mesh->faces)`
-        // SAFETY: `faces` describes one contiguous arena run of the mesh's own,
-        // initialized faces, live and unmoved for this call.
-        let faces = unsafe {
-            SliceViewIter::<Face>::from_raw_parts(
-                mesh.faces().data as *mut Face,
-                mesh.faces().count,
-            )
-        };
-        for face in faces {
+        for face in Run::from_list(mesh.faces_view()).iter() {
             if face.num_indices() == 0 {
                 continue;
             }
@@ -6971,15 +6932,7 @@ pub(crate) unsafe fn flip_winding(uc: &Context, mesh: &View<Mesh>) -> Result<(),
         }
 
         // C: `ufbxi_for_list(ufbx_edge, p_edge, mesh->edges)`
-        // SAFETY: `edges` describes one contiguous arena run of the mesh's own,
-        // initialized edges, live and unmoved for this call.
-        let edges = unsafe {
-            SliceViewIter::<Edge>::from_raw_parts(
-                mesh.edges().data as *mut Edge,
-                mesh.edges().count,
-            )
-        };
-        for p_edge in edges {
+        for p_edge in Run::from_list(mesh.edges_view()).iter() {
             // C-parity: the `(int32_t)` casts are load-bearing — a
             // `UFBX_NO_INDEX` endpoint indexes `index_mapping[-1]`, the slot
             // reserved above.

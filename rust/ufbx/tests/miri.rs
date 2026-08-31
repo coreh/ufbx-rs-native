@@ -215,18 +215,37 @@ fn load_attribute_zoo_6100_binary() {
 /// Finalized UV and color set lists retain every layer and their indexed data.
 #[test]
 fn load_uv_and_color_sets_6100_binary() {
-    let scene = load("maya_uv_and_color_sets_6100_binary.fbx");
-    assert!(walk(&scene).is_finite());
+    fn check(scene: &Scene, reversed_winding: bool) {
+        assert!(walk(scene).is_finite());
+        let mesh = scene.meshes.first().expect("missing mesh");
+        let uv_names: Vec<&str> = mesh.uv_sets.iter().map(|set| set.name.as_ref()).collect();
+        let color_names: Vec<&str> = mesh
+            .color_sets
+            .iter()
+            .map(|set| set.name.as_ref())
+            .collect();
+        assert_eq!(uv_names, ["UVA", "UVB"]);
+        assert_eq!(color_names, ["ColorA", "ColorB"]);
+        assert_eq!(mesh.reversed_winding, reversed_winding);
+        for edge in &mesh.edges {
+            assert!(edge.a == u32::MAX || edge.a < mesh.num_indices as u32);
+            assert!(edge.b == u32::MAX || edge.b < mesh.num_indices as u32);
+        }
+    }
 
-    let mesh = scene.meshes.first().expect("missing mesh");
-    let uv_names: Vec<&str> = mesh.uv_sets.iter().map(|set| set.name.as_ref()).collect();
-    let color_names: Vec<&str> = mesh
-        .color_sets
-        .iter()
-        .map(|set| set.name.as_ref())
-        .collect();
-    assert_eq!(uv_names, ["UVA", "UVB"]);
-    assert_eq!(color_names, ["ColorA", "ColorB"]);
+    let scene = load("maya_uv_and_color_sets_6100_binary.fbx");
+    check(&scene, false);
+
+    let data = read_data("maya_uv_and_color_sets_6100_binary.fbx");
+    let reversed = ufbx::load_memory(
+        &data,
+        LoadOpts {
+            reverse_winding: true,
+            ..Default::default()
+        },
+    )
+    .expect("reverse-winding load should succeed");
+    check(&reversed, true);
 }
 
 /// Legacy constraints use property connections in both directions.
