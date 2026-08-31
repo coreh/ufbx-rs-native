@@ -1112,8 +1112,21 @@ fn public_find_wrappers_from_shared_refs() {
     }
 
     // Element-rooted paths (api.rs public-boundary roots).
-    let elem: &ufbx::Element = &node.element;
-    let _ = ufbx::find_prop_element(elem, "Lcl Translation", ufbx::ElementType::Node);
+    let prop_node = scene
+        .nodes
+        .iter()
+        .find(|node| !node.element.props.props.is_empty())
+        .expect("scene has no node with stored properties");
+    let elem: &ufbx::Element = &prop_node.element;
+    let props: &ufbx::Props = &elem.props;
+    let prop = props.props.first().expect("node has no stored properties");
+    let by_name = ufbx::find_prop_element(elem, &prop.name, ufbx::ElementType::Node);
+    // Direct prop adapter and name lookup share the same Const header core.
+    let direct = ufbx::get_prop_element(elem, prop, ufbx::ElementType::Node);
+    assert_eq!(
+        direct.map(core::ptr::from_ref),
+        by_name.map(core::ptr::from_ref)
+    );
 
     // Anim-eval path: evaluate_prop_flags reads props through the same roots,
     // and evaluate_props builds a stack `Props` whose defaults chain crosses

@@ -138,8 +138,8 @@ use crate::native::platform::{
 };
 use crate::native::scene_process::{
     add_weighted_mat, add_weighted_quat, add_weighted_vec3, cmp_name_element_less_ref,
-    cmp_prop_less_concat, cmp_prop_less_ref, fetch_dst_element, get_rotation, get_scale,
-    get_transform, mul_quat, AnimImp,
+    cmp_prop_less_concat, cmp_prop_less_ref, fetch_dst_element_header, get_rotation, get_scale,
+    get_transform, mul_quat, AnimImp, ConnectionPropKey,
 };
 use crate::native::string_pool as sp;
 use crate::native::string_pool::{
@@ -1120,8 +1120,10 @@ pub(crate) unsafe fn get_prop_element(
         }
     };
     // SAFETY: `element` is non-null (checked) and points at a live `Element` —
-    // the raw-pointer contract of this `unsafe fn`.
-    unsafe { fetch_dst_element(element as *mut Element, false, prop_name, type_) }
+    // the raw-pointer contract of this `unsafe fn`; this lookup reads only the
+    // fixed `Element` header.
+    let element = unsafe { View::<Element, Const>::from_ptr(element) };
+    fetch_dst_element_header(element, ConnectionPropKey::from_option(prop_name), type_)
 }
 
 // ufbx.c:30750-30758 `ufbx_find_prop_element_len`
@@ -1136,10 +1138,11 @@ pub(crate) fn find_prop_element_len<M: Mode>(
     // `&element->props` is the view's own `props` projection — no intermediate
     // `&Props` is formed.
     match find_prop_len(element.props(), name) {
-        // SAFETY: `element.as_ptr()` addresses the live viewed `Element` and
-        // `prop.as_ptr()` the matched live `Prop` — the raw-pointer contract
-        // `get_prop_element` asks for, discharged by both views.
-        Some(prop) => unsafe { get_prop_element(element.as_ptr(), prop.as_ptr(), type_) },
+        Some(prop) => fetch_dst_element_header(
+            element,
+            ConnectionPropKey::from_string(prop.name_view()),
+            type_,
+        ),
         None => core::ptr::null_mut(),
     }
 }
