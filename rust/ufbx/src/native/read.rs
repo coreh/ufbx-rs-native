@@ -130,9 +130,8 @@ use crate::native::parse::{
 };
 use crate::native::platform::{
     add_ptr, f64_to_i64, macro_stable_sort, macro_stable_sort_views, math, max_real, max_sz, min32,
-    min_real, min_sz, pack_version, stable_sort, to_size, ufbx_assert, ufbxi_dev_assert,
-    ufbxi_ignore, ufbxi_maybe_null, ufbxi_unreachable, unstable_sort, FACE_GROUP_HASH_BITS,
-    NO_INDEX,
+    min_real, min_sz, pack_version, stable_sort, to_size, ufbx_assert, ufbxi_ignore,
+    ufbxi_maybe_null, ufbxi_unreachable, unstable_sort, FACE_GROUP_HASH_BITS, NO_INDEX,
 };
 use crate::native::string_pool as sp;
 use crate::native::string_pool::{push_string_place_blob, push_string_place_str};
@@ -1508,27 +1507,28 @@ pub(crate) unsafe fn connect_pp(
     Ok(())
 }
 
+// Synthetic property names are interned static byte runs: the stored pointer
+// carries their identity and remains live with the resulting scene property.
+// Their first in-run NUL supplies C's `strlen` result; four preceding bytes are
+// required for the property key.
+#[inline(always)]
+fn synthetic_name_length(name: &'static [u8]) -> usize {
+    name.iter()
+        .position(|&c| c == b'\0')
+        .expect("synthetic property name must contain NUL")
+}
+
 // ufbx.c:12451-12463 `ufbxi_init_synthetic_int_prop`
-// `name` is the interned static run itself: its pointer is stored into
-// `dst->name.data` (the pointer-identity carrier) and its length is measured by
-// `strlen`, exactly as C does.
-//
-// # Safety
-// `name` must be NUL-terminated within its own run and at least 4 bytes long —
-// `strlen` walks it from `name.as_ptr()` and the key read takes its first 4
-// bytes. Neither obligation is carried by `&[u8]`.
 #[inline(never)]
-pub(crate) unsafe fn init_synthetic_int_prop(
+pub(crate) fn init_synthetic_int_prop(
     dst: &mut Prop,
-    name: &[u8],
+    name: &'static [u8],
     value: i64,
     type_: PropType,
 ) {
     dst.type_ = type_;
     dst.name.data = name.as_ptr();
-    // SAFETY: `name` is a NUL-terminated interned string (fn contract) —
-    // `strlen`'s contract.
-    dst.name.length = unsafe { strlen(name.as_ptr()) };
+    dst.name.length = synthetic_name_length(name);
     // C-parity: `dst->value_real` is the `ufbx_prop` value union's first real
     // (`value_vec4.x` in the generated struct).
     dst.value_vec4.x = value as Real;
@@ -1538,34 +1538,24 @@ pub(crate) unsafe fn init_synthetic_int_prop(
     dst.value_int = value;
     dst.value_str.data = EMPTY_CHAR.as_ptr();
 
-    ufbxi_dev_assert!(dst.name.length >= 4);
-    // SAFETY: every caller passes a `ufbxi_*` interned property name of at
-    // least 4 characters (the dev assert above guards that contract), so the
-    // 4-byte key read stays inside `name`.
-    dst._internal_key = get_name_key(unsafe { crate::prelude::slice_from_ptr(name.as_ptr(), 4) });
+    assert!(
+        dst.name.length >= 4,
+        "synthetic property name must be at least four bytes"
+    );
+    dst._internal_key = get_name_key(&name[..4]);
 }
 
 // ufbx.c:12465-12477 `ufbxi_init_synthetic_real_prop`
-// `name` is the interned static run itself: its pointer is stored into
-// `dst->name.data` (the pointer-identity carrier) and its length is measured by
-// `strlen`, exactly as C does.
-//
-// # Safety
-// `name` must be NUL-terminated within its own run and at least 4 bytes long —
-// `strlen` walks it from `name.as_ptr()` and the key read takes its first 4
-// bytes. Neither obligation is carried by `&[u8]`.
 #[inline(never)]
-pub(crate) unsafe fn init_synthetic_real_prop(
+pub(crate) fn init_synthetic_real_prop(
     dst: &mut Prop,
-    name: &[u8],
+    name: &'static [u8],
     value: Real,
     type_: PropType,
 ) {
     dst.type_ = type_;
     dst.name.data = name.as_ptr();
-    // SAFETY: `name` is a NUL-terminated interned string (fn contract) —
-    // `strlen`'s contract.
-    dst.name.length = unsafe { strlen(name.as_ptr()) };
+    dst.name.length = synthetic_name_length(name);
     // C-parity: bare `(int64_t)` cast on a float operand — `as` (saturating),
     // per PORTING.md "Integer semantics".
     dst.value_vec4.x = value;
@@ -1573,34 +1563,24 @@ pub(crate) unsafe fn init_synthetic_real_prop(
     dst.value_int = value as i64;
     dst.value_str.data = EMPTY_CHAR.as_ptr();
 
-    ufbxi_dev_assert!(dst.name.length >= 4);
-    // SAFETY: every caller passes a `ufbxi_*` interned property name of at
-    // least 4 characters (the dev assert above guards that contract), so the
-    // 4-byte key read stays inside `name`.
-    dst._internal_key = get_name_key(unsafe { crate::prelude::slice_from_ptr(name.as_ptr(), 4) });
+    assert!(
+        dst.name.length >= 4,
+        "synthetic property name must be at least four bytes"
+    );
+    dst._internal_key = get_name_key(&name[..4]);
 }
 
 // ufbx.c:12479-12491 `ufbxi_init_synthetic_vec3_prop`
-// `name` is the interned static run itself: its pointer is stored into
-// `dst->name.data` (the pointer-identity carrier) and its length is measured by
-// `strlen`, exactly as C does.
-//
-// # Safety
-// `name` must be NUL-terminated within its own run and at least 4 bytes long —
-// `strlen` walks it from `name.as_ptr()` and the key read takes its first 4
-// bytes. Neither obligation is carried by `&[u8]`.
 #[inline(never)]
-pub(crate) unsafe fn init_synthetic_vec3_prop(
+pub(crate) fn init_synthetic_vec3_prop(
     dst: &PropView,
-    name: &[u8],
+    name: &'static [u8],
     value: &Vec3,
     type_: PropType,
 ) {
     dst.set_type(type_);
     dst.name_view().set_data(name.as_ptr());
-    // SAFETY: `name` is a NUL-terminated interned string (fn contract) —
-    // `strlen`'s contract.
-    dst.name_view().set_length(unsafe { strlen(name.as_ptr()) });
+    dst.name_view().set_length(synthetic_name_length(name));
     // C: `dst->value_vec3 = *value;` writes only x/y/z of the value union.
     // SAFETY: `value_vec4_raw()` addresses `dst`'s own 4-`Real` value union
     // arm; `Vec3` is its 3-real prefix, so the projected write stays inside it.
@@ -1616,13 +1596,11 @@ pub(crate) unsafe fn init_synthetic_vec3_prop(
     dst.set_value_int(f64_to_i64(as_f64!(value_real)));
     dst.value_str_view().set_data(EMPTY_CHAR.as_ptr());
 
-    ufbxi_dev_assert!(dst.name_view().length() >= 4);
-    // SAFETY: every caller passes a `ufbxi_*` interned property name of at
-    // least 4 characters (the dev assert above guards that contract), so the
-    // 4-byte key read stays inside `name`.
-    dst.set_internal_key(get_name_key(unsafe {
-        crate::prelude::slice_from_ptr(name.as_ptr(), 4)
-    }));
+    assert!(
+        dst.name_view().length() >= 4,
+        "synthetic property name must be at least four bytes"
+    );
+    dst.set_internal_key(get_name_key(&name[..4]));
 }
 
 // ufbx.c:12493-12505 `ufbxi_set_own_prop_vec3_uniform`
@@ -1720,8 +1698,8 @@ pub(crate) fn setup_geometry_transform_helper(
         // SAFETY: `props` is the fresh non-null 3-element zeroed run checked
         // above, so indices 0..3 are live `ufbx_prop` slots with the result
         // arena's write-capable provenance — each anchors a `PropView`; each
-        // name is an interned `ufbxi_*` string, NUL-terminated and at least 4
-        // bytes (`init_synthetic_vec3_prop`'s name contract).
+        // name is one of the static `sp::*` property names retained by the
+        // resulting scene property.
         unsafe {
             init_synthetic_vec3_prop(
                 PropView::from_ptr(props.add(0)),
@@ -8777,43 +8755,40 @@ pub(crate) fn read_take(uc: &Context, node: &NodeView) -> Result<(), Fail> {
     let mut num_props: u32 = 0;
 
     // C: `int64_t start, stop;` — written by each successful `"LL"` fetch.
-    // SAFETY: the synthetic props are initialized in place into the local
-    // `tmp_props` array — at most four are ever written, which is its length —
-    // from `sp::*` statics, each a NUL-terminated interned run of at least four
-    // bytes (`init_synthetic_int_prop`'s name contract).
-    unsafe {
-        if let Some((start, stop)) = find_val2::<i64, i64>(node, sp::LocalTime.as_ptr()) {
-            init_synthetic_int_prop(
-                &mut tmp_props[num_props as usize],
-                &sp::LocalStart,
-                start,
-                PropType::Integer,
-            );
-            num_props += 1;
-            init_synthetic_int_prop(
-                &mut tmp_props[num_props as usize],
-                &sp::LocalStop,
-                stop,
-                PropType::Integer,
-            );
-            num_props += 1;
-        }
-        if let Some((start, stop)) = find_val2::<i64, i64>(node, sp::ReferenceTime.as_ptr()) {
-            init_synthetic_int_prop(
-                &mut tmp_props[num_props as usize],
-                &sp::ReferenceStart,
-                start,
-                PropType::Integer,
-            );
-            num_props += 1;
-            init_synthetic_int_prop(
-                &mut tmp_props[num_props as usize],
-                &sp::ReferenceStop,
-                stop,
-                PropType::Integer,
-            );
-            num_props += 1;
-        }
+    // The synthetic props are initialized in place into the local `tmp_props`
+    // array — at most four are ever written, which is its length — from `sp::*`
+    // static property names retained by the resulting props.
+    if let Some((start, stop)) = find_val2::<i64, i64>(node, sp::LocalTime.as_ptr()) {
+        init_synthetic_int_prop(
+            &mut tmp_props[num_props as usize],
+            &sp::LocalStart,
+            start,
+            PropType::Integer,
+        );
+        num_props += 1;
+        init_synthetic_int_prop(
+            &mut tmp_props[num_props as usize],
+            &sp::LocalStop,
+            stop,
+            PropType::Integer,
+        );
+        num_props += 1;
+    }
+    if let Some((start, stop)) = find_val2::<i64, i64>(node, sp::ReferenceTime.as_ptr()) {
+        init_synthetic_int_prop(
+            &mut tmp_props[num_props as usize],
+            &sp::ReferenceStart,
+            start,
+            PropType::Integer,
+        );
+        num_props += 1;
+        init_synthetic_int_prop(
+            &mut tmp_props[num_props as usize],
+            &sp::ReferenceStop,
+            stop,
+            PropType::Integer,
+        );
+        num_props += 1;
     }
 
     // C: `const char *name;` — written by the `ufbxi_get_val1` check below.
@@ -8950,8 +8925,7 @@ pub(crate) fn read_legacy_settings(uc: &Context, node: &NodeView) -> Result<(), 
         // write, and on success `str_` is a pooled `data`/`length` pair, so the
         // double parse and the end-of-string compare stay inside it. The two
         // synthetic props are written into the local 2-element `tmp_props` from
-        // `sp::*` statics, each a NUL-terminated interned run of at least four
-        // bytes (`init_synthetic_real_prop`'s name contract).
+        // `sp::*` static property names retained by the resulting props.
         unsafe {
             if let Some(got) = get_val1::<f64>(frame_rate) {
                 fps = got;
@@ -11084,4 +11058,105 @@ pub(crate) fn finalize_mesh(
     patch_mesh_reals(mesh);
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn empty_prop() -> Prop {
+        Prop {
+            name: EMPTY_STRING.0,
+            _internal_key: 0,
+            type_: PropType::Unknown,
+            flags: PropFlags::NONE,
+            value_str: EMPTY_STRING.0,
+            value_blob: EMPTY_BLOB.0,
+            value_int: 0,
+            value_vec4: Vec4::default(),
+        }
+    }
+
+    #[test]
+    fn synthetic_static_property_initializers() {
+        static INT_NAME: &[u8] = b"Abcd integer\0ignored";
+        let mut int_prop = empty_prop();
+        init_synthetic_int_prop(&mut int_prop, INT_NAME, -37, PropType::Integer);
+        assert_eq!(int_prop.name.data, INT_NAME.as_ptr());
+        assert_eq!(int_prop.name.length, 12);
+        assert_eq!(int_prop._internal_key, get_name_key(b"Abcd"));
+        assert_eq!(int_prop.type_, PropType::Integer);
+        assert_eq!(
+            int_prop.flags.raw(),
+            PropFlags::SYNTHETIC.raw() | PropFlags::VALUE_REAL.raw() | PropFlags::VALUE_INT.raw()
+        );
+        assert_eq!(int_prop.value_vec4.x, -37.0);
+        assert_eq!(int_prop.value_int, -37);
+        assert_eq!(int_prop.value_str.data, EMPTY_CHAR.as_ptr());
+
+        static REAL_NAME: &[u8] = b"Efgh real\0tail";
+        let mut real_prop = empty_prop();
+        init_synthetic_real_prop(&mut real_prop, REAL_NAME, 3.75, PropType::Number);
+        assert_eq!(real_prop.name.data, REAL_NAME.as_ptr());
+        assert_eq!(real_prop.name.length, 9);
+        assert_eq!(real_prop._internal_key, get_name_key(b"Efgh"));
+        assert_eq!(real_prop.type_, PropType::Number);
+        assert_eq!(
+            real_prop.flags.raw(),
+            PropFlags::SYNTHETIC.raw() | PropFlags::VALUE_REAL.raw()
+        );
+        assert_eq!(real_prop.value_vec4.x, 3.75);
+        assert_eq!(real_prop.value_int, 3);
+        assert_eq!(real_prop.value_str.data, EMPTY_CHAR.as_ptr());
+
+        static VEC3_NAME: &[u8] = b"Ijkl vector\0suffix";
+        let mut vec3_prop = empty_prop();
+        vec3_prop.value_vec4.w = 91.0;
+        init_synthetic_vec3_prop(
+            PropView::from_mut(&mut vec3_prop),
+            VEC3_NAME,
+            &Vec3 {
+                x: 2.25,
+                y: -4.5,
+                z: 8.75,
+            },
+            PropType::Vector,
+        );
+        assert_eq!(vec3_prop.name.data, VEC3_NAME.as_ptr());
+        assert_eq!(vec3_prop.name.length, 11);
+        assert_eq!(vec3_prop._internal_key, get_name_key(b"Ijkl"));
+        assert_eq!(vec3_prop.type_, PropType::Vector);
+        assert_eq!(
+            vec3_prop.flags.raw(),
+            PropFlags::SYNTHETIC.raw() | PropFlags::VALUE_VEC3.raw()
+        );
+        assert_eq!(vec3_prop.value_vec4.x, 2.25);
+        assert_eq!(vec3_prop.value_vec4.y, -4.5);
+        assert_eq!(vec3_prop.value_vec4.z, 8.75);
+        assert_eq!(vec3_prop.value_vec4.w, 91.0);
+        assert_eq!(vec3_prop.value_int, 2);
+        assert_eq!(vec3_prop.value_str.data, EMPTY_CHAR.as_ptr());
+
+        static NO_NUL: &[u8] = b"No NUL here";
+        let mut no_nul_prop = empty_prop();
+        let no_nul = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            init_synthetic_int_prop(&mut no_nul_prop, NO_NUL, 17, PropType::Distance)
+        }));
+        assert!(no_nul.is_err());
+        assert_eq!(no_nul_prop.type_, PropType::Distance);
+        assert_eq!(no_nul_prop.name.data, NO_NUL.as_ptr());
+        assert_eq!(no_nul_prop.name.length, 0);
+        assert_eq!(no_nul_prop.value_int, 0);
+
+        static SHORT: &[u8] = b"abc\0";
+        let mut short_prop = empty_prop();
+        let short = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            init_synthetic_real_prop(&mut short_prop, SHORT, 6.5, PropType::Number)
+        }));
+        assert!(short.is_err());
+        assert_eq!(short_prop.name.length, 3);
+        assert_eq!(short_prop.value_vec4.x, 6.5);
+        assert_eq!(short_prop.value_int, 6);
+        assert_eq!(short_prop._internal_key, 0);
+    }
 }
