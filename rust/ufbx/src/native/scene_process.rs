@@ -2415,11 +2415,9 @@ pub(crate) fn find_src_connections<'a, M: Mode>(
 //
 // # Safety
 // `element` is null or heads a live, arena-owned `ufbx_element`, and when its
-// `type_` is `UFBX_ELEMENT_NODE` the same address heads the enclosing
-// `ufbx_node`. The param stays a raw pointer because the `UFBX_ELEMENT_NODE`
-// branch reads `is_geometry_transform_helper` / `parent`, which lie past
-// `size_of::<Element>()`: a `&View<Element>` tags the header only, so a
-// pointer derived from it may not address the node body.
+// `type_` is `UFBX_ELEMENT_NODE` its write-capable provenance spans the
+// enclosing `ufbx_node`. The param stays raw because a `&View<Element>` tags
+// the header only and may not address the node-body fields this function reads.
 #[must_use]
 pub(crate) unsafe fn get_element_node(element: *mut Element) -> *mut Element {
     if element.is_null() {
@@ -2429,27 +2427,141 @@ pub(crate) unsafe fn get_element_node(element: *mut Element) -> *mut Element {
     // in the arena (fn contract), so its pointer anchors an `ElementView`.
     let element_view: &ElementView = unsafe { ElementView::from_ptr(element) };
     if element_view.type_() == ElementType::Node {
-        let node: *mut Node = element as *mut Node;
         // SAFETY: `type_ == Node` (checked) means the element is the `element`
-        // prefix of a live `ufbx_node`, so the cast pointer is a valid `Node`.
-        if unsafe { (*node).is_geometry_transform_helper } {
-            // SAFETY: as above; `parent` is a live `Option<Ref<Node>>` field of
-            // that node, read here as the nullable pointer C stores.
-            return unsafe { ptr::read(&raw const (*node).parent) }
-                .map_or(ptr::null_mut(), |parent| parent.ptr()) as *mut Element;
+        // prefix of a live `ufbx_node`, and the fn contract supplies the whole
+        // enclosing allocation's write provenance.
+        let node: &NodeView = unsafe { NodeView::from_ptr(element.cast::<Node>()) };
+        if node.is_geometry_transform_helper() {
+            return node
+                .parent()
+                .map_or(ptr::null_mut(), |parent| parent.ptr().cast::<Element>());
         }
         ptr::null_mut()
     } else {
         // C: `return element->instances.count > 0 ? &element->instances.data[0]->element : NULL;`
-        if element_view.instances().count > 0 {
-            // SAFETY: `instances.count > 0` (checked), so `instances.data` points
-            // at a live `Ref<Node>` whose referent is a live node; taking the
-            // address of its `element` prefix does not read the node.
-            unsafe { &raw mut (*ptr::read(element_view.instances().data).ptr()).element }
+        let instances = element_view.instances_view();
+        if instances.count() > 0 {
+            instances.at(0).get().cast::<Element>()
         } else {
             ptr::null_mut()
         }
     }
+}
+
+/// Initialized byte flag for each element in one scene-finalization pass.
+#[derive(Clone, Copy)]
+struct ElementFlags<'a> {
+    data: *mut u8,
+    count: usize,
+    _context: &'a Context,
+}
+
+impl<'a> ElementFlags<'a> {
+    /// # Safety
+    /// `uc.tmp_element_flag()` must address `count` initialized, writable bytes
+    /// that remain live and unmoved for `'a`.
+    #[inline(always)]
+    unsafe fn from_context(uc: &'a Context, count: usize) -> Self {
+        Self {
+            data: uc.tmp_element_flag(),
+            count,
+            _context: uc,
+        }
+    }
+
+    #[inline(always)]
+    fn get(self, index: usize) -> u8 {
+        assert!(index < self.count);
+        // SAFETY: the constructor vouches for `count` initialized bytes and the
+        // assertion keeps this read in bounds.
+        unsafe { self.data.add(index).read() }
+    }
+
+    #[inline(always)]
+    fn set(self, index: usize, value: u8) {
+        assert!(index < self.count);
+        // SAFETY: the constructor vouches for `count` writable bytes and the
+        // assertion keeps this write in bounds.
+        unsafe { self.data.add(index).write(value) };
+    }
+}
+
+#[inline(always)]
+fn finish_fetched_elements(
+    uc: &Context,
+    element_flags: ElementFlags<'_>,
+    p_dst_list: &RefListView<Element>,
+    num_elements: usize,
+    ignore_duplicates: bool,
+) -> Result<(), Fail> {
+    // C: `ufbx_element_list *list = (ufbx_element_list*)p_dst_list;` — the
+    // cast is the parameter type here.
+    p_dst_list.set_data(
+        uc.result_view()
+            .push_pop::<*mut Element>(uc.tmp_stack_view(), num_elements)
+            as *const Ref<Element>,
+    );
+    p_dst_list.set_count(num_elements);
+    ufbxi_check!(uc, !p_dst_list.data().is_null(), "list->data");
+
+    if ignore_duplicates {
+        // C: `ufbxi_for_ptr_list(ufbx_element, p_elem, *list)` — indexed over
+        // the same run of element refs the fetch just wrote.
+        for elem_ix in 0..p_dst_list.count() {
+            let p_elem: &ElementView = p_dst_list.at(elem_ix);
+            element_flags.set(p_elem.element_id() as usize, 0);
+        }
+    }
+
+    Ok(())
+}
+
+#[inline(always)]
+fn scan_dst_elements<M: Mode>(
+    uc: &Context,
+    element_flags: ElementFlags<'_>,
+    element: &View<Element, M>,
+    ignore_duplicates: bool,
+    prop: Option<&[u8]>,
+    src_type: ElementType,
+    num_elements: &mut usize,
+) -> Result<(), Fail> {
+    let conns = find_dst_connections(element, prop);
+    // C: `ufbxi_for_list(ufbx_connection, conn, conns)` — Run iteration
+    // preserves the C `for` increment when the body continues.
+    for conn in conns.iter() {
+        let src_view = conn.src_view();
+        if src_view.type_() == src_type {
+            if ignore_duplicates {
+                let element_id = src_view.element_id();
+                if element_flags.get(element_id as usize) != 0 {
+                    ufbxi_check!(
+                        uc,
+                        // C re-reads `element->element_id` for the warning.
+                        ufbxi_warnf_tag!(
+                            uc,
+                            WarningType::DuplicateConnection,
+                            element_id,
+                            "Duplicate connection to %u",
+                            element.element_id()
+                        )
+                        .is_ok(),
+                        "ufbxi_warnf_imp(&uc->warnings, UFBX_WARNING_DUPLICATE_CONNECTION, (element_id), \"Duplicate connection to %u\", element->element_id)"
+                    );
+                    continue;
+                }
+                element_flags.set(element_id as usize, 1);
+            }
+            let p_elem: *mut *mut Element = uc.tmp_stack_view().push(1);
+            ufbxi_check!(uc, !p_elem.is_null(), "p_elem");
+            // SAFETY: `p_elem` is non-null (checked) and addresses the slot
+            // just pushed on `tmp_stack`; `conn.src()` names a live scene
+            // element.
+            unsafe { *p_elem = conn.src().ptr() };
+            *num_elements += 1;
+        }
+    }
+    Ok(())
 }
 
 // ufbx.c:19047-19083 `ufbxi_fetch_dst_elements`
@@ -2466,8 +2578,9 @@ pub(crate) unsafe fn get_element_node(element: *mut Element) -> *mut Element {
 // `size_of::<Element>()`, so a pointer derived from a header-only
 // `&View<Element>` may not address them.
 #[inline(never)]
-pub(crate) unsafe fn fetch_dst_elements(
+unsafe fn fetch_dst_elements(
     uc: &Context,
+    element_flags: ElementFlags<'_>,
     p_dst_list: &RefListView<Element>,
     element: *mut Element,
     search_node: bool,
@@ -2482,45 +2595,15 @@ pub(crate) unsafe fn fetch_dst_elements(
         // SAFETY: `element` is a live scene element — the caller's on the first
         // pass, `get_element_node`'s non-null result after that.
         let element_view: &ElementView = unsafe { ElementView::from_ptr(element) };
-        let conns = find_dst_connections(element_view, prop);
-        // C: `ufbxi_for_list(ufbx_connection, conn, conns)` — Run iteration
-        // preserves the C `for` increment when the body continues.
-        for conn in conns.iter() {
-            let src_view: &ElementView = conn.src_view();
-            if src_view.type_() == src_type {
-                if ignore_duplicates {
-                    let element_id: u32 = src_view.element_id();
-                    // SAFETY: `tmp_element_flag` is a byte per scene element and
-                    // `element_id` indexes the scene's element array.
-                    if unsafe { *uc.tmp_element_flag().add(element_id as usize) } != 0 {
-                        ufbxi_check!(
-                            uc,
-                            // C re-reads `element->element_id` for the warning.
-                            ufbxi_warnf_tag!(
-                                uc,
-                                WarningType::DuplicateConnection,
-                                element_id,
-                                "Duplicate connection to %u",
-                                element_view.element_id()
-                            )
-                            .is_ok(),
-                            "ufbxi_warnf_imp(&uc->warnings, UFBX_WARNING_DUPLICATE_CONNECTION, (element_id), \"Duplicate connection to %u\", element->element_id)"
-                        );
-                        continue;
-                    }
-                    // SAFETY: as the read above — `element_id` indexes the
-                    // per-element flag byte array.
-                    unsafe { *uc.tmp_element_flag().add(element_id as usize) = 1 };
-                }
-                let p_elem: *mut *mut Element = uc.tmp_stack_view().push(1);
-                ufbxi_check!(uc, !p_elem.is_null(), "p_elem");
-                // SAFETY: `p_elem` is non-null (checked) and addresses the slot
-                // just pushed on `tmp_stack`; `conn.src()` names a live scene
-                // element.
-                unsafe { *p_elem = conn.src().ptr() };
-                num_elements += 1;
-            }
-        }
+        scan_dst_elements(
+            uc,
+            element_flags,
+            element_view,
+            ignore_duplicates,
+            prop,
+            src_type,
+            &mut num_elements,
+        )?;
 
         if !(search_node && {
             // SAFETY: `element` is a live scene element (see the `find_dst_connections`
@@ -2532,28 +2615,44 @@ pub(crate) unsafe fn fetch_dst_elements(
         }
     }
 
-    // C: `ufbx_element_list *list = (ufbx_element_list*)p_dst_list;` — the
-    // cast is the parameter type here.
-    p_dst_list.set_data(
-        uc.result_view()
-            .push_pop::<*mut Element>(uc.tmp_stack_view(), num_elements)
-            as *const Ref<Element>,
-    );
-    p_dst_list.set_count(num_elements);
-    ufbxi_check!(uc, !p_dst_list.data().is_null(), "list->data");
+    finish_fetched_elements(
+        uc,
+        element_flags,
+        p_dst_list,
+        num_elements,
+        ignore_duplicates,
+    )
+}
 
-    if ignore_duplicates {
-        // C: `ufbxi_for_ptr_list(ufbx_element, p_elem, *list)` — indexed here
-        // over the same run of element refs the fetch just wrote.
-        for elem_ix in 0..p_dst_list.count() {
-            let p_elem: &ElementView = p_dst_list.at(elem_ix);
-            // SAFETY: `tmp_element_flag` is a byte per scene element and the
-            // listed element's `element_id` indexes the scene's element array.
-            unsafe { *uc.tmp_element_flag().add(p_elem.element_id() as usize) = 0 };
-        }
-    }
-
-    Ok(())
+/// Header-only `ufbxi_fetch_dst_elements` entry for call sites with
+/// `search_node == false`.
+#[inline(never)]
+fn fetch_dst_elements_header<M: Mode>(
+    uc: &Context,
+    element_flags: ElementFlags<'_>,
+    p_dst_list: &RefListView<Element>,
+    element: &View<Element, M>,
+    ignore_duplicates: bool,
+    prop: Option<&[u8]>,
+    src_type: ElementType,
+) -> Result<(), Fail> {
+    let mut num_elements = 0;
+    scan_dst_elements(
+        uc,
+        element_flags,
+        element,
+        ignore_duplicates,
+        prop,
+        src_type,
+        &mut num_elements,
+    )?;
+    finish_fetched_elements(
+        uc,
+        element_flags,
+        p_dst_list,
+        num_elements,
+        ignore_duplicates,
+    )
 }
 
 // ufbx.c:19085-19121 `ufbxi_fetch_src_elements`
@@ -2562,103 +2661,63 @@ pub(crate) unsafe fn fetch_dst_elements(
 // call site passes (C: `ufbx_element_list *list = (ufbx_element_list*)p_dst_list;`),
 // and the nullable `const char *prop` as `Option<&[u8]>` (see
 // `find_src_connections`).
-//
-// # Safety
-// `element` heads a live, arena-owned `ufbx_element`. With `search_node` set,
-// its provenance must additionally span the ENCLOSING element struct: the walk
-// then reaches `ufbxi_get_element_node`, which reads `ufbx_node` fields past
-// `size_of::<Element>()`, so a pointer derived from a header-only
-// `&View<Element>` may not address them. With `search_node` clear the walk
-// stays within the `ufbx_element` header, where header-only provenance suffices.
+// The C call site passes `search_node == false`, represented by an anchored
+// element-header view with no enclosing-node traversal.
 #[inline(never)]
-pub(crate) unsafe fn fetch_src_elements(
+fn fetch_src_elements<M: Mode>(
     uc: &Context,
+    element_flags: ElementFlags<'_>,
     p_dst_list: &RefListView<Element>,
-    element: *mut Element,
-    search_node: bool,
+    element: &View<Element, M>,
     ignore_duplicates: bool,
     prop: Option<&[u8]>,
     dst_type: ElementType,
 ) -> Result<(), Fail> {
-    let mut element: *mut Element = element;
     let mut num_elements: usize = 0;
 
-    loop {
-        // SAFETY: `element` is a live scene element — the caller's on the first
-        // pass, `get_element_node`'s non-null result after that.
-        let element_view: &ElementView = unsafe { ElementView::from_ptr(element) };
-        let conns = find_src_connections(element_view, prop);
-        // C: `ufbxi_for_list(ufbx_connection, conn, conns)` — Run iteration
-        // preserves the C `for` increment when the body continues.
-        for conn in conns.iter() {
-            let dst_view: &ElementView = conn.dst_view();
-            if dst_view.type_() == dst_type {
-                if ignore_duplicates {
-                    let element_id: u32 = dst_view.element_id();
-                    // SAFETY: `tmp_element_flag` is a byte per scene element and
-                    // `element_id` indexes the scene's element array.
-                    if unsafe { *uc.tmp_element_flag().add(element_id as usize) } != 0 {
-                        ufbxi_check!(
+    let conns = find_src_connections(element, prop);
+    // C: `ufbxi_for_list(ufbx_connection, conn, conns)` — Run iteration
+    // preserves the C `for` increment when the body continues.
+    for conn in conns.iter() {
+        let dst_view = conn.dst_view();
+        if dst_view.type_() == dst_type {
+            if ignore_duplicates {
+                let element_id = dst_view.element_id();
+                if element_flags.get(element_id as usize) != 0 {
+                    ufbxi_check!(
+                        uc,
+                        // C re-reads `element->element_id` for the warning.
+                        ufbxi_warnf_tag!(
                             uc,
-                            // C re-reads `element->element_id` for the warning.
-                            ufbxi_warnf_tag!(
-                                uc,
-                                WarningType::DuplicateConnection,
-                                element_id,
-                                "Duplicate connection to %u",
-                                element_view.element_id()
-                            )
-                            .is_ok(),
-                            "ufbxi_warnf_imp(&uc->warnings, UFBX_WARNING_DUPLICATE_CONNECTION, (element_id), \"Duplicate connection to %u\", element->element_id)"
-                        );
-                        continue;
-                    }
-                    // SAFETY: as the read above — `element_id` indexes the
-                    // per-element flag byte array.
-                    unsafe { *uc.tmp_element_flag().add(element_id as usize) = 1 };
+                            WarningType::DuplicateConnection,
+                            element_id,
+                            "Duplicate connection to %u",
+                            element.element_id()
+                        )
+                        .is_ok(),
+                        "ufbxi_warnf_imp(&uc->warnings, UFBX_WARNING_DUPLICATE_CONNECTION, (element_id), \"Duplicate connection to %u\", element->element_id)"
+                    );
+                    continue;
                 }
-                let p_elem: *mut *mut Element = uc.tmp_stack_view().push(1);
-                ufbxi_check!(uc, !p_elem.is_null(), "p_elem");
-                // SAFETY: `p_elem` is non-null (checked) and addresses the slot
-                // just pushed on `tmp_stack`; `conn.dst()` names a live scene
-                // element.
-                unsafe { *p_elem = conn.dst().ptr() };
-                num_elements += 1;
+                element_flags.set(element_id as usize, 1);
             }
-        }
-
-        if !(search_node && {
-            // SAFETY: `element` is a live scene element (see the `find_src_connections`
-            // call above).
-            element = unsafe { get_element_node(element) };
-            !element.is_null()
-        }) {
-            break;
+            let p_elem: *mut *mut Element = uc.tmp_stack_view().push(1);
+            ufbxi_check!(uc, !p_elem.is_null(), "p_elem");
+            // SAFETY: `p_elem` is non-null (checked) and addresses the slot
+            // just pushed on `tmp_stack`; `conn.dst()` names a live scene
+            // element.
+            unsafe { *p_elem = conn.dst().ptr() };
+            num_elements += 1;
         }
     }
 
-    // C: `ufbx_element_list *list = (ufbx_element_list*)p_dst_list;` — the
-    // cast is the parameter type here.
-    p_dst_list.set_data(
-        uc.result_view()
-            .push_pop::<*mut Element>(uc.tmp_stack_view(), num_elements)
-            as *const Ref<Element>,
-    );
-    p_dst_list.set_count(num_elements);
-    ufbxi_check!(uc, !p_dst_list.data().is_null(), "list->data");
-
-    if ignore_duplicates {
-        // C: `ufbxi_for_ptr_list(ufbx_element, p_elem, *list)` — indexed here
-        // over the same run of element refs the fetch just wrote.
-        for elem_ix in 0..p_dst_list.count() {
-            let p_elem: &ElementView = p_dst_list.at(elem_ix);
-            // SAFETY: `tmp_element_flag` is a byte per scene element and the
-            // listed element's `element_id` indexes the scene's element array.
-            unsafe { *uc.tmp_element_flag().add(p_elem.element_id() as usize) = 0 };
-        }
-    }
-
-    Ok(())
+    finish_fetched_elements(
+        uc,
+        element_flags,
+        p_dst_list,
+        num_elements,
+        ignore_duplicates,
+    )
 }
 
 /// Find the first source of `src_type` connected to one element header.
@@ -8163,6 +8222,10 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
 
     uc.set_tmp_element_flag(uc.tmp_view().push_zero::<u8>(num_elements));
     ufbxi_check!(uc, !uc.tmp_element_flag().is_null(), "uc->tmp_element_flag");
+    // SAFETY: `push_zero` returned `num_elements` initialized bytes in the
+    // context's stable temporary arena, and the non-null failure sentinel was
+    // checked above.
+    let element_flags = unsafe { ElementFlags::from_context(uc, num_elements) };
 
     uc.scene_view()
         .metadata_view()
@@ -8389,19 +8452,15 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
                 .set_data(node.attrib_ptr() as *const Ref<Element>);
         }
 
-        // SAFETY: `node.element_raw()` addresses that element's
-        // header with whole-struct provenance.
-        unsafe {
-            fetch_dst_elements(
-                uc,
-                node.materials_view().as_element_list(),
-                node.element_raw(),
-                false,
-                false,
-                None,
-                ElementType::Material,
-            )
-        }?;
+        fetch_dst_elements_header(
+            uc,
+            element_flags,
+            node.materials_view().as_element_list(),
+            node.element(),
+            false,
+            None,
+            ElementType::Material,
+        )?;
     }
 
     // Resolve bind pose bones that don't use the normal connection system
@@ -8501,21 +8560,15 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
         // C: `ufbxi_for_ptr_list(ufbx_element, p_elem, uc->scene.elements_by_type[type])`
         for elem_ix in 0..typed_elems.count() {
             let elem: &ElementView = typed_elems.at(elem_ix);
-            // SAFETY: `elem.get()` addresses that element's live header, minted
-            // from the scene's element-ref list; `search_node` is `false` here
-            // (C: ufbx.c:21832), so the walk never leaves the `ufbx_element`
-            // header and the view's header-only provenance suffices.
-            unsafe {
-                fetch_src_elements(
-                    uc,
-                    elem.instances_view().as_element_list(),
-                    elem.get(),
-                    false,
-                    true,
-                    None,
-                    ElementType::Node,
-                )
-            }?;
+            fetch_src_elements(
+                uc,
+                element_flags,
+                elem.instances_view().as_element_list(),
+                elem,
+                true,
+                None,
+                ElementType::Node,
+            )?;
         }
         attrib_type += 1;
     }
@@ -8541,19 +8594,15 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
     let scene_skin_deformers: &RefListView<SkinDeformer> = uc.scene_view().skin_deformers_view();
     for skin_ix in 0..scene_skin_deformers.count() {
         let skin_view: &View<SkinDeformer> = scene_skin_deformers.at(skin_ix);
-        // SAFETY: `skin_view.element_raw()` addresses that element's
-        // header with whole-struct provenance.
-        unsafe {
-            fetch_dst_elements(
-                uc,
-                skin_view.clusters_view().as_element_list(),
-                skin_view.element_raw(),
-                false,
-                true,
-                None,
-                ElementType::SkinCluster,
-            )
-        }?;
+        fetch_dst_elements_header(
+            uc,
+            element_flags,
+            skin_view.clusters_view().as_element_list(),
+            skin_view.element(),
+            true,
+            None,
+            ElementType::SkinCluster,
+        )?;
 
         // Remove clusters without a valid `bone`
         if !uc.opts_view().connect_broken_elements() {
@@ -8754,19 +8803,15 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
     let scene_blend_deformers: &RefListView<BlendDeformer> = uc.scene_view().blend_deformers_view();
     for blend_ix in 0..scene_blend_deformers.count() {
         let blend: &View<BlendDeformer> = scene_blend_deformers.at(blend_ix);
-        // SAFETY: `blend.element_raw()` addresses that element's
-        // header with whole-struct provenance.
-        unsafe {
-            fetch_dst_elements(
-                uc,
-                blend.channels_view().as_element_list(),
-                blend.element_raw(),
-                false,
-                true,
-                None,
-                ElementType::BlendChannel,
-            )
-        }?;
+        fetch_dst_elements_header(
+            uc,
+            element_flags,
+            blend.channels_view().as_element_list(),
+            blend.element(),
+            true,
+            None,
+            ElementType::BlendChannel,
+        )?;
     }
 
     // C: `ufbxi_for_ptr_list(ufbx_cache_deformer, p_deformer, uc->scene.cache_deformers)`
@@ -9171,6 +9216,7 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
             unsafe {
                 fetch_dst_elements(
                     uc,
+                    element_flags,
                     mesh.skin_deformers_view().as_element_list(),
                     mesh.element_raw(),
                     search_node,
@@ -9184,6 +9230,7 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
             unsafe {
                 fetch_dst_elements(
                     uc,
+                    element_flags,
                     mesh.blend_deformers_view().as_element_list(),
                     mesh.element_raw(),
                     search_node,
@@ -9197,6 +9244,7 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
             unsafe {
                 fetch_dst_elements(
                     uc,
+                    element_flags,
                     mesh.cache_deformers_view().as_element_list(),
                     mesh.element_raw(),
                     search_node,
@@ -9290,19 +9338,15 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
     let anim_stacks: &RefListView<AnimStack> = uc.scene_view().anim_stacks_view();
     for stack_ix in 0..anim_stacks.count() {
         let stack: &AnimStackView = anim_stacks.at(stack_ix);
-        // SAFETY: `stack.element_raw()` addresses that element's
-        // header with whole-struct provenance.
-        unsafe {
-            fetch_dst_elements(
-                uc,
-                stack.layers_view().as_element_list(),
-                stack.element_raw(),
-                false,
-                true,
-                None,
-                ElementType::AnimLayer,
-            )
-        }?;
+        fetch_dst_elements_header(
+            uc,
+            element_flags,
+            stack.layers_view().as_element_list(),
+            stack.element(),
+            true,
+            None,
+            ElementType::AnimLayer,
+        )?;
 
         // SAFETY: `anim_raw()` addresses the stack's own anim-pointer slot
         // (`Ref<Anim>` is `repr(transparent)` over the pointer); the fetch
@@ -9327,19 +9371,15 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
         // `ufbxi_push_anim` copies from), never from the element view.
         let p_layer: *mut *mut AnimLayer =
             (anim_layers.data() as *mut *mut AnimLayer).wrapping_add(layer_ix);
-        // SAFETY: `layer.element_raw()` addresses that element's
-        // header with whole-struct provenance.
-        unsafe {
-            fetch_dst_elements(
-                uc,
-                layer.anim_values_view().as_element_list(),
-                layer.element_raw(),
-                false,
-                true,
-                None,
-                ElementType::AnimValue,
-            )
-        }?;
+        fetch_dst_elements_header(
+            uc,
+            element_flags,
+            layer.anim_values_view().as_element_list(),
+            layer.element(),
+            true,
+            None,
+            ElementType::AnimValue,
+        )?;
 
         // SAFETY: `anim_raw()` addresses the layer's own anim-pointer slot;
         // `p_layer` addresses this layer's own slot of the scene's
@@ -9539,19 +9579,15 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
     let shaders: &RefListView<Shader> = uc.scene_view().shaders_view();
     for shader_ix in 0..shaders.count() {
         let shader: &ShaderView = shaders.at(shader_ix);
-        // SAFETY: `shader.element_raw()` addresses that element's
-        // header with whole-struct provenance.
-        unsafe {
-            fetch_dst_elements(
-                uc,
-                shader.bindings_view().as_element_list(),
-                shader.element_raw(),
-                false,
-                false,
-                None,
-                ElementType::ShaderBinding,
-            )
-        }?;
+        fetch_dst_elements_header(
+            uc,
+            element_flags,
+            shader.bindings_view().as_element_list(),
+            shader.element(),
+            false,
+            None,
+            ElementType::ShaderBinding,
+        )?;
 
         let api: Option<&PropView> = find_prop_len(shader.props_view(), b"RenderAPI");
         if let Some(api) = api {
@@ -9673,6 +9709,7 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
             unsafe {
                 fetch_dst_elements(
                     uc,
+                    element_flags,
                     RefListView::<Element>::from_ptr(textures as *mut RefList<Element>),
                     mesh.element_raw(),
                     true,
@@ -10052,38 +10089,30 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
     let scene_display_layers: &RefListView<DisplayLayer> = uc.scene_view().display_layers_view();
     for layer_ix in 0..scene_display_layers.count() {
         let layer: &DisplayLayerView = scene_display_layers.at(layer_ix);
-        // SAFETY: `layer.element_raw()` addresses that element's
-        // header with whole-struct provenance.
-        unsafe {
-            fetch_dst_elements(
-                uc,
-                layer.nodes_view().as_element_list(),
-                layer.element_raw(),
-                false,
-                true,
-                None,
-                ElementType::Node,
-            )
-        }?;
+        fetch_dst_elements_header(
+            uc,
+            element_flags,
+            layer.nodes_view().as_element_list(),
+            layer.element(),
+            true,
+            None,
+            ElementType::Node,
+        )?;
     }
 
     // C: `ufbxi_for_ptr_list(ufbx_selection_set, p_set, uc->scene.selection_sets)`
     let scene_selection_sets: &RefListView<SelectionSet> = uc.scene_view().selection_sets_view();
     for set_ix in 0..scene_selection_sets.count() {
         let set: &View<SelectionSet> = scene_selection_sets.at(set_ix);
-        // SAFETY: `set.element_raw()` addresses that element's
-        // header with whole-struct provenance.
-        unsafe {
-            fetch_dst_elements(
-                uc,
-                set.nodes_view().as_element_list(),
-                set.element_raw(),
-                false,
-                true,
-                None,
-                ElementType::SelectionNode,
-            )
-        }?;
+        fetch_dst_elements_header(
+            uc,
+            element_flags,
+            set.nodes_view().as_element_list(),
+            set.element(),
+            true,
+            None,
+            ElementType::SelectionNode,
+        )?;
     }
 
     // C: `ufbxi_for_ptr_list(ufbx_selection_node, p_node, uc->scene.selection_nodes)`
@@ -10213,19 +10242,15 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
     let scene_audio_layers: &RefListView<AudioLayer> = uc.scene_view().audio_layers_view();
     for layer_ix in 0..scene_audio_layers.count() {
         let layer: &View<AudioLayer> = scene_audio_layers.at(layer_ix);
-        // SAFETY: `layer.element_raw()` addresses that element's
-        // header with whole-struct provenance.
-        unsafe {
-            fetch_dst_elements(
-                uc,
-                layer.clips_view().as_element_list(),
-                layer.element_raw(),
-                false,
-                true,
-                None,
-                ElementType::AudioClip,
-            )
-        }?;
+        fetch_dst_elements_header(
+            uc,
+            element_flags,
+            layer.clips_view().as_element_list(),
+            layer.element(),
+            true,
+            None,
+            ElementType::AudioClip,
+        )?;
     }
 
     // C: `ufbxi_for_ptr_list(ufbx_lod_group, p_lod, uc->scene.lod_groups)`
@@ -13012,6 +13037,71 @@ mod tests {
     const FBX_MAP_COUNT: u8 = MaterialFbxMap::VectorDisplacement as u8 + 1;
     const PBR_MAP_COUNT: u8 = MaterialPbrMap::TransmissionGlossiness as u8 + 1;
     const FEATURE_COUNT: u8 = MaterialFeature::TransmissionRoughnessAsGlossiness as u8 + 1;
+
+    #[test]
+    fn element_node_walks_helpers_and_instances() {
+        let path = format!(
+            "{}/../../data/max_geometry_transform_instances_6100_binary.fbx",
+            env!("CARGO_MANIFEST_DIR")
+        );
+        let data = std::fs::read(path).expect("geometry-transform fixture");
+        let root = crate::load_memory(
+            &data,
+            crate::LoadOpts {
+                geometry_transform_handling: GeometryTransformHandling::HelperNodes,
+                ..Default::default()
+            },
+        )
+        .expect("load geometry-transform fixture");
+
+        // Stored `Ref` pointers retain the scene arena's whole-allocation write
+        // provenance; no `&Node`/`&Mesh` cast is used for these raw entry calls.
+        let node_refs: &[Ref<Node>] = root.nodes.as_ref();
+        let helper = node_refs
+            .iter()
+            .copied()
+            .find(|node| node.view::<Mut>().is_geometry_transform_helper())
+            .expect("geometry transform helper");
+        let ordinary = node_refs
+            .iter()
+            .copied()
+            .find(|node| !node.view::<Mut>().is_geometry_transform_helper())
+            .expect("ordinary node");
+
+        let helper_view: &NodeView = helper.view();
+        let parent = helper_view.parent().expect("helper parent");
+        // SAFETY: both node element pointers come from stored scene `Ref`s and
+        // retain whole-Node provenance, which is `get_element_node`'s contract.
+        assert_eq!(
+            unsafe { get_element_node(helper_view.element_raw()) },
+            parent.ptr().cast::<Element>()
+        );
+        let ordinary_view: &NodeView = ordinary.view();
+        assert!(unsafe { get_element_node(ordinary_view.element_raw()) }.is_null());
+
+        let mesh_refs: &[Ref<Mesh>] = root.meshes.as_ref();
+        let mesh = mesh_refs
+            .iter()
+            .copied()
+            .find(|mesh| mesh.view::<Mut>().element().instances_view().count() > 0)
+            .expect("instanced mesh");
+        let mesh_view: &View<Mesh> = mesh.view();
+        let expected = mesh_view
+            .element()
+            .instances_view()
+            .at(0)
+            .get()
+            .cast::<Element>();
+        // SAFETY: the mesh element pointer comes from its stored scene `Ref`
+        // and therefore satisfies the raw entry contract.
+        assert_eq!(
+            unsafe { get_element_node(mesh_view.element_raw()) },
+            expected
+        );
+
+        // SAFETY: null is explicitly accepted by the function contract.
+        assert!(unsafe { get_element_node(ptr::null_mut()) }.is_null());
+    }
 
     // Transcription guard for the ufbx.c:19443-19960 tables. C derives
     // `prop_len` from the literal via `sizeof(str) - 1`, so it must equal the
