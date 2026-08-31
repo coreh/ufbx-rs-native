@@ -558,9 +558,7 @@ override_functions["ufbx_find_element_len"] = """
 #[allow(clippy::needless_lifetimes)]
 pub fn find_element<'a>(scene: &'a Scene, type_: ElementType, name: &str) -> Option<&'a Element> {
     let result = crate::native::api::find_element_len(
-        Some(unsafe {
-            crate::native::view::View::<Scene, crate::native::view::Const>::from_ptr(scene as *const Scene)
-        }),
+        Some(crate::native::view::View::<Scene, crate::native::view::Const>::from_ref(scene)),
         type_,
         name.as_bytes(),
     );
@@ -576,9 +574,7 @@ override_functions["ufbx_find_node_len"] = """
 #[allow(clippy::needless_lifetimes)]
 pub fn find_node<'a>(scene: &'a Scene, name: &str) -> Option<&'a Node> {
     let result = crate::native::api::find_node_len(
-        Some(unsafe {
-            crate::native::view::View::<Scene, crate::native::view::Const>::from_ptr(scene as *const Scene)
-        }),
+        Some(crate::native::view::View::<Scene, crate::native::view::Const>::from_ref(scene)),
         name.as_bytes(),
     );
     if result.is_null() {
@@ -593,9 +589,7 @@ override_functions["ufbx_find_anim_stack_len"] = """
 #[allow(clippy::needless_lifetimes)]
 pub fn find_anim_stack<'a>(scene: &'a Scene, name: &str) -> Option<&'a AnimStack> {
     let result = crate::native::api::find_anim_stack_len(
-        Some(unsafe {
-            crate::native::view::View::<Scene, crate::native::view::Const>::from_ptr(scene as *const Scene)
-        }),
+        Some(crate::native::view::View::<Scene, crate::native::view::Const>::from_ref(scene)),
         name.as_bytes(),
     );
     if result.is_null() {
@@ -610,9 +604,7 @@ override_functions["ufbx_find_material_len"] = """
 #[allow(clippy::needless_lifetimes)]
 pub fn find_material<'a>(scene: &'a Scene, name: &str) -> Option<&'a Material> {
     let result = crate::native::api::find_material_len(
-        Some(unsafe {
-            crate::native::view::View::<Scene, crate::native::view::Const>::from_ptr(scene as *const Scene)
-        }),
+        Some(crate::native::view::View::<Scene, crate::native::view::Const>::from_ref(scene)),
         name.as_bytes(),
     );
     if result.is_null() {
@@ -627,13 +619,11 @@ override_functions["ufbx_find_anim_prop_len"] = """
 #[allow(clippy::needless_lifetimes)]
 pub fn find_anim_prop<'a>(
     layer: &'a AnimLayer,
-    element: &'a Element,
+    element: &Element,
     prop: &str,
 ) -> Option<&'a AnimProp> {
     let result = crate::native::api::find_anim_prop_len(
-        Some(unsafe {
-            crate::native::view::View::<AnimLayer, crate::native::view::Const>::from_ptr(layer as *const AnimLayer)
-        }),
+        Some(crate::native::view::View::<AnimLayer, crate::native::view::Const>::from_ref(layer)),
         element as *const Element,
         prop.as_bytes(),
     );
@@ -643,24 +633,14 @@ pub fn find_anim_prop<'a>(
 
 override_functions["ufbx_find_anim_props"] = """
 #[allow(clippy::needless_lifetimes)]
-pub fn find_anim_props<'a>(layer: &'a AnimLayer, element: &'a Element) -> &'a [AnimProp] {
+pub fn find_anim_props<'a>(layer: &'a AnimLayer, element: &Element) -> &'a [AnimProp] {
     let result = crate::native::api::find_anim_props(
-        Some(unsafe {
-            crate::native::view::View::<AnimLayer, crate::native::view::Const>::from_ptr(layer as *const AnimLayer)
-        }),
+        Some(crate::native::view::View::<AnimLayer, crate::native::view::Const>::from_ref(layer)),
         element as *const Element,
     );
     unsafe { result.as_static_ref() }
 }
 """
-
-override_functions["ufbx_find_shader_prop_len"] = """
-pub fn find_shader_prop<'a>(shader: &'a Shader, name: &'a str) -> &'a str {
-    let result = unsafe { crate::native::api::find_shader_prop_len(shader as *const Shader, name.as_bytes()) };
-    unsafe { result.as_static_ref() }
-}
-"""
-
 
 # The dom_* family: native fns take mode-generic views; the safe wrappers mint
 # read-only `Const` views from the caller's `&DomNode` (the mint every readable
@@ -681,11 +661,9 @@ pub fn dom_find<'a>(parent: &'a DomNode, name: &str) -> Option<&'a DomNode> {
 # `&`-derived pointers), so the safe wrappers mint the view instead of casting
 # to a raw pointer.
 override_functions["ufbx_find_shader_prop_len"] = """
-pub fn find_shader_prop<'a>(shader: &'a Shader, name: &'a str) -> &'a str {
+pub fn find_shader_prop<'a>(shader: &'a Shader, name: &str) -> &'a str {
     let result = crate::native::api::find_shader_prop_len(
-        Some(unsafe {
-            crate::native::view::View::<Shader, crate::native::view::Const>::from_ptr(shader as *const Shader)
-        }),
+        Some(crate::native::view::View::<Shader, crate::native::view::Const>::from_ref(shader)),
         name.as_bytes(),
     );
     unsafe { result.as_static_ref() }
@@ -696,9 +674,7 @@ override_functions["ufbx_find_shader_prop_bindings_len"] = """
 #[allow(clippy::needless_lifetimes)]
 pub fn find_shader_prop_bindings<'a>(shader: &'a Shader, name: &str) -> &'a [ShaderPropBinding] {
     let result = crate::native::api::find_shader_prop_bindings_len(
-        Some(unsafe {
-            crate::native::view::View::<Shader, crate::native::view::Const>::from_ptr(shader as *const Shader)
-        }),
+        Some(crate::native::view::View::<Shader, crate::native::view::Const>::from_ref(shader)),
         name.as_bytes(),
     );
     unsafe { result.as_static_ref() }
@@ -724,9 +700,7 @@ pub fn find_shader_texture_input<'a>(
 override_functions["ufbx_evaluate_curve"] = """
 pub fn evaluate_curve(curve: &AnimCurve, time: f64, default_value: Real) -> Real {
     crate::native::api::evaluate_curve(
-        Some(unsafe {
-            crate::native::view::View::<AnimCurve, crate::native::view::Const>::from_ptr(curve as *const AnimCurve)
-        }),
+        Some(crate::native::view::View::<AnimCurve, crate::native::view::Const>::from_ref(curve)),
         time,
         default_value,
     )
@@ -736,9 +710,7 @@ pub fn evaluate_curve(curve: &AnimCurve, time: f64, default_value: Real) -> Real
 override_functions["ufbx_evaluate_curve_flags"] = """
 pub fn evaluate_curve_flags(curve: &AnimCurve, time: f64, default_value: Real, flags: u32) -> Real {
     crate::native::api::evaluate_curve_flags(
-        Some(unsafe {
-            crate::native::view::View::<AnimCurve, crate::native::view::Const>::from_ptr(curve as *const AnimCurve)
-        }),
+        Some(crate::native::view::View::<AnimCurve, crate::native::view::Const>::from_ref(curve)),
         time,
         default_value,
         flags,
@@ -749,9 +721,7 @@ pub fn evaluate_curve_flags(curve: &AnimCurve, time: f64, default_value: Real, f
 override_functions["ufbx_evaluate_anim_value_real"] = """
 pub fn evaluate_anim_value_real(anim_value: &AnimValue, time: f64) -> Real {
     crate::native::api::evaluate_anim_value_real(
-        Some(unsafe {
-            crate::native::view::View::<AnimValue, crate::native::view::Const>::from_ptr(anim_value as *const AnimValue)
-        }),
+        Some(crate::native::view::View::<AnimValue, crate::native::view::Const>::from_ref(anim_value)),
         time,
     )
 }
@@ -760,9 +730,7 @@ pub fn evaluate_anim_value_real(anim_value: &AnimValue, time: f64) -> Real {
 override_functions["ufbx_evaluate_anim_value_vec3"] = """
 pub fn evaluate_anim_value_vec3(anim_value: &AnimValue, time: f64) -> Vec3 {
     crate::native::api::evaluate_anim_value_vec3(
-        Some(unsafe {
-            crate::native::view::View::<AnimValue, crate::native::view::Const>::from_ptr(anim_value as *const AnimValue)
-        }),
+        Some(crate::native::view::View::<AnimValue, crate::native::view::Const>::from_ref(anim_value)),
         time,
     )
 }
@@ -771,9 +739,7 @@ pub fn evaluate_anim_value_vec3(anim_value: &AnimValue, time: f64) -> Vec3 {
 override_functions["ufbx_evaluate_anim_value_real_flags"] = """
 pub fn evaluate_anim_value_real_flags(anim_value: &AnimValue, time: f64, flags: u32) -> Real {
     crate::native::api::evaluate_anim_value_real_flags(
-        Some(unsafe {
-            crate::native::view::View::<AnimValue, crate::native::view::Const>::from_ptr(anim_value as *const AnimValue)
-        }),
+        Some(crate::native::view::View::<AnimValue, crate::native::view::Const>::from_ref(anim_value)),
         time,
         flags,
     )
@@ -783,9 +749,7 @@ pub fn evaluate_anim_value_real_flags(anim_value: &AnimValue, time: f64, flags: 
 override_functions["ufbx_evaluate_anim_value_vec3_flags"] = """
 pub fn evaluate_anim_value_vec3_flags(anim_value: &AnimValue, time: f64, flags: u32) -> Vec3 {
     crate::native::api::evaluate_anim_value_vec3_flags(
-        Some(unsafe {
-            crate::native::view::View::<AnimValue, crate::native::view::Const>::from_ptr(anim_value as *const AnimValue)
-        }),
+        Some(crate::native::view::View::<AnimValue, crate::native::view::Const>::from_ref(anim_value)),
         time,
         flags,
     )
@@ -806,19 +770,30 @@ pub fn get_blend_shape_offset_index(shape: &BlendShape, vertex: usize) -> u32 {
 }
 """
 
+override_functions["ufbx_get_bone_pose"] = """
+#[allow(clippy::needless_lifetimes)]
+pub fn get_bone_pose<'a>(pose: &'a Pose, node: &Node) -> Option<&'a BonePose> {
+    let result = crate::native::api::get_bone_pose_entry(
+        Some(crate::native::view::View::<Pose, crate::native::view::Const>::from_ref(pose)),
+        Some(crate::native::view::View::<Node, crate::native::view::Const>::from_ref(node)),
+    );
+    result.map(|bone_pose| unsafe { &*bone_pose.as_ptr() })
+}
+"""
+
 override_functions["ufbx_dom_is_array"] = """
 pub fn dom_is_array(node: &DomNode) -> bool {
-    crate::native::api::dom_is_array(Some(unsafe {
-        crate::native::view::View::<DomNode, crate::native::view::Const>::from_ptr(node as *const DomNode)
-    }))
+    crate::native::api::dom_is_array(Some(
+        crate::native::view::View::<DomNode, crate::native::view::Const>::from_ref(node)
+    ))
 }
 """
 
 override_functions["ufbx_dom_array_size"] = """
 pub fn dom_array_size(node: &DomNode) -> usize {
-    crate::native::api::dom_array_size(Some(unsafe {
-        crate::native::view::View::<DomNode, crate::native::view::Const>::from_ptr(node as *const DomNode)
-    }))
+    crate::native::api::dom_array_size(Some(
+        crate::native::view::View::<DomNode, crate::native::view::Const>::from_ref(node)
+    ))
 }
 """
 
@@ -938,25 +913,21 @@ pub fn find_baked_element<'a>(
 override_functions["ufbx_find_prop_len"] = """
 #[allow(clippy::needless_lifetimes)]
 pub fn find_prop<'a>(props: &'a Props, name: &str) -> Option<&'a Prop> {
-    let result = unsafe {
-        crate::native::api::find_prop_len(
-            crate::native::view::View::<Props, crate::native::view::Const>::from_ptr(props as *const Props),
-            name.as_bytes(),
-        )
-    };
+    let result = crate::native::api::find_prop_len(
+        crate::native::view::View::<Props, crate::native::view::Const>::from_ref(props),
+        name.as_bytes(),
+    );
     result.map(|prop| unsafe { &*prop.as_ptr() })
 }
 """
 
 override_functions["ufbx_find_blob_len"] = """
 pub fn find_blob(props: &Props, name: &str, def: Blob) -> Blob {
-    unsafe {
-        crate::native::api::find_blob_len(
-            crate::native::view::View::<Props, crate::native::view::Const>::from_ptr(props as *const Props),
-            name.as_bytes(),
-            def,
-        )
-    }
+    crate::native::api::find_blob_len(
+        crate::native::view::View::<Props, crate::native::view::Const>::from_ref(props),
+        name.as_bytes(),
+        def,
+    )
 }
 """
 
@@ -1023,8 +994,22 @@ override_member_functions["ufbx_find_string_len"] = """
 // TODO: find_string()
 """
 
+override_member_functions["ufbx_find_anim_prop_len"] = """
+#[allow(clippy::needless_lifetimes)]
+pub fn find_anim_prop<'a>(&'a self, element: &Element, prop: &str) -> Option<&'a AnimProp> {
+    find_anim_prop(self, element, prop)
+}
+"""
+
+override_member_functions["ufbx_find_anim_props"] = """
+#[allow(clippy::needless_lifetimes)]
+pub fn find_anim_props<'a>(&'a self, element: &Element) -> &'a [AnimProp] {
+    find_anim_props(self, element)
+}
+"""
+
 override_member_functions["ufbx_find_shader_prop_len"] = """
-pub fn find_shader_prop<'a>(&'a self, name: &'a str) -> &'a str {
+pub fn find_shader_prop<'a>(&'a self, name: &str) -> &'a str {
     find_shader_prop(self, name)
 }
 """
@@ -2002,11 +1987,27 @@ const_view_args = {
     "ufbx_evaluate_blend_weight_flags": {"anim": "Anim", "channel": "BlendChannel"},
 }
 
+# These direct native calls receive no raw object pointers: each safe wrapper
+# constructs the `Const` views above. The general direct-safe test below is
+# deliberately conservative about pointer returns and panic slots, so keep the
+# audited exceptions explicit rather than broadening it globally.
+safe_const_view_calls = {
+    "ufbx_catch_get_vertex_real",
+    "ufbx_catch_get_vertex_vec2",
+    "ufbx_catch_get_vertex_vec3",
+    "ufbx_catch_get_vertex_vec4",
+    "ufbx_catch_get_vertex_w_vec3",
+    "ufbx_catch_get_weighted_face_normal",
+    "ufbx_find_prop_element_len",
+    "ufbx_evaluate_blend_weight",
+    "ufbx_evaluate_blend_weight_flags",
+}
+
 def apply_const_view_args(cname, arg_pass):
     for aname, aty in const_view_args.get(cname, {}).items():
         raw = f"{aname} as *const {aty}"
         mint = (f"crate::native::view::View::<{aty}, crate::native::view::Const>"
-                f"::from_ptr({raw})")
+                f"::from_ref({aname})")
         arg_pass[:] = [mint if a == raw else a for a in arg_pass]
 
 def parse_capi_forwarders(capi_path):
@@ -2223,14 +2224,19 @@ def emit_function(rf: RustFunction, non_raw: bool = False):
         fwd is not None
         and not is_raw
         and not rf.ir.is_unsafe
-        and not rf.ir.has_error
-        and not rf.ir.has_panic
-        and not rf.ir.alloc_type
-        and not rf.return_type.is_void
-        and not rf.return_type.is_list
-        and not rf.return_type.is_string
-        and rf.return_type.kind != "pointer"
-        and all(_arg_by_value(a) for a in rf.args)
+        and (
+            rf.ir.name in safe_const_view_calls
+            or (
+                not rf.ir.has_error
+                and not rf.ir.has_panic
+                and not rf.ir.alloc_type
+                and not rf.return_type.is_void
+                and not rf.return_type.is_list
+                and not rf.return_type.is_string
+                and rf.return_type.kind != "pointer"
+                and all(_arg_by_value(a) for a in rf.args)
+            )
+        )
     )
     # The callee for this wrapper body: the native fn when the shim is a pure
     # forward, else the capi shim itself (adapters that bridge/adapt args).

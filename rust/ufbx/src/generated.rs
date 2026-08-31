@@ -4704,14 +4704,10 @@ pub fn format_error(dst: &mut [u8], error: &Error) -> usize {
 
 #[allow(clippy::needless_lifetimes)]
 pub fn find_prop<'a>(props: &'a Props, name: &str) -> Option<&'a Prop> {
-    let result = unsafe {
-        crate::native::api::find_prop_len(
-            crate::native::view::View::<Props, crate::native::view::Const>::from_ptr(
-                props as *const Props,
-            ),
-            name.as_bytes(),
-        )
-    };
+    let result = crate::native::api::find_prop_len(
+        crate::native::view::View::<Props, crate::native::view::Const>::from_ref(props),
+        name.as_bytes(),
+    );
     result.map(|prop| unsafe { &*prop.as_ptr() })
 }
 
@@ -4726,15 +4722,11 @@ pub fn find_prop<'a>(props: &'a Props, name: &str) -> Option<&'a Prop> {
 // TODO: Property find functions
 
 pub fn find_blob(props: &Props, name: &str, def: Blob) -> Blob {
-    unsafe {
-        crate::native::api::find_blob_len(
-            crate::native::view::View::<Props, crate::native::view::Const>::from_ptr(
-                props as *const Props,
-            ),
-            name.as_bytes(),
-            def,
-        )
-    }
+    crate::native::api::find_blob_len(
+        crate::native::view::View::<Props, crate::native::view::Const>::from_ref(props),
+        name.as_bytes(),
+        def,
+    )
 }
 
 // TODO: ufbx_find_prop_concat()
@@ -4761,15 +4753,11 @@ pub fn find_prop_element<'a>(
     name: &str,
     type_: ElementType,
 ) -> Option<&'a Element> {
-    let result = unsafe {
-        crate::native::api::find_prop_element_len(
-            crate::native::view::View::<Element, crate::native::view::Const>::from_ptr(
-                element as *const Element,
-            ),
-            name.as_bytes(),
-            type_,
-        )
-    };
+    let result = crate::native::api::find_prop_element_len(
+        crate::native::view::View::<Element, crate::native::view::Const>::from_ref(element),
+        name.as_bytes(),
+        type_,
+    );
     if result.is_null() {
         None
     } else {
@@ -4780,11 +4768,7 @@ pub fn find_prop_element<'a>(
 #[allow(clippy::needless_lifetimes)]
 pub fn find_element<'a>(scene: &'a Scene, type_: ElementType, name: &str) -> Option<&'a Element> {
     let result = crate::native::api::find_element_len(
-        Some(unsafe {
-            crate::native::view::View::<Scene, crate::native::view::Const>::from_ptr(
-                scene as *const Scene,
-            )
-        }),
+        Some(crate::native::view::View::<Scene, crate::native::view::Const>::from_ref(scene)),
         type_,
         name.as_bytes(),
     );
@@ -4798,11 +4782,7 @@ pub fn find_element<'a>(scene: &'a Scene, type_: ElementType, name: &str) -> Opt
 #[allow(clippy::needless_lifetimes)]
 pub fn find_node<'a>(scene: &'a Scene, name: &str) -> Option<&'a Node> {
     let result = crate::native::api::find_node_len(
-        Some(unsafe {
-            crate::native::view::View::<Scene, crate::native::view::Const>::from_ptr(
-                scene as *const Scene,
-            )
-        }),
+        Some(crate::native::view::View::<Scene, crate::native::view::Const>::from_ref(scene)),
         name.as_bytes(),
     );
     if result.is_null() {
@@ -4815,11 +4795,7 @@ pub fn find_node<'a>(scene: &'a Scene, name: &str) -> Option<&'a Node> {
 #[allow(clippy::needless_lifetimes)]
 pub fn find_anim_stack<'a>(scene: &'a Scene, name: &str) -> Option<&'a AnimStack> {
     let result = crate::native::api::find_anim_stack_len(
-        Some(unsafe {
-            crate::native::view::View::<Scene, crate::native::view::Const>::from_ptr(
-                scene as *const Scene,
-            )
-        }),
+        Some(crate::native::view::View::<Scene, crate::native::view::Const>::from_ref(scene)),
         name.as_bytes(),
     );
     if result.is_null() {
@@ -4832,11 +4808,7 @@ pub fn find_anim_stack<'a>(scene: &'a Scene, name: &str) -> Option<&'a AnimStack
 #[allow(clippy::needless_lifetimes)]
 pub fn find_material<'a>(scene: &'a Scene, name: &str) -> Option<&'a Material> {
     let result = crate::native::api::find_material_len(
-        Some(unsafe {
-            crate::native::view::View::<Scene, crate::native::view::Const>::from_ptr(
-                scene as *const Scene,
-            )
-        }),
+        Some(crate::native::view::View::<Scene, crate::native::view::Const>::from_ref(scene)),
         name.as_bytes(),
     );
     if result.is_null() {
@@ -4849,15 +4821,14 @@ pub fn find_material<'a>(scene: &'a Scene, name: &str) -> Option<&'a Material> {
 #[allow(clippy::needless_lifetimes)]
 pub fn find_anim_prop<'a>(
     layer: &'a AnimLayer,
-    element: &'a Element,
+    element: &Element,
     prop: &str,
 ) -> Option<&'a AnimProp> {
     let result = crate::native::api::find_anim_prop_len(
-        Some(unsafe {
-            crate::native::view::View::<AnimLayer, crate::native::view::Const>::from_ptr(
-                layer as *const AnimLayer,
-            )
-        }),
+        Some(crate::native::view::View::<
+            AnimLayer,
+            crate::native::view::Const,
+        >::from_ref(layer)),
         element as *const Element,
         prop.as_bytes(),
     );
@@ -4865,13 +4836,12 @@ pub fn find_anim_prop<'a>(
 }
 
 #[allow(clippy::needless_lifetimes)]
-pub fn find_anim_props<'a>(layer: &'a AnimLayer, element: &'a Element) -> &'a [AnimProp] {
+pub fn find_anim_props<'a>(layer: &'a AnimLayer, element: &Element) -> &'a [AnimProp] {
     let result = crate::native::api::find_anim_props(
-        Some(unsafe {
-            crate::native::view::View::<AnimLayer, crate::native::view::Const>::from_ptr(
-                layer as *const AnimLayer,
-            )
-        }),
+        Some(crate::native::view::View::<
+            AnimLayer,
+            crate::native::view::Const,
+        >::from_ref(layer)),
         element as *const Element,
     );
     unsafe { result.as_static_ref() }
@@ -4984,11 +4954,10 @@ pub unsafe fn open_memory_ctx_raw(
 
 pub fn evaluate_curve(curve: &AnimCurve, time: f64, default_value: Real) -> Real {
     crate::native::api::evaluate_curve(
-        Some(unsafe {
-            crate::native::view::View::<AnimCurve, crate::native::view::Const>::from_ptr(
-                curve as *const AnimCurve,
-            )
-        }),
+        Some(crate::native::view::View::<
+            AnimCurve,
+            crate::native::view::Const,
+        >::from_ref(curve)),
         time,
         default_value,
     )
@@ -4996,11 +4965,10 @@ pub fn evaluate_curve(curve: &AnimCurve, time: f64, default_value: Real) -> Real
 
 pub fn evaluate_curve_flags(curve: &AnimCurve, time: f64, default_value: Real, flags: u32) -> Real {
     crate::native::api::evaluate_curve_flags(
-        Some(unsafe {
-            crate::native::view::View::<AnimCurve, crate::native::view::Const>::from_ptr(
-                curve as *const AnimCurve,
-            )
-        }),
+        Some(crate::native::view::View::<
+            AnimCurve,
+            crate::native::view::Const,
+        >::from_ref(curve)),
         time,
         default_value,
         flags,
@@ -5009,33 +4977,30 @@ pub fn evaluate_curve_flags(curve: &AnimCurve, time: f64, default_value: Real, f
 
 pub fn evaluate_anim_value_real(anim_value: &AnimValue, time: f64) -> Real {
     crate::native::api::evaluate_anim_value_real(
-        Some(unsafe {
-            crate::native::view::View::<AnimValue, crate::native::view::Const>::from_ptr(
-                anim_value as *const AnimValue,
-            )
-        }),
+        Some(crate::native::view::View::<
+            AnimValue,
+            crate::native::view::Const,
+        >::from_ref(anim_value)),
         time,
     )
 }
 
 pub fn evaluate_anim_value_vec3(anim_value: &AnimValue, time: f64) -> Vec3 {
     crate::native::api::evaluate_anim_value_vec3(
-        Some(unsafe {
-            crate::native::view::View::<AnimValue, crate::native::view::Const>::from_ptr(
-                anim_value as *const AnimValue,
-            )
-        }),
+        Some(crate::native::view::View::<
+            AnimValue,
+            crate::native::view::Const,
+        >::from_ref(anim_value)),
         time,
     )
 }
 
 pub fn evaluate_anim_value_real_flags(anim_value: &AnimValue, time: f64, flags: u32) -> Real {
     crate::native::api::evaluate_anim_value_real_flags(
-        Some(unsafe {
-            crate::native::view::View::<AnimValue, crate::native::view::Const>::from_ptr(
-                anim_value as *const AnimValue,
-            )
-        }),
+        Some(crate::native::view::View::<
+            AnimValue,
+            crate::native::view::Const,
+        >::from_ref(anim_value)),
         time,
         flags,
     )
@@ -5043,11 +5008,10 @@ pub fn evaluate_anim_value_real_flags(anim_value: &AnimValue, time: f64, flags: 
 
 pub fn evaluate_anim_value_vec3_flags(anim_value: &AnimValue, time: f64, flags: u32) -> Vec3 {
     crate::native::api::evaluate_anim_value_vec3_flags(
-        Some(unsafe {
-            crate::native::view::View::<AnimValue, crate::native::view::Const>::from_ptr(
-                anim_value as *const AnimValue,
-            )
-        }),
+        Some(crate::native::view::View::<
+            AnimValue,
+            crate::native::view::Const,
+        >::from_ref(anim_value)),
         time,
         flags,
     )
@@ -5162,17 +5126,11 @@ pub fn evaluate_transform_flags(anim: &Anim, node: &Node, time: f64, flags: u32)
 
 #[allow(clippy::let_and_return)]
 pub fn evaluate_blend_weight(anim: &Anim, channel: &BlendChannel, time: f64) -> Real {
-    let result = unsafe {
-        crate::native::api::evaluate_blend_weight(
-            crate::native::view::View::<Anim, crate::native::view::Const>::from_ptr(
-                anim as *const Anim,
-            ),
-            crate::native::view::View::<BlendChannel, crate::native::view::Const>::from_ptr(
-                channel as *const BlendChannel,
-            ),
-            time,
-        )
-    };
+    let result = crate::native::api::evaluate_blend_weight(
+        crate::native::view::View::<Anim, crate::native::view::Const>::from_ref(anim),
+        crate::native::view::View::<BlendChannel, crate::native::view::Const>::from_ref(channel),
+        time,
+    );
     result
 }
 
@@ -5183,18 +5141,12 @@ pub fn evaluate_blend_weight_flags(
     time: f64,
     flags: u32,
 ) -> Real {
-    let result = unsafe {
-        crate::native::api::evaluate_blend_weight_flags(
-            crate::native::view::View::<Anim, crate::native::view::Const>::from_ptr(
-                anim as *const Anim,
-            ),
-            crate::native::view::View::<BlendChannel, crate::native::view::Const>::from_ptr(
-                channel as *const BlendChannel,
-            ),
-            time,
-            flags,
-        )
-    };
+    let result = crate::native::api::evaluate_blend_weight_flags(
+        crate::native::view::View::<Anim, crate::native::view::Const>::from_ref(anim),
+        crate::native::view::View::<BlendChannel, crate::native::view::Const>::from_ref(channel),
+        time,
+        flags,
+    );
     result
 }
 
@@ -5324,14 +5276,12 @@ pub fn evaluate_baked_quat(keyframes: &[BakedQuat], time: f64) -> Quat {
 }
 
 #[allow(clippy::needless_lifetimes)]
-pub fn get_bone_pose<'a>(pose: &'a Pose, node: &'a Node) -> Option<&'a BonePose> {
-    let result =
-        unsafe { crate::native::api::get_bone_pose(pose as *const Pose, node as *const Node) };
-    if result.is_null() {
-        None
-    } else {
-        unsafe { Some(&*result) }
-    }
+pub fn get_bone_pose<'a>(pose: &'a Pose, node: &Node) -> Option<&'a BonePose> {
+    let result = crate::native::api::get_bone_pose_entry(
+        Some(crate::native::view::View::<Pose, crate::native::view::Const>::from_ref(pose)),
+        Some(crate::native::view::View::<Node, crate::native::view::Const>::from_ref(node)),
+    );
+    result.map(|bone_pose| unsafe { &*bone_pose.as_ptr() })
 }
 
 #[allow(clippy::needless_lifetimes)]
@@ -5346,13 +5296,12 @@ pub fn find_prop_texture<'a>(material: &'a Material, name: &str) -> Option<&'a T
     }
 }
 
-pub fn find_shader_prop<'a>(shader: &'a Shader, name: &'a str) -> &'a str {
+pub fn find_shader_prop<'a>(shader: &'a Shader, name: &str) -> &'a str {
     let result = crate::native::api::find_shader_prop_len(
-        Some(unsafe {
-            crate::native::view::View::<Shader, crate::native::view::Const>::from_ptr(
-                shader as *const Shader,
-            )
-        }),
+        Some(crate::native::view::View::<
+            Shader,
+            crate::native::view::Const,
+        >::from_ref(shader)),
         name.as_bytes(),
     );
     unsafe { result.as_static_ref() }
@@ -5361,11 +5310,10 @@ pub fn find_shader_prop<'a>(shader: &'a Shader, name: &'a str) -> &'a str {
 #[allow(clippy::needless_lifetimes)]
 pub fn find_shader_prop_bindings<'a>(shader: &'a Shader, name: &str) -> &'a [ShaderPropBinding] {
     let result = crate::native::api::find_shader_prop_bindings_len(
-        Some(unsafe {
-            crate::native::view::View::<Shader, crate::native::view::Const>::from_ptr(
-                shader as *const Shader,
-            )
-        }),
+        Some(crate::native::view::View::<
+            Shader,
+            crate::native::view::Const,
+        >::from_ref(shader)),
         name.as_bytes(),
     );
     unsafe { result.as_static_ref() }
@@ -5495,9 +5443,7 @@ pub fn get_skin_vertex_matrix(skin: &SkinDeformer, vertex: usize, fallback: &Mat
     let result = unsafe {
         crate::native::api::catch_get_skin_vertex_matrix(
             Some(&mut panic),
-            crate::native::view::View::<SkinDeformer, crate::native::view::Const>::from_ptr(
-                skin as *const SkinDeformer,
-            ),
+            crate::native::view::View::<SkinDeformer, crate::native::view::Const>::from_ref(skin),
             vertex,
             fallback as *const Matrix,
         )
@@ -5644,9 +5590,7 @@ pub fn triangulate_face(indices: &mut [u32], mesh: &Mesh, face: Face) -> u32 {
             Some(&mut panic),
             indices.as_mut_ptr(),
             indices.len(),
-            crate::native::view::View::<Mesh, crate::native::view::Const>::from_ptr(
-                mesh as *const Mesh,
-            ),
+            crate::native::view::View::<Mesh, crate::native::view::Const>::from_ref(mesh),
             face,
         )
     };
@@ -5661,9 +5605,7 @@ pub fn compute_topology(mesh: &Mesh, topo: &mut [TopoEdge]) {
     unsafe {
         crate::native::api::catch_compute_topology(
             Some(&mut panic),
-            crate::native::view::View::<Mesh, crate::native::view::Const>::from_ptr(
-                mesh as *const Mesh,
-            ),
+            crate::native::view::View::<Mesh, crate::native::view::Const>::from_ref(mesh),
             topo.as_mut_ptr(),
             topo.len(),
         )
@@ -5707,15 +5649,11 @@ pub fn topo_prev_vertex_edge(topo: &[TopoEdge], index: u32) -> u32 {
 
 pub fn get_weighted_face_normal(positions: &VertexVec3, face: Face) -> Vec3 {
     let mut panic: Panic = Default::default();
-    let result = unsafe {
-        crate::native::api::catch_get_weighted_face_normal(
-            Some(&mut panic),
-            crate::native::view::View::<VertexVec3, crate::native::view::Const>::from_ptr(
-                positions as *const VertexVec3,
-            ),
-            face,
-        )
-    };
+    let result = crate::native::api::catch_get_weighted_face_normal(
+        Some(&mut panic),
+        crate::native::view::View::<VertexVec3, crate::native::view::Const>::from_ref(positions),
+        face,
+    );
     if panic.did_panic {
         panic!("ufbx::get_weighted_face_normal() {}", panic.message());
     }
@@ -5732,9 +5670,7 @@ pub fn generate_normal_mapping(
     let result = unsafe {
         crate::native::api::catch_generate_normal_mapping(
             Some(&mut panic),
-            crate::native::view::View::<Mesh, crate::native::view::Const>::from_ptr(
-                mesh as *const Mesh,
-            ),
+            crate::native::view::View::<Mesh, crate::native::view::Const>::from_ref(mesh),
             topo.as_ptr(),
             topo.len(),
             normal_indices.as_mut_ptr(),
@@ -5758,11 +5694,9 @@ pub fn compute_normals(
     unsafe {
         crate::native::api::catch_compute_normals(
             Some(&mut panic),
-            crate::native::view::View::<Mesh, crate::native::view::Const>::from_ptr(
-                mesh as *const Mesh,
-            ),
-            crate::native::view::View::<VertexVec3, crate::native::view::Const>::from_ptr(
-                positions as *const VertexVec3,
+            crate::native::view::View::<Mesh, crate::native::view::Const>::from_ref(mesh),
+            crate::native::view::View::<VertexVec3, crate::native::view::Const>::from_ref(
+                positions,
             ),
             normal_indices.as_ptr(),
             normal_indices.len(),
@@ -5988,15 +5922,11 @@ pub unsafe fn thread_pool_get_user_ptr(ctx: ThreadPoolContext) -> *mut c_void {
 
 pub fn get_vertex_real(v: &VertexReal, index: usize) -> Real {
     let mut panic: Panic = Default::default();
-    let result = unsafe {
-        crate::native::api::catch_get_vertex_real(
-            Some(&mut panic),
-            crate::native::view::View::<VertexReal, crate::native::view::Const>::from_ptr(
-                v as *const VertexReal,
-            ),
-            index,
-        )
-    };
+    let result = crate::native::api::catch_get_vertex_real(
+        Some(&mut panic),
+        crate::native::view::View::<VertexReal, crate::native::view::Const>::from_ref(v),
+        index,
+    );
     if panic.did_panic {
         panic!("ufbx::get_vertex_real() {}", panic.message());
     }
@@ -6005,15 +5935,11 @@ pub fn get_vertex_real(v: &VertexReal, index: usize) -> Real {
 
 pub fn get_vertex_vec2(v: &VertexVec2, index: usize) -> Vec2 {
     let mut panic: Panic = Default::default();
-    let result = unsafe {
-        crate::native::api::catch_get_vertex_vec2(
-            Some(&mut panic),
-            crate::native::view::View::<VertexVec2, crate::native::view::Const>::from_ptr(
-                v as *const VertexVec2,
-            ),
-            index,
-        )
-    };
+    let result = crate::native::api::catch_get_vertex_vec2(
+        Some(&mut panic),
+        crate::native::view::View::<VertexVec2, crate::native::view::Const>::from_ref(v),
+        index,
+    );
     if panic.did_panic {
         panic!("ufbx::get_vertex_vec2() {}", panic.message());
     }
@@ -6022,15 +5948,11 @@ pub fn get_vertex_vec2(v: &VertexVec2, index: usize) -> Vec2 {
 
 pub fn get_vertex_vec3(v: &VertexVec3, index: usize) -> Vec3 {
     let mut panic: Panic = Default::default();
-    let result = unsafe {
-        crate::native::api::catch_get_vertex_vec3(
-            Some(&mut panic),
-            crate::native::view::View::<VertexVec3, crate::native::view::Const>::from_ptr(
-                v as *const VertexVec3,
-            ),
-            index,
-        )
-    };
+    let result = crate::native::api::catch_get_vertex_vec3(
+        Some(&mut panic),
+        crate::native::view::View::<VertexVec3, crate::native::view::Const>::from_ref(v),
+        index,
+    );
     if panic.did_panic {
         panic!("ufbx::get_vertex_vec3() {}", panic.message());
     }
@@ -6039,15 +5961,11 @@ pub fn get_vertex_vec3(v: &VertexVec3, index: usize) -> Vec3 {
 
 pub fn get_vertex_vec4(v: &VertexVec4, index: usize) -> Vec4 {
     let mut panic: Panic = Default::default();
-    let result = unsafe {
-        crate::native::api::catch_get_vertex_vec4(
-            Some(&mut panic),
-            crate::native::view::View::<VertexVec4, crate::native::view::Const>::from_ptr(
-                v as *const VertexVec4,
-            ),
-            index,
-        )
-    };
+    let result = crate::native::api::catch_get_vertex_vec4(
+        Some(&mut panic),
+        crate::native::view::View::<VertexVec4, crate::native::view::Const>::from_ref(v),
+        index,
+    );
     if panic.did_panic {
         panic!("ufbx::get_vertex_vec4() {}", panic.message());
     }
@@ -6056,15 +5974,11 @@ pub fn get_vertex_vec4(v: &VertexVec4, index: usize) -> Vec4 {
 
 pub fn get_vertex_w_vec3(v: &VertexVec3, index: usize) -> Real {
     let mut panic: Panic = Default::default();
-    let result = unsafe {
-        crate::native::api::catch_get_vertex_w_vec3(
-            Some(&mut panic),
-            crate::native::view::View::<VertexVec3, crate::native::view::Const>::from_ptr(
-                v as *const VertexVec3,
-            ),
-            index,
-        )
-    };
+    let result = crate::native::api::catch_get_vertex_w_vec3(
+        Some(&mut panic),
+        crate::native::view::View::<VertexVec3, crate::native::view::Const>::from_ref(v),
+        index,
+    );
     if panic.did_panic {
         panic!("ufbx::get_vertex_w_vec3() {}", panic.message());
     }
@@ -6492,19 +6406,17 @@ pub fn as_metadata_object<'a>(element: &'a Element) -> Option<&'a MetadataObject
 }
 
 pub fn dom_is_array(node: &DomNode) -> bool {
-    crate::native::api::dom_is_array(Some(unsafe {
-        crate::native::view::View::<DomNode, crate::native::view::Const>::from_ptr(
-            node as *const DomNode,
-        )
-    }))
+    crate::native::api::dom_is_array(Some(crate::native::view::View::<
+        DomNode,
+        crate::native::view::Const,
+    >::from_ref(node)))
 }
 
 pub fn dom_array_size(node: &DomNode) -> usize {
-    crate::native::api::dom_array_size(Some(unsafe {
-        crate::native::view::View::<DomNode, crate::native::view::Const>::from_ptr(
-            node as *const DomNode,
-        )
-    }))
+    crate::native::api::dom_array_size(Some(crate::native::view::View::<
+        DomNode,
+        crate::native::view::Const,
+    >::from_ref(node)))
 }
 
 pub fn dom_as_int32_list(node: &DomNode) -> &[i32] {
@@ -6807,19 +6719,19 @@ impl Material {
 }
 
 impl Shader {
-    pub fn find_shader_prop<'a>(&'a self, name: &'a str) -> &'a str {
+    pub fn find_shader_prop<'a>(&'a self, name: &str) -> &'a str {
         find_shader_prop(self, name)
     }
 }
 
 impl AnimLayer {
     #[allow(clippy::needless_lifetimes)]
-    pub fn find_anim_prop<'a>(&'a self, element: &'a Element, prop: &str) -> Option<&'a AnimProp> {
+    pub fn find_anim_prop<'a>(&'a self, element: &Element, prop: &str) -> Option<&'a AnimProp> {
         find_anim_prop(self, element, prop)
     }
 
     #[allow(clippy::needless_lifetimes)]
-    pub fn find_anim_props<'a>(&'a self, element: &'a Element) -> &'a [AnimProp] {
+    pub fn find_anim_props<'a>(&'a self, element: &Element) -> &'a [AnimProp] {
         find_anim_props(self, element)
     }
 }

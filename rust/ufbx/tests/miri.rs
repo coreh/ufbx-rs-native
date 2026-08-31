@@ -369,6 +369,19 @@ fn load_face_group_ids_6100_ascii() {
 /// properties and legacy names, then interned with a trailing separator.
 #[test]
 fn load_shader_texture_prefixes() {
+    // Compile-shape regression: shader-property results borrow the owning
+    // shader, while the property-name string is an independent lookup key.
+    fn find_for_shader<'a>(
+        shader: &'a ufbx::Shader,
+        name: &str,
+    ) -> (&'a str, &'a str, &'a [ufbx::ShaderPropBinding]) {
+        (
+            ufbx::find_shader_prop(shader, name),
+            shader.find_shader_prop(name),
+            ufbx::find_shader_prop_bindings(shader, name),
+        )
+    }
+
     fn check_prefix(scene: &ufbx::Scene, name: &str, expected: &str) {
         let mut num_prefixes = 0usize;
         let mut found_expected = false;
@@ -388,6 +401,31 @@ fn load_shader_texture_prefixes() {
     }
 
     let legacy = load("max_texture_mapping_6100_binary.fbx");
+    let shader = legacy
+        .shaders
+        .iter()
+        .find(|shader| {
+            shader
+                .bindings
+                .iter()
+                .any(|binding| !binding.prop_bindings.is_empty())
+        })
+        .expect("missing shader with property bindings");
+    let binding = shader
+        .bindings
+        .iter()
+        .find_map(|binding| binding.prop_bindings.first())
+        .expect("missing shader property binding");
+    let (free_prop, member_prop, bindings) = find_for_shader(shader, binding.shader_prop.as_ref());
+    assert_eq!(free_prop, binding.material_prop.as_ref());
+    assert_eq!(member_prop, free_prop);
+    assert!(!bindings.is_empty());
+    let (missing_free, missing_member, missing_bindings) =
+        find_for_shader(shader, "__missing_shader_property__");
+    assert!(missing_free.is_empty());
+    assert_eq!(missing_member, missing_free);
+    assert!(missing_bindings.is_empty());
+
     let material = legacy
         .materials
         .iter()
@@ -1534,6 +1572,17 @@ fn public_find_wrappers_from_shared_refs() {
         acc += blob.size as f64;
     }
 
+    // Scene-rooted finders: one hit for the generic/node pair and explicit
+    // misses for every typed wrapper keep each safe-reference boundary live.
+    let node_name = scene.root_node.element.name.as_ref();
+    let found_element = ufbx::find_element(scene, ufbx::ElementType::Node, node_name)
+        .expect("root node element lookup");
+    let found_node = ufbx::find_node(scene, node_name).expect("root node lookup");
+    assert!(core::ptr::eq(found_element, &scene.root_node.element));
+    assert!(core::ptr::eq(found_node, scene.root_node.as_ref()));
+    assert!(ufbx::find_anim_stack(scene, "__missing_anim_stack__").is_none());
+    assert!(ufbx::find_material(scene, "__missing_material__").is_none());
+
     // Element-rooted paths (api.rs public-boundary roots).
     let prop_node = scene
         .nodes
@@ -1672,12 +1721,33 @@ fn public_dom_walkers_from_shared_refs() {
 /// value helpers fed from scene data.
 #[test]
 fn public_anim_eval_from_shared_refs() {
+    // Compile-shape regression: results borrow only the owning layer, not the
+    // independently borrowed element key, for both free and member forms.
+    fn find_for_layer<'a>(
+        layer: &'a ufbx::AnimLayer,
+        element: &ufbx::Element,
+        name: &str,
+    ) -> (
+        Option<&'a ufbx::AnimProp>,
+        &'a [ufbx::AnimProp],
+        Option<&'a ufbx::AnimProp>,
+        &'a [ufbx::AnimProp],
+    ) {
+        (
+            ufbx::find_anim_prop(layer, element, name),
+            ufbx::find_anim_props(layer, element),
+            layer.find_anim_prop(element, name),
+            layer.find_anim_props(element),
+        )
+    }
+
     let root = load("maya_interpolation_modes_7500_binary.fbx");
     let scene: &Scene = &root;
     let anim: &ufbx::Anim = &scene.anim;
     let mut acc = 0.0f64;
 
     for curve in &scene.anim_curves {
+        acc += ufbx::evaluate_curve(curve, 0.4, 0.0) as f64;
         acc += ufbx::evaluate_curve_flags(curve, 0.4, 0.0, 0) as f64;
     }
     for layer in &scene.anim_layers {
@@ -1690,8 +1760,14 @@ fn public_anim_eval_from_shared_refs() {
         // Anim-prop finders navigate the layer's sorted prop table.
         for prop in layer.anim_props.as_ref().iter().take(2) {
             let elem: &ufbx::Element = prop.element.as_ref();
-            acc += ufbx::find_anim_props(layer, elem).len() as f64;
-            if let Some(found) = layer.find_anim_prop(elem, prop.prop_name.as_ref()) {
+            let (free_prop, free_props, member_prop, member_props) =
+                find_for_layer(layer, elem, prop.prop_name.as_ref());
+            acc += free_props.len() as f64 + member_props.len() as f64;
+            assert_eq!(
+                free_prop.map(core::ptr::from_ref),
+                member_prop.map(core::ptr::from_ref)
+            );
+            if let Some(found) = member_prop {
                 acc += found.prop_name.as_ref().len() as f64;
             }
         }
@@ -1861,6 +1937,37 @@ fn public_mesh_helpers_from_shared_refs() {
     for face in &mesh.faces {
         acc += ufbx::get_weighted_face_normal(&mesh.vertex_position, *face).y as f64;
     }
+    if let Some(face) = mesh.faces.first().copied() {
+        let mut triangles = vec![0u32; face.num_indices.saturating_sub(2) as usize * 3];
+        acc += ufbx::triangulate_face(&mut triangles, mesh, face) as f64;
+    }
+
+    // These fixtures guarantee that the less common generated vertex wrappers
+    // execute instead of being conditionally skipped by the plain cube.
+    let attribute_root = load("maya_uv_and_color_sets_6100_binary.fbx");
+    let mut saw_uv = false;
+    let mut saw_color = false;
+    for attribute_mesh in &attribute_root.meshes {
+        if !attribute_mesh.vertex_uv.indices.is_empty() {
+            acc += ufbx::get_vertex_vec2(&attribute_mesh.vertex_uv, 0).x as f64;
+            saw_uv = true;
+        }
+        if !attribute_mesh.vertex_color.indices.is_empty() {
+            acc += ufbx::get_vertex_vec4(&attribute_mesh.vertex_color, 0).w as f64;
+            saw_color = true;
+        }
+    }
+    assert!(saw_uv && saw_color);
+
+    let crease_root = load("maya_vertex_crease_6100_binary.fbx");
+    let mut saw_crease = false;
+    for crease_mesh in &crease_root.meshes {
+        if !crease_mesh.vertex_crease.indices.is_empty() {
+            acc += ufbx::get_vertex_real(&crease_mesh.vertex_crease, 0) as f64;
+            saw_crease = true;
+        }
+    }
+    assert!(saw_crease);
 
     let mut topo = vec![ufbx::TopoEdge::default(); mesh.num_indices];
     ufbx::compute_topology(mesh, &mut topo);
@@ -1919,6 +2026,12 @@ fn public_mesh_helpers_from_shared_refs() {
 /// offset lookups, blend-weight evaluation and bind-pose queries.
 #[test]
 fn public_deform_helpers_from_shared_refs() {
+    // Compile-shape regression: the returned entry belongs to `pose`; `node`
+    // is only an independently borrowed search key.
+    fn find_for_pose<'a>(pose: &'a ufbx::Pose, node: &ufbx::Node) -> Option<&'a ufbx::BonePose> {
+        ufbx::get_bone_pose(pose, node)
+    }
+
     let mut acc = 0.0f64;
 
     let root = load("blender_293_half_skinned_7400_binary.fbx");
@@ -1932,7 +2045,7 @@ fn public_deform_helpers_from_shared_refs() {
     for pose in &scene.poses {
         for bone_pose in pose.bone_poses.as_ref().iter().take(2) {
             let node: &ufbx::Node = bone_pose.bone_node.as_ref();
-            if let Some(found) = ufbx::get_bone_pose(pose, node) {
+            if let Some(found) = find_for_pose(pose, node) {
                 acc += found.bone_to_world.m00 as f64;
             }
         }
@@ -1943,7 +2056,7 @@ fn public_deform_helpers_from_shared_refs() {
     let pose = pose_scene.poses.first().expect("missing pose");
     let bone_pose = pose.bone_poses.first().expect("missing bone pose");
     let found =
-        ufbx::get_bone_pose(pose, bone_pose.bone_node.as_ref()).expect("missing indexed bone pose");
+        find_for_pose(pose, bone_pose.bone_node.as_ref()).expect("missing indexed bone pose");
     assert!(std::ptr::eq(found, bone_pose));
 
     let root = load("blender_279_shape_weights_7400_binary.fbx");
