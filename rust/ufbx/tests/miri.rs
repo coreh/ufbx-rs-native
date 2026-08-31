@@ -229,6 +229,70 @@ fn load_uv_and_color_sets_6100_binary() {
     assert_eq!(color_names, ["ColorA", "ColorB"]);
 }
 
+/// Legacy constraints use property connections in both directions.
+#[test]
+fn load_constraint_connections_6100_binary() {
+    let scene = load("maya_constraint_zoo_6100_binary.fbx");
+    assert!(walk(&scene).is_finite());
+
+    assert!(scene.constraints.iter().any(|constraint| {
+        constraint
+            .element
+            .connections_src
+            .iter()
+            .any(|conn| conn.src_prop.length > 0 && conn.dst.type_ == ufbx::ElementType::Node)
+    }));
+    assert!(scene.constraints.iter().any(|constraint| {
+        constraint
+            .element
+            .connections_dst
+            .iter()
+            .any(|conn| conn.dst_prop.length > 0 && conn.src.type_ == ufbx::ElementType::Node)
+    }));
+
+    let parent = scene
+        .constraints
+        .iter()
+        .find(|constraint| constraint.type_ == ufbx::ConstraintType::Parent)
+        .expect("missing parent constraint");
+    assert_eq!(
+        parent
+            .node
+            .as_ref()
+            .expect("parent constraint has no node")
+            .element
+            .name
+            .as_ref(),
+        "joint1",
+    );
+    assert_eq!(parent.targets.len(), 1);
+    assert_eq!(parent.targets[0].node.element.name.as_ref(), "Parent");
+    assert_eq!(parent.targets[0].weight, 1.0);
+
+    let aim = scene
+        .constraints
+        .iter()
+        .find(|constraint| {
+            constraint.type_ == ufbx::ConstraintType::Aim
+                && constraint
+                    .node
+                    .as_ref()
+                    .is_some_and(|node| node.element.name.as_ref() == "joint2")
+        })
+        .expect("missing joint2 aim constraint");
+    assert_eq!(aim.targets.len(), 1);
+    assert_eq!(aim.targets[0].node.element.name.as_ref(), "Aim");
+    assert_eq!(
+        aim.aim_up_node
+            .as_ref()
+            .expect("aim constraint has no up node")
+            .element
+            .name
+            .as_ref(),
+        "Up",
+    );
+}
+
 /// Shader-texture property prefixes are discovered from both explicit compound
 /// properties and legacy names, then interned with a trailing separator.
 #[test]
@@ -269,6 +333,16 @@ fn load_shader_texture_prefixes() {
         .find(|texture| texture.material_prop.as_ref() == "3dsMax|Parameters|base_color_map")
         .expect("missing base-color property texture");
     assert_eq!(base_color.shader_prop.as_ref(), "base_color");
+    let mapped_base_color = material
+        .pbr
+        .base_color
+        .texture
+        .as_ref()
+        .expect("PBR base color has no mapped texture");
+    assert!(std::ptr::eq(
+        mapped_base_color.as_ref(),
+        base_color.texture.as_ref(),
+    ));
 
     check_prefix(
         &legacy,

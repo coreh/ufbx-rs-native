@@ -4451,14 +4451,10 @@ pub(crate) unsafe fn fetch_mapping_maps(
 
         let mapping_flags: u32 = mapping.flags as u32;
         // C: `ufbxi_for_list(ufbx_shader_prop_binding, binding, bindings)`
-        // SAFETY: `bindings` describes a contiguous run of initialized
-        // `ShaderPropBinding` — either the shader's own binding span, which
-        // nothing in this loop writes, or the single `identity_binding` written
-        // just above.
-        let binding_run: &[ShaderPropBinding] =
-            unsafe { slice_from_ptr(bindings.data, bindings.count) };
-        for binding in binding_run {
-            let name: String = binding.material_prop;
+        let binding_run =
+            Run::from_list(View::<List<ShaderPropBinding>, Const>::from_ref(&bindings));
+        for binding in binding_run.iter() {
+            let name: String = binding.material_prop();
             // The property key is minted once per binding.
             // SAFETY: `name` is a `data`/`length` span readable for its length,
             // pointing at either interned string-pool bytes or the
@@ -10097,52 +10093,35 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
         // Find property connections in _both_ src and dst connections as they are inconsistent
         // in pre-7000 files. For example "Constrained Object" is a "PO" connection in 6100.
         // C: `ufbxi_for_list(ufbx_connection, conn, constraint->element.connections_src)`
-        // SAFETY: the viewed constraint's `connections_src` `data`/`count` describe
-        // one contiguous, initialized connection run in `uc`'s result arena.
-        let conn_iter = unsafe {
-            SliceViewIter::<Connection>::from_raw_parts(
-                constraint.element().connections_src_view().data() as *mut Connection,
-                constraint.element().connections_src_view().count(),
-            )
-        };
-        for conn in conn_iter {
-            // C: `conn->dst` — the whole element pointer; the view over it covers
-            // the `ufbx_element` header only, so the cast to `ufbx_node*` below is
-            // taken from the stored pointer rather than derived from the view.
-            let conn_dst: *mut Element = conn.dst().ptr();
-            // SAFETY: a connection's `dst` is a non-null reference to a live scene
-            // element; only its own `type_` field is projected out of it.
-            let dst: &ElementView = unsafe { ElementView::from_ptr(conn_dst) };
-            if conn.src_prop().length == 0 || dst.type_() != ElementType::Node {
+        for conn in Run::from_list(constraint.element().connections_src_view()).iter() {
+            if conn.src_prop_view().length() == 0 {
+                continue;
+            }
+            let conn_dst: Ref<Element> = conn.dst();
+            let dst: &ElementView = conn_dst.view();
+            if dst.type_() != ElementType::Node {
                 continue;
             }
             // SAFETY: the check above pins the destination's type, so the element
             // heads a live `ufbx_node` of the uc-owned scene and its provenance is
             // write-capable.
-            let node: &NodeView = unsafe { NodeView::from_ptr(conn_dst as *mut Node) };
+            let node: &NodeView = unsafe { NodeView::from_ptr(conn_dst.ptr() as *mut Node) };
             add_constraint_prop(uc, constraint, node, conn.src_prop_view().bytes())?;
         }
         // C: `ufbxi_for_list(ufbx_connection, conn, constraint->element.connections_dst)`
-        // SAFETY: as above, for the constraint's own `connections_dst` run.
-        let conn_iter = unsafe {
-            SliceViewIter::<Connection>::from_raw_parts(
-                constraint.element().connections_dst_view().data() as *mut Connection,
-                constraint.element().connections_dst_view().count(),
-            )
-        };
-        for conn in conn_iter {
-            // C: `conn->src` — the whole element pointer (see the `dst` walk above).
-            let conn_src: *mut Element = conn.src().ptr();
-            // SAFETY: a connection's `src` is a non-null reference to a live scene
-            // element; only its own `type_` field is projected out of it.
-            let src: &ElementView = unsafe { ElementView::from_ptr(conn_src) };
-            if conn.dst_prop().length == 0 || src.type_() != ElementType::Node {
+        for conn in Run::from_list(constraint.element().connections_dst_view()).iter() {
+            if conn.dst_prop_view().length() == 0 {
+                continue;
+            }
+            let conn_src: Ref<Element> = conn.src();
+            let src: &ElementView = conn_src.view();
+            if src.type_() != ElementType::Node {
                 continue;
             }
             // SAFETY: the check above pins the source's type, so the element heads
             // a live `ufbx_node` of the uc-owned scene and its provenance is
             // write-capable.
-            let node: &NodeView = unsafe { NodeView::from_ptr(conn_src as *mut Node) };
+            let node: &NodeView = unsafe { NodeView::from_ptr(conn_src.ptr() as *mut Node) };
             add_constraint_prop(uc, constraint, node, conn.dst_prop_view().bytes())?;
         }
 
