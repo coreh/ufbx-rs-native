@@ -509,6 +509,19 @@ impl<'a, T> Run<'a, T, Mut> {
 }
 
 impl<'a, T> Run<'a, T, Const> {
+    /// Borrow a shared slice as a bounded initialized read-only run.
+    ///
+    /// The returned capability keeps the shared slice borrow active for `'a`;
+    /// its elements stay readable and frozen for the run's lifetime.
+    #[inline(always)]
+    pub(crate) fn from_slice(slice: &'a [T]) -> Self {
+        Self {
+            base: slice.as_ptr().cast_mut(),
+            count: slice.len(),
+            _marker: PhantomData,
+        }
+    }
+
     /// Vouch for one contiguous initialized read-only run.
     ///
     /// # Safety

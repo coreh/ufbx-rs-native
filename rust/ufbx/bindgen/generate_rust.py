@@ -1102,6 +1102,48 @@ pub fn matrix_to_transform(m: &Matrix) -> Transform {
 }
 """
 
+# Safe mesh helpers carry Rust references and slices directly into their
+# read-only native cores. Raw nullable pointers and `(data, count)` pairs stay
+# confined to the native adapters used by the C ABI.
+override_functions["ufbx_find_face_index"] = """
+pub fn find_face_index(mesh: &mut Mesh, index: usize) -> u32 {
+    crate::native::api::find_face_index_view(
+        crate::native::view::View::<Mesh, crate::native::view::Const>::from_ref(mesh),
+        index,
+    )
+}
+"""
+
+override_functions["ufbx_catch_topo_next_vertex_edge"] = """
+pub fn topo_next_vertex_edge(topo: &[TopoEdge], index: u32) -> u32 {
+    let mut panic: Panic = Default::default();
+    let result = crate::native::api::catch_topo_next_vertex_edge_run(
+        Some(&mut panic),
+        crate::native::view::Run::<TopoEdge, crate::native::view::Const>::from_slice(topo),
+        index,
+    );
+    if panic.did_panic {
+        panic!("ufbx::topo_next_vertex_edge() {}", panic.message());
+    }
+    result
+}
+"""
+
+override_functions["ufbx_catch_topo_prev_vertex_edge"] = """
+pub fn topo_prev_vertex_edge(topo: &[TopoEdge], index: u32) -> u32 {
+    let mut panic: Panic = Default::default();
+    let result = crate::native::api::catch_topo_prev_vertex_edge_run(
+        Some(&mut panic),
+        crate::native::view::Run::<TopoEdge, crate::native::view::Const>::from_slice(topo),
+        index,
+    );
+    if panic.did_panic {
+        panic!("ufbx::topo_prev_vertex_edge() {}", panic.message());
+    }
+    result
+}
+"""
+
 override_functions["ufbx_evaluate_props"] = """
 pub fn evaluate_props<'a, 'b>(anim: &'a Anim, element: &'a Element, time: f64, buffer: &'b mut [ExternalRef<'b, Prop>]) -> ExternalRef<'b, Props>
     where 'a: 'b

@@ -4571,19 +4571,7 @@ pub(crate) unsafe fn retain_line_curve(line_curve: *mut LineCurve) {
 }
 
 // ufbx.c:32381-32390 `ufbx_find_face_index`
-pub(crate) unsafe fn find_face_index(mesh: *mut Mesh, index: usize) -> u32 {
-    // C: `!mesh || index > UINT32_MAX` — `index` is `size_t`.
-    if mesh.is_null() || index > u32::MAX as usize {
-        return NO_INDEX;
-    }
-    let ix: u32 = index as u32;
-
-    // SAFETY: `mesh` is non-null here (checked above) and points at a live `Mesh`
-    // per this fn's raw-pointer contract. C only reads the mesh here, so a
-    // read-only `Const` view is minted; nothing writes those bytes while it is
-    // live.
-    let mesh = unsafe { View::<Mesh, Const>::from_ptr(mesh) };
-
+fn find_face_index_prepared(mesh: &View<Mesh, Const>, ix: u32) -> u32 {
     match mesh.faces_view().lower_bound_eq(
         4,
         // C: `a->index_begin + a->num_indices <= ix` — `uint32_t` arithmetic.
@@ -4596,6 +4584,29 @@ pub(crate) unsafe fn find_face_index(mesh: *mut Mesh, index: usize) -> u32 {
         // `UFBX_NO_INDEX`.
         None => usize::MAX as u32,
     }
+}
+
+pub(crate) fn find_face_index_view(mesh: &View<Mesh, Const>, index: usize) -> u32 {
+    if index > u32::MAX as usize {
+        return NO_INDEX;
+    }
+    let ix: u32 = index as u32;
+    find_face_index_prepared(mesh, ix)
+}
+
+pub(crate) unsafe fn find_face_index(mesh: *mut Mesh, index: usize) -> u32 {
+    // C: `!mesh || index > UINT32_MAX` — `index` is `size_t`.
+    if mesh.is_null() || index > u32::MAX as usize {
+        return NO_INDEX;
+    }
+    let ix: u32 = index as u32;
+
+    // SAFETY: `mesh` is non-null here (checked above) and points at a live `Mesh`
+    // per this fn's raw-pointer contract. C only reads the mesh here, so a
+    // read-only `Const` view is minted; nothing writes those bytes while it is
+    // live.
+    let mesh = unsafe { View::<Mesh, Const>::from_ptr(mesh) };
+    find_face_index_prepared(mesh, ix)
 }
 
 // ufbx.c:32392-32475 `ufbx_catch_triangulate_face`
@@ -7434,10 +7445,7 @@ mod tests {
         let mut topo = [TopoEdge::default(); 2];
         topo[0].twin = 2;
         topo[0].prev = 2;
-        // SAFETY: `topo` is a fully initialized stack array, held read-only for
-        // the lifetime of this run.
-        let topo =
-            unsafe { Run::<TopoEdge, Const>::from_const_raw_parts(topo.as_ptr(), topo.len()) };
+        let topo = Run::<TopoEdge, Const>::from_slice(&topo);
 
         let mut panic = Panic::default();
         let next = catch_topo_next_vertex_edge_run(Some(&mut panic), topo, 0);
@@ -7450,6 +7458,27 @@ mod tests {
         assert_eq!(prev, NO_INDEX);
         assert!(panic.did_panic);
         assert_eq!(panic.message(), "Corrupted topology structure");
+
+        let mut panic = Panic::default();
+        let next = catch_topo_next_vertex_edge_run(Some(&mut panic), topo, 2);
+        assert_eq!(next, NO_INDEX);
+        assert!(panic.did_panic);
+        assert_eq!(panic.message(), "index (2) out of bounds (2)");
+
+        let empty = Run::<TopoEdge, Const>::from_slice(&[]);
+        let mut panic = Panic::default();
+        assert_eq!(
+            catch_topo_next_vertex_edge_run(Some(&mut panic), empty, NO_INDEX),
+            NO_INDEX
+        );
+        assert!(!panic.did_panic);
+
+        let mut panic = Panic::default();
+        assert_eq!(
+            catch_topo_prev_vertex_edge_run(Some(&mut panic), empty, NO_INDEX),
+            NO_INDEX
+        );
+        assert!(!panic.did_panic);
     }
 
     #[test]

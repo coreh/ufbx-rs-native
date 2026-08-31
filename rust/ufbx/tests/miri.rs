@@ -1657,8 +1657,8 @@ fn public_downcasts_from_narrowed_element_refs() {
 //
 // Not coverable from safe code (upstream signature quirks, noted here so the
 // gap is deliberate): `find_baked_node`/`find_baked_element`(+`_by_*_id`)
-// take `&mut BakedAnim` (no `DerefMut` on `BakedAnimRoot`), `find_face_index`
-// takes `&mut Mesh`.
+// take `&mut BakedAnim` (no `DerefMut` on `BakedAnimRoot`). A non-owning mesh
+// header snapshot below supplies the `&mut Mesh` required by `find_face_index`.
 
 /// DOM retention: `dom_find` navigation and the typed `dom_as_*` array reads,
 /// all through `&DomNode`s reached from the scene's retained DOM root.
@@ -2098,8 +2098,40 @@ fn public_matrix_value_helpers_from_shared_refs() {
 fn public_mesh_helpers_from_shared_refs() {
     let root = load("maya_cube_7500_binary.fbx");
     let scene: &Scene = &root;
-    let mesh = scene.meshes.first().expect("cube mesh");
+    let mesh: &ufbx::Mesh = scene.meshes.first().expect("cube mesh").as_ref();
     let mut acc = 0.0f64;
+
+    // `Mesh` is a non-owning C-layout header whose referenced storage belongs
+    // to `root`. Keep a shallow header snapshot from being dropped while the
+    // root remains live so the parity-locked `&mut Mesh` finder can be called.
+    // SAFETY: this reads the initialized header without moving or writing the
+    // scene-owned original; all referenced storage stays live and read-only
+    // for the calls below.
+    let mut mesh_header = core::mem::ManuallyDrop::new(unsafe { core::ptr::read(mesh) });
+    let first_face = mesh.faces.first().expect("cube face");
+    assert_eq!(
+        ufbx::find_face_index(&mut mesh_header, first_face.index_begin as usize),
+        0
+    );
+    assert_eq!(
+        ufbx::find_face_index(
+            &mut mesh_header,
+            first_face
+                .index_begin
+                .wrapping_add(first_face.num_indices)
+                .wrapping_sub(1) as usize,
+        ),
+        0
+    );
+    assert_eq!(
+        ufbx::find_face_index(&mut mesh_header, mesh.num_indices),
+        u32::MAX
+    );
+    #[cfg(target_pointer_width = "64")]
+    assert_eq!(
+        ufbx::find_face_index(&mut mesh_header, u32::MAX as usize + 1),
+        u32::MAX
+    );
 
     for i in 0..mesh.num_indices.min(8) {
         acc += ufbx::get_vertex_vec3(&mesh.vertex_position, i).x as f64;

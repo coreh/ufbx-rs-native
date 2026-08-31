@@ -5575,10 +5575,11 @@ pub fn tessellate_nurbs_surface(
     unsafe { tessellate_nurbs_surface_raw(surface, &opts_raw) }
 }
 
-#[allow(clippy::let_and_return)]
 pub fn find_face_index(mesh: &mut Mesh, index: usize) -> u32 {
-    let result = unsafe { crate::native::api::find_face_index(mesh as *mut Mesh, index) };
-    result
+    crate::native::api::find_face_index_view(
+        crate::native::view::View::<Mesh, crate::native::view::Const>::from_ref(mesh),
+        index,
+    )
 }
 
 pub fn triangulate_face(indices: &mut [u32], mesh: &Mesh, face: Face) -> u32 {
@@ -5615,14 +5616,11 @@ pub fn compute_topology(mesh: &Mesh, topo: &mut [TopoEdge]) {
 
 pub fn topo_next_vertex_edge(topo: &[TopoEdge], index: u32) -> u32 {
     let mut panic: Panic = Default::default();
-    let result = unsafe {
-        crate::native::api::catch_topo_next_vertex_edge(
-            Some(&mut panic),
-            topo.as_ptr(),
-            topo.len(),
-            index,
-        )
-    };
+    let result = crate::native::api::catch_topo_next_vertex_edge_run(
+        Some(&mut panic),
+        crate::native::view::Run::<TopoEdge, crate::native::view::Const>::from_slice(topo),
+        index,
+    );
     if panic.did_panic {
         panic!("ufbx::topo_next_vertex_edge() {}", panic.message());
     }
@@ -5631,14 +5629,11 @@ pub fn topo_next_vertex_edge(topo: &[TopoEdge], index: u32) -> u32 {
 
 pub fn topo_prev_vertex_edge(topo: &[TopoEdge], index: u32) -> u32 {
     let mut panic: Panic = Default::default();
-    let result = unsafe {
-        crate::native::api::catch_topo_prev_vertex_edge(
-            Some(&mut panic),
-            topo.as_ptr(),
-            topo.len(),
-            index,
-        )
-    };
+    let result = crate::native::api::catch_topo_prev_vertex_edge_run(
+        Some(&mut panic),
+        crate::native::view::Run::<TopoEdge, crate::native::view::Const>::from_slice(topo),
+        index,
+    );
     if panic.did_panic {
         panic!("ufbx::topo_prev_vertex_edge() {}", panic.message());
     }
