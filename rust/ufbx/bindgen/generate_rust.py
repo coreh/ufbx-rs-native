@@ -1187,6 +1187,46 @@ pub fn compute_normals(
 }
 """
 
+# Safe reference downcasts validate the header discriminant before widening
+# the stored allocation address. The raw native `as_*` functions remain the
+# nullable C-ABI boundary; only the final typed-reference construction is
+# unsafe in these public wrappers.
+override_functions["ufbx_as_node"] = """
+#[allow(clippy::needless_lifetimes)]
+pub fn as_node<'a>(element: &'a Element) -> Option<&'a Node> {
+    let result = crate::native::api::downcast_element::<Node>(element, ElementType::Node);
+    if result.is_null() {
+        None
+    } else {
+        unsafe { Some(&*result) }
+    }
+}
+"""
+
+override_functions["ufbx_as_mesh"] = """
+#[allow(clippy::needless_lifetimes)]
+pub fn as_mesh<'a>(element: &'a Element) -> Option<&'a Mesh> {
+    let result = crate::native::api::downcast_element::<Mesh>(element, ElementType::Mesh);
+    if result.is_null() {
+        None
+    } else {
+        unsafe { Some(&*result) }
+    }
+}
+"""
+
+override_functions["ufbx_as_anim_layer"] = """
+#[allow(clippy::needless_lifetimes)]
+pub fn as_anim_layer<'a>(element: &'a Element) -> Option<&'a AnimLayer> {
+    let result = crate::native::api::downcast_element::<AnimLayer>(element, ElementType::AnimLayer);
+    if result.is_null() {
+        None
+    } else {
+        unsafe { Some(&*result) }
+    }
+}
+"""
+
 override_functions["ufbx_evaluate_props"] = """
 pub fn evaluate_props<'a, 'b>(anim: &'a Anim, element: &'a Element, time: f64, buffer: &'b mut [ExternalRef<'b, Prop>]) -> ExternalRef<'b, Props>
     where 'a: 'b

@@ -1617,32 +1617,47 @@ fn public_find_wrappers_from_shared_refs() {
 
 // Public-boundary provenance regression #2 — downcast widening: `as_mesh(&e)`
 // takes a reference whose retag covers only the `Element` header and returns a
-// reference to the FULL containing struct. The native `as_*` family must
-// reconstitute a wide pointer via the arena allocation's exposed provenance
-// (allocator.rs `expose_provenance`); the naive `element as *mut Mesh` cast
-// keeps the narrowed range and reading any tail field is Stacked Borrows UB
-// (caught 2026-08-18; Tree Borrows accepts it, so SB is the load-bearing gate).
+// reference to the FULL containing struct. Safe-reference adapters and the raw
+// native `as_*` family reconstitute a wide pointer via the arena allocation's
+// exposed provenance (allocator.rs `expose_provenance`); the naive
+// `element as *mut Mesh` cast keeps the narrowed range and reading any tail
+// field is Stacked Borrows UB. Tree Borrows accepts it, so SB is the
+// load-bearing gate.
 #[test]
 fn public_downcasts_from_narrowed_element_refs() {
     let root = load("maya_interpolation_modes_7500_binary.fbx");
     let scene: &ufbx::Scene = &root;
 
     let mut acc = 0.0f64;
+    let mut saw_mesh = false;
+    let mut saw_node = false;
+    let mut saw_anim_layer = false;
     for elem in &scene.elements {
         let e: &ufbx::Element = elem;
         if let Some(mesh) = ufbx::as_mesh(e) {
             acc += mesh.num_vertices as f64; // tail read, outside &Element's range
+            saw_mesh = true;
         }
         if let Some(node) = ufbx::as_node(e) {
             acc += node.local_transform.translation.x as f64;
+            saw_node = true;
         }
         if let Some(layer) = ufbx::as_anim_layer(e) {
             acc += layer.anim_values.len() as f64;
+            saw_anim_layer = true;
         }
         if let Some(stack) = ufbx::as_anim_stack(e) {
             acc += stack.time_end;
         }
     }
+    assert!(saw_mesh && saw_node && saw_anim_layer);
+
+    let node_element: &ufbx::Element = &scene.root_node.element;
+    assert!(ufbx::as_mesh(node_element).is_none());
+    assert!(ufbx::as_anim_layer(node_element).is_none());
+    let mesh_element: &ufbx::Element = &scene.meshes.first().expect("mesh element").element;
+    assert!(ufbx::as_node(mesh_element).is_none());
+
     assert!(acc.is_finite());
 }
 

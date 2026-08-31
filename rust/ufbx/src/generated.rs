@@ -5980,7 +5980,7 @@ pub fn as_unknown<'a>(element: &'a Element) -> Option<&'a Unknown> {
 
 #[allow(clippy::needless_lifetimes)]
 pub fn as_node<'a>(element: &'a Element) -> Option<&'a Node> {
-    let result = unsafe { crate::native::api::as_node(element as *const Element) };
+    let result = crate::native::api::downcast_element::<Node>(element, ElementType::Node);
     if result.is_null() {
         None
     } else {
@@ -5990,7 +5990,7 @@ pub fn as_node<'a>(element: &'a Element) -> Option<&'a Node> {
 
 #[allow(clippy::needless_lifetimes)]
 pub fn as_mesh<'a>(element: &'a Element) -> Option<&'a Mesh> {
-    let result = unsafe { crate::native::api::as_mesh(element as *const Element) };
+    let result = crate::native::api::downcast_element::<Mesh>(element, ElementType::Mesh);
     if result.is_null() {
         None
     } else {
@@ -6270,7 +6270,7 @@ pub fn as_anim_stack<'a>(element: &'a Element) -> Option<&'a AnimStack> {
 
 #[allow(clippy::needless_lifetimes)]
 pub fn as_anim_layer<'a>(element: &'a Element) -> Option<&'a AnimLayer> {
-    let result = unsafe { crate::native::api::as_anim_layer(element as *const Element) };
+    let result = crate::native::api::downcast_element::<AnimLayer>(element, ElementType::AnimLayer);
     if result.is_null() {
         None
     } else {

@@ -6305,6 +6305,19 @@ pub(crate) fn catch_get_vertex_w_vec3<M: Mode>(
     unsafe { *v.values_w_data().offset(ix as i32 as isize) }
 }
 
+/// Downcast a safe element header to a raw pointer for its matching full type.
+///
+/// Loaded element objects store their `Element` header first in the enclosing
+/// allocation. The discriminant selects the concrete layout; exposed
+/// provenance restores that allocation-wide address without dereferencing it.
+pub(crate) fn downcast_element<T>(element: &Element, expected: ElementType) -> *const T {
+    if element.type_ != expected {
+        return core::ptr::null();
+    }
+
+    core::ptr::with_exposed_provenance::<T>(core::ptr::from_ref(element).expose_provenance())
+}
+
 // ufbx.c:33034-33075 `ufbx_as_*` — each returns `element` reinterpreted iff its
 // `type` matches, else NULL. Non-null guard AND type test, in that order.
 // ufbx.c:33034 `ufbx_as_unknown`
