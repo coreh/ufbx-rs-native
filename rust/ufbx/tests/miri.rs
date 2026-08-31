@@ -1856,6 +1856,42 @@ fn public_anim_eval_from_shared_refs() {
         .iter()
         .find(|n| !n.is_root)
         .expect("non-root node");
+    const EXPLICIT_INCLUDES: u32 = 0x4;
+    const INCLUDE_TRANSLATION: u32 = 0x10;
+    const INCLUDE_ROTATION: u32 = 0x20;
+    const INCLUDE_SCALE: u32 = 0x40;
+
+    let identity = ufbx::evaluate_transform_flags(anim, node, 0.25, EXPLICIT_INCLUDES);
+    assert_eq!(identity.translation.x, 0.0);
+    assert_eq!(identity.rotation.w, 1.0);
+    assert_eq!(identity.scale.x, 1.0);
+
+    let rotation =
+        ufbx::evaluate_transform_flags(anim, node, 0.25, EXPLICIT_INCLUDES | INCLUDE_ROTATION);
+    assert_eq!(rotation.translation.x, 0.0);
+    assert_eq!(rotation.scale.x, 1.0);
+
+    let scale = ufbx::evaluate_transform_flags(anim, node, 0.25, EXPLICIT_INCLUDES | INCLUDE_SCALE);
+    assert_eq!(scale.translation.x, 0.0);
+    assert_eq!(scale.rotation.w, 1.0);
+
+    let rotation_scale = ufbx::evaluate_transform_flags(
+        anim,
+        node,
+        0.25,
+        EXPLICIT_INCLUDES | INCLUDE_ROTATION | INCLUDE_SCALE,
+    );
+    assert_eq!(rotation_scale.translation.x, 0.0);
+
+    let translation =
+        ufbx::evaluate_transform_flags(anim, node, 0.25, EXPLICIT_INCLUDES | INCLUDE_TRANSLATION);
+    assert_eq!(translation.rotation.w, 1.0);
+    assert_eq!(translation.scale.x, 1.0);
+
+    acc += rotation.rotation.w as f64;
+    acc += scale.scale.y as f64;
+    acc += rotation_scale.rotation.w as f64;
+    acc += translation.translation.x as f64;
     let over = ufbx::create_anim(
         scene,
         ufbx::AnimOpts {

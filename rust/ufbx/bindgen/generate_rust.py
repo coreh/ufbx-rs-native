@@ -786,6 +786,28 @@ pub fn get_blend_vertex_offset(blend: &BlendDeformer, vertex: usize) -> Vec3 {
 }
 """
 
+# NURBS curve and surface evaluation navigate read-only `Const` views. Safe
+# Rust references mint them directly; the nullable raw adapters are the C-ABI
+# boundaries.
+override_functions["ufbx_evaluate_nurbs_curve"] = """
+pub fn evaluate_nurbs_curve(curve: &NurbsCurve, u: Real) -> CurvePoint {
+    crate::native::api::evaluate_nurbs_curve_view(
+        Some(crate::native::view::View::<NurbsCurve, crate::native::view::Const>::from_ref(curve)),
+        u,
+    )
+}
+"""
+
+override_functions["ufbx_evaluate_nurbs_surface"] = """
+pub fn evaluate_nurbs_surface(surface: &NurbsSurface, u: Real, v: Real) -> SurfacePoint {
+    crate::native::api::evaluate_nurbs_surface_view(
+        Some(crate::native::view::View::<NurbsSurface, crate::native::view::Const>::from_ref(surface)),
+        u,
+        v,
+    )
+}
+"""
+
 override_functions["ufbx_get_bone_pose"] = """
 #[allow(clippy::needless_lifetimes)]
 pub fn get_bone_pose<'a>(pose: &'a Pose, node: &Node) -> Option<&'a BonePose> {
@@ -998,6 +1020,27 @@ pub fn evaluate_prop<'a, 'b>(anim: &'a Anim, element: &'a Element, name: &'b str
 
 override_functions["ufbx_prepare_prop_overrides"] = """
 // TODO: ufbx_prepare_prop_overrides()
+"""
+
+override_functions["ufbx_evaluate_transform"] = """
+pub fn evaluate_transform(anim: &Anim, node: &Node, time: f64) -> Transform {
+    crate::native::api::evaluate_transform(
+        Some(crate::native::view::View::<Anim, crate::native::view::Const>::from_ref(anim)),
+        Some(crate::native::view::View::<Node, crate::native::view::Const>::from_ref(node)),
+        time,
+    )
+}
+"""
+
+override_functions["ufbx_evaluate_transform_flags"] = """
+pub fn evaluate_transform_flags(anim: &Anim, node: &Node, time: f64, flags: u32) -> Transform {
+    crate::native::api::evaluate_transform_flags(
+        Some(crate::native::view::View::<Anim, crate::native::view::Const>::from_ref(anim)),
+        Some(crate::native::view::View::<Node, crate::native::view::Const>::from_ref(node)),
+        time,
+        flags,
+    )
+}
 """
 
 override_functions["ufbx_evaluate_props"] = """

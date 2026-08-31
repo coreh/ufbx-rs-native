@@ -1054,10 +1054,30 @@ pub unsafe extern "C" fn ufbx_evaluate_transform(
     node: *const crate::generated::Node,
     time: f64,
 ) -> crate::generated::Transform {
-    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
-    // own raw-pointer contract and are forwarded unchanged to the native impl,
-    // whose contract is identical.
-    unsafe { crate::native::api::evaluate_transform(anim, node, time) }
+    crate::native::platform::ufbx_assert!(!anim.is_null());
+    crate::native::platform::ufbx_assert!(!node.is_null());
+    // SAFETY: the non-null raw ABI arguments point at live, readable objects
+    // frozen for this call. The node null check precedes the anim null check,
+    // matching the native C-parity path after the assertions.
+    unsafe {
+        let node = if node.is_null() {
+            None
+        } else {
+            Some(crate::native::view::View::<
+                crate::generated::Node,
+                crate::native::view::Const,
+            >::from_ptr(node))
+        };
+        let anim = if anim.is_null() {
+            None
+        } else {
+            Some(crate::native::view::View::<
+                crate::generated::Anim,
+                crate::native::view::Const,
+            >::from_ptr(anim))
+        };
+        crate::native::api::evaluate_transform(anim, node, time)
+    }
 }
 
 // ufbx.c:31062-31160 `ufbx_evaluate_transform_flags` (impl: native/api.rs
@@ -1069,10 +1089,30 @@ pub unsafe extern "C" fn ufbx_evaluate_transform_flags(
     time: f64,
     flags: u32,
 ) -> crate::generated::Transform {
-    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
-    // own raw-pointer contract and are forwarded unchanged to the native impl,
-    // whose contract is identical.
-    unsafe { crate::native::api::evaluate_transform_flags(anim, node, time, flags) }
+    crate::native::platform::ufbx_assert!(!anim.is_null());
+    crate::native::platform::ufbx_assert!(!node.is_null());
+    // SAFETY: the non-null raw ABI arguments point at live, readable objects
+    // frozen for this call. The node null check precedes the anim null check,
+    // matching the native C-parity path after the assertions.
+    unsafe {
+        let node = if node.is_null() {
+            None
+        } else {
+            Some(crate::native::view::View::<
+                crate::generated::Node,
+                crate::native::view::Const,
+            >::from_ptr(node))
+        };
+        let anim = if anim.is_null() {
+            None
+        } else {
+            Some(crate::native::view::View::<
+                crate::generated::Anim,
+                crate::native::view::Const,
+            >::from_ptr(anim))
+        };
+        crate::native::api::evaluate_transform_flags(anim, node, time, flags)
+    }
 }
 
 // ufbx.c:31162-31165 `ufbx_evaluate_blend_weight` (impl: native/api.rs

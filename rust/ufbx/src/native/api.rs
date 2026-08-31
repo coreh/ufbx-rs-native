@@ -1791,14 +1791,12 @@ pub(crate) unsafe fn evaluate_props_flags(
 
 // ufbx.c:31025-31028 `ufbx_evaluate_transform`
 #[inline(never)]
-pub(crate) unsafe fn evaluate_transform(
-    anim: *const Anim,
-    node: *const Node,
+pub(crate) fn evaluate_transform(
+    anim: Option<&View<Anim, Const>>,
+    node: Option<&View<Node, Const>>,
     time: f64,
 ) -> Transform {
-    // SAFETY: `anim`/`node` are this `unsafe fn`'s own live params, forwarded
-    // unchanged to `evaluate_transform_flags`.
-    unsafe { evaluate_transform_flags(anim, node, time, 0) }
+    evaluate_transform_flags(anim, node, time, 0)
 }
 
 // ufbx.c:31030-31060 `ufbxi_transform_props_*` tables — raw pointers into the
@@ -1848,27 +1846,23 @@ static TRANSFORM_PROPS_ROTATION_SCALE: PropNameTable<5> = PropNameTable([
 
 // ufbx.c:31062-31160 `ufbx_evaluate_transform_flags`
 #[inline(never)]
-pub(crate) unsafe fn evaluate_transform_flags(
-    anim: *const Anim,
-    node: *const Node,
+pub(crate) fn evaluate_transform_flags(
+    anim: Option<&View<Anim, Const>>,
+    node: Option<&View<Node, Const>>,
     time: f64,
     flags: u32,
 ) -> Transform {
     let mut flags = flags;
-    ufbx_assert!(!anim.is_null());
-    ufbx_assert!(!node.is_null());
-    if node.is_null() {
+    ufbx_assert!(anim.is_some());
+    ufbx_assert!(node.is_some());
+    let Some(node) = node else {
         return IDENTITY_TRANSFORM;
-    }
-    if anim.is_null() {
-        // SAFETY: `node` is non-null (checked) and points at a live `Node` — the
-        // raw-pointer contract of this `unsafe fn`; reading its own transform.
-        return unsafe { (*node).local_transform };
-    }
-    // SAFETY: live `node` per above; reading its own `is_root` flag.
-    if unsafe { (*node).is_root } {
-        // SAFETY: as above.
-        return unsafe { (*node).local_transform };
+    };
+    let Some(anim) = anim else {
+        return node.local_transform();
+    };
+    if node.is_root() {
+        return node.local_transform();
     }
 
     if (flags & TransformFlags::EXPLICIT_INCLUDES.raw()) == 0 {
@@ -1902,15 +1896,10 @@ pub(crate) unsafe fn evaluate_transform_flags(
     let mut scale_factor: Vec3 = ONE_VEC3;
     let mut use_scale_factor: bool = false;
 
-    // SAFETY: `node` is non-null (checked) and points at a live `Node` — the
-    // raw-pointer contract of this `unsafe fn`; the node graph is only read
-    // while this frozen view (and the views reached from it) are live.
-    let node_view: &View<Node, Const> = unsafe { View::<Node, Const>::from_ptr(node) };
-
     // C: `if (node->parent && (flags & (…SCALE|…TRANSLATION)) != 0)`, then
     // `const ufbx_node *parent = node->parent;` — `filter` keeps C's
     // short-circuit order (parent read first, flags only when it is non-null).
-    if let Some(parent) = node_view.parent_view().filter(|_| {
+    if let Some(parent) = node.parent_view().filter(|_| {
         (flags & (TransformFlags::INCLUDE_SCALE.raw() | TransformFlags::INCLUDE_TRANSLATION.raw()))
             != 0
     }) {
@@ -1919,8 +1908,7 @@ pub(crate) unsafe fn evaluate_transform_flags(
         {
             let mut p: Option<&View<Node, Const>> = parent.inherit_scale_node_view();
 
-            // SAFETY: live `node` per above; reading its own `is_scale_helper`.
-            if unsafe { (*node).is_scale_helper } {
+            if node.is_scale_helper() {
                 use_scale_factor = true;
             }
 
@@ -1929,16 +1917,10 @@ pub(crate) unsafe fn evaluate_transform_flags(
                     break;
                 };
                 // C: `ufbx_prop scale = ufbx_evaluate_prop(anim, &p->scale_helper->element, ufbxi_Lcl_Scaling, time);`
-                // SAFETY: `anim` is the live anim param, read-only for the call —
-                // which is what the `Const` mint asks for; `sp::Lcl_Scaling` is a
-                // NUL-terminated static name.
+                // SAFETY: `anim` and the helper element are frozen views;
+                // `sp::Lcl_Scaling` is a NUL-terminated static name.
                 let scale: Prop = unsafe {
-                    evaluate_prop(
-                        View::<Anim, Const>::from_ptr(anim),
-                        helper.element(),
-                        sp::Lcl_Scaling.as_ptr(),
-                        time,
-                    )
+                    evaluate_prop(anim, helper.element(), sp::Lcl_Scaling.as_ptr(), time)
                 };
                 // C: `scale.value_vec3.{x,y,z}` — the value union's 3-real view.
                 scale_factor.x *= scale.value_vec4.x;
@@ -1954,16 +1936,10 @@ pub(crate) unsafe fn evaluate_transform_flags(
             .scale_helper_view()
             .filter(|_| (flags & TransformFlags::IGNORE_SCALE_HELPER.raw()) == 0)
         {
-            // SAFETY: `anim` is the live anim param, read-only for the call —
-            // which is what the `Const` mint asks for; `sp::Lcl_Scaling` is a
-            // NUL-terminated static name.
+            // SAFETY: `anim` and the helper element are frozen views;
+            // `sp::Lcl_Scaling` is a NUL-terminated static name.
             helper_scale.write(unsafe {
-                evaluate_prop(
-                    View::<Anim, Const>::from_ptr(anim),
-                    helper.element(),
-                    sp::Lcl_Scaling.as_ptr(),
-                    time,
-                )
+                evaluate_prop(anim, helper.element(), sp::Lcl_Scaling.as_ptr(), time)
             });
             let hs: *mut Prop = helper_scale.as_mut_ptr();
             // SAFETY: `hs` is the just-written local `Prop` storage; reading and
@@ -1997,13 +1973,13 @@ pub(crate) unsafe fn evaluate_transform_flags(
 
     // C: `ufbx_prop buf[ufbxi_arraycount(ufbxi_transform_props_all)]; // ufbxi_uninit`
     let mut buf = MaybeUninit::<[Prop; TRANSFORM_PROPS_ALL_COUNT]>::uninit(); // ufbxi_uninit
-                                                                              // SAFETY: `anim` is live, the raw field address identifies the node's own
-                                                                              // element, `buf` is this frame's correctly sized scratch storage, and
-                                                                              // `prop_names`/`num_prop_names` describe the static name table.
+                                                                              // SAFETY: the views root live anim/node objects, `buf` is this frame's
+                                                                              // correctly sized scratch storage, and `prop_names`/`num_prop_names`
+                                                                              // describe the static name table.
     let props: Props = unsafe {
         evaluate::evaluate_selected_props(
-            anim,
-            &raw const (*node).element,
+            anim.as_ptr(),
+            node.element_ptr(),
             time,
             buf.as_mut_ptr() as *mut Prop,
             prop_names,
@@ -2038,7 +2014,7 @@ pub(crate) unsafe fn evaluate_transform_flags(
                 get_transform(
                     View::<Props, Const>::from_ref(&props),
                     order,
-                    View::<Node, Const>::from_ptr(node),
+                    node,
                     translation_scale,
                 ),
             );
@@ -2053,11 +2029,7 @@ pub(crate) unsafe fn evaluate_transform_flags(
             // views over the local `props` and the live `node`, neither written
             // through while the views are held.
             unsafe {
-                (*t).rotation = get_rotation(
-                    View::<Props, Const>::from_ref(&props),
-                    order,
-                    View::<Node, Const>::from_ptr(node),
-                );
+                (*t).rotation = get_rotation(View::<Props, Const>::from_ref(&props), order, node);
             }
         } else {
             // SAFETY: local transform storage; writing its own field.
@@ -2070,10 +2042,7 @@ pub(crate) unsafe fn evaluate_transform_flags(
             // views over the local `props` and the live `node`, neither written
             // through while the views are held.
             unsafe {
-                (*t).scale = get_scale(
-                    View::<Props, Const>::from_ref(&props),
-                    View::<Node, Const>::from_ptr(node),
-                );
+                (*t).scale = get_scale(View::<Props, Const>::from_ref(&props), node);
             }
         } else {
             // SAFETY: local transform storage; writing its own field.
@@ -4147,17 +4116,17 @@ pub(crate) unsafe fn evaluate_nurbs_basis(
 
 // ufbx.c:32168-32212 `ufbx_evaluate_nurbs_curve`
 #[inline(never)]
-pub(crate) unsafe fn evaluate_nurbs_curve(curve: *const NurbsCurve, u: Real) -> CurvePoint {
+pub(crate) fn evaluate_nurbs_curve_view(
+    curve: Option<&View<NurbsCurve, Const>>,
+    u: Real,
+) -> CurvePoint {
     // C: `ufbx_curve_point result = { false };`
     let mut result = CurvePoint::default();
 
-    ufbx_assert!(!curve.is_null());
-    if curve.is_null() {
+    ufbx_assert!(curve.is_some());
+    let Some(curve_view) = curve else {
         return result;
-    }
-    // SAFETY: `curve` is non-null here (checked above), points at a live
-    // `NurbsCurve` per this fn's contract, and remains read-only for the call.
-    let curve_view = unsafe { View::<NurbsCurve, Const>::from_ptr(curve) };
+    };
 
     // C leaves these arrays uninitialized; every consumed prefix is written by
     // `evaluate_nurbs_basis`, so zero initialization has identical live values.
@@ -4220,23 +4189,33 @@ pub(crate) unsafe fn evaluate_nurbs_curve(curve: *const NurbsCurve, u: Real) -> 
     result
 }
 
+// Raw nullable adapter for the C ABI shim.
+#[inline(always)]
+pub(crate) unsafe fn evaluate_nurbs_curve(curve: *const NurbsCurve, u: Real) -> CurvePoint {
+    let curve = if curve.is_null() {
+        None
+    } else {
+        // SAFETY: this adapter's raw contract makes `curve` a live, initialized
+        // `NurbsCurve`, readable and frozen for this call.
+        Some(unsafe { View::<NurbsCurve, Const>::from_ptr(curve) })
+    };
+    evaluate_nurbs_curve_view(curve, u)
+}
+
 // ufbx.c:32214-32280 `ufbx_evaluate_nurbs_surface`
 #[inline(never)]
-pub(crate) unsafe fn evaluate_nurbs_surface(
-    surface: *const NurbsSurface,
+pub(crate) fn evaluate_nurbs_surface_view(
+    surface: Option<&View<NurbsSurface, Const>>,
     u: Real,
     v: Real,
 ) -> SurfacePoint {
     // C: `ufbx_surface_point result = { false };`
     let mut result = SurfacePoint::default();
 
-    ufbx_assert!(!surface.is_null());
-    if surface.is_null() {
+    ufbx_assert!(surface.is_some());
+    let Some(surface_view) = surface else {
         return result;
-    }
-    // SAFETY: `surface` is non-null here (checked above), points at a live
-    // `NurbsSurface` per this fn's contract, and remains read-only for the call.
-    let surface_view = unsafe { View::<NurbsSurface, Const>::from_ptr(surface) };
+    };
 
     // C leaves these arrays uninitialized; every consumed prefix is written by
     // the two basis evaluations, so zero initialization has identical live values.
@@ -4334,6 +4313,23 @@ pub(crate) unsafe fn evaluate_nurbs_surface(
     result.derivative_v.y = (dv.y - dv.w * result.position.y) * rcp_w;
     result.derivative_v.z = (dv.z - dv.w * result.position.z) * rcp_w;
     result
+}
+
+// Raw nullable adapter for the C ABI shim.
+#[inline(always)]
+pub(crate) unsafe fn evaluate_nurbs_surface(
+    surface: *const NurbsSurface,
+    u: Real,
+    v: Real,
+) -> SurfacePoint {
+    let surface = if surface.is_null() {
+        None
+    } else {
+        // SAFETY: this adapter's raw contract makes `surface` a live,
+        // initialized `NurbsSurface`, readable and frozen for this call.
+        Some(unsafe { View::<NurbsSurface, Const>::from_ptr(surface) })
+    };
+    evaluate_nurbs_surface_view(surface, u, v)
 }
 
 // ufbx.c:32282-32318 `ufbx_tessellate_nurbs_curve`

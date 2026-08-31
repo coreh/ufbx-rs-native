@@ -5103,25 +5103,21 @@ where
     unsafe { ExternalRef::new(result) }
 }
 
-#[allow(clippy::let_and_return)]
 pub fn evaluate_transform(anim: &Anim, node: &Node, time: f64) -> Transform {
-    let result = unsafe {
-        crate::native::api::evaluate_transform(anim as *const Anim, node as *const Node, time)
-    };
-    result
+    crate::native::api::evaluate_transform(
+        Some(crate::native::view::View::<Anim, crate::native::view::Const>::from_ref(anim)),
+        Some(crate::native::view::View::<Node, crate::native::view::Const>::from_ref(node)),
+        time,
+    )
 }
 
-#[allow(clippy::let_and_return)]
 pub fn evaluate_transform_flags(anim: &Anim, node: &Node, time: f64, flags: u32) -> Transform {
-    let result = unsafe {
-        crate::native::api::evaluate_transform_flags(
-            anim as *const Anim,
-            node as *const Node,
-            time,
-            flags,
-        )
-    };
-    result
+    crate::native::api::evaluate_transform_flags(
+        Some(crate::native::view::View::<Anim, crate::native::view::Const>::from_ref(anim)),
+        Some(crate::native::view::View::<Node, crate::native::view::Const>::from_ref(node)),
+        time,
+        flags,
+    )
 }
 
 #[allow(clippy::let_and_return)]
@@ -5504,17 +5500,25 @@ pub fn evaluate_nurbs_basis(
     result
 }
 
-#[allow(clippy::let_and_return)]
 pub fn evaluate_nurbs_curve(curve: &NurbsCurve, u: Real) -> CurvePoint {
-    let result = unsafe { crate::native::api::evaluate_nurbs_curve(curve as *const NurbsCurve, u) };
-    result
+    crate::native::api::evaluate_nurbs_curve_view(
+        Some(crate::native::view::View::<
+            NurbsCurve,
+            crate::native::view::Const,
+        >::from_ref(curve)),
+        u,
+    )
 }
 
-#[allow(clippy::let_and_return)]
 pub fn evaluate_nurbs_surface(surface: &NurbsSurface, u: Real, v: Real) -> SurfacePoint {
-    let result =
-        unsafe { crate::native::api::evaluate_nurbs_surface(surface as *const NurbsSurface, u, v) };
-    result
+    crate::native::api::evaluate_nurbs_surface_view(
+        Some(crate::native::view::View::<
+            NurbsSurface,
+            crate::native::view::Const,
+        >::from_ref(surface)),
+        u,
+        v,
+    )
 }
 
 pub unsafe fn tessellate_nurbs_curve_raw(

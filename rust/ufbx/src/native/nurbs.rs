@@ -33,7 +33,7 @@ use crate::native::allocator::LINE_CURVE_IMP_MAGIC;
 use crate::native::allocator::{does_overflow, init_ator, Allocator};
 #[cfg(feature = "tessellation")]
 use crate::native::api::{
-    compute_normals, evaluate_nurbs_curve, evaluate_nurbs_surface, ZERO_VEC2, ZERO_VEC3,
+    compute_normals, evaluate_nurbs_curve_view, evaluate_nurbs_surface_view, ZERO_VEC2, ZERO_VEC3,
 };
 #[cfg(feature = "tessellation")]
 use crate::native::buf::Buf;
@@ -655,10 +655,7 @@ pub(crate) fn tessellate_nurbs_curve_imp(
                     u = u * (1.0f32 as Real - t) + t * spans.copy_at(span_ix + 1);
                 }
 
-                // SAFETY: `u` comes from this live curve's own bounded span
-                // run; the evaluator's control-point/basis relation remains a
-                // raw internal contract.
-                let point: CurvePoint = unsafe { evaluate_nurbs_curve(curve, u) };
+                let point: CurvePoint = evaluate_nurbs_curve_view(Some(curve_view), u);
                 vertices_write.write_at(ix, point.position);
                 indices_write.write_at(ix, ix as u32);
             } else {
@@ -921,9 +918,8 @@ pub(crate) fn tessellate_nurbs_surface_imp(
                     }
 
                     let (pos, tangent_u, tangent_v) = {
-                        // SAFETY: evaluating the live surface (tc construction
-                        // invariant) at a parameter taken from its own span range.
-                        let point: SurfacePoint = unsafe { evaluate_nurbs_surface(surface, u, v) };
+                        let point: SurfacePoint =
+                            evaluate_nurbs_surface_view(Some(surface_view), u, v);
                         (
                             point.position,
                             slow_normalize3(&point.derivative_u),

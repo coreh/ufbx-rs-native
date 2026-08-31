@@ -7280,11 +7280,16 @@ pub(crate) unsafe fn bake_node_imp(
         }
 
         let eval_time: f64 = bake_time_sample_time(bake_time);
-        // SAFETY: `bc.anim()` is the `ufbx_anim` `bake_anim_imp` stored into `bc`
-        // and `node` views a live element of the scene that anim evaluates
-        // against, so its address is a live `ufbx_node`.
-        let mut transform: Transform =
-            unsafe { evaluate_transform_flags(bc.anim(), node.as_ptr(), eval_time, flags) };
+        // SAFETY: `bc.anim()` is the live anim stored into `bc`, and `node`
+        // views a live scene element. Both remain frozen for this evaluation.
+        let mut transform: Transform = unsafe {
+            evaluate_transform_flags(
+                Some(View::<Anim, Const>::from_ptr(bc.anim())),
+                Some(View::<UfbxNode, Const>::from_ptr(node.as_ptr())),
+                eval_time,
+                flags,
+            )
+        };
 
         if (flags & TransformFlags::INCLUDE_TRANSLATION.raw()) != 0 {
             if let Some(scale_helper_t) = scale_helper_t {
