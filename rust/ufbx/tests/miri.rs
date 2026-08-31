@@ -110,7 +110,13 @@ fn load_and_walk(name: &str) -> f64 {
 
 #[test]
 fn load_cube_binary() {
-    assert!(load_and_walk("maya_cube_7500_binary.fbx").is_finite());
+    let original = load("maya_cube_7500_binary.fbx");
+    let retained = original.clone();
+    drop(original);
+
+    assert!(!retained.nodes.is_empty(), "retained scene has no nodes");
+    assert!(walk(&retained).is_finite());
+    drop(retained);
 }
 
 #[test]

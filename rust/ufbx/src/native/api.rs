@@ -191,8 +191,9 @@ pub(crate) unsafe fn retain_ref(refcount: *mut Refcount) {
     // SAFETY: `refcount` points at a live `Refcount` — the raw-pointer contract
     // of this `unsafe fn`.
     ufbx_assert!(unsafe { (*refcount).self_magic } == REFCOUNT_IMP_MAGIC);
-    // SAFETY: same live `Refcount`; `refcount.refcount` is its own atomic field.
-    let count: usize = unsafe { atomic_counter_inc(&raw mut (*refcount).refcount) };
+    // SAFETY: same live `Refcount`; `refcount.refcount` is initialized and
+    // remains live for this atomic operation.
+    let count: usize = atomic_counter_inc(unsafe { &(*refcount).refcount });
     ufbxi_ignore!(count);
     ufbx_assert!(count < usize::MAX / 2);
 }
@@ -204,9 +205,11 @@ pub(crate) unsafe fn release_ref(mut refcount: *mut Refcount) {
         // SAFETY: `refcount` is non-null here and points at a live `Refcount` —
         // the raw-pointer contract of this `unsafe fn`.
         ufbx_assert!(unsafe { (*refcount).self_magic } == REFCOUNT_IMP_MAGIC);
-        // SAFETY: same live `Refcount`; `refcount.refcount` is its own atomic.
+        // SAFETY: same live `Refcount`; the temporary shared borrow of its
+        // initialized atomic ends when `dec` returns, before the exclusive
+        // plain-store `free` below.
         unsafe {
-            if atomic_counter_dec(&raw mut (*refcount).refcount) > 0 {
+            if atomic_counter_dec(&(*refcount).refcount) > 0 {
                 return;
             }
             atomic_counter_free(&raw mut (*refcount).refcount);

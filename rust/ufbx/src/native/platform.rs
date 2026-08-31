@@ -237,29 +237,23 @@ pub(crate) unsafe fn atomic_counter_free(ptr: *mut AtomicCounter) {
 // ufbx.c:645 `#define ufbxi_atomic_counter_inc(ptr) __sync_fetch_and_add((ptr), 1)`
 // Returns the PREVIOUS value.
 #[inline(always)]
-pub(crate) unsafe fn atomic_counter_inc(ptr: *mut AtomicCounter) -> usize {
-    // SAFETY: `ptr` points at a live, initialized counter (caller contract);
-    // the RMW itself is race-free through the atomic.
-    unsafe { (*ptr).fetch_add(1, core::sync::atomic::Ordering::SeqCst) }
+pub(crate) fn atomic_counter_inc(counter: &AtomicCounter) -> usize {
+    counter.fetch_add(1, core::sync::atomic::Ordering::SeqCst)
 }
 
 // ufbx.c:646 `#define ufbxi_atomic_counter_dec(ptr) __sync_fetch_and_sub((ptr), 1)`
 // Returns the PREVIOUS value.
 #[inline(always)]
-pub(crate) unsafe fn atomic_counter_dec(ptr: *mut AtomicCounter) -> usize {
-    // SAFETY: `ptr` points at a live, initialized counter (caller contract);
-    // the RMW itself is race-free through the atomic.
-    unsafe { (*ptr).fetch_sub(1, core::sync::atomic::Ordering::SeqCst) }
+pub(crate) fn atomic_counter_dec(counter: &AtomicCounter) -> usize {
+    counter.fetch_sub(1, core::sync::atomic::Ordering::SeqCst)
 }
 
 // ufbx.c:647 `#define ufbxi_atomic_counter_load(ptr) __sync_fetch_and_add((ptr), 0)`
 // C: "// TODO: Proper atomic load" — ported as `fetch_add(0, SeqCst)` to match
 // (PORTING.md "Atomics / refcount"), not a plain `load`.
 #[inline(always)]
-pub(crate) unsafe fn atomic_counter_load(ptr: *mut AtomicCounter) -> usize {
-    // SAFETY: `ptr` points at a live, initialized counter (caller contract);
-    // the RMW itself is race-free through the atomic.
-    unsafe { (*ptr).fetch_add(0, core::sync::atomic::Ordering::SeqCst) }
+pub(crate) fn atomic_counter_load(counter: &AtomicCounter) -> usize {
+    counter.fetch_add(0, core::sync::atomic::Ordering::SeqCst)
 }
 
 // -- Configuration constants with regression overrides
@@ -1899,18 +1893,18 @@ mod tests {
             let mut c = core::mem::MaybeUninit::<AtomicCounter>::uninit();
             let p = c.as_mut_ptr();
             atomic_counter_init(p);
-            assert_eq!(atomic_counter_load(p), 0);
-            assert_eq!(atomic_counter_inc(p), 0);
-            assert_eq!(atomic_counter_inc(p), 1);
-            assert_eq!(atomic_counter_load(p), 2);
-            assert_eq!(atomic_counter_dec(p), 2);
+            assert_eq!(atomic_counter_load(&*p), 0);
+            assert_eq!(atomic_counter_inc(&*p), 0);
+            assert_eq!(atomic_counter_inc(&*p), 1);
+            assert_eq!(atomic_counter_load(&*p), 2);
+            assert_eq!(atomic_counter_dec(&*p), 2);
             // Refcount idiom (ufbx.c:30255/30273): the counter starts at 0 and
             // `if dec(...) > 0 { return }` — the object is freed when the
             // PREVIOUS value was 0.
-            assert_eq!(atomic_counter_dec(p), 1);
-            assert_eq!(atomic_counter_load(p), 0);
+            assert_eq!(atomic_counter_dec(&*p), 1);
+            assert_eq!(atomic_counter_load(&*p), 0);
             atomic_counter_free(p);
-            assert_eq!(atomic_counter_load(p), 0);
+            assert_eq!(atomic_counter_load(&*p), 0);
         }
         // ufbx.c:633 / 30497-30500 `ufbx_is_thread_safe` logic.
         assert!(THREAD_SAFE != 0);
@@ -1925,10 +1919,9 @@ mod tests {
         static SEEN: [AtomicBool; 64] = [const { AtomicBool::new(false) }; 64];
         let threads: Vec<_> = (0..4)
             .map(|_| {
-                std::thread::spawn(|| unsafe {
-                    let p = &COUNTER as *const AtomicCounter as *mut AtomicCounter;
+                std::thread::spawn(|| {
                     for _ in 0..16 {
-                        let prev = atomic_counter_inc(p);
+                        let prev = atomic_counter_inc(&COUNTER);
                         assert!(!SEEN[prev].swap(true, Ordering::SeqCst));
                     }
                 })
@@ -1937,10 +1930,7 @@ mod tests {
         for t in threads {
             t.join().unwrap();
         }
-        unsafe {
-            let p = &COUNTER as *const AtomicCounter as *mut AtomicCounter;
-            assert_eq!(atomic_counter_load(p), 64);
-        }
+        assert_eq!(atomic_counter_load(&COUNTER), 64);
         assert!(SEEN.iter().all(|s| s.load(Ordering::SeqCst)));
     }
 
