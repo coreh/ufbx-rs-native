@@ -399,11 +399,12 @@ pub(crate) fn evaluate_skinning(
                     let mat: Matrix =
                         unsafe { catch_get_skin_vertex_matrix(None, skin, i, fallback) };
                     // SAFETY: `i < num_vertices`, so `result_pos + i` is inside
-                    // the pushed result allocation, readable and writable;
-                    // the `*const Matrix` `transform_position` reads is derived
-                    // from a borrow of the live local `mat`.
+                    // the pushed result allocation, readable and writable.
                     unsafe {
-                        *result_pos.add(i) = transform_position(&raw const mat, *result_pos.add(i))
+                        *result_pos.add(i) = transform_position(
+                            View::<Matrix, Const>::from_ref(&mat),
+                            *result_pos.add(i),
+                        )
                     };
                 }
 

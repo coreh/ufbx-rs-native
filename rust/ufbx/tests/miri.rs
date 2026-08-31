@@ -1947,6 +1947,65 @@ fn public_anim_eval_from_shared_refs() {
     assert!(acc.is_finite());
 }
 
+#[test]
+fn public_matrix_value_helpers_from_shared_refs() {
+    let matrix = ufbx::Matrix {
+        m00: -2.0,
+        m11: 4.0,
+        m22: 8.0,
+        m03: 10.0,
+        m13: 20.0,
+        m23: 30.0,
+        ..Default::default()
+    };
+    let vector = ufbx::Vec3 {
+        x: 1.0,
+        y: 2.0,
+        z: 3.0,
+    };
+
+    let position = ufbx::transform_position(&matrix, vector);
+    assert_eq!(position.x, 8.0);
+    assert_eq!(position.y, 28.0);
+    assert_eq!(position.z, 54.0);
+
+    let direction = ufbx::transform_direction(&matrix, vector);
+    assert_eq!(direction.x, -2.0);
+    assert_eq!(direction.y, 8.0);
+    assert_eq!(direction.z, 24.0);
+
+    assert_eq!(ufbx::matrix_determinant(&matrix), -64.0);
+    let inverse = ufbx::matrix_invert(&matrix);
+    assert_eq!(inverse.m00, -0.5);
+    assert_eq!(inverse.m11, 0.25);
+    assert_eq!(inverse.m22, 0.125);
+    assert_eq!(inverse.m03, 5.0);
+    assert_eq!(inverse.m13, -5.0);
+    assert_eq!(inverse.m23, -3.75);
+
+    let normals = ufbx::matrix_for_normals(&matrix);
+    assert_eq!(normals.m00, -32.0);
+    assert_eq!(normals.m11, 16.0);
+    assert_eq!(normals.m22, 8.0);
+    assert_eq!(normals.m03, 0.0);
+    assert_eq!(normals.m13, 0.0);
+    assert_eq!(normals.m23, 0.0);
+
+    let singular = ufbx::Matrix {
+        m00: 1.0,
+        m11: 0.0,
+        m22: 1.0,
+        ..Default::default()
+    };
+    let zero = ufbx::matrix_invert(&singular);
+    for value in [
+        zero.m00, zero.m10, zero.m20, zero.m01, zero.m11, zero.m21, zero.m02, zero.m12, zero.m22,
+        zero.m03, zero.m13, zero.m23,
+    ] {
+        assert_eq!(value, 0.0);
+    }
+}
+
 /// Mesh geometry helpers from shared refs: indexed vertex-attribute getters,
 /// face normals, topology edge navigation, normal mapping/accumulation, and
 /// bounds rejection over caller-provided buffers.

@@ -1277,8 +1277,7 @@ pub(crate) fn get_compatible_matrix_for_normals<M: Mode>(node: Option<&View<Node
     // SAFETY: `node_to_world_ptr()` projects the viewed node's own world matrix,
     // and `&geom_rot_mat` addresses the local matrix just computed.
     let mut norm_mat: Matrix = unsafe { matrix_mul(node.node_to_world_ptr(), &geom_rot_mat) };
-    // SAFETY: `&norm_mat` addresses the local matrix just computed.
-    norm_mat = unsafe { matrix_for_normals(&norm_mat) };
+    norm_mat = matrix_for_normals(View::<Matrix, Const>::from_ref(&norm_mat));
     norm_mat
 }
 
@@ -3201,9 +3200,10 @@ pub(crate) unsafe fn matrix_mul(a: *const Matrix, b: *const Matrix) -> Matrix {
 // ufbx.c:31749-31754 `ufbx_matrix_determinant`
 // Kept here because `ufbx_matrix_for_normals` below
 // needs it.
-pub(crate) unsafe fn matrix_determinant(m: *const Matrix) -> Real {
-    // SAFETY: `m` points at a live `Matrix` per this fn's contract; every field
-    // read is one of its own `mNN` fields.
+pub(crate) fn matrix_determinant<M: Mode>(m: &View<Matrix, M>) -> Real {
+    let m = m.as_ptr();
+    // SAFETY: the view roots a live initialized matrix; every field read is one
+    // of its own `mNN` fields.
     unsafe {
         -(*m).m02 * (*m).m11 * (*m).m20
             + (*m).m01 * (*m).m12 * (*m).m20
@@ -3217,10 +3217,9 @@ pub(crate) unsafe fn matrix_determinant(m: *const Matrix) -> Real {
 // ufbx.c:31756-31782 `ufbx_matrix_invert`
 // Kept here because `ufbxi_update_pose`
 // (ufbx.c:23271, `native::scene_process`) calls it.
-pub(crate) unsafe fn matrix_invert(m: *const Matrix) -> Matrix {
-    // SAFETY: `m` points at a live `Matrix` per this fn's contract, forwarded
-    // unchanged to `matrix_determinant`.
-    let det: Real = unsafe { matrix_determinant(m) };
+pub(crate) fn matrix_invert<M: Mode>(m: &View<Matrix, M>) -> Matrix {
+    let det: Real = matrix_determinant(m);
+    let m = m.as_ptr();
 
     // C: `ufbx_matrix r;` — the early-out arm `memset`s it and the fall-through
     // arm writes every field, so the zero-fill is inert (upstream carries no
@@ -3279,10 +3278,9 @@ pub(crate) unsafe fn matrix_invert(m: *const Matrix) -> Matrix {
 // Kept here because `ufbxi_modify_geometry`
 // (ufbx.c:21165, `native::scene_process`) calls it.
 #[inline(never)]
-pub(crate) unsafe fn matrix_for_normals(m: *const Matrix) -> Matrix {
-    // SAFETY: `m` points at a live `Matrix` per this fn's contract, forwarded
-    // unchanged to `matrix_determinant`.
-    let det: Real = unsafe { matrix_determinant(m) };
+pub(crate) fn matrix_for_normals<M: Mode>(m: &View<Matrix, M>) -> Matrix {
+    let det: Real = matrix_determinant(m);
+    let m = m.as_ptr();
     let det_sign: Real = if det >= 0.0 { 1.0 } else { -1.0 };
 
     // C: `ufbx_matrix r;` — every field is written below before the return.
@@ -3313,18 +3311,14 @@ pub(crate) unsafe fn matrix_for_normals(m: *const Matrix) -> Matrix {
 // Kept here because `ufbxi_transform_vec3_list`
 // (ufbx.c:21049, `native::scene_process`) calls it.
 #[inline(never)]
-pub(crate) unsafe fn transform_position(m: *const Matrix, v: Vec3) -> Vec3 {
-    ufbx_assert!(!m.is_null());
-    if m.is_null() {
-        return ZERO_VEC3;
-    }
-
+pub(crate) fn transform_position<M: Mode>(m: &View<Matrix, M>, v: Vec3) -> Vec3 {
+    let m = m.as_ptr();
     // C: `ufbx_vec3 r;` — every field is written below before the return,
     // so the zero-fill is inert (upstream carries no `// ufbxi_uninit` marker).
     // SAFETY: an all-zero bit pattern is a valid `Vec3` (all `Real` fields).
     let mut r: Vec3 = unsafe { core::mem::zeroed() };
-    // SAFETY: `m` is non-null here (checked above) and points at a live `Matrix`
-    // per this fn's contract; every field read is one of its own `mNN` fields.
+    // SAFETY: the view roots a live initialized matrix; every field read is one
+    // of its own `mNN` fields.
     unsafe {
         r.x = (*m).m00 * v.x + (*m).m01 * v.y + (*m).m02 * v.z + (*m).m03;
         r.y = (*m).m10 * v.x + (*m).m11 * v.y + (*m).m12 * v.z + (*m).m13;
@@ -3337,18 +3331,14 @@ pub(crate) unsafe fn transform_position(m: *const Matrix, v: Vec3) -> Vec3 {
 // Kept here because `ufbxi_update_adjust_transforms`
 // (ufbx.c:23705, `native::scene_process`) calls it.
 #[inline(never)]
-pub(crate) unsafe fn transform_direction(m: *const Matrix, v: Vec3) -> Vec3 {
-    ufbx_assert!(!m.is_null());
-    if m.is_null() {
-        return ZERO_VEC3;
-    }
-
+pub(crate) fn transform_direction<M: Mode>(m: &View<Matrix, M>, v: Vec3) -> Vec3 {
+    let m = m.as_ptr();
     // C: `ufbx_vec3 r;` — every field is written below before the return,
     // so the zero-fill is inert (upstream carries no `// ufbxi_uninit` marker).
     // SAFETY: an all-zero bit pattern is a valid `Vec3` (all `Real` fields).
     let mut r: Vec3 = unsafe { core::mem::zeroed() };
-    // SAFETY: `m` is non-null here (checked above) and points at a live `Matrix`
-    // per this fn's contract; every field read is one of its own `mNN` fields.
+    // SAFETY: the view roots a live initialized matrix; every field read is one
+    // of its own `mNN` fields.
     unsafe {
         r.x = (*m).m00 * v.x + (*m).m01 * v.y + (*m).m02 * v.z;
         r.y = (*m).m10 * v.x + (*m).m11 * v.y + (*m).m12 * v.z;
@@ -3418,9 +3408,9 @@ pub(crate) unsafe fn matrix_to_transform(m: *const Matrix) -> Transform {
         return IDENTITY_TRANSFORM;
     }
 
-    // SAFETY: `m` is non-null here (checked above) and points at a live `Matrix`
-    // per this fn's contract, forwarded unchanged to `matrix_determinant`.
-    let det: Real = unsafe { matrix_determinant(m) };
+    // SAFETY: `m` is non-null here (checked above) and points at a live matrix;
+    // the frozen mint is confined to the determinant read.
+    let det: Real = unsafe { matrix_determinant(View::<Matrix, Const>::from_ptr(m)) };
 
     // C indexes the `ufbx_matrix` value union's `ufbx_vec3 cols[4]` view; the
     // generated struct keeps only the `m00`..`m23` scalars, so the index is
@@ -4022,29 +4012,33 @@ fn evaluate_nurbs_basis_run(
     }
 }
 
-// ufbx.c:32097-32166 `ufbx_evaluate_nurbs_basis`
-pub(crate) unsafe fn evaluate_nurbs_basis(
-    basis: *const NurbsBasis,
-    mut u: Real,
-    weights: *mut Real,
-    num_weights: usize,
-    mut derivatives: *mut Real,
-    num_derivatives: usize,
-) -> usize {
-    ufbx_assert!(!basis.is_null());
-    if basis.is_null() {
-        return usize::MAX;
+#[derive(Clone, Copy)]
+struct PreparedNurbsBasis<'a> {
+    knots: Run<'a, Real, Const>,
+    knot: usize,
+    degree: usize,
+    u: Real,
+}
+
+impl PreparedNurbsBasis<'_> {
+    #[inline(always)]
+    fn base(self) -> usize {
+        self.knot - self.degree
     }
-    // SAFETY: `basis` is non-null here (checked above) and points at a live
-    // `NurbsBasis` per this fn's contract; the function does not mutate it
-    // while the read-only view is live.
-    let basis_view: &View<NurbsBasis, Const> =
-        unsafe { View::<NurbsBasis, Const>::from_ptr(basis) };
+}
+
+// Navigation half of ufbx.c:32097-32166 `ufbx_evaluate_nurbs_basis`: basis
+// validation, parameter clamping, and knot-span search all precede inspection
+// of the caller's output pointers/counts in C.
+fn prepare_nurbs_basis(
+    basis_view: &View<NurbsBasis, Const>,
+    mut u: Real,
+) -> Option<PreparedNurbsBasis<'_>> {
     if basis_view.order() == 0 {
-        return usize::MAX;
+        return None;
     }
     if !basis_view.valid() {
-        return usize::MAX;
+        return None;
     }
 
     let degree: usize = (basis_view.order() - 1) as usize;
@@ -4080,18 +4074,92 @@ pub(crate) unsafe fn evaluate_nurbs_basis(
     // but we return it as `knot - degree` so that users can find the control points
     // at `points[knot], points[knot+1], ..., points[knot+degree]`
     if knot < degree {
+        return None;
+    }
+
+    Some(PreparedNurbsBasis {
+        knots,
+        knot,
+        degree,
+        u,
+    })
+}
+
+// Output half shared by the safe slice entry and raw C adapter. `Run` retains
+// C's non-restrict semantics: raw weights/derivatives may overlap, while the
+// safe slice entry obtains disjoint capabilities from its two `&mut` borrows.
+fn evaluate_nurbs_basis_prepared(
+    prepared: PreparedNurbsBasis<'_>,
+    weights: Run<'_, Real>,
+    derivatives: Option<Run<'_, Real>>,
+) -> usize {
+    evaluate_nurbs_basis_run(
+        prepared.knots,
+        prepared.knot,
+        prepared.degree,
+        prepared.u,
+        weights,
+        derivatives,
+    );
+    prepared.base()
+}
+
+pub(crate) fn evaluate_nurbs_basis_view(
+    basis_view: &View<NurbsBasis, Const>,
+    u: Real,
+    weights: &mut [Real],
+    derivatives: &mut [Real],
+) -> usize {
+    let Some(prepared) = prepare_nurbs_basis(basis_view, u) else {
+        return usize::MAX;
+    };
+
+    let order = basis_view.order() as usize;
+    if weights.len() < order {
+        return prepared.base();
+    }
+
+    let derivative_count = core::cmp::min(derivatives.len(), order);
+    let weights = Run::from_mut_slice(&mut weights[..order]);
+    let derivatives = if derivative_count == 0 {
+        None
+    } else {
+        Some(Run::from_mut_slice(&mut derivatives[..derivative_count]))
+    };
+    evaluate_nurbs_basis_prepared(prepared, weights, derivatives)
+}
+
+// Raw overlapping-output adapter for the C ABI shim.
+pub(crate) unsafe fn evaluate_nurbs_basis(
+    basis: *const NurbsBasis,
+    u: Real,
+    weights: *mut Real,
+    num_weights: usize,
+    mut derivatives: *mut Real,
+    num_derivatives: usize,
+) -> usize {
+    ufbx_assert!(!basis.is_null());
+    if basis.is_null() {
         return usize::MAX;
     }
+    // SAFETY: `basis` is non-null here (checked above) and points at a live
+    // `NurbsBasis` per this fn's contract; the function does not mutate it
+    // while the read-only view is live.
+    let basis_view: &View<NurbsBasis, Const> =
+        unsafe { View::<NurbsBasis, Const>::from_ptr(basis) };
+    let Some(prepared) = prepare_nurbs_basis(basis_view, u) else {
+        return usize::MAX;
+    };
 
     if num_derivatives == 0 {
         derivatives = core::ptr::null_mut();
     }
     let order = basis_view.order() as usize;
     if num_weights < order {
-        return knot - degree;
+        return prepared.base();
     }
     if weights.is_null() {
-        return knot - degree;
+        return prepared.base();
     }
 
     let derivative_count = core::cmp::min(num_derivatives, order);
@@ -4109,9 +4177,7 @@ pub(crate) unsafe fn evaluate_nurbs_basis(
             },
         )
     };
-    evaluate_nurbs_basis_run(knots, knot, degree, u, weights, derivatives);
-
-    knot - degree
+    evaluate_nurbs_basis_prepared(prepared, weights, derivatives)
 }
 
 // ufbx.c:32168-32212 `ufbx_evaluate_nurbs_curve`
@@ -4132,18 +4198,7 @@ pub(crate) fn evaluate_nurbs_curve_view(
     // `evaluate_nurbs_basis`, so zero initialization has identical live values.
     let mut weights = [0.0f32 as Real; MAX_NURBS_ORDER];
     let mut derivs = [0.0f32 as Real; MAX_NURBS_ORDER];
-    // SAFETY: the basis projection belongs to the live frozen curve, and the
-    // two stack arrays are distinct writable `MAX_NURBS_ORDER` runs.
-    let base: usize = unsafe {
-        evaluate_nurbs_basis(
-            curve_view.basis_ptr(),
-            u,
-            weights.as_mut_ptr(),
-            MAX_NURBS_ORDER,
-            derivs.as_mut_ptr(),
-            MAX_NURBS_ORDER,
-        )
-    };
+    let base: usize = evaluate_nurbs_basis_view(curve_view.basis(), u, &mut weights, &mut derivs);
     if base == usize::MAX {
         return result;
     }
@@ -4223,30 +4278,11 @@ pub(crate) fn evaluate_nurbs_surface_view(
     let mut weights_v = [0.0f32 as Real; MAX_NURBS_ORDER];
     let mut derivs_u = [0.0f32 as Real; MAX_NURBS_ORDER];
     let mut derivs_v = [0.0f32 as Real; MAX_NURBS_ORDER];
-    // SAFETY: the U basis projection belongs to the live frozen surface, and
-    // the two stack arrays are distinct writable `MAX_NURBS_ORDER` runs.
-    let base_u: usize = unsafe {
-        evaluate_nurbs_basis(
-            surface_view.basis_u_ptr(),
-            u,
-            weights_u.as_mut_ptr(),
-            MAX_NURBS_ORDER,
-            derivs_u.as_mut_ptr(),
-            MAX_NURBS_ORDER,
-        )
-    };
-    // SAFETY: the V basis projection and its two stack arrays satisfy the same
-    // contracts; this call remains before the combined result check, as in C.
-    let base_v: usize = unsafe {
-        evaluate_nurbs_basis(
-            surface_view.basis_v_ptr(),
-            v,
-            weights_v.as_mut_ptr(),
-            MAX_NURBS_ORDER,
-            derivs_v.as_mut_ptr(),
-            MAX_NURBS_ORDER,
-        )
-    };
+    let base_u: usize =
+        evaluate_nurbs_basis_view(surface_view.basis_u(), u, &mut weights_u, &mut derivs_u);
+    // The V evaluation precedes the combined result check, as in C.
+    let base_v: usize =
+        evaluate_nurbs_basis_view(surface_view.basis_v(), v, &mut weights_v, &mut derivs_v);
     if base_u == usize::MAX || base_v == usize::MAX {
         return result;
     }
@@ -7860,7 +7896,7 @@ mod tests {
             node.node_to_world.m11 = 4.0;
             node.node_to_world.m22 = 8.0;
             let m = get_compatible_matrix_for_normals(Some(View::<Node, Const>::from_ref(&node)));
-            let expected = matrix_for_normals(&node.node_to_world);
+            let expected = matrix_for_normals(View::<Matrix, Const>::from_ref(&node.node_to_world));
             assert!(matrix_eq(&m, &expected));
         }
     }
@@ -8349,6 +8385,90 @@ mod tests {
 
         let keys = pair(none, BakedKeyFlags::STEP_RIGHT);
         assert!(quat_close(evaluate_baked_quat_slice(&keys, 0.5), rot90));
+    }
+
+    #[test]
+    fn test_evaluate_nurbs_basis_raw_output_contracts() {
+        let knots = [0.0, 0.0, 1.0, 1.0];
+        let mut basis = MaybeUninit::<NurbsBasis>::zeroed();
+        let sentinel = 1234.5;
+        // SAFETY: the zeroed basis storage is populated in every field the
+        // evaluator reads, and it plus every output array stays live for each
+        // synchronous call. `List::from_slice` records the live knot run; the
+        // final call deliberately passes the same valid run for both raw outputs,
+        // which C permits because neither pointer is restrict-like.
+        unsafe {
+            let basis = basis.assume_init_mut();
+            basis.order = 2;
+            basis.valid = true;
+            basis.t_min = 0.0;
+            basis.t_max = 1.0;
+            basis.knot_vector = List::from_slice(&knots);
+
+            // The base is derived before output validation. A short or null
+            // weight run returns it without touching either output.
+            let mut short_weights = [sentinel; 1];
+            let mut untouched_derivatives = [sentinel; 2];
+            assert_eq!(
+                evaluate_nurbs_basis(
+                    basis as *const NurbsBasis,
+                    0.25,
+                    short_weights.as_mut_ptr(),
+                    short_weights.len(),
+                    untouched_derivatives.as_mut_ptr(),
+                    untouched_derivatives.len(),
+                ),
+                0
+            );
+            assert_eq!(short_weights, [sentinel; 1]);
+            assert_eq!(untouched_derivatives, [sentinel; 2]);
+
+            assert_eq!(
+                evaluate_nurbs_basis(
+                    basis as *const NurbsBasis,
+                    0.25,
+                    core::ptr::null_mut(),
+                    2,
+                    untouched_derivatives.as_mut_ptr(),
+                    untouched_derivatives.len(),
+                ),
+                0
+            );
+            assert_eq!(untouched_derivatives, [sentinel; 2]);
+
+            // A zero derivative count ignores its pointer and writes exactly
+            // the order-sized weight prefix.
+            let mut weights = [sentinel; 3];
+            assert_eq!(
+                evaluate_nurbs_basis(
+                    basis as *const NurbsBasis,
+                    0.25,
+                    weights.as_mut_ptr(),
+                    weights.len(),
+                    core::ptr::NonNull::<Real>::dangling().as_ptr(),
+                    0,
+                ),
+                0
+            );
+            assert_eq!(weights, [0.75, 0.25, sentinel]);
+
+            // Exact overlap retains C's write order: derivative writes replace
+            // the weight values in the shared run.
+            let mut shared = [sentinel; 2];
+            let shared_ptr = shared.as_mut_ptr();
+            assert_eq!(
+                evaluate_nurbs_basis(
+                    basis as *const NurbsBasis,
+                    0.25,
+                    shared_ptr,
+                    shared.len(),
+                    shared_ptr,
+                    shared.len(),
+                ),
+                0
+            );
+            assert_eq!(shared, [-1.0, 1.0]);
+        }
     }
 
     fn quat_close(a: Quat, b: Quat) -> bool {

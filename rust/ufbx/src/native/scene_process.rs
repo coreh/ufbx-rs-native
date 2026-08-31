@@ -6721,9 +6721,13 @@ pub(crate) unsafe fn transform_vec3_list<T>(
     while p != end {
         let v: *mut Vec3 = p as *mut Vec3;
         // SAFETY: `p` walks the `count` strided slots of the viewed list's own
-        // run, each a live `ufbx_vec3` per the `stride` contract above; `matrix`
-        // addresses a live `ufbx_matrix` per the fn contract.
-        unsafe { *v = transform_position(matrix, *v) };
+        // run, each a live `ufbx_vec3` per the `stride` contract above;
+        // `matrix` addresses the live input matrix and stays frozen for this
+        // one value computation.
+        unsafe {
+            let transformed = transform_position(View::<Matrix, Const>::from_ptr(matrix), *v);
+            *v = transformed;
+        }
         p = p.wrapping_add(stride);
     }
 }
@@ -7110,8 +7114,9 @@ pub(crate) fn modify_geometry<'a>(uc: &'a Context) -> Result<(), Fail> {
                 tangent_matrix.m03 = 0.0;
                 tangent_matrix.m13 = 0.0;
                 tangent_matrix.m23 = 0.0;
-                let normal_matrix: Matrix =
-                    matrix_for_normals(&raw const (*geo_node).geometry_to_node);
+                let normal_matrix: Matrix = matrix_for_normals(View::<Matrix, Const>::from_ptr(
+                    &raw const (*geo_node).geometry_to_node,
+                ));
 
                 transform_vec3_list(
                     Some(mesh.vertex_position().values_view()),
@@ -11444,8 +11449,10 @@ pub(crate) fn update_pose(pose_view: &PoseView) {
         }
 
         // SAFETY: `parent_to_world` is either the static identity matrix or a
-        // live scene matrix borrowed above.
-        let world_to_parent: Matrix = unsafe { matrix_invert(parent_to_world) };
+        // live scene matrix borrowed above and stays frozen for this value
+        // computation.
+        let world_to_parent: Matrix =
+            unsafe { matrix_invert(View::<Matrix, Const>::from_ptr(parent_to_world)) };
         // SAFETY: `bone` addresses a live, writable entry of the pose's own run
         // (see above).
         unsafe {
@@ -11591,7 +11598,9 @@ pub(crate) fn update_texture(texture_view: &TextureView) {
         if !is_transform_identity(texture_view.uv_transform_view()) {
             (*texture).has_uv_transform = true;
             (*texture).texture_to_uv = transform_to_matrix(&raw const (*texture).uv_transform);
-            (*texture).uv_to_texture = matrix_invert(&raw const (*texture).texture_to_uv);
+            (*texture).uv_to_texture = matrix_invert(View::<Matrix, Const>::from_ptr(
+                &raw const (*texture).texture_to_uv,
+            ));
         } else {
             (*texture).has_uv_transform = false;
             (*texture).texture_to_uv = IDENTITY_MATRIX;
@@ -12181,9 +12190,7 @@ pub(crate) fn update_initial_clusters(scene_view: &SceneView) {
 
         if matrix_all_zero(cluster.mesh_node_to_bone_view()) {
             // If `mesh_node_to_bone` is not explicitly specified compute it from bind pose.
-            // SAFETY: `bind_to_world_ptr()` projects the cluster's own live,
-            // initialized matrix.
-            let world_to_bind: Matrix = unsafe { matrix_invert(cluster.bind_to_world_ptr()) };
+            let world_to_bind: Matrix = matrix_invert(cluster.bind_to_world_view());
             // SAFETY: `&world_to_bind` borrows a live local matrix and
             // `node_to_world_ptr()` projects the node's own live, initialized one.
             cluster.set_mesh_node_to_bone(unsafe {
@@ -12406,8 +12413,9 @@ pub(crate) fn update_adjust_transforms<'a>(uc: &'a Context, scene: &'a SceneView
             ) {
                 light_post_rotation = matrix_to_transform(mat).rotation;
 
-                let inv: Matrix = matrix_invert(mat);
-                light_direction = transform_direction(&inv, light_direction);
+                let inv: Matrix = matrix_invert(View::<Matrix>::from_ptr(mat));
+                light_direction =
+                    transform_direction(View::<Matrix, Const>::from_ref(&inv), light_direction);
                 has_light_transform = true;
             }
         }

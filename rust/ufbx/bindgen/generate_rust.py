@@ -786,9 +786,25 @@ pub fn get_blend_vertex_offset(blend: &BlendDeformer, vertex: usize) -> Vec3 {
 }
 """
 
-# NURBS curve and surface evaluation navigate read-only `Const` views. Safe
-# Rust references mint them directly; the nullable raw adapters are the C-ABI
+# NURBS evaluation navigates read-only `Const` views. Safe Rust references mint
+# them directly; the nullable/overlapping-output raw adapters are the C-ABI
 # boundaries.
+override_functions["ufbx_evaluate_nurbs_basis"] = """
+pub fn evaluate_nurbs_basis(
+    basis: &NurbsBasis,
+    u: Real,
+    weights: &mut [Real],
+    derivatives: &mut [Real],
+) -> usize {
+    crate::native::api::evaluate_nurbs_basis_view(
+        crate::native::view::View::<NurbsBasis, crate::native::view::Const>::from_ref(basis),
+        u,
+        weights,
+        derivatives,
+    )
+}
+"""
+
 override_functions["ufbx_evaluate_nurbs_curve"] = """
 pub fn evaluate_nurbs_curve(curve: &NurbsCurve, u: Real) -> CurvePoint {
     crate::native::api::evaluate_nurbs_curve_view(
@@ -1039,6 +1055,24 @@ pub fn evaluate_transform_flags(anim: &Anim, node: &Node, time: f64, flags: u32)
         Some(crate::native::view::View::<Node, crate::native::view::Const>::from_ref(node)),
         time,
         flags,
+    )
+}
+"""
+
+override_functions["ufbx_transform_position"] = """
+pub fn transform_position(m: &Matrix, v: Vec3) -> Vec3 {
+    crate::native::api::transform_position(
+        crate::native::view::View::<Matrix, crate::native::view::Const>::from_ref(m),
+        v,
+    )
+}
+"""
+
+override_functions["ufbx_transform_direction"] = """
+pub fn transform_direction(m: &Matrix, v: Vec3) -> Vec3 {
+    crate::native::api::transform_direction(
+        crate::native::view::View::<Matrix, crate::native::view::Const>::from_ref(m),
+        v,
     )
 }
 """
@@ -2072,6 +2106,9 @@ const_view_args = {
     "ufbx_find_prop_element_len": {"element": "Element"},
     "ufbx_evaluate_blend_weight": {"anim": "Anim", "channel": "BlendChannel"},
     "ufbx_evaluate_blend_weight_flags": {"anim": "Anim", "channel": "BlendChannel"},
+    "ufbx_matrix_determinant": {"m": "Matrix"},
+    "ufbx_matrix_invert": {"m": "Matrix"},
+    "ufbx_matrix_for_normals": {"m": "Matrix"},
 }
 
 # These direct native calls receive no raw object pointers: each safe wrapper
@@ -2088,6 +2125,9 @@ safe_const_view_calls = {
     "ufbx_find_prop_element_len",
     "ufbx_evaluate_blend_weight",
     "ufbx_evaluate_blend_weight_flags",
+    "ufbx_matrix_determinant",
+    "ufbx_matrix_invert",
+    "ufbx_matrix_for_normals",
 }
 
 def apply_const_view_args(cname, arg_pass):

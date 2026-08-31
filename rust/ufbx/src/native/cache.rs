@@ -2814,8 +2814,7 @@ pub(crate) fn transform_to_axes(uc: &Context, dst_axes: CoordinateAxes) {
         return;
     }
 
-    // SAFETY: pure value math over `uc`'s live axis-matrix field.
-    if unsafe { matrix_determinant(axis_matrix_view.as_ptr()) } < 0.0f32 as Real {
+    if matrix_determinant(axis_matrix_view) < 0.0f32 as Real {
         if uc.opts_view().handedness_conversion_axis() != MirrorAxis::None {
             let mirror_axis: MirrorAxis = uc.opts_view().handedness_conversion_axis();
             uc.set_mirror_axis(mirror_axis);
@@ -2825,10 +2824,7 @@ pub(crate) fn transform_to_axes(uc: &Context, dst_axes: CoordinateAxes) {
 
             let axis_matrix_view: &View<Matrix> = uc.axis_matrix_view();
             mirror_matrix_dst(axis_matrix_view, uc.mirror_axis());
-            // SAFETY: a pure value read of uc's own live axis-matrix field.
-            ufbxi_dev_assert!(
-                unsafe { matrix_determinant(axis_matrix_view.as_ptr()) } >= 0.0f32 as Real
-            );
+            ufbxi_dev_assert!(matrix_determinant(axis_matrix_view) >= 0.0f32 as Real);
 
             // C: `ufbxi_for_ptr_list(ufbx_node, p_node, uc->scene.nodes)`
             // SAFETY: walking the stored `nodes` element-pointer run of the

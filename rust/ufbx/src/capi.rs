@@ -1650,10 +1650,14 @@ pub unsafe extern "C" fn ufbx_matrix_mul(
 pub unsafe extern "C" fn ufbx_matrix_determinant(
     m: *const crate::generated::Matrix,
 ) -> crate::prelude::Real {
-    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
-    // own raw-pointer contract and are forwarded unchanged to the native impl,
-    // whose contract is identical.
-    unsafe { crate::native::api::matrix_determinant(m) }
+    // SAFETY: C has no null fallback for this input; the raw ABI contract
+    // supplies one live readable matrix, frozen for the value computation.
+    unsafe {
+        crate::native::api::matrix_determinant(crate::native::view::View::<
+            crate::generated::Matrix,
+            crate::native::view::Const,
+        >::from_ptr(m))
+    }
 }
 
 // ufbx.c:31756-31782 `ufbx_matrix_invert` (impl: native/api.rs `matrix_invert`)
@@ -1661,10 +1665,14 @@ pub unsafe extern "C" fn ufbx_matrix_determinant(
 pub unsafe extern "C" fn ufbx_matrix_invert(
     m: *const crate::generated::Matrix,
 ) -> crate::generated::Matrix {
-    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
-    // own raw-pointer contract and are forwarded unchanged to the native impl,
-    // whose contract is identical.
-    unsafe { crate::native::api::matrix_invert(m) }
+    // SAFETY: C has no null fallback for this input; the raw ABI contract
+    // supplies one live readable matrix, frozen for the value computation.
+    unsafe {
+        crate::native::api::matrix_invert(crate::native::view::View::<
+            crate::generated::Matrix,
+            crate::native::view::Const,
+        >::from_ptr(m))
+    }
 }
 
 // ufbx.c:31784-31802 `ufbx_matrix_for_normals` (impl: native/api.rs `matrix_for_normals`)
@@ -1672,10 +1680,14 @@ pub unsafe extern "C" fn ufbx_matrix_invert(
 pub unsafe extern "C" fn ufbx_matrix_for_normals(
     m: *const crate::generated::Matrix,
 ) -> crate::generated::Matrix {
-    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
-    // own raw-pointer contract and are forwarded unchanged to the native impl,
-    // whose contract is identical.
-    unsafe { crate::native::api::matrix_for_normals(m) }
+    // SAFETY: C has no null fallback for this input; the raw ABI contract
+    // supplies one live readable matrix, frozen for the value computation.
+    unsafe {
+        crate::native::api::matrix_for_normals(crate::native::view::View::<
+            crate::generated::Matrix,
+            crate::native::view::Const,
+        >::from_ptr(m))
+    }
 }
 
 // ufbx.c:31804-31814 `ufbx_transform_position` (impl: native/api.rs `transform_position`)
@@ -1684,10 +1696,21 @@ pub unsafe extern "C" fn ufbx_transform_position(
     m: *const crate::generated::Matrix,
     v: crate::generated::Vec3,
 ) -> crate::generated::Vec3 {
-    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
-    // own raw-pointer contract and are forwarded unchanged to the native impl,
-    // whose contract is identical.
-    unsafe { crate::native::api::transform_position(m, v) }
+    crate::native::platform::ufbx_assert!(!m.is_null());
+    if m.is_null() {
+        return crate::native::api::ZERO_VEC3;
+    }
+    // SAFETY: the non-null raw ABI argument points at a live readable matrix,
+    // frozen for this value computation.
+    unsafe {
+        crate::native::api::transform_position(
+            crate::native::view::View::<
+                crate::generated::Matrix,
+                crate::native::view::Const,
+            >::from_ptr(m),
+            v,
+        )
+    }
 }
 
 // ufbx.c:31816-31826 `ufbx_transform_direction` (impl: native/api.rs `transform_direction`)
@@ -1696,10 +1719,21 @@ pub unsafe extern "C" fn ufbx_transform_direction(
     m: *const crate::generated::Matrix,
     v: crate::generated::Vec3,
 ) -> crate::generated::Vec3 {
-    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
-    // own raw-pointer contract and are forwarded unchanged to the native impl,
-    // whose contract is identical.
-    unsafe { crate::native::api::transform_direction(m, v) }
+    crate::native::platform::ufbx_assert!(!m.is_null());
+    if m.is_null() {
+        return crate::native::api::ZERO_VEC3;
+    }
+    // SAFETY: the non-null raw ABI argument points at a live readable matrix,
+    // frozen for this value computation.
+    unsafe {
+        crate::native::api::transform_direction(
+            crate::native::view::View::<
+                crate::generated::Matrix,
+                crate::native::view::Const,
+            >::from_ptr(m),
+            v,
+        )
+    }
 }
 
 // ufbx.c:31828-31852 `ufbx_transform_to_matrix` (impl: native/api.rs `transform_to_matrix`)

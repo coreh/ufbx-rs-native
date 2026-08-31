@@ -5384,32 +5384,43 @@ pub fn matrix_mul(a: &Matrix, b: &Matrix) -> Matrix {
 
 #[allow(clippy::let_and_return)]
 pub fn matrix_determinant(m: &Matrix) -> Real {
-    let result = unsafe { crate::native::api::matrix_determinant(m as *const Matrix) };
+    let result = crate::native::api::matrix_determinant(crate::native::view::View::<
+        Matrix,
+        crate::native::view::Const,
+    >::from_ref(m));
     result
 }
 
 #[allow(clippy::let_and_return)]
 pub fn matrix_invert(m: &Matrix) -> Matrix {
-    let result = unsafe { crate::native::api::matrix_invert(m as *const Matrix) };
+    let result = crate::native::api::matrix_invert(crate::native::view::View::<
+        Matrix,
+        crate::native::view::Const,
+    >::from_ref(m));
     result
 }
 
 #[allow(clippy::let_and_return)]
 pub fn matrix_for_normals(m: &Matrix) -> Matrix {
-    let result = unsafe { crate::native::api::matrix_for_normals(m as *const Matrix) };
+    let result = crate::native::api::matrix_for_normals(crate::native::view::View::<
+        Matrix,
+        crate::native::view::Const,
+    >::from_ref(m));
     result
 }
 
-#[allow(clippy::let_and_return)]
 pub fn transform_position(m: &Matrix, v: Vec3) -> Vec3 {
-    let result = unsafe { crate::native::api::transform_position(m as *const Matrix, v) };
-    result
+    crate::native::api::transform_position(
+        crate::native::view::View::<Matrix, crate::native::view::Const>::from_ref(m),
+        v,
+    )
 }
 
-#[allow(clippy::let_and_return)]
 pub fn transform_direction(m: &Matrix, v: Vec3) -> Vec3 {
-    let result = unsafe { crate::native::api::transform_direction(m as *const Matrix, v) };
-    result
+    crate::native::api::transform_direction(
+        crate::native::view::View::<Matrix, crate::native::view::Const>::from_ref(m),
+        v,
+    )
 }
 
 #[allow(clippy::let_and_return)]
@@ -5480,24 +5491,18 @@ pub fn add_blend_vertex_offsets(blend: &BlendDeformer, vertices: &mut [Vec3], we
     };
 }
 
-#[allow(clippy::let_and_return)]
 pub fn evaluate_nurbs_basis(
     basis: &NurbsBasis,
     u: Real,
     weights: &mut [Real],
     derivatives: &mut [Real],
 ) -> usize {
-    let result = unsafe {
-        crate::native::api::evaluate_nurbs_basis(
-            basis as *const NurbsBasis,
-            u,
-            weights.as_mut_ptr(),
-            weights.len(),
-            derivatives.as_mut_ptr(),
-            derivatives.len(),
-        )
-    };
-    result
+    crate::native::api::evaluate_nurbs_basis_view(
+        crate::native::view::View::<NurbsBasis, crate::native::view::Const>::from_ref(basis),
+        u,
+        weights,
+        derivatives,
+    )
 }
 
 pub fn evaluate_nurbs_curve(curve: &NurbsCurve, u: Real) -> CurvePoint {
