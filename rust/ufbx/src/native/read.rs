@@ -141,7 +141,7 @@ use crate::native::thread::{
     thread_pool_wait_group, THREAD_GROUP_COUNT,
 };
 use crate::native::view::{view_project, view_raw_mut, view_read, view_read_shared, view_write};
-use crate::native::view::{Mode, Mut, Run, SliceViewIter, View};
+use crate::native::view::{Const, Mode, Mut, Run, SliceViewIter, View};
 use crate::native::warnings::ufbxi_warnf;
 use crate::prelude::as_f64;
 use crate::prelude::{
@@ -9038,9 +9038,7 @@ pub(crate) fn unscaled_transform_to_matrix<M: Mode>(t: &View<Transform, M>) -> M
     transform.scale.x = 1.0;
     transform.scale.y = 1.0;
     transform.scale.z = 1.0;
-    // SAFETY: the pointer addresses the live, fully initialized local, and
-    // `ufbx_transform_to_matrix` takes it by raw pointer and only reads it.
-    unsafe { transform_to_matrix(&raw const transform) }
+    transform_to_matrix(View::<Transform, Const>::from_ref(&transform))
 }
 
 // ufbx.c:15827-15837 `ufbxi_setup_root_node`
@@ -9048,11 +9046,11 @@ pub(crate) fn unscaled_transform_to_matrix<M: Mode>(t: &View<Transform, M>) -> M
 pub(crate) fn setup_root_node(uc: &Context, root: &View<UfbxNode, Mut>) {
     if uc.opts_view().use_root_transform() {
         root.set_local_transform(uc.opts_view().root_transform());
-        // SAFETY: `root_transform_ptr()` points at uc's own live, initialized
-        // `opts.root_transform`.
-        root.set_node_to_parent(unsafe {
-            transform_to_matrix(uc.opts_view().root_transform_ptr())
-        });
+        // SAFETY: the projected transform belongs to the live context options
+        // view and remains frozen for this value computation.
+        let root_transform =
+            unsafe { View::<Transform, Const>::from_ptr(uc.opts_view().root_transform_ptr()) };
+        root.set_node_to_parent(transform_to_matrix(root_transform));
     } else {
         root.set_local_transform(IDENTITY_TRANSFORM);
         root.set_node_to_parent(IDENTITY_MATRIX);

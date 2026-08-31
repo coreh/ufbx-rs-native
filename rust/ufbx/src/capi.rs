@@ -1639,10 +1639,24 @@ pub unsafe extern "C" fn ufbx_matrix_mul(
     a: *const crate::generated::Matrix,
     b: *const crate::generated::Matrix,
 ) -> crate::generated::Matrix {
-    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
-    // own raw-pointer contract and are forwarded unchanged to the native impl,
-    // whose contract is identical.
-    unsafe { crate::native::api::matrix_mul(a, b) }
+    crate::native::platform::ufbx_assert!(!a.is_null() && !b.is_null());
+    if a.is_null() || b.is_null() {
+        return crate::native::api::IDENTITY_MATRIX;
+    }
+    // SAFETY: the non-null raw ABI arguments point at live readable matrices,
+    // frozen independently for this value computation. They may alias.
+    unsafe {
+        crate::native::api::matrix_mul(
+            crate::native::view::View::<
+                crate::generated::Matrix,
+                crate::native::view::Const,
+            >::from_ptr(a),
+            crate::native::view::View::<
+                crate::generated::Matrix,
+                crate::native::view::Const,
+            >::from_ptr(b),
+        )
+    }
 }
 
 // ufbx.c:31749-31754 `ufbx_matrix_determinant` (impl: native/api.rs `matrix_determinant`)
@@ -1741,10 +1755,18 @@ pub unsafe extern "C" fn ufbx_transform_direction(
 pub unsafe extern "C" fn ufbx_transform_to_matrix(
     t: *const crate::generated::Transform,
 ) -> crate::generated::Matrix {
-    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
-    // own raw-pointer contract and are forwarded unchanged to the native impl,
-    // whose contract is identical.
-    unsafe { crate::native::api::transform_to_matrix(t) }
+    crate::native::platform::ufbx_assert!(!t.is_null());
+    if t.is_null() {
+        return crate::native::api::IDENTITY_MATRIX;
+    }
+    // SAFETY: the non-null raw ABI argument points at a live readable
+    // transform, frozen for this value computation.
+    unsafe {
+        crate::native::api::transform_to_matrix(crate::native::view::View::<
+            crate::generated::Transform,
+            crate::native::view::Const,
+        >::from_ptr(t))
+    }
 }
 
 // ufbx.c:31854-31926 `ufbx_matrix_to_transform` (impl: native/api.rs `matrix_to_transform`)
@@ -1752,10 +1774,18 @@ pub unsafe extern "C" fn ufbx_transform_to_matrix(
 pub unsafe extern "C" fn ufbx_matrix_to_transform(
     m: *const crate::generated::Matrix,
 ) -> crate::generated::Transform {
-    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
-    // own raw-pointer contract and are forwarded unchanged to the native impl,
-    // whose contract is identical.
-    unsafe { crate::native::api::matrix_to_transform(m) }
+    crate::native::platform::ufbx_assert!(!m.is_null());
+    if m.is_null() {
+        return crate::native::api::IDENTITY_TRANSFORM;
+    }
+    // SAFETY: the non-null raw ABI argument points at a live readable matrix,
+    // frozen for this value computation.
+    unsafe {
+        crate::native::api::matrix_to_transform(crate::native::view::View::<
+            crate::generated::Matrix,
+            crate::native::view::Const,
+        >::from_ptr(m))
+    }
 }
 
 // ufbx.c:31928-32018 `ufbx_catch_get_skin_vertex_matrix`

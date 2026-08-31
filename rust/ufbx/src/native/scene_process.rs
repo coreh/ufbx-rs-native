@@ -6989,7 +6989,7 @@ pub(crate) fn modify_geometry<'a>(uc: &'a Context) -> Result<(), Fail> {
                     get_geometry_transform(node_view.props_view(), node_view);
                 if !is_transform_identity(node_view.geometry_transform_view()) {
                     (*node).geometry_to_node =
-                        transform_to_matrix(&raw const (*node).geometry_transform);
+                        transform_to_matrix(node_view.geometry_transform_view());
                     (*node).has_geometry_transform = true;
                 } else {
                     (*node).geometry_to_node = IDENTITY_MATRIX;
@@ -10827,11 +10827,7 @@ pub(crate) fn update_node(node_view: &NodeView, overrides: &[TransformOverride])
                 node_view.set_local_transform(overrides[override_ix].transform);
             }
         }
-        // SAFETY: `local_transform_ptr()` is the node view's own live,
-        // freshly composed transform field, and `ufbx_transform_to_matrix`
-        // takes it by raw pointer and only reads it.
-        let node_to_parent: Matrix =
-            unsafe { transform_to_matrix(node_view.local_transform_ptr()) };
+        let node_to_parent: Matrix = transform_to_matrix(node_view.local_transform_view());
         node_view.set_node_to_parent(node_to_parent);
         let geometry_transform: Transform =
             get_geometry_transform(node_view.props_view(), node_view);
@@ -10848,21 +10844,20 @@ pub(crate) fn update_node(node_view: &NodeView, overrides: &[TransformOverride])
     if let Some(parent) = node_view.parent() {
         let parent_view: &NodeView = parent.view();
         if node_view.inherit_mode() == InheritMode::Normal {
-            // SAFETY: both operands are live matrix fields projected from their
-            // own views, and `ufbx_matrix_mul` takes them by raw pointer and
-            // only reads them; `node_to_parent` was composed above.
+            // SAFETY: both pointers project live initialized matrix fields and
+            // remain frozen until the value computation completes.
             let node_to_world: Matrix = unsafe {
                 matrix_mul(
-                    parent_view.node_to_world_ptr(),
-                    node_view.node_to_parent_ptr(),
+                    View::<Matrix, Const>::from_ptr(parent_view.node_to_world_ptr()),
+                    View::<Matrix, Const>::from_ptr(node_view.node_to_parent_ptr()),
                 )
             };
             node_view.set_node_to_world(node_to_world);
             // SAFETY: as above; `unscaled_node_to_parent` is a live local.
             let unscaled_node_to_world: Matrix = unsafe {
                 matrix_mul(
-                    parent_view.node_to_world_ptr(),
-                    &raw const unscaled_node_to_parent,
+                    View::<Matrix, Const>::from_ptr(parent_view.node_to_world_ptr()),
+                    View::<Matrix, Const>::from_ref(&unscaled_node_to_parent),
                 )
             };
             node_view.set_unscaled_node_to_world(unscaled_node_to_world);
@@ -10882,29 +10877,26 @@ pub(crate) fn update_node(node_view: &NodeView, overrides: &[TransformOverride])
             transform.translation.y *= parent_view.inherit_scale().y;
             transform.translation.z *= parent_view.inherit_scale().z;
 
-            // SAFETY: the raw pointer addresses the live, fully initialized
-            // local `ufbx_transform`.
             let node_to_unscaled_parent: Matrix =
-                unsafe { transform_to_matrix(&raw const transform) };
+                transform_to_matrix(View::<Transform, Const>::from_ref(&transform));
             let unscaled_node_to_unscaled_parent: Matrix =
                 unscaled_transform_to_matrix(View::<Transform, Const>::from_ref(&transform));
 
             node_view.set_inherit_scale(transform.scale);
-            // SAFETY: the parent's matrix field is projected from its own view
-            // and the other operand is a live local; `ufbx_matrix_mul` takes
-            // both by raw pointer and only reads them.
+            // SAFETY: the parent pointer projects a live initialized matrix and
+            // remains frozen until the value computation completes.
             let node_to_world: Matrix = unsafe {
                 matrix_mul(
-                    parent_view.unscaled_node_to_world_ptr(),
-                    &raw const node_to_unscaled_parent,
+                    View::<Matrix, Const>::from_ptr(parent_view.unscaled_node_to_world_ptr()),
+                    View::<Matrix, Const>::from_ref(&node_to_unscaled_parent),
                 )
             };
             node_view.set_node_to_world(node_to_world);
             // SAFETY: as above.
             let unscaled_node_to_world: Matrix = unsafe {
                 matrix_mul(
-                    parent_view.unscaled_node_to_world_ptr(),
-                    &raw const unscaled_node_to_unscaled_parent,
+                    View::<Matrix, Const>::from_ptr(parent_view.unscaled_node_to_world_ptr()),
+                    View::<Matrix, Const>::from_ref(&unscaled_node_to_unscaled_parent),
                 )
             };
             node_view.set_unscaled_node_to_world(unscaled_node_to_world);
@@ -10915,17 +10907,14 @@ pub(crate) fn update_node(node_view: &NodeView, overrides: &[TransformOverride])
     }
 
     if !is_transform_identity(node_view.geometry_transform_view()) {
-        // SAFETY: as above, for `ufbx_transform_to_matrix`.
-        let geometry_to_node: Matrix =
-            unsafe { transform_to_matrix(node_view.geometry_transform_ptr()) };
+        let geometry_to_node: Matrix = transform_to_matrix(node_view.geometry_transform_view());
         node_view.set_geometry_to_node(geometry_to_node);
-        // SAFETY: both operands are the node view's own matrix fields, set
-        // above, and `ufbx_matrix_mul` takes them by raw pointer and only
-        // reads them.
+        // SAFETY: both pointers project live initialized matrix fields and
+        // remain frozen until the value computation completes.
         let geometry_to_world: Matrix = unsafe {
             matrix_mul(
-                node_view.node_to_world_ptr(),
-                node_view.geometry_to_node_ptr(),
+                View::<Matrix, Const>::from_ptr(node_view.node_to_world_ptr()),
+                View::<Matrix, Const>::from_ptr(node_view.geometry_to_node_ptr()),
             )
         };
         node_view.set_geometry_to_world(geometry_to_world);
@@ -11453,12 +11442,16 @@ pub(crate) fn update_pose(pose_view: &PoseView) {
         // computation.
         let world_to_parent: Matrix =
             unsafe { matrix_invert(View::<Matrix, Const>::from_ptr(parent_to_world)) };
-        // SAFETY: `bone` addresses a live, writable entry of the pose's own run
-        // (see above).
+        // SAFETY: `bone` addresses a live writable entry of the pose's own run;
+        // the input view ends at the first statement before the distinct output
+        // field is written.
         unsafe {
-            (*bone).bone_to_parent =
-                matrix_mul(&raw const world_to_parent, &raw const (*bone).bone_to_world)
-        };
+            let bone_to_parent = matrix_mul(
+                View::<Matrix, Const>::from_ref(&world_to_parent),
+                View::<Matrix, Const>::from_ptr(&raw const (*bone).bone_to_world),
+            );
+            (*bone).bone_to_parent = bone_to_parent;
+        }
 
         // SAFETY: `bone != bone_end`, so the advance lands at or before the run's
         // one-past-the-end pointer.
@@ -11472,31 +11465,34 @@ pub(crate) fn update_skin_cluster(cluster_view: &SkinClusterView) {
     let cluster: *mut SkinCluster = cluster_view.get();
     // C: `if (cluster->bone_node)` — pointer truthiness.
     if let Some(bone_node) = cluster_view.bone_node_view() {
-        // SAFETY: `bone_node` projects the linked live scene node's own matrix;
-        // `cluster` is the cluster view's own live, initialized
-        // `ufbx_skin_cluster` storage, so it is live and writable.
+        // SAFETY: both pointers project live initialized matrices and remain
+        // frozen until the value computation completes.
         unsafe {
-            (*cluster).geometry_to_world = matrix_mul(
-                bone_node.node_to_world_ptr(),
-                &raw const (*cluster).geometry_to_bone,
-            )
-        };
+            let geometry_to_world = matrix_mul(
+                View::<Matrix, Const>::from_ptr(bone_node.node_to_world_ptr()),
+                View::<Matrix, Const>::from_ptr(&raw const (*cluster).geometry_to_bone),
+            );
+            (*cluster).geometry_to_world = geometry_to_world;
+        }
     } else {
-        // SAFETY: `cluster` is live and writable (see above); both operands are
-        // its own matrices.
+        // SAFETY: both pointers project the cluster's live initialized matrix
+        // fields and remain frozen until the value computation completes.
         unsafe {
-            (*cluster).geometry_to_world = matrix_mul(
-                &raw const (*cluster).bind_to_world,
-                &raw const (*cluster).geometry_to_bone,
-            )
-        };
+            let geometry_to_world = matrix_mul(
+                View::<Matrix, Const>::from_ptr(&raw const (*cluster).bind_to_world),
+                View::<Matrix, Const>::from_ptr(&raw const (*cluster).geometry_to_bone),
+            );
+            (*cluster).geometry_to_world = geometry_to_world;
+        }
     }
-    // SAFETY: `cluster` is live and writable (see above); `geometry_to_world` was
-    // assigned on both arms above.
+    // SAFETY: `geometry_to_world` was assigned on both arms above and remains
+    // frozen until this value computation completes.
     unsafe {
-        (*cluster).geometry_to_world_transform =
-            matrix_to_transform(&raw const (*cluster).geometry_to_world)
-    };
+        let geometry_to_world_transform = matrix_to_transform(View::<Matrix, Const>::from_ptr(
+            &raw const (*cluster).geometry_to_world,
+        ));
+        (*cluster).geometry_to_world_transform = geometry_to_world_transform;
+    }
 }
 
 // ufbx.c:23299-23342 `ufbxi_update_blend_channel`
@@ -11597,7 +11593,7 @@ pub(crate) fn update_texture(texture_view: &TextureView) {
         (*texture).uv_transform = get_texture_transform(texture_view.props_view());
         if !is_transform_identity(texture_view.uv_transform_view()) {
             (*texture).has_uv_transform = true;
-            (*texture).texture_to_uv = transform_to_matrix(&raw const (*texture).uv_transform);
+            (*texture).texture_to_uv = transform_to_matrix(texture_view.uv_transform_view());
             (*texture).uv_to_texture = matrix_invert(View::<Matrix, Const>::from_ptr(
                 &raw const (*texture).texture_to_uv,
             ));
@@ -12072,10 +12068,8 @@ pub(crate) fn update_initial_clusters(scene_view: &SceneView) {
             root_transform.scale.x = metadata.root_scale();
             root_transform.scale.y = metadata.root_scale();
             root_transform.scale.z = metadata.root_scale();
-            // SAFETY: `&root_transform` borrows a live local `ufbx_transform`,
-            // zero-initialized above and with every member assigned before the
-            // read.
-            world_to_units = unsafe { transform_to_matrix(&raw const root_transform) };
+            world_to_units =
+                transform_to_matrix(View::<Transform, Const>::from_ref(&root_transform));
             translation_scale = metadata.geometry_scale();
         }
 
@@ -12083,12 +12077,11 @@ pub(crate) fn update_initial_clusters(scene_view: &SceneView) {
         for i in 0..skin_clusters.count() {
             // C: `ufbx_skin_cluster *cluster = *p_cluster;`
             let cluster: &View<SkinCluster> = skin_clusters.at(i);
-            // SAFETY: `&world_to_units` borrows a live, fully written local
-            // matrix and `bind_to_world_ptr()` projects the cluster's own live,
-            // initialized one.
-            cluster.set_bind_to_world(unsafe {
-                matrix_mul(&raw const world_to_units, cluster.bind_to_world_ptr())
-            });
+            let bind_to_world = matrix_mul(
+                View::<Matrix, Const>::from_ref(&world_to_units),
+                cluster.bind_to_world_view(),
+            );
+            cluster.set_bind_to_world(bind_to_world);
             // C: `cluster->bind_to_world.cols[3].x` — the `cols[4]` overlay.
             let bind_cols: *mut Vec3 = cluster.bind_to_world_raw() as *mut Vec3;
             // SAFETY: an `ufbx_matrix` is laid out as exactly four consecutive
@@ -12108,12 +12101,11 @@ pub(crate) fn update_initial_clusters(scene_view: &SceneView) {
             let bone_poses: &View<List<BonePose>> = poses.at(pose_index).bone_poses_view();
             for bone_index in 0..bone_poses.count() {
                 let pose: &View<BonePose> = bone_poses.at(bone_index);
-                // SAFETY: `&world_to_units` borrows a live, fully written local
-                // matrix and `bone_to_world_ptr()` projects the bone pose's own
-                // live, initialized one.
-                pose.set_bone_to_world(unsafe {
-                    matrix_mul(&raw const world_to_units, pose.bone_to_world_ptr())
-                });
+                let bone_to_world = matrix_mul(
+                    View::<Matrix, Const>::from_ref(&world_to_units),
+                    pose.bone_to_world_view(),
+                );
+                pose.set_bone_to_world(bone_to_world);
                 // C: `pose->bone_to_world.cols[3].x` — the `cols[4]` overlay.
                 let pose_cols: *mut Vec3 = pose.bone_to_world_raw() as *mut Vec3;
                 // SAFETY: an `ufbx_matrix` is laid out as exactly four
@@ -12191,11 +12183,15 @@ pub(crate) fn update_initial_clusters(scene_view: &SceneView) {
         if matrix_all_zero(cluster.mesh_node_to_bone_view()) {
             // If `mesh_node_to_bone` is not explicitly specified compute it from bind pose.
             let world_to_bind: Matrix = matrix_invert(cluster.bind_to_world_view());
-            // SAFETY: `&world_to_bind` borrows a live local matrix and
-            // `node_to_world_ptr()` projects the node's own live, initialized one.
-            cluster.set_mesh_node_to_bone(unsafe {
-                matrix_mul(&raw const world_to_bind, node_view.node_to_world_ptr())
-            });
+            // SAFETY: the node pointer projects its live initialized matrix and
+            // remains frozen until this value computation completes.
+            let node_to_world =
+                unsafe { View::<Matrix, Const>::from_ptr(node_view.node_to_world_ptr()) };
+            let mesh_node_to_bone = matrix_mul(
+                View::<Matrix, Const>::from_ref(&world_to_bind),
+                node_to_world,
+            );
+            cluster.set_mesh_node_to_bone(mesh_node_to_bone);
         } else {
             // If `mesh_node_to_bone` is explicit, we may need to modify it for space conversion.
             mirror_matrix(cluster.mesh_node_to_bone_view(), mirror_axis);
@@ -12220,23 +12216,19 @@ pub(crate) fn update_initial_clusters(scene_view: &SceneView) {
         // C: `if (node->geometry_transform_helper)` — pointer truthiness.
         // C: `ufbx_node *geo_node = node->geometry_transform_helper;`
         if let Some(geo_node) = node_view.geometry_transform_helper_view() {
-            // SAFETY: both projections address their owners' own live,
-            // initialized matrices.
-            cluster.set_geometry_to_bone(unsafe {
-                matrix_mul(
-                    cluster.mesh_node_to_bone_ptr(),
-                    geo_node.node_to_parent_ptr(),
-                )
-            });
+            // SAFETY: the node pointer projects its live initialized matrix and
+            // remains frozen until this value computation completes.
+            let node_to_parent =
+                unsafe { View::<Matrix, Const>::from_ptr(geo_node.node_to_parent_ptr()) };
+            let geometry_to_bone = matrix_mul(cluster.mesh_node_to_bone_view(), node_to_parent);
+            cluster.set_geometry_to_bone(geometry_to_bone);
         } else if node_view.has_geometry_transform() {
-            // SAFETY: both projections address their owners' own live,
-            // initialized matrices.
-            cluster.set_geometry_to_bone(unsafe {
-                matrix_mul(
-                    cluster.mesh_node_to_bone_ptr(),
-                    node_view.geometry_to_node_ptr(),
-                )
-            });
+            // SAFETY: the node pointer projects its live initialized matrix and
+            // remains frozen until this value computation completes.
+            let geometry_to_node =
+                unsafe { View::<Matrix, Const>::from_ptr(node_view.geometry_to_node_ptr()) };
+            let geometry_to_bone = matrix_mul(cluster.mesh_node_to_bone_view(), geometry_to_node);
+            cluster.set_geometry_to_bone(geometry_to_bone);
         } else {
             cluster.set_geometry_to_bone(cluster.mesh_node_to_bone());
         }
@@ -12369,12 +12361,8 @@ pub(crate) fn update_adjust_transforms<'a>(uc: &'a Context, scene: &'a SceneView
     let scene: *mut Scene = scene.get();
     let mut root_transform: Transform = IDENTITY_TRANSFORM;
     let axis_matrix_view: &View<Matrix> = uc.axis_matrix_view();
-    // SAFETY: pure value math over `uc`'s live axis-matrix field.
-    unsafe {
-        let axis_matrix: *const Matrix = axis_matrix_view.as_ptr();
-        if !matrix_all_zero(axis_matrix_view) {
-            root_transform = matrix_to_transform(axis_matrix);
-        }
+    if !matrix_all_zero(axis_matrix_view) {
+        root_transform = matrix_to_transform(axis_matrix_view);
     }
     root_transform.scale.x *= uc.unit_scale();
     root_transform.scale.y *= uc.unit_scale();
@@ -12406,14 +12394,11 @@ pub(crate) fn update_adjust_transforms<'a>(uc: &'a Context, scene: &'a SceneView
         // `axis_matrix` fully writes it before returning true, so the reads
         // below are of initialized memory.
         unsafe {
-            if axis_matrix(
-                View::<Matrix>::from_ptr(mat),
-                uc.opts_view().target_light_axes(),
-                light_axes,
-            ) {
-                light_post_rotation = matrix_to_transform(mat).rotation;
+            let mat_view = View::<Matrix>::from_ptr(mat);
+            if axis_matrix(mat_view, uc.opts_view().target_light_axes(), light_axes) {
+                light_post_rotation = matrix_to_transform(mat_view).rotation;
 
-                let inv: Matrix = matrix_invert(View::<Matrix>::from_ptr(mat));
+                let inv: Matrix = matrix_invert(mat_view);
                 light_direction =
                     transform_direction(View::<Matrix, Const>::from_ref(&inv), light_direction);
                 has_light_transform = true;
@@ -12435,12 +12420,9 @@ pub(crate) fn update_adjust_transforms<'a>(uc: &'a Context, scene: &'a SceneView
         // `axis_matrix` fully writes it before returning true, so the read
         // below is of initialized memory.
         unsafe {
-            if axis_matrix(
-                View::<Matrix>::from_ptr(mat),
-                uc.opts_view().target_camera_axes(),
-                camera_axes,
-            ) {
-                camera_post_rotation = matrix_to_transform(mat).rotation;
+            let mat_view = View::<Matrix>::from_ptr(mat);
+            if axis_matrix(mat_view, uc.opts_view().target_camera_axes(), camera_axes) {
+                camera_post_rotation = matrix_to_transform(mat_view).rotation;
                 has_camera_transform = true;
             }
         }

@@ -1077,6 +1077,31 @@ pub fn transform_direction(m: &Matrix, v: Vec3) -> Vec3 {
 }
 """
 
+override_functions["ufbx_matrix_mul"] = """
+pub fn matrix_mul(a: &Matrix, b: &Matrix) -> Matrix {
+    crate::native::api::matrix_mul(
+        crate::native::view::View::<Matrix, crate::native::view::Const>::from_ref(a),
+        crate::native::view::View::<Matrix, crate::native::view::Const>::from_ref(b),
+    )
+}
+"""
+
+override_functions["ufbx_transform_to_matrix"] = """
+pub fn transform_to_matrix(t: &Transform) -> Matrix {
+    crate::native::api::transform_to_matrix(
+        crate::native::view::View::<Transform, crate::native::view::Const>::from_ref(t),
+    )
+}
+"""
+
+override_functions["ufbx_matrix_to_transform"] = """
+pub fn matrix_to_transform(m: &Matrix) -> Transform {
+    crate::native::api::matrix_to_transform(
+        crate::native::view::View::<Matrix, crate::native::view::Const>::from_ref(m),
+    )
+}
+"""
+
 override_functions["ufbx_evaluate_props"] = """
 pub fn evaluate_props<'a, 'b>(anim: &'a Anim, element: &'a Element, time: f64, buffer: &'b mut [ExternalRef<'b, Prop>]) -> ExternalRef<'b, Props>
     where 'a: 'b

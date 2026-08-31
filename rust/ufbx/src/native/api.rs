@@ -1271,12 +1271,15 @@ pub(crate) fn get_compatible_matrix_for_normals<M: Mode>(node: Option<&View<Node
     // its rotation leaf, matching C without broadening the initialized-read
     // obligation to the whole transform.
     geom_rot.rotation = unsafe { (*node.geometry_transform_ptr()).rotation };
-    // SAFETY: `&geom_rot` addresses the fully-initialized local transform.
-    let geom_rot_mat: Matrix = unsafe { transform_to_matrix(&geom_rot) };
+    let geom_rot_mat: Matrix = transform_to_matrix(View::<Transform, Const>::from_ref(&geom_rot));
 
-    // SAFETY: `node_to_world_ptr()` projects the viewed node's own world matrix,
-    // and `&geom_rot_mat` addresses the local matrix just computed.
-    let mut norm_mat: Matrix = unsafe { matrix_mul(node.node_to_world_ptr(), &geom_rot_mat) };
+    // SAFETY: the projected matrix belongs to the viewed node and remains
+    // frozen until this value computation completes.
+    let node_to_world = unsafe { View::<Matrix, Const>::from_ptr(node.node_to_world_ptr()) };
+    let mut norm_mat: Matrix = matrix_mul(
+        node_to_world,
+        View::<Matrix, Const>::from_ref(&geom_rot_mat),
+    );
     norm_mat = matrix_for_normals(View::<Matrix, Const>::from_ref(&norm_mat));
     norm_mat
 }
@@ -3161,21 +3164,17 @@ pub(crate) fn quat_to_euler(q: Quat, order: RotationOrder) -> Vec3 {
 // Kept here because `ufbxi_update_node`
 // (ufbx.c:22955, `native::scene_process`) calls it.
 #[inline(never)]
-pub(crate) unsafe fn matrix_mul(a: *const Matrix, b: *const Matrix) -> Matrix {
-    // C: `ufbx_assert(a && b);`
-    ufbx_assert!(!a.is_null() && !b.is_null());
-    if a.is_null() || b.is_null() {
-        return IDENTITY_MATRIX;
-    }
+pub(crate) fn matrix_mul<MA: Mode, MB: Mode>(a: &View<Matrix, MA>, b: &View<Matrix, MB>) -> Matrix {
+    let a = a.as_ptr();
+    let b = b.as_ptr();
 
     // C: `ufbx_matrix dst;` — every field is written below before the return,
     // so the zero-fill is inert (upstream carries no `// ufbxi_uninit` marker).
     // SAFETY: an all-zero bit pattern is a valid `Matrix` (all `Real` fields).
     let mut dst: Matrix = unsafe { core::mem::zeroed() };
 
-    // SAFETY: `a` and `b` are non-null here (checked above) and point at live
-    // `Matrix` values per this fn's contract; every field read below is one of
-    // their own `mNN` fields.
+    // SAFETY: both views root live initialized matrices; every field read below
+    // is one of their own `mNN` fields.
     unsafe {
         dst.m03 = (*a).m00 * (*b).m03 + (*a).m01 * (*b).m13 + (*a).m02 * (*b).m23 + (*a).m03;
         dst.m13 = (*a).m10 * (*b).m03 + (*a).m11 * (*b).m13 + (*a).m12 * (*b).m23 + (*a).m13;
@@ -3349,15 +3348,11 @@ pub(crate) fn transform_direction<M: Mode>(m: &View<Matrix, M>, v: Vec3) -> Vec3
 
 // ufbx.c:31828-31852 `ufbx_transform_to_matrix`
 #[inline(never)]
-pub(crate) unsafe fn transform_to_matrix(t: *const Transform) -> Matrix {
-    ufbx_assert!(!t.is_null());
-    if t.is_null() {
-        return IDENTITY_MATRIX;
-    }
+pub(crate) fn transform_to_matrix<M: Mode>(t: &View<Transform, M>) -> Matrix {
+    let t = t.as_ptr();
 
-    // SAFETY: `t` is non-null here (checked above) and points at a live
-    // `Transform` per this fn's contract; reading its own `rotation`/`scale`
-    // fields.
+    // SAFETY: the view roots a live initialized transform; read only its own
+    // `rotation` and `scale` fields.
     let (q, sx, sy, sz) = unsafe {
         (
             (*t).rotation,
@@ -3388,8 +3383,8 @@ pub(crate) unsafe fn transform_to_matrix(t: *const Transform) -> Matrix {
     m.m02 = sz * (xz + yw);
     m.m12 = sz * (-xw + yz);
     m.m22 = sz * (-xx - yy + 0.5);
-    // SAFETY: `t` points at a live `Transform` per this fn's contract; reading
-    // its own `translation` field.
+    // SAFETY: the view roots a live initialized transform; read only its own
+    // `translation` field.
     unsafe {
         m.m03 = (*t).translation.x;
         m.m13 = (*t).translation.y;
@@ -3402,15 +3397,9 @@ pub(crate) unsafe fn transform_to_matrix(t: *const Transform) -> Matrix {
 // Kept here because `ufbxi_update_skin_cluster`
 // (ufbx.c:23289, `native::scene_process`) calls it.
 #[inline(never)]
-pub(crate) unsafe fn matrix_to_transform(m: *const Matrix) -> Transform {
-    ufbx_assert!(!m.is_null());
-    if m.is_null() {
-        return IDENTITY_TRANSFORM;
-    }
-
-    // SAFETY: `m` is non-null here (checked above) and points at a live matrix;
-    // the frozen mint is confined to the determinant read.
-    let det: Real = unsafe { matrix_determinant(View::<Matrix, Const>::from_ptr(m)) };
+pub(crate) fn matrix_to_transform<M: Mode>(m: &View<Matrix, M>) -> Transform {
+    let det: Real = matrix_determinant(m);
+    let m = m.as_ptr();
 
     // C indexes the `ufbx_matrix` value union's `ufbx_vec3 cols[4]` view; the
     // generated struct keeps only the `m00`..`m23` scalars, so the index is
@@ -3722,9 +3711,7 @@ pub(crate) unsafe fn catch_get_skin_vertex_matrix<M: Mode>(
         dqt.translation.x = rcp_len2x2 * (-qe.w * q0.x + qe.x * q0.w - qe.y * q0.z + qe.z * q0.y);
         dqt.translation.y = rcp_len2x2 * (-qe.w * q0.y + qe.x * q0.z + qe.y * q0.w - qe.z * q0.x);
         dqt.translation.z = rcp_len2x2 * (-qe.w * q0.z - qe.x * q0.y + qe.y * q0.x + qe.z * q0.w);
-        // SAFETY: `dqt` is a live, fully written stack `Transform`; its raw
-        // address is passed to `transform_to_matrix`.
-        let dqm: Matrix = unsafe { transform_to_matrix(&raw const dqt) };
+        let dqm: Matrix = transform_to_matrix(View::<Transform, Const>::from_ref(&dqt));
         if skin_vertex.dq_weight < 1.0 {
             add_weighted_mat(&mut mat, &dqm, skin_vertex.dq_weight);
         } else {

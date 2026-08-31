@@ -1991,6 +1991,91 @@ fn public_matrix_value_helpers_from_shared_refs() {
     assert_eq!(normals.m13, 0.0);
     assert_eq!(normals.m23, 0.0);
 
+    let squared = ufbx::matrix_mul(&matrix, &matrix);
+    assert_eq!(squared.m00, 4.0);
+    assert_eq!(squared.m11, 16.0);
+    assert_eq!(squared.m22, 64.0);
+    assert_eq!(squared.m03, -10.0);
+    assert_eq!(squared.m13, 100.0);
+    assert_eq!(squared.m23, 270.0);
+
+    let translation = ufbx::Matrix {
+        m00: 1.0,
+        m11: 1.0,
+        m22: 1.0,
+        m03: 1.0,
+        m13: 2.0,
+        m23: 3.0,
+        ..Default::default()
+    };
+    let scale = ufbx::Matrix {
+        m00: 2.0,
+        m11: 3.0,
+        m22: 4.0,
+        ..Default::default()
+    };
+    let translate_then_scale = ufbx::matrix_mul(&translation, &scale);
+    assert_eq!(translate_then_scale.m03, 1.0);
+    assert_eq!(translate_then_scale.m13, 2.0);
+    assert_eq!(translate_then_scale.m23, 3.0);
+    let scale_then_translate = ufbx::matrix_mul(&scale, &translation);
+    assert_eq!(scale_then_translate.m03, 2.0);
+    assert_eq!(scale_then_translate.m13, 6.0);
+    assert_eq!(scale_then_translate.m23, 12.0);
+
+    let transform = ufbx::Transform {
+        translation: ufbx::Vec3 {
+            x: 5.0,
+            y: -6.0,
+            z: 7.0,
+        },
+        rotation: ufbx::Quat {
+            x: 0.0,
+            y: 0.0,
+            z: 1.0,
+            w: 0.0,
+        },
+        scale: ufbx::Vec3 {
+            x: -2.0,
+            y: 3.0,
+            z: 4.0,
+        },
+    };
+    let transformed = ufbx::transform_to_matrix(&transform);
+    let decomposed = ufbx::matrix_to_transform(&transformed);
+    let rebuilt = ufbx::transform_to_matrix(&decomposed);
+    for (actual, expected) in [
+        rebuilt.m00,
+        rebuilt.m10,
+        rebuilt.m20,
+        rebuilt.m01,
+        rebuilt.m11,
+        rebuilt.m21,
+        rebuilt.m02,
+        rebuilt.m12,
+        rebuilt.m22,
+        rebuilt.m03,
+        rebuilt.m13,
+        rebuilt.m23,
+    ]
+    .into_iter()
+    .zip([
+        transformed.m00,
+        transformed.m10,
+        transformed.m20,
+        transformed.m01,
+        transformed.m11,
+        transformed.m21,
+        transformed.m02,
+        transformed.m12,
+        transformed.m22,
+        transformed.m03,
+        transformed.m13,
+        transformed.m23,
+    ]) {
+        assert!((actual - expected).abs() < 1.0e-5);
+    }
+
     let singular = ufbx::Matrix {
         m00: 1.0,
         m11: 0.0,

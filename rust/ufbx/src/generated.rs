@@ -5376,10 +5376,11 @@ pub fn euler_to_quat(v: Vec3, order: RotationOrder) -> Quat {
     result
 }
 
-#[allow(clippy::let_and_return)]
 pub fn matrix_mul(a: &Matrix, b: &Matrix) -> Matrix {
-    let result = unsafe { crate::native::api::matrix_mul(a as *const Matrix, b as *const Matrix) };
-    result
+    crate::native::api::matrix_mul(
+        crate::native::view::View::<Matrix, crate::native::view::Const>::from_ref(a),
+        crate::native::view::View::<Matrix, crate::native::view::Const>::from_ref(b),
+    )
 }
 
 #[allow(clippy::let_and_return)]
@@ -5423,16 +5424,18 @@ pub fn transform_direction(m: &Matrix, v: Vec3) -> Vec3 {
     )
 }
 
-#[allow(clippy::let_and_return)]
 pub fn transform_to_matrix(t: &Transform) -> Matrix {
-    let result = unsafe { crate::native::api::transform_to_matrix(t as *const Transform) };
-    result
+    crate::native::api::transform_to_matrix(crate::native::view::View::<
+        Transform,
+        crate::native::view::Const,
+    >::from_ref(t))
 }
 
-#[allow(clippy::let_and_return)]
 pub fn matrix_to_transform(m: &Matrix) -> Transform {
-    let result = unsafe { crate::native::api::matrix_to_transform(m as *const Matrix) };
-    result
+    crate::native::api::matrix_to_transform(crate::native::view::View::<
+        Matrix,
+        crate::native::view::Const,
+    >::from_ref(m))
 }
 
 pub fn get_skin_vertex_matrix(skin: &SkinDeformer, vertex: usize, fallback: &Matrix) -> Matrix {

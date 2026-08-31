@@ -51,10 +51,10 @@ use crate::native::string_pool::{
 };
 use crate::native::view::SliceViewIter;
 use crate::native::view::{
-    view_project, view_read, view_read_shared, view_write, Mode, Mut, Run, View,
+    view_project, view_read, view_read_shared, view_write, Const, Mode, Mut, Run, View,
 };
 #[cfg(feature = "geometry-cache")]
-use crate::native::view::{view_raw_const, view_raw_mut, Const};
+use crate::native::view::{view_raw_const, view_raw_mut};
 use crate::native::warnings::ufbxi_warnf;
 #[cfg(feature = "geometry-cache")]
 use crate::native::xml::{
@@ -2849,21 +2849,17 @@ pub(crate) fn transform_to_axes(uc: &Context, dst_axes: CoordinateAxes) {
         let mut axis_mat: Matrix = uc.axis_matrix();
         let root_node_view: &View<Node> = uc.scene_view().root_node().view::<Mut>();
         if !is_transform_identity(root_node_view.local_transform_view()) {
-            // SAFETY: `local_transform_ptr()` projects the root's own live,
-            // initialized transform field; `root_mat`/`axis_mat` are live stack
-            // locals and the matrix helpers are pure value math over them.
-            unsafe {
-                let root_mat: Matrix = transform_to_matrix(root_node_view.local_transform_ptr());
-                axis_mat = matrix_mul(&raw const root_mat, &raw const axis_mat);
-            }
+            let root_mat: Matrix = transform_to_matrix(root_node_view.local_transform_view());
+            axis_mat = matrix_mul(
+                View::<Matrix, Const>::from_ref(&root_mat),
+                View::<Matrix, Const>::from_ref(&axis_mat),
+            );
         }
 
-        // SAFETY: `&raw const axis_mat` over the live, fully written stack local
-        // is a pure value read for the conversion.
-        unsafe {
-            mirror_matrix(View::<Matrix>::from_mut(&mut axis_mat), uc.mirror_axis());
-            root_node_view.set_local_transform(matrix_to_transform(&raw const axis_mat));
-        }
+        mirror_matrix(View::<Matrix>::from_mut(&mut axis_mat), uc.mirror_axis());
+        root_node_view.set_local_transform(matrix_to_transform(View::<Matrix, Const>::from_ref(
+            &axis_mat,
+        )));
         root_node_view.set_node_to_parent(axis_mat);
     }
 }
