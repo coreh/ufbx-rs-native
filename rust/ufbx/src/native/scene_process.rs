@@ -9023,30 +9023,14 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
             patch_index_pointer(uc, mesh.skinned_normal().indices_view());
 
             // C: `ufbxi_for_list(ufbx_uv_set, set, mesh->uv_sets)`
-            // SAFETY: `uv_sets` describes one contiguous arena run of the mesh's
-            // own UV sets, live and unmoved for this call.
-            let sets = unsafe {
-                SliceViewIter::<UvSet>::from_raw_parts(
-                    mesh.uv_sets().data as *mut UvSet,
-                    mesh.uv_sets().count,
-                )
-            };
-            for set in sets {
+            for set in Run::from_list(mesh.uv_sets_view()).iter() {
                 patch_index_pointer(uc, set.vertex_uv().indices_view());
                 patch_index_pointer(uc, set.vertex_bitangent().indices_view());
                 patch_index_pointer(uc, set.vertex_tangent().indices_view());
             }
 
             // C: `ufbxi_for_list(ufbx_color_set, set, mesh->color_sets)`
-            // SAFETY: `color_sets` describes one contiguous arena run of the
-            // mesh's own color sets, live and unmoved for this call.
-            let csets = unsafe {
-                SliceViewIter::<ColorSet>::from_raw_parts(
-                    mesh.color_sets().data as *mut ColorSet,
-                    mesh.color_sets().count,
-                )
-            };
-            for cset in csets {
+            for cset in Run::from_list(mesh.color_sets_view()).iter() {
                 patch_index_pointer(uc, cset.vertex_color().indices_view());
             }
 
@@ -9999,16 +9983,7 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
                 let binding: &View<ShaderBinding> = bindings.at(binding_ix);
 
                 // C: `ufbxi_for_list(ufbx_shader_prop_binding, prop, binding->prop_bindings)`
-                // SAFETY: the viewed binding's `prop_bindings` `data`/`count`
-                // describe its own contiguous, initialized prop-binding run,
-                // owned by the uc result arena.
-                let prop_iter = unsafe {
-                    SliceViewIter::<ShaderPropBinding>::from_raw_parts(
-                        binding.prop_bindings_view().data() as *mut ShaderPropBinding,
-                        binding.prop_bindings_view().count(),
-                    )
-                };
-                for prop in prop_iter {
+                for prop in Run::from_list(binding.prop_bindings_view()).iter() {
                     let name: String = prop.material_prop();
 
                     // C: `size_t index = SIZE_MAX;` — `ufbxi_macro_lower_bound_eq`

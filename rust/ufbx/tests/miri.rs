@@ -212,6 +212,23 @@ fn load_attribute_zoo_6100_binary() {
     assert_ne!(left.element.element_id, right.element.element_id);
 }
 
+/// Finalized UV and color set lists retain every layer and their indexed data.
+#[test]
+fn load_uv_and_color_sets_6100_binary() {
+    let scene = load("maya_uv_and_color_sets_6100_binary.fbx");
+    assert!(walk(&scene).is_finite());
+
+    let mesh = scene.meshes.first().expect("missing mesh");
+    let uv_names: Vec<&str> = mesh.uv_sets.iter().map(|set| set.name.as_ref()).collect();
+    let color_names: Vec<&str> = mesh
+        .color_sets
+        .iter()
+        .map(|set| set.name.as_ref())
+        .collect();
+    assert_eq!(uv_names, ["UVA", "UVB"]);
+    assert_eq!(color_names, ["ColorA", "ColorB"]);
+}
+
 /// Shader-texture property prefixes are discovered from both explicit compound
 /// properties and legacy names, then interned with a trailing separator.
 #[test]
@@ -245,6 +262,13 @@ fn load_shader_texture_prefixes() {
         .expect("missing material property texture");
     assert!(std::ptr::eq(found, material_texture.texture.as_ref()));
     assert!(ufbx::find_prop_texture(material, "DefinitelyNotAProperty").is_none());
+
+    let base_color = material
+        .textures
+        .iter()
+        .find(|texture| texture.material_prop.as_ref() == "3dsMax|Parameters|base_color_map")
+        .expect("missing base-color property texture");
+    assert_eq!(base_color.shader_prop.as_ref(), "base_color");
 
     check_prefix(
         &legacy,
