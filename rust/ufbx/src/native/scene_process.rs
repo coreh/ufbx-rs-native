@@ -367,10 +367,12 @@ impl<T> crate::prelude::RefListView<T> {
     #[inline(always)]
     pub(crate) fn as_element_list(&self) -> &crate::prelude::RefListView<Element> {
         // SAFETY: every generated `ufbx_*_list` is layout-identical to
-        // `ufbx_element_list` — a `data` pointer plus a `count` — and every
-        // `Ref<T>` slot it describes names an `ufbx_element`-headed element, so
-        // the re-view addresses exactly the two leaves this view already covers
-        // and inherits its own write-capable provenance.
+        // `ufbx_element_list` — a `data` pointer plus a `count` — so the re-view
+        // addresses exactly the two leaves this Mut view already covers and
+        // inherits its write-capable provenance. The projection reads neither
+        // leaf and may therefore carry an uninitialized out-parameter header;
+        // before any getter/index operation, data/count must describe `Ref<T>`
+        // slots naming `ufbx_element`-headed elements.
         unsafe { crate::prelude::RefListView::<Element>::mint(self.get() as *mut RefList<Element>) }
     }
 }
@@ -2411,43 +2413,6 @@ pub(crate) fn find_src_connections<'a, M: Mode>(
     Run::from_list(element.connections_src_view()).subrun(begin, end - begin)
 }
 
-// ufbx.c:19035-19045 `ufbxi_get_element_node`
-//
-// # Safety
-// `element` is null or heads a live, arena-owned `ufbx_element`, and when its
-// `type_` is `UFBX_ELEMENT_NODE` its write-capable provenance spans the
-// enclosing `ufbx_node`. The param stays raw because a `&View<Element>` tags
-// the header only and may not address the node-body fields this function reads.
-#[must_use]
-pub(crate) unsafe fn get_element_node(element: *mut Element) -> *mut Element {
-    if element.is_null() {
-        return ptr::null_mut();
-    }
-    // SAFETY: `element` is non-null (checked) and points to a live scene element
-    // in the arena (fn contract), so its pointer anchors an `ElementView`.
-    let element_view: &ElementView = unsafe { ElementView::from_ptr(element) };
-    if element_view.type_() == ElementType::Node {
-        // SAFETY: `type_ == Node` (checked) means the element is the `element`
-        // prefix of a live `ufbx_node`, and the fn contract supplies the whole
-        // enclosing allocation's write provenance.
-        let node: &NodeView = unsafe { NodeView::from_ptr(element.cast::<Node>()) };
-        if node.is_geometry_transform_helper() {
-            return node
-                .parent()
-                .map_or(ptr::null_mut(), |parent| parent.ptr().cast::<Element>());
-        }
-        ptr::null_mut()
-    } else {
-        // C: `return element->instances.count > 0 ? &element->instances.data[0]->element : NULL;`
-        let instances = element_view.instances_view();
-        if instances.count() > 0 {
-            instances.at(0).get().cast::<Element>()
-        } else {
-            ptr::null_mut()
-        }
-    }
-}
-
 /// Safe specialization of `ufbxi_get_element_node()` for fetches rooted at a
 /// typed non-node element. Explicit advancement keeps each call site's C
 /// bottom-condition traversal visible after its current scan, early return, or
@@ -2656,48 +2621,33 @@ fn scan_dst_elements<M: Mode>(
 // C's `void *p_dst_list` is typed here as the element-ref list header every
 // call site passes (C: `ufbx_element_list *list = (ufbx_element_list*)p_dst_list;`),
 // and the nullable `const char *prop` as `Option<&[u8]>` (see
-// `find_dst_connections`).
-//
-// # Safety
-// `element` heads a live, arena-owned `ufbx_element` whose provenance spans the
-// ENCLOSING element struct: with `search_node` the walk reaches
-// `ufbxi_get_element_node`, which reads `ufbx_node` fields past
-// `size_of::<Element>()`, so a pointer derived from a header-only
-// `&View<Element>` may not address them.
+// `find_dst_connections`). The typed walk preserves C's optional
+// instance/helper traversal without recasting an Element header to Node.
 #[inline(never)]
-unsafe fn fetch_dst_elements(
+fn fetch_dst_elements(
     uc: &Context,
     element_flags: ElementFlags<'_>,
     p_dst_list: &RefListView<Element>,
-    element: *mut Element,
+    mut walk: ElementNodeWalk<'_>,
     search_node: bool,
     ignore_duplicates: bool,
     prop: Option<&[u8]>,
     src_type: ElementType,
 ) -> Result<(), Fail> {
-    let mut element: *mut Element = element;
     let mut num_elements: usize = 0;
 
     loop {
-        // SAFETY: `element` is a live scene element — the caller's on the first
-        // pass, `get_element_node`'s non-null result after that.
-        let element_view: &ElementView = unsafe { ElementView::from_ptr(element) };
         scan_dst_elements(
             uc,
             element_flags,
-            element_view,
+            walk.element(),
             ignore_duplicates,
             prop,
             src_type,
             &mut num_elements,
         )?;
 
-        if !(search_node && {
-            // SAFETY: `element` is a live scene element (see the `find_dst_connections`
-            // call above).
-            element = unsafe { get_element_node(element) };
-            !element.is_null()
-        }) {
+        if !walk.advance(search_node) {
             break;
         }
     }
@@ -9221,48 +9171,36 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
             }
 
             // Fetch deformers
-            // SAFETY: `mesh.element_raw()` addresses that element's
-            // header with whole-struct provenance.
-            unsafe {
-                fetch_dst_elements(
-                    uc,
-                    element_flags,
-                    mesh.skin_deformers_view().as_element_list(),
-                    mesh.element_raw(),
-                    search_node,
-                    true,
-                    None,
-                    ElementType::SkinDeformer,
-                )
-            }?;
-            // SAFETY: `mesh.element_raw()` addresses that element's
-            // header with whole-struct provenance.
-            unsafe {
-                fetch_dst_elements(
-                    uc,
-                    element_flags,
-                    mesh.blend_deformers_view().as_element_list(),
-                    mesh.element_raw(),
-                    search_node,
-                    true,
-                    None,
-                    ElementType::BlendDeformer,
-                )
-            }?;
-            // SAFETY: `mesh.element_raw()` addresses that element's
-            // header with whole-struct provenance.
-            unsafe {
-                fetch_dst_elements(
-                    uc,
-                    element_flags,
-                    mesh.cache_deformers_view().as_element_list(),
-                    mesh.element_raw(),
-                    search_node,
-                    true,
-                    None,
-                    ElementType::CacheDeformer,
-                )
-            }?;
+            fetch_dst_elements(
+                uc,
+                element_flags,
+                mesh.skin_deformers_view().as_element_list(),
+                ElementNodeWalk::from_mesh(mesh),
+                search_node,
+                true,
+                None,
+                ElementType::SkinDeformer,
+            )?;
+            fetch_dst_elements(
+                uc,
+                element_flags,
+                mesh.blend_deformers_view().as_element_list(),
+                ElementNodeWalk::from_mesh(mesh),
+                search_node,
+                true,
+                None,
+                ElementType::BlendDeformer,
+            )?;
+            fetch_dst_elements(
+                uc,
+                element_flags,
+                mesh.cache_deformers_view().as_element_list(),
+                ElementNodeWalk::from_mesh(mesh),
+                search_node,
+                true,
+                None,
+                ElementType::CacheDeformer,
+            )?;
             fetch_deformers(uc, mesh.all_deformers_view(), mesh, search_node)?;
 
             // Vertex position must always exist if not explicitly allowed to be missing
@@ -9701,23 +9639,21 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
             // upstream `// ufbxi_uninit` marker); `ufbxi_fetch_dst_elements`
             // writes both fields before the first read.
             let mut textures_storage = MaybeUninit::<RefList<Texture>>::uninit();
-            let textures: *mut RefList<Texture> = textures_storage.as_mut_ptr();
-            // SAFETY: `textures` addresses a live local `ufbx_texture_list`, which
-            // shares the `ufbx_element_list` layout the fetch writes in full (C:
-            // its `void *` out-parameter); `mesh.element_raw()` addresses the viewed mesh's
-            // element header with whole-mesh provenance.
-            unsafe {
-                fetch_dst_elements(
-                    uc,
-                    element_flags,
-                    RefListView::<Element>::from_ptr(textures as *mut RefList<Element>),
-                    mesh.element_raw(),
-                    true,
-                    false,
-                    None,
-                    ElementType::Texture,
-                )
-            }?;
+            // SAFETY: the MaybeUninit slot is live, aligned, stable for this
+            // scope, and write-capable. A Mut View may carry its uninitialized
+            // bytes; the fetch writes data then count before any getter below.
+            let textures_view: &RefListView<Texture> =
+                unsafe { RefListView::<Texture>::from_ptr(textures_storage.as_mut_ptr()) };
+            fetch_dst_elements(
+                uc,
+                element_flags,
+                textures_view.as_element_list(),
+                ElementNodeWalk::from_mesh(mesh),
+                true,
+                false,
+                None,
+                ElementType::Texture,
+            )?;
 
             let mut num_material_textures: usize = 0;
             // C: `ufbxi_for(ufbxi_tmp_mesh_texture, tex, extra->texture_arr, extra->texture_count)`
@@ -9737,8 +9673,7 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
                             0
                         }
                     };
-                    // SAFETY: `textures` was written in full by the fetch above.
-                    if texture_id >= 0 && (texture_id as usize) < unsafe { (*textures).count } {
+                    if texture_id >= 0 && (texture_id as usize) < textures_view.count() {
                         let mat_texs: *mut TmpMaterialTexture =
                             uc.tmp_stack_view()
                                 .push::<TmpMaterialTexture>(num_materials);
@@ -9769,8 +9704,7 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
                         // `face_material` list is non-empty here (checked above), so
                         // it is the per-face run of that length.
                         let material_id: i32 = unsafe { *mesh.face_material().data.add(i) } as i32;
-                        // SAFETY: `textures` was written in full by the fetch above.
-                        if texture_id < 0 || (texture_id as usize) >= unsafe { (*textures).count } {
+                        if texture_id < 0 || (texture_id as usize) >= textures_view.count() {
                             continue;
                         }
                         if material_id < 0 || (material_id as usize) >= num_materials {
@@ -9831,13 +9765,6 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
             // C: `ufbxi_tmp_material_texture mat_tex = mat_texs[i];` over the
             // sorted run.
             let mat_tex_iter = mat_texs.iter();
-            // SAFETY: `textures_storage` is a live local that
-            // `ufbxi_fetch_dst_elements` wrote in full above, so it heads a
-            // valid `ufbx_texture_list` reached through write-capable
-            // (`as_mut_ptr`) provenance.
-            let textures_view: &RefListView<Texture> =
-                unsafe { RefListView::<Texture>::from_ptr(textures) };
-
             let mut prev_material: i32 = -2;
             let mut prev_texture: i32 = -2;
             let mut prev_prop: *const u8 = ptr::null();
@@ -13054,8 +12981,8 @@ mod tests {
         )
         .expect("load geometry-transform fixture");
 
-        // Stored `Ref` pointers retain the scene arena's whole-allocation write
-        // provenance; no `&Node`/`&Mesh` cast is used for these raw entry calls.
+        // Stored Refs retain the scene arena's whole-allocation provenance, so
+        // the cursor can keep typed Node states while following helper parents.
         let node_refs: &[Ref<Node>] = root.nodes.as_ref();
         let helper = node_refs
             .iter()
@@ -13070,14 +12997,7 @@ mod tests {
 
         let helper_view: &NodeView = helper.view();
         let parent = helper_view.parent().expect("helper parent");
-        // SAFETY: both node element pointers come from stored scene `Ref`s and
-        // retain whole-Node provenance, which is `get_element_node`'s contract.
-        assert_eq!(
-            unsafe { get_element_node(helper_view.element_raw()) },
-            parent.ptr().cast::<Element>()
-        );
         let ordinary_view: &NodeView = ordinary.view();
-        assert!(unsafe { get_element_node(ordinary_view.element_raw()) }.is_null());
 
         let mesh_refs: &[Ref<Mesh>] = root.meshes.as_ref();
         let mesh = mesh_refs
@@ -13086,23 +13006,12 @@ mod tests {
             .find(|mesh| mesh.view::<Mut>().element().instances_view().count() > 0)
             .expect("instanced mesh");
         let mesh_view: &View<Mesh> = mesh.view();
-        let expected = mesh_view
-            .element()
-            .instances_view()
-            .at(0)
-            .get()
-            .cast::<Element>();
-        // SAFETY: the mesh element pointer comes from its stored scene `Ref`
-        // and therefore satisfies the raw entry contract.
-        assert_eq!(
-            unsafe { get_element_node(mesh_view.element_raw()) },
-            expected
-        );
+        let expected = mesh_view.element().instances_view().at(0);
 
         let mut mesh_walk = ElementNodeWalk::from_mesh(mesh_view);
         assert_eq!(mesh_walk.element().as_ptr(), mesh_view.element().as_ptr());
         assert!(mesh_walk.advance(true));
-        assert_eq!(mesh_walk.element().as_ptr(), expected.cast_const());
+        assert_eq!(mesh_walk.element().as_ptr(), expected.element().as_ptr());
 
         let mut one_element_walk = ElementNodeWalk::from_mesh(mesh_view);
         assert_eq!(
@@ -13128,9 +13037,6 @@ mod tests {
             current: Some(ElementNodeWalkState::Node(ordinary_view)),
         };
         assert!(!ordinary_walk.advance(true));
-
-        // SAFETY: null is explicitly accepted by the function contract.
-        assert!(unsafe { get_element_node(ptr::null_mut()) }.is_null());
     }
 
     // Transcription guard for the ufbx.c:19443-19960 tables. C derives
