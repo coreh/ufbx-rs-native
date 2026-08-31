@@ -2185,8 +2185,12 @@ fn public_mesh_helpers_from_shared_refs() {
     ufbx::compute_topology(mesh, &mut topo);
     acc += ufbx::topo_next_vertex_edge(&topo, 0) as f64;
     acc += ufbx::topo_prev_vertex_edge(&topo, 0) as f64;
-    let mut normal_indices = vec![0u32; mesh.num_indices];
+    let mapping_tail = 0x1234_5678;
+    let mut normal_indices = vec![mapping_tail; mesh.num_indices + 2];
     let num_normals = ufbx::generate_normal_mapping(mesh, &topo, &mut normal_indices, false);
+    assert!(normal_indices[mesh.num_indices..]
+        .iter()
+        .all(|&index| index == mapping_tail));
     acc += num_normals as f64;
 
     let mut short_mapping = vec![0x1234_5678; mesh.num_indices - 1];
@@ -2196,9 +2200,17 @@ fn public_mesh_helpers_from_shared_refs() {
     assert!(short_mapping_result.is_err());
     assert!(short_mapping.iter().all(|&index| index == 0x1234_5678));
 
-    let mut normals = vec![ufbx::Vec3::default(); num_normals];
+    let normal_tail = ufbx::Vec3 {
+        x: 4.0,
+        y: 5.0,
+        z: 6.0,
+    };
+    let mut normals = vec![normal_tail; num_normals + 2];
     ufbx::compute_normals(mesh, &mesh.vertex_position, &normal_indices, &mut normals);
-    for normal in &normals {
+    assert!(normals[num_normals..]
+        .iter()
+        .all(|normal| normal.x == 0.0 && normal.y == 0.0 && normal.z == 0.0));
+    for normal in &normals[..num_normals] {
         acc += normal.x as f64 + normal.y as f64 + normal.z as f64;
     }
 
@@ -2225,11 +2237,26 @@ fn public_mesh_helpers_from_shared_refs() {
 
     // Every mapped normal index must address the caller-provided output run.
     let invalid_indices = vec![num_normals as u32; mesh.num_indices];
+    let mut invalid_output = vec![
+        ufbx::Vec3 {
+            x: 1.0,
+            y: 2.0,
+            z: 3.0,
+        };
+        num_normals
+    ];
     let invalid_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let mut output = vec![ufbx::Vec3::default(); num_normals];
-        ufbx::compute_normals(mesh, &mesh.vertex_position, &invalid_indices, &mut output);
+        ufbx::compute_normals(
+            mesh,
+            &mesh.vertex_position,
+            &invalid_indices,
+            &mut invalid_output,
+        );
     }));
     assert!(invalid_result.is_err());
+    assert!(invalid_output
+        .iter()
+        .all(|normal| normal.x == 0.0 && normal.y == 0.0 && normal.z == 0.0));
 
     assert!(acc.is_finite());
 }

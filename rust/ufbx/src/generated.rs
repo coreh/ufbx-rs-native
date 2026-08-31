@@ -5660,17 +5660,13 @@ pub fn generate_normal_mapping(
     assume_smooth: bool,
 ) -> usize {
     let mut panic: Panic = Default::default();
-    let result = unsafe {
-        crate::native::api::catch_generate_normal_mapping(
-            Some(&mut panic),
-            crate::native::view::View::<Mesh, crate::native::view::Const>::from_ref(mesh),
-            topo.as_ptr(),
-            topo.len(),
-            normal_indices.as_mut_ptr(),
-            normal_indices.len(),
-            assume_smooth,
-        )
-    };
+    let result = crate::native::api::catch_generate_normal_mapping_slices(
+        Some(&mut panic),
+        crate::native::view::View::<Mesh, crate::native::view::Const>::from_ref(mesh),
+        topo,
+        normal_indices,
+        assume_smooth,
+    );
     if panic.did_panic {
         panic!("ufbx::generate_normal_mapping() {}", panic.message());
     }
@@ -5684,19 +5680,13 @@ pub fn compute_normals(
     normals: &mut [Vec3],
 ) {
     let mut panic: Panic = Default::default();
-    unsafe {
-        crate::native::api::catch_compute_normals(
-            Some(&mut panic),
-            crate::native::view::View::<Mesh, crate::native::view::Const>::from_ref(mesh),
-            crate::native::view::View::<VertexVec3, crate::native::view::Const>::from_ref(
-                positions,
-            ),
-            normal_indices.as_ptr(),
-            normal_indices.len(),
-            normals.as_mut_ptr(),
-            normals.len(),
-        )
-    };
+    crate::native::api::catch_compute_normals_slices(
+        Some(&mut panic),
+        crate::native::view::View::<Mesh, crate::native::view::Const>::from_ref(mesh),
+        crate::native::view::View::<VertexVec3, crate::native::view::Const>::from_ref(positions),
+        normal_indices,
+        normals,
+    );
     if panic.did_panic {
         panic!("ufbx::compute_normals() {}", panic.message());
     }

@@ -1144,6 +1144,49 @@ pub fn topo_prev_vertex_edge(topo: &[TopoEdge], index: u32) -> u32 {
 }
 """
 
+override_functions["ufbx_catch_generate_normal_mapping"] = """
+pub fn generate_normal_mapping(
+    mesh: &Mesh,
+    topo: &[TopoEdge],
+    normal_indices: &mut [u32],
+    assume_smooth: bool,
+) -> usize {
+    let mut panic: Panic = Default::default();
+    let result = crate::native::api::catch_generate_normal_mapping_slices(
+        Some(&mut panic),
+        crate::native::view::View::<Mesh, crate::native::view::Const>::from_ref(mesh),
+        topo,
+        normal_indices,
+        assume_smooth,
+    );
+    if panic.did_panic {
+        panic!("ufbx::generate_normal_mapping() {}", panic.message());
+    }
+    result
+}
+"""
+
+override_functions["ufbx_catch_compute_normals"] = """
+pub fn compute_normals(
+    mesh: &Mesh,
+    positions: &VertexVec3,
+    normal_indices: &[u32],
+    normals: &mut [Vec3],
+) {
+    let mut panic: Panic = Default::default();
+    crate::native::api::catch_compute_normals_slices(
+        Some(&mut panic),
+        crate::native::view::View::<Mesh, crate::native::view::Const>::from_ref(mesh),
+        crate::native::view::View::<VertexVec3, crate::native::view::Const>::from_ref(positions),
+        normal_indices,
+        normals,
+    );
+    if panic.did_panic {
+        panic!("ufbx::compute_normals() {}", panic.message());
+    }
+}
+"""
+
 override_functions["ufbx_evaluate_props"] = """
 pub fn evaluate_props<'a, 'b>(anim: &'a Anim, element: &'a Element, time: f64, buffer: &'b mut [ExternalRef<'b, Prop>]) -> ExternalRef<'b, Props>
     where 'a: 'b

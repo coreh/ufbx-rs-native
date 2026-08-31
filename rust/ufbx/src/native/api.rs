@@ -5135,6 +5135,30 @@ fn generate_normal_mapping_run<M: Mode>(
     next_index as usize
 }
 
+pub(crate) fn catch_generate_normal_mapping_slices<M: Mode>(
+    mut panic: Option<&mut Panic>,
+    mesh: &View<Mesh, M>,
+    topo: &[TopoEdge],
+    normal_indices: &mut [u32],
+    assume_smooth: bool,
+) -> usize {
+    if ufbxi_panicf!(
+        panic,
+        normal_indices.len() >= mesh.num_indices(),
+        "Expected at least mesh.num_indices (%zu), got %zu",
+        mesh.num_indices(),
+        normal_indices.len(),
+    ) {
+        return 0;
+    }
+
+    // Topology is consumed as the caller's full read-only run. Mapping owns
+    // exactly the mesh-index prefix; any spare output capacity stays untouched.
+    let topo = Run::<TopoEdge, Const>::from_slice(topo);
+    let normal_indices = Run::<u32>::from_mut_slice(&mut normal_indices[..mesh.num_indices()]);
+    generate_normal_mapping_run(mesh, topo, normal_indices, assume_smooth)
+}
+
 // ufbx.c:32534-32578 `ufbx_catch_generate_normal_mapping`
 // C-parity: this one is declared WITHOUT `ufbx_abi` in ufbx.c (the `ufbx.h`
 // declaration carries it) — no behavioral difference here.
@@ -5243,6 +5267,30 @@ fn compute_normals_run<M: Mode>(
             normal.set_z(normal.z() / len);
         }
     }
+}
+
+pub(crate) fn catch_compute_normals_slices<M: Mode>(
+    mut panic: Option<&mut Panic>,
+    mesh: &View<Mesh, M>,
+    positions: &View<VertexVec3, M>,
+    normal_indices: &[u32],
+    normals: &mut [Vec3],
+) {
+    if ufbxi_panicf!(
+        panic,
+        normal_indices.len() >= mesh.num_indices(),
+        "Expected at least mesh.num_indices (%zu), got %zu",
+        mesh.num_indices(),
+        normal_indices.len(),
+    ) {
+        return;
+    }
+
+    // Face traversal consumes exactly the mesh-index input prefix. Every
+    // caller-provided output slot participates in zeroing and normalization.
+    let normal_indices = Run::<u32, Const>::from_slice(&normal_indices[..mesh.num_indices()]);
+    let normals = Run::<Vec3>::from_mut_slice(normals);
+    compute_normals_run(panic, mesh, positions, normal_indices, normals);
 }
 
 // ufbx.c:32585-32612 `ufbx_catch_compute_normals`
