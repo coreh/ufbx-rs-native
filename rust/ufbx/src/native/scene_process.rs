@@ -1854,22 +1854,20 @@ pub(crate) fn resolve_connections(uc: &Context) -> Result<(), Fail> {
         }
     }
 
-    uc.scene_view()
-        .connections_dst_view()
-        .set_count(uc.scene_view().connections_src_view().count());
     // SAFETY: copies the initialized `connections_src` run just materialized in
-    // uc's own result buffer into a second run in that same stable buffer.
-    uc.scene_view().connections_dst_view().set_data(unsafe {
-        uc.result_view().push_copy_raw::<Connection>(
-            uc.scene_view().connections_src_view().count(),
-            uc.scene_view().connections_src_view().data(),
-        )
-    });
-    ufbxi_check!(
-        uc,
-        !uc.scene_view().connections_dst_view().data().is_null(),
-        "uc->scene.connections_dst.data"
-    );
+    // uc's own result buffer into a second run in that same stable buffer. The
+    // non-null copy remains live and unmoved for every use of the scene list.
+    unsafe {
+        let src = uc.scene_view().connections_src_view();
+        let count = src.count();
+        let data = uc
+            .result_view()
+            .push_copy_raw::<Connection>(count, src.data());
+        ufbxi_check!(uc, !data.is_null(), "uc->scene.connections_dst.data");
+        uc.scene_view()
+            .connections_dst_view()
+            .set(List::from_raw_parts(data, count));
+    }
 
     sort_connections(
         uc,
@@ -5208,23 +5206,25 @@ pub(crate) fn finalize_nurbs_basis(uc: &Context, basis: &View<NurbsBasis>) -> Re
             let spans_data: *mut Real = uc.result_view().push(max_spans);
             ufbxi_check!(uc, !spans_data.is_null(), "spans");
             // SAFETY: `spans_data` is the fresh non-null `max_spans`-element
-            // result-buffer push above, with write-capable stable storage.
-            let spans = unsafe { Run::<Real>::from_raw_parts(spans_data, max_spans) };
-
-            let mut prev: Real = -math::INFINITY as Real;
-            let mut num_spans: usize = 0;
-            for i in 0..max_spans {
-                let t: Real = knots.copy_at(degree.wrapping_add(i));
-                if t != prev {
-                    spans.write_at(num_spans, t);
-                    num_spans += 1;
-                    prev = t;
+            // result-buffer push above, with write-capable stable storage. The
+            // loop initializes exactly the published prefix, which remains live
+            // and unmoved for every use of the basis.
+            let spans_list = unsafe {
+                let spans = Run::<Real>::from_raw_parts(spans_data, max_spans);
+                let mut prev: Real = -math::INFINITY as Real;
+                let mut num_spans: usize = 0;
+                for i in 0..max_spans {
+                    let t: Real = knots.copy_at(degree.wrapping_add(i));
+                    if t != prev {
+                        spans.write_at(num_spans, t);
+                        num_spans += 1;
+                        prev = t;
+                    }
                 }
-            }
+                List::from_raw_parts(spans.as_ptr(), num_spans)
+            };
 
-            // `spans` is the push above, holding `num_spans` initialized reals.
-            basis.spans_view().set_data(spans.as_ptr());
-            basis.spans_view().set_count(num_spans);
+            basis.spans_view().set(spans_list);
             basis.set_valid(true);
             for i in 1..knots.len() {
                 if knots.copy_at(i - 1) > knots.copy_at(i) {
@@ -5413,9 +5413,11 @@ pub(crate) unsafe fn generate_normals(uc: &Context, mesh: &View<Mesh>) -> Result
 
     // SAFETY: `mesh.as_ptr()` reads the viewed mesh and `vertex_position_ptr()`
     // addresses its own vertex-position attribute; `normal_indices` holds
-    // `num_indices` mapping entries and `normal_data` the `num_normals`
-    // accumulator slots the push reserved past the zero element.
-    unsafe {
+    // `num_indices` initialized mapping entries and `normal_data` the
+    // `num_normals` accumulator slots the push reserved past the zero element.
+    // `compute_normals` initializes all of the latter, and both result-arena
+    // runs remain live and unmoved with the scene.
+    let (normal_values, normal_mapping) = unsafe {
         compute_normals(
             mesh.as_ptr(),
             mesh.vertex_position_ptr(),
@@ -5423,21 +5425,17 @@ pub(crate) unsafe fn generate_normals(uc: &Context, mesh: &View<Mesh>) -> Result
             num_indices,
             normal_data,
             num_normals,
+        );
+        (
+            List::from_raw_parts(normal_data, num_normals),
+            List::from_raw_parts(normal_indices, num_indices),
         )
     };
 
-    // The two runs stored here are the result-arena pushes above, which outlive
-    // the scene.
     let vertex_normal = mesh.vertex_normal();
     vertex_normal.set_exists(true);
-    vertex_normal
-        .values_view()
-        .set_data(normal_data as *const Vec3);
-    vertex_normal.values_view().set_count(num_normals);
-    vertex_normal
-        .indices_view()
-        .set_data(normal_indices as *const u32);
-    vertex_normal.indices_view().set_count(num_indices);
+    vertex_normal.values_view().set(normal_values);
+    vertex_normal.indices_view().set(normal_mapping);
     vertex_normal.set_value_reals(3);
 
     // C: `mesh->skinned_normal = mesh->vertex_normal;` — struct assignment

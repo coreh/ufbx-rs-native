@@ -460,8 +460,10 @@ pub(crate) fn evaluate_skinning(
             // address the scene-owned mesh this view was minted over (read-only
             // use); `normal_indices` holds the `num_indices` indices
             // `generate_normal_mapping` wrote and `normal_data` addresses
-            // `num_normals` writable `ufbx_vec3` slots.
-            unsafe {
+            // `num_normals` writable `ufbx_vec3` slots. `compute_normals`
+            // initializes that whole values run before both stable result-buffer
+            // runs are captured in the returned descriptors.
+            let (normal_values, normal_indices_list) = unsafe {
                 compute_normals(
                     mesh.as_ptr(),
                     mesh.skinned_position().as_ptr(),
@@ -469,19 +471,19 @@ pub(crate) fn evaluate_skinning(
                     num_indices,
                     normal_data,
                     num_normals,
+                );
+                (
+                    List::from_raw_parts(normal_data, num_normals),
+                    List::from_raw_parts(normal_indices, num_indices),
                 )
             };
 
             mesh.set_generated_normals(true);
             mesh.skinned_normal().set_exists(true);
-            mesh.skinned_normal()
-                .values_view()
-                .set_data(normal_data as *const Vec3);
-            mesh.skinned_normal().values_view().set_count(num_normals);
+            mesh.skinned_normal().values_view().set(normal_values);
             mesh.skinned_normal()
                 .indices_view()
-                .set_data(normal_indices as *const u32);
-            mesh.skinned_normal().indices_view().set_count(num_indices);
+                .set(normal_indices_list);
             mesh.skinned_normal().set_value_reals(3);
         }
     }

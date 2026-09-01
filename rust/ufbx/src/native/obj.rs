@@ -240,8 +240,7 @@ pub(crate) fn obj_pop_props(uc: &Context, dst: &ListView<Prop>, count: usize) ->
     }
 
     // C: `*dst = props;`
-    dst.set_data(props_view.data());
-    dst.set_count(props_view.count());
+    dst.set(props);
     Ok(())
 }
 
@@ -355,9 +354,11 @@ pub(crate) fn obj_flush_mesh(uc: &Context) -> Result<(), Fail> {
         .push_pop::<FaceGroup>(uc.obj().tmp_face_group_infos_view(), num_groups);
     ufbxi_check!(uc, !groups.is_null(), "groups");
 
-    // `groups` is the fresh non-null `num_groups` run popped just above.
-    fbx_mesh.face_groups_view().set_data(groups);
-    fbx_mesh.face_groups_view().set_count(num_groups);
+    // SAFETY: `groups` is the fresh non-null `num_groups` run popped just
+    // above, fully initialized and stable in uc's result arena.
+    fbx_mesh
+        .face_groups_view()
+        .set(unsafe { List::from_raw_parts(groups, num_groups) });
 
     Ok(())
 }
