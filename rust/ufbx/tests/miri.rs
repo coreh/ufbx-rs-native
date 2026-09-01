@@ -119,6 +119,59 @@ fn load_cube_binary() {
     drop(retained);
 }
 
+/// Dynamic code-length repeats are rejected when their final run would exceed
+/// the combined literal/length and distance symbol count.
+#[test]
+fn inflate_dynamic_codelen_repeat_overflow() {
+    let cases: &[(u8, &[u8], isize)] = &[
+        (
+            16,
+            b"\x78\x9c\x05\x80\x85\x0c\x00\x00\x00\xc0\xfc\xa1\x9f\xc3\x06\x05\xf5\x02\xfb",
+            -18,
+        ),
+        (
+            17,
+            b"\x78\x9c\x05\xc0\xb1\x0c\x00\x00\x00\x00\x20\x7f\xe7\xbe\x26\x00\xfd\x00\xfd",
+            -19,
+        ),
+        (
+            18,
+            b"\x78\x9c\x05\xc0\x81\x08\x00\x00\x00\x00\x20\x7f\xdf\x0d\x4e\x00\xf5\x00\xf5",
+            -20,
+        ),
+    ];
+
+    for &(repeat, source, expected) in cases {
+        let input = ufbx::InflateInput {
+            total_size: source.len(),
+            data: source.as_ptr().cast(),
+            data_size: source.len(),
+            buffer: core::ptr::null_mut(),
+            buffer_size: 0,
+            read_fn: None,
+            read_user: core::ptr::null_mut(),
+            progress_cb: ufbx::RawProgressCb::default(),
+            progress_interval_hint: 0,
+            progress_size_before: 0,
+            progress_size_after: 0,
+            no_header: false,
+            no_checksum: false,
+            internal_fast_bits: 0,
+        };
+        let mut retain = ufbx::InflateRetain {
+            initialized: false,
+            data: [0; 1024],
+        };
+        let mut output = [0u8; 64];
+
+        assert_eq!(
+            ufbx::inflate(&mut output, &input, &mut retain),
+            expected,
+            "code-length repeat symbol {repeat}",
+        );
+    }
+}
+
 #[test]
 fn load_cube_with_axis_conversion() {
     let data = read_data("maya_cube_7500_binary.fbx");

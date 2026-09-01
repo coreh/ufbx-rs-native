@@ -855,24 +855,18 @@ pub(crate) unsafe fn bit_copy_bytes(dst: *mut c_void, s: &BitStreamView, len: us
 // -2: Underfull
 // ufbx.c:2253-2453 `ufbxi_huff_build_imp`
 #[inline(never)]
-pub(crate) unsafe fn huff_build_imp(
-    tree: *mut HuffTree,
-    sym_bits: *const u8,
-    sym_count: u32,
-    sym_extra: *const u32,
+pub(crate) fn huff_build_imp(
+    tree: &mut HuffTree,
+    sym_bits: &[u8],
+    sym_extra: &[u32],
     sym_extra_offset: u32,
     fast_bits: u32,
     bits_counts: &mut [u32; HUFF_MAX_BITS],
 ) -> isize {
-    // Sole raw pointer to `*tree` in this function (rule 4): local exclusive
-    // borrow for the whole body in place of repeated `(*tree).field` derefs.
-    // SAFETY: the caller's contract is that `tree` points at a valid, uniquely
-    // owned `HuffTree` for the duration of this call.
-    let tree = unsafe { &mut *tree };
-
     let fast_mask = (1u32 << fast_bits) - 1;
 
-    ufbx_assert!(sym_count as usize <= HUFF_MAX_VALUE);
+    ufbx_assert!(sym_bits.len() <= HUFF_MAX_VALUE);
+    let sym_count = sym_bits.len() as u32;
     tree.num_symbols = sym_count;
 
     let nonzero_sym_count = sym_count - bits_counts[0];
@@ -981,19 +975,14 @@ pub(crate) unsafe fn huff_build_imp(
     // Generate per-length sorted-to-symbol and fast lookup tables
     let mut bits_index = [0u32; HUFF_MAX_BITS];
     for i in 0..sym_count {
-        // SAFETY: the caller's contract is that `sym_bits` addresses at least
-        // `sym_count` bytes, and `i < sym_count`.
-        let bits = unsafe { *sym_bits.add(i as usize) } as u32;
+        let bits = sym_bits[i as usize] as u32;
         if bits == 0 {
             continue;
         }
 
         let mut sym = i << 8 | bits;
         if i >= sym_extra_offset {
-            // SAFETY: the caller's contract is that `sym_extra` addresses at
-            // least `sym_count - sym_extra_offset` entries; this arm holds `i >=
-            // sym_extra_offset` and `i < sym_count`, keeping the index in range.
-            let extra = unsafe { *sym_extra.add((i - sym_extra_offset) as usize) };
+            let extra = sym_extra[(i - sym_extra_offset) as usize];
             sym += extra;
 
             // Store length/distance codes with extra values in a table.
@@ -1100,11 +1089,10 @@ pub(crate) unsafe fn huff_build_imp(
 // -2: Underfull
 // ufbx.c:2458-2472 `ufbxi_huff_build`
 #[inline(never)]
-pub(crate) unsafe fn huff_build(
-    tree: *mut HuffTree,
-    sym_bits: *const u8,
-    sym_count: u32,
-    sym_extra: *const u32,
+pub(crate) fn huff_build(
+    tree: &mut HuffTree,
+    sym_bits: &[u8],
+    sym_extra: &[u32],
     sym_extra_offset: u32,
     fast_bits: u32,
 ) -> isize {
@@ -1112,28 +1100,20 @@ pub(crate) unsafe fn huff_build(
     // `bits_counts[0]` contains the number of non-used symbols
     // C: `uint32_t bits_counts[UFBXI_HUFF_MAX_BITS]; // ufbxi_uninit` + memset
     let mut bits_counts = [0u32; HUFF_MAX_BITS];
-    for i in 0..sym_count {
-        // SAFETY: the caller's contract is that `sym_bits` addresses at least
-        // `sym_count` bytes, and `i < sym_count`.
-        let bits = unsafe { *sym_bits.add(i as usize) } as u32;
+    for &sym_bits in sym_bits {
+        let bits = sym_bits as u32;
         ufbx_assert!((bits as usize) < HUFF_MAX_BITS);
         bits_counts[bits as usize] += 1;
     }
 
-    // SAFETY: `tree`/`sym_bits`/`sym_extra` and the counts carry this fn's own
-    // caller contract straight into `huff_build_imp`, which requires exactly the
-    // same validity of those pointers.
-    unsafe {
-        huff_build_imp(
-            tree,
-            sym_bits,
-            sym_count,
-            sym_extra,
-            sym_extra_offset,
-            fast_bits,
-            &mut bits_counts,
-        )
-    }
+    huff_build_imp(
+        tree,
+        sym_bits,
+        sym_extra,
+        sym_extra_offset,
+        fast_bits,
+        &mut bits_counts,
+    )
 }
 
 // ufbx.c:2474-2508 `ufbxi_huff_decode_bits`
@@ -1210,6 +1190,7 @@ pub(crate) unsafe fn init_static_huff(trees: *mut Trees, input: *const InflateIn
     } else {
         trees.fast_bits = HUFF_FAST_BITS;
     }
+    let fast_bits = trees.fast_bits;
 
     // 0-143: 8 bits, 144-255: 9 bits, 256-279: 7 bits, 280-287: 8 bits
     let mut lit_length_bits = [0u8; 288]; // ufbxi_uninit
@@ -1217,35 +1198,24 @@ pub(crate) unsafe fn init_static_huff(trees: *mut Trees, input: *const InflateIn
     lit_length_bits[144..256].fill(9);
     lit_length_bits[256..280].fill(7);
     lit_length_bits[280..288].fill(8);
-    // SAFETY: `lit_length_bits`/`DEFLATE_LENGTH_LUT` are local/static arrays
-    // whose `.as_ptr()` spans match the passed counts (288 / the LUT), the
-    // pointer/length pairing `huff_build` requires.
-    err |= unsafe {
-        huff_build(
-            trees.lit_length_mut(),
-            lit_length_bits.as_ptr(),
-            size_of::<[u8; 288]>() as u32,
-            DEFLATE_LENGTH_LUT.as_ptr(),
-            256,
-            trees.fast_bits,
-        )
-    };
+    err |= huff_build(
+        trees.lit_length_mut(),
+        &lit_length_bits,
+        &DEFLATE_LENGTH_LUT,
+        256,
+        fast_bits,
+    );
 
     // "Distance codes 0-31 are represented by (fixed-length) 5-bit codes"
     let mut dist_bits = [0u8; 32]; // ufbxi_uninit
     dist_bits[0..32].fill(5);
-    // SAFETY: `dist_bits`/`DEFLATE_DIST_LUT` are local/static arrays whose
-    // `.as_ptr()` spans match the passed counts (32 / the LUT).
-    err |= unsafe {
-        huff_build(
-            trees.dist_mut(),
-            dist_bits.as_ptr(),
-            size_of::<[u8; 32]>() as u32,
-            DEFLATE_DIST_LUT.as_ptr(),
-            0,
-            trees.fast_bits,
-        )
-    };
+    err |= huff_build(
+        trees.dist_mut(),
+        &dist_bits,
+        &DEFLATE_DIST_LUT,
+        0,
+        fast_bits,
+    );
 
     // Building the static trees cannot fail as we use pre-defined code lengths.
     ufbxi_ignore!(err);
@@ -1257,8 +1227,7 @@ pub(crate) unsafe fn init_static_huff(trees: *mut Trees, input: *const InflateIn
 pub(crate) unsafe fn decode_dynamic_huff_bits(
     dc: &DeflateContext,
     huff_code_length: *const HuffTree,
-    code_lengths: *mut u8,
-    num_symbols: u32,
+    code_lengths: &mut [u8],
 ) -> isize {
     // `(*dc.get()).stream` holds a self-referential `buffer`→`local_buffer` pointer (see
     // `bit_stream_init`), so `dc` stays raw and is derefed as `(*dc.get()).field` to
@@ -1268,6 +1237,7 @@ pub(crate) unsafe fn decode_dynamic_huff_bits(
     let mut left = dc.stream_view().left();
     let mut data = dc.stream_view().chunk_ptr();
 
+    let num_symbols = code_lengths.len() as u32;
     let mut symbol_index = 0u32;
     let mut prev = 0u8;
     while symbol_index < num_symbols {
@@ -1303,12 +1273,7 @@ pub(crate) unsafe fn decode_dynamic_huff_bits(
             // "0 - 15: Represent code lengths of 0 - 15"
             prev = inst as u8;
             // C: `code_lengths[symbol_index++] = (uint8_t)inst;`
-            // SAFETY: the caller's contract is that `code_lengths` addresses at
-            // least `num_symbols` bytes, and the loop holds `symbol_index <
-            // num_symbols`.
-            unsafe {
-                *code_lengths.add(symbol_index as usize) = inst as u8;
-            }
+            code_lengths[symbol_index as usize] = inst as u8;
             symbol_index += 1;
         } else if inst == 16 {
             // "16: Copy the previous code length 3 - 6 times. The next 2 bits indicate repeat length."
@@ -1319,12 +1284,7 @@ pub(crate) unsafe fn decode_dynamic_huff_bits(
                 return -18;
             }
             // C: memset(code_lengths + symbol_index, prev, num)
-            // SAFETY: `symbol_index + num <= num_symbols` (checked just above)
-            // and `code_lengths` addresses `num_symbols` bytes, so the `num`-byte
-            // fill at `symbol_index` stays in bounds.
-            unsafe {
-                core::ptr::write_bytes(code_lengths.add(symbol_index as usize), prev, num as usize);
-            }
+            code_lengths[symbol_index as usize..(symbol_index + num) as usize].fill(prev);
             symbol_index += num;
         } else if inst == 17 {
             // "17: Repeat a code length of 0 for 3 - 10 times. (3 bits of length)"
@@ -1334,11 +1294,7 @@ pub(crate) unsafe fn decode_dynamic_huff_bits(
             if symbol_index + num > num_symbols {
                 return -19;
             }
-            // SAFETY: `symbol_index + num <= num_symbols` (checked just above)
-            // and `code_lengths` addresses `num_symbols` bytes.
-            unsafe {
-                core::ptr::write_bytes(code_lengths.add(symbol_index as usize), 0, num as usize);
-            }
+            code_lengths[symbol_index as usize..(symbol_index + num) as usize].fill(0);
             symbol_index += num;
             prev = 0;
         } else if inst == 18 {
@@ -1349,11 +1305,7 @@ pub(crate) unsafe fn decode_dynamic_huff_bits(
             if symbol_index + num > num_symbols {
                 return -20;
             }
-            // SAFETY: `symbol_index + num <= num_symbols` (checked just above)
-            // and `code_lengths` addresses `num_symbols` bytes.
-            unsafe {
-                core::ptr::write_bytes(code_lengths.add(symbol_index as usize), 0, num as usize);
-            }
+            code_lengths[symbol_index as usize..(symbol_index + num) as usize].fill(0);
             symbol_index += num;
             prev = 0;
         } else {
@@ -1435,68 +1387,48 @@ pub(crate) unsafe fn init_dynamic_huff(dc: &DeflateContext, trees: *mut Trees) -
     // Build the temporary "code length" Huffman tree used to encode the actual
     // trees used to compress the data. Use that to build the literal/length and
     // distance trees.
-    // SAFETY: `&mut huff_code_length` is a live local tree; `code_lengths` is a
-    // local array read for `HUFF_CODELEN_SYMS` entries and `sym_extra` is null
-    // with `sym_extra_offset == i32::MAX`, so no extra entry is read.
-    err = unsafe {
-        huff_build(
-            &mut huff_code_length,
-            code_lengths.as_ptr(),
-            HUFF_CODELEN_SYMS as u32,
-            core::ptr::null(),
-            i32::MAX as u32,
-            HUFF_CODELEN_FAST_BITS,
-        )
-    };
+    err = huff_build(
+        &mut huff_code_length,
+        &code_lengths[..HUFF_CODELEN_SYMS],
+        &[],
+        i32::MAX as u32,
+        HUFF_CODELEN_FAST_BITS,
+    );
     if err != 0 {
         return -14 + 1 + err;
     }
 
-    // SAFETY: `&huff_code_length` is the tree just built; `code_lengths` is a
-    // local `HUFF_MAX_COMBINED_SYMS`-byte array and `num_lit_lengths + num_dists
-    // <= HUFF_MAX_COMBINED_SYMS` here.
+    // SAFETY: `&huff_code_length` is the tree just built; the bounded mutable
+    // prefix spans exactly the `num_lit_lengths + num_dists` symbols decoded.
     err = unsafe {
         decode_dynamic_huff_bits(
             dc,
             &huff_code_length,
-            code_lengths.as_mut_ptr(),
-            num_lit_lengths + num_dists,
+            &mut code_lengths[..(num_lit_lengths + num_dists) as usize],
         )
     };
     if err != 0 {
         return err;
     }
 
-    // SAFETY: `trees.lit_length_mut()` is a live tree field; `code_lengths` is a
-    // local array with `num_lit_lengths` decoded entries and `DEFLATE_LENGTH_LUT`
-    // is the matching static extra table.
-    err = unsafe {
-        huff_build(
-            trees.lit_length_mut(),
-            code_lengths.as_ptr(),
-            num_lit_lengths,
-            DEFLATE_LENGTH_LUT.as_ptr(),
-            256,
-            dc.fast_bits(),
-        )
-    };
+    err = huff_build(
+        trees.lit_length_mut(),
+        &code_lengths[..num_lit_lengths as usize],
+        &DEFLATE_LENGTH_LUT,
+        256,
+        dc.fast_bits(),
+    );
     if err != 0 {
         return if err == -7 { -28 } else { -16 + 1 + err };
     }
 
-    // SAFETY: `trees.dist_mut()` is a live tree field; the distance code lengths
-    // occupy `code_lengths[num_lit_lengths .. num_lit_lengths + num_dists]`,
-    // within the local array, and `DEFLATE_DIST_LUT` is the matching extra table.
-    err = unsafe {
-        huff_build(
-            trees.dist_mut(),
-            code_lengths.as_ptr().add(num_lit_lengths as usize),
-            num_dists,
-            DEFLATE_DIST_LUT.as_ptr(),
-            0,
-            dc.fast_bits(),
-        )
-    };
+    err = huff_build(
+        trees.dist_mut(),
+        &code_lengths[num_lit_lengths as usize..(num_lit_lengths + num_dists) as usize],
+        &DEFLATE_DIST_LUT,
+        0,
+        dc.fast_bits(),
+    );
     if err != 0 {
         return if err == -7 { -28 } else { -22 + 1 + err };
     }
