@@ -80,7 +80,7 @@ use crate::native::string_pool::{push_string_place_blob, push_string_place_str, 
 #[cfg(feature = "obj")]
 use crate::native::view::{view_read, view_write};
 #[cfg(feature = "obj")]
-use crate::native::view::{Mut, Run, View};
+use crate::native::view::{Const, Mut, Run, View};
 #[cfg(feature = "obj")]
 use crate::native::warnings::ufbxi_warnf;
 #[cfg(feature = "obj")]
@@ -1372,32 +1372,21 @@ pub(crate) fn obj_pop_vertices(
 }
 
 // ufbx.c:17434-17481 `ufbxi_obj_setup_attrib`
-//
-// # Safety
-// `tmp_indices` must address a writable `u64` run holding at least
-// `mesh->num_indices` elements (C's caller-sized scratch run) — a run length
-// the parameter types cannot carry.
 #[cfg(feature = "obj")]
 #[inline(never)]
-pub(crate) unsafe fn obj_setup_attrib(
+pub(crate) fn obj_setup_attrib(
     uc: &Context,
     mesh: &ObjMeshView,
-    tmp_indices: *mut u64,
+    tmp_indices: Run<'_, u64>,
     dst: &View<VertexAttrib>,
-    p_data: &List<Real>,
+    data: &View<List<Real>, Const>,
     attrib: u32,
     non_disjoint: bool,
     required: bool,
 ) -> Result<(), Fail> {
-    // C: `ufbx_real_list data = *p_data;`
-    // SAFETY: `p_data` is a live borrow of a `List<Real>`, and `List` is the
-    // plain `{ data, count }` descriptor with no `Drop`, so the bitwise copy
-    // out leaves the source valid (C struct assignment is memcpy).
-    let data: List<Real> = unsafe { core::ptr::read(p_data) };
-
     let num_indices: usize = mesh.num_indices();
     let stride: usize = OBJ_ATTRIB_STRIDE[attrib as usize] as usize;
-    let num_values: usize = data.count / stride;
+    let num_values: usize = data.count() / stride;
 
     let mesh_min_ix: u64 = mesh.vertex_range_min(attrib as usize);
     if num_indices == 0 || num_values == 0 || mesh_min_ix == u64::MAX {
@@ -1421,6 +1410,7 @@ pub(crate) unsafe fn obj_setup_attrib(
     }
 
     let min_index: u64 = if non_disjoint { 0 } else { mesh_min_ix };
+    let tmp_indices = tmp_indices.subrun(0, num_indices);
 
     // SAFETY: pops this mesh's `num_indices` entries off the attribute's own
     // `tmp_indices` arena into `tmp_indices`, the caller-supplied scratch run
@@ -1429,47 +1419,46 @@ pub(crate) unsafe fn obj_setup_attrib(
         pop::<u64>(
             uc.obj().tmp_indices_at(attrib as usize),
             num_indices,
-            tmp_indices,
+            tmp_indices.as_mut_ptr(),
         );
     }
 
+    // SAFETY: the pop above initialized the first `num_indices` slots of the
+    // caller's scratch run, which remains stable and unwritten while read here.
+    let tmp_indices_read =
+        unsafe { Run::<u64, Const>::from_const_raw_parts(tmp_indices.as_ptr(), num_indices) };
+
     let dst_indices: *mut u32 = uc.result_view().push::<u32>(num_indices);
     ufbxi_check!(uc, !dst_indices.is_null(), "dst_indices");
+    // SAFETY: `dst_indices` is the checked fresh `num_indices`-slot result run.
+    let dst_indices_write = unsafe { Run::<u32>::from_raw_parts(dst_indices, num_indices) };
 
     // `data` is the value run the caller popped for this attribute and
     // `dst_indices` the fresh non-null `num_indices` run pushed above.
     dst.set_exists(true);
 
     let mut values: VoidList = dst.values();
-    values.data = data.data as *mut c_void;
+    values.data = data.data() as *mut c_void;
     values.count = num_values;
     dst.set_values(values);
 
-    dst.indices_view().set_data(dst_indices);
-    dst.indices_view().set_count(num_indices);
-
     // C: `ufbxi_nounroll for (size_t i = 0; i < num_indices; i++)`
     for i in 0..num_indices {
-        // SAFETY: `i < num_indices`, the item count both the scratch run
-        // (filled by the pop above) and the fresh `dst_indices` run were sized
-        // for.
-        let mut ix: u64 = unsafe { *tmp_indices.add(i) };
+        let mut ix: u64 = tmp_indices_read.copy_at(i);
         if ix != u64::MAX {
             ix = ix.wrapping_sub(min_index);
             ufbxi_check!(uc, ix < u32::MAX as u64, "ix < UINT32_MAX");
         }
         if ix < num_values as u64 {
-            // SAFETY: `i < num_indices` bounds the fresh run, as above.
-            unsafe { *dst_indices.add(i) = ix as u32 };
+            dst_indices_write.write_at(i, ix as u32);
         } else {
-            // SAFETY: as above — the slot handed to the fixer is `dst_indices`
-            // element `i`: live and write-capable, an adequate mint for the
-            // `Mut` index-slot view (the slot is still uninitialized, which
-            // `Mut` storage tolerates).
-            let p_dst: &View<u32> = unsafe { View::<u32, Mut>::from_ptr(dst_indices.add(i)) };
-            fix_index(uc, p_dst, ix as u32, num_values)?;
+            fix_index(uc, dst_indices_write.at(i), ix as u32, num_values)?;
         }
     }
+
+    // SAFETY: every slot was initialized by the completed loop, and the result
+    // buffer keeps the run live and unmoved for the mesh lifetime.
+    dst.set_indices(unsafe { List::from_raw_parts(dst_indices, num_indices) });
 
     Ok(())
 }
@@ -1710,50 +1699,55 @@ pub(crate) fn obj_pop_meshes(uc: &Context) -> Result<(), Fail> {
                 }
             }
 
-            // SAFETY: `obj_setup_attrib` is an `unsafe fn` taking the raw
-            // `tmp_indices` scratch run, sized for the widest mesh (its
-            // contract). Each attribute view is minted over a distinct
+            // SAFETY: `tmp_indices` is the checked scratch allocation sized for
+            // the widest mesh. Each attribute view is minted over a distinct
             // vertex-attribute field of `fbx_mesh`, live and write-capable
             // through this mesh element, reinterpreted onto the shared
             // `ufbx_vertex_attrib` layout prefix (C's cast).
-            unsafe {
-                obj_setup_attrib(
-                    uc,
-                    mesh,
-                    tmp_indices,
+            let (tmp_indices_run, position, uv, normal) = unsafe {
+                (
+                    Run::<u64>::from_raw_parts(tmp_indices, max_indices),
                     View::<VertexAttrib>::from_ptr(
                         fbx_mesh.vertex_position_raw() as *mut VertexAttrib
                     ),
-                    &vertices[ObjAttrib::Position as usize],
-                    ObjAttrib::Position as u32,
-                    non_disjoint[ObjAttrib::Position as usize],
-                    true,
-                )?;
-
-                obj_setup_attrib(
-                    uc,
-                    mesh,
-                    tmp_indices,
                     View::<VertexAttrib>::from_ptr(fbx_mesh.vertex_uv_raw() as *mut VertexAttrib),
-                    &vertices[ObjAttrib::Uv as usize],
-                    ObjAttrib::Uv as u32,
-                    non_disjoint[ObjAttrib::Uv as usize],
-                    false,
-                )?;
-
-                obj_setup_attrib(
-                    uc,
-                    mesh,
-                    tmp_indices,
                     View::<VertexAttrib>::from_ptr(
                         fbx_mesh.vertex_normal_raw() as *mut VertexAttrib
                     ),
-                    &vertices[ObjAttrib::Normal as usize],
-                    ObjAttrib::Normal as u32,
-                    non_disjoint[ObjAttrib::Normal as usize],
-                    false,
-                )?;
-            }
+                )
+            };
+            obj_setup_attrib(
+                uc,
+                mesh,
+                tmp_indices_run,
+                position,
+                View::<List<Real>, Const>::from_ref(&vertices[ObjAttrib::Position as usize]),
+                ObjAttrib::Position as u32,
+                non_disjoint[ObjAttrib::Position as usize],
+                true,
+            )?;
+
+            obj_setup_attrib(
+                uc,
+                mesh,
+                tmp_indices_run,
+                uv,
+                View::<List<Real>, Const>::from_ref(&vertices[ObjAttrib::Uv as usize]),
+                ObjAttrib::Uv as u32,
+                non_disjoint[ObjAttrib::Uv as usize],
+                false,
+            )?;
+
+            obj_setup_attrib(
+                uc,
+                mesh,
+                tmp_indices_run,
+                normal,
+                View::<List<Real>, Const>::from_ref(&vertices[ObjAttrib::Normal as usize]),
+                ObjAttrib::Normal as u32,
+                non_disjoint[ObjAttrib::Normal as usize],
+                false,
+            )?;
 
             if uc.obj().has_vertex_color() {
                 ufbx_assert!(!color_valid.is_null());

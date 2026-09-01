@@ -315,17 +315,18 @@ pub(crate) fn evaluate_skinning(
                 {
                     // TODO: Is this right at all?
                     let num_normals: usize = mesh.skinned_normal().values().count;
-                    let mut normal_data: *mut Vec3 =
+                    let normal_data: *mut Vec3 =
                         buf_result.push::<Vec3>(num_normals.wrapping_add(1));
                     ufbxi_check_err!(error, !normal_data.is_null(), "normal_data");
                     // C: `normal_data[0] = ufbx_zero_vec3; normal_data++;`
                     // SAFETY: valid attribute counts satisfy the C allocation
                     // invariant `num_normals < SIZE_MAX`; the checked non-null
-                    // result therefore has a writable sentinel slot.
-                    unsafe { *normal_data = ZERO_VEC3 };
-                    // SAFETY: under that same invariant this advance remains in
-                    // the allocation or reaches its one-past pointer.
-                    normal_data = unsafe { normal_data.add(1) };
+                    // result therefore has `num_normals + 1` writable slots.
+                    let normal_storage = unsafe {
+                        Run::<Vec3>::from_raw_parts(normal_data, num_normals.wrapping_add(1))
+                    };
+                    normal_storage.write_at(0, ZERO_VEC3);
+                    let normal_data = normal_storage.subrun(1, num_normals).as_mut_ptr();
 
                     // SAFETY: `channel` is a live scene-owned cache channel,
                     // `normal_data` addresses `num_normals` writable `ufbx_vec3`
@@ -397,14 +398,11 @@ pub(crate) fn evaluate_skinning(
                     // matrix once before the loop; its bytes are read only if
                     // the skin vertex has no effective weight.
                     let mat: Matrix = catch_get_skin_vertex_matrix(None, skin, i, fallback);
-                    // SAFETY: `i < num_vertices`, so `result_pos + i` is inside
-                    // the pushed result allocation, readable and writable.
-                    unsafe {
-                        *result_pos.add(i) = transform_position(
-                            View::<Matrix, Const>::from_ref(&mat),
-                            *result_pos.add(i),
-                        )
-                    };
+                    let vertex = result_vertices.at(i);
+                    vertex.set_vec3(transform_position(
+                        View::<Matrix, Const>::from_ref(&mat),
+                        vertex.vec3(),
+                    ));
                 }
 
                 mesh.set_skinned_is_local(false);
@@ -444,17 +442,17 @@ pub(crate) fn evaluate_skinning(
                 mesh.skinned_normal().set_unique_per_vertex(true);
             }
 
-            let mut normal_data: *mut Vec3 = buf_result.push::<Vec3>(num_normals.wrapping_add(1));
+            let normal_data: *mut Vec3 = buf_result.push::<Vec3>(num_normals.wrapping_add(1));
             ufbxi_check_err!(error, !normal_data.is_null(), "normal_data");
 
             // C: `normal_data[0] = ufbx_zero_vec3; normal_data++;`
             // SAFETY: valid attribute counts satisfy the C allocation invariant
             // `num_normals < SIZE_MAX`; the checked non-null result therefore
-            // has a writable sentinel slot.
-            unsafe { *normal_data = ZERO_VEC3 };
-            // SAFETY: under that same invariant this advance remains in the
-            // allocation or reaches its one-past pointer.
-            normal_data = unsafe { normal_data.add(1) };
+            // has `num_normals + 1` writable slots.
+            let normal_storage =
+                unsafe { Run::<Vec3>::from_raw_parts(normal_data, num_normals.wrapping_add(1)) };
+            normal_storage.write_at(0, ZERO_VEC3);
+            let normal_data = normal_storage.subrun(1, num_normals).as_mut_ptr();
 
             // SAFETY: `mesh.as_ptr()` and the `skinned_position` projection both
             // address the scene-owned mesh this view was minted over (read-only
