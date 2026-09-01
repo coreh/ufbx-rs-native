@@ -33,14 +33,15 @@ use crate::native::allocator::LINE_CURVE_IMP_MAGIC;
 use crate::native::allocator::{does_overflow, init_ator, Allocator};
 #[cfg(feature = "tessellation")]
 use crate::native::api::{
-    compute_normals, evaluate_nurbs_curve_view, evaluate_nurbs_surface_view, ZERO_VEC2, ZERO_VEC3,
+    compute_normals, evaluate_nurbs_curve_view, evaluate_nurbs_surface_view, EMPTY_STRING,
+    ZERO_VEC2, ZERO_VEC3,
 };
 #[cfg(feature = "tessellation")]
 use crate::native::buf::Buf;
 #[cfg(feature = "tessellation")]
 use crate::native::error::Fail;
 #[cfg(feature = "tessellation")]
-use crate::native::error::{ufbxi_check_err, ufbxi_check_err_msg, EMPTY_CHAR};
+use crate::native::error::{ufbxi_check_err, ufbxi_check_err_msg};
 #[cfg(feature = "tessellation")]
 use crate::native::hash::Map;
 #[cfg(feature = "tessellation")]
@@ -674,10 +675,7 @@ pub(crate) fn tessellate_nurbs_curve_imp(
         let line_view = View::<LineCurve>::from_ptr(line);
         (line_view, View::<Vec3>::from_ptr(line_view.color_raw()))
     };
-    line_view
-        .element()
-        .name_view()
-        .set_data(EMPTY_CHAR.as_ptr());
+    line_view.element().name_view().set(EMPTY_STRING.0);
     line_view.element().set_type(ElementType::LineCurve);
     line_view.element().set_typed_id(u32::MAX);
     line_view.element().set_element_id(u32::MAX);
@@ -1089,10 +1087,7 @@ pub(crate) fn tessellate_nurbs_surface_imp(
     // tc's zeroed construction (`tessellate_nurbs_surface` creates the whole
     // context zeroed).
     let mesh_view = unsafe { View::<Mesh>::from_ptr(mesh) };
-    mesh_view
-        .element()
-        .name_view()
-        .set_data(EMPTY_CHAR.as_ptr());
+    mesh_view.element().name_view().set(EMPTY_STRING.0);
     mesh_view.element().set_type(ElementType::Mesh);
     mesh_view.element().set_typed_id(u32::MAX);
     mesh_view.element().set_element_id(u32::MAX);

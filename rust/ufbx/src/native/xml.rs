@@ -15,9 +15,10 @@ use core::ffi::{c_void, CStr};
 
 use crate::generated::Error;
 use crate::native::allocator::{free, grow_array, Allocator, AllocatorView};
+use crate::native::api::EMPTY_STRING;
 use crate::native::buf::{buf_free, Buf, BufView};
 use crate::native::error::{
-    c_strcmp, strcmp, ufbxi_check_err, ufbxi_check_err_msg, ufbxi_fail_err, Fail, EMPTY_CHAR,
+    c_strcmp, strcmp, ufbxi_check_err, ufbxi_check_err_msg, ufbxi_fail_err, Fail,
 };
 use crate::native::platform::{ufbx_assert, IS_REGRESSION};
 use crate::native::view::{view_raw_mut, view_read, view_write};
@@ -65,13 +66,6 @@ impl View<XmlTag> {
         unsafe { (*self.get()).name.data }
     }
     #[inline(always)]
-    pub(crate) fn set_name_data(&self, data: *const u8) {
-        // SAFETY: storing the `name.data` pointer field of a valid arena `XmlTag`.
-        unsafe {
-            (*self.get()).name.data = data;
-        }
-    }
-    #[inline(always)]
     pub(crate) fn name_view(&self) -> &View<String> {
         // SAFETY: in-place projection of the `name` field; liveness and
         // provenance carry over from this view's own mint.
@@ -80,13 +74,6 @@ impl View<XmlTag> {
     #[inline(always)]
     pub(crate) fn text(&self) -> String {
         view_read!(self, text)
-    }
-    #[inline(always)]
-    pub(crate) fn set_text_data(&self, data: *const u8) {
-        // SAFETY: storing the `text.data` pointer field of a valid arena `XmlTag`.
-        unsafe {
-            (*self.get()).text.data = data;
-        }
     }
     #[inline(always)]
     pub(crate) fn text_view(&self) -> &View<String> {
@@ -834,8 +821,7 @@ unsafe fn xml_parse_tag_rec(
                 // push above, so it addresses xc's own tmp-stack allocation
                 // (write-capable provenance).
                 let tag: &XmlTagView = unsafe { XmlTagView::from_ptr(tag) };
-                // `EMPTY_CHAR` is a NUL-terminated `'static` run.
-                tag.set_name_data(EMPTY_CHAR.as_ptr());
+                tag.name_view().set(EMPTY_STRING.0);
 
                 xml_publish_token_string(xc, tag.text_view(), XmlTokenStringSlot::TagText)?;
             }
@@ -883,8 +869,7 @@ unsafe fn xml_parse_tag_rec(
             // provenance).
             let tag: &XmlTagView = unsafe { XmlTagView::from_ptr(tag) };
             xml_skip_until_string(xc, Some(tag.text_view()), b"]]>\0")?;
-            // `EMPTY_CHAR` is a NUL-terminated `'static` run.
-            tag.set_name_data(EMPTY_CHAR.as_ptr());
+            tag.name_view().set(EMPTY_STRING.0);
         } else if xml_accept(xc, b'-') {
             if !xml_accept(xc, b'-') {
                 return Err(Fail::unrecorded());
@@ -909,8 +894,7 @@ unsafe fn xml_parse_tag_rec(
     // xc's own tmp-stack allocation (write-capable provenance).
     let tag: &XmlTagView = unsafe { XmlTagView::from_ptr(tag) };
     xml_read_until(xc, Some(tag.name_view()), XML_CTYPE_NAME_END)?;
-    // `EMPTY_CHAR` is a NUL-terminated `'static` run.
-    tag.set_text_data(EMPTY_CHAR.as_ptr());
+    tag.text_view().set(EMPTY_STRING.0);
 
     let mut has_children: bool = false;
 
@@ -1003,9 +987,8 @@ pub(crate) fn xml_parse_root(xc: &XmlContext) -> Result<(), Fail> {
     // SAFETY: `tag` is a fresh non-null single-element push, so it addresses
     // xc's own result allocation (write-capable provenance).
     let tag: &XmlTagView = unsafe { XmlTagView::from_ptr(tag) };
-    // `EMPTY_CHAR` is a `'static` run.
-    tag.set_name_data(EMPTY_CHAR.as_ptr());
-    tag.set_text_data(EMPTY_CHAR.as_ptr());
+    tag.name_view().set(EMPTY_STRING.0);
+    tag.text_view().set(EMPTY_STRING.0);
 
     loop {
         let mut closing: bool = false;

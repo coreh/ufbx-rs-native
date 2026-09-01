@@ -243,11 +243,11 @@ use crate::native::platform::{
     ufbxi_string_literal, ufbxi_unreachable, unstable_sort, NO_INDEX,
 };
 use crate::native::read::{
-    deduplicate_properties, find_fbx_id, fix_index, init_synthetic_vec3_prop, mesh_part_add_face,
-    opt_ref, resolve_relative_filename, set_own_prop_vec3_uniform, setup_geometry_transform_helper,
-    setup_scale_helper, sort_properties, strblob_data, strblob_length, strblob_set,
-    unscaled_transform_to_matrix, update_vertex_first_index, NodeExtra, Strblob,
-    SENTINEL_INDEX_CONSECUTIVE, SENTINEL_INDEX_ZERO,
+    blob_from_string, deduplicate_properties, find_fbx_id, fix_index, init_synthetic_vec3_prop,
+    mesh_part_add_face, opt_ref, resolve_relative_filename, set_own_prop_vec3_uniform,
+    setup_geometry_transform_helper, setup_scale_helper, sort_properties, strblob_data,
+    strblob_length, strblob_set_blob, strblob_set_string, unscaled_transform_to_matrix,
+    update_vertex_first_index, NodeExtra, Strblob, SENTINEL_INDEX_CONSECUTIVE, SENTINEL_INDEX_ZERO,
 };
 use crate::native::string_pool::{
     self as sp, add3, concat_str_cmp, min3, neg3, normalize3, str_cmp, str_less, sub3, ConcatParts,
@@ -7553,8 +7553,14 @@ pub(crate) unsafe fn absolute_to_relative_path(
     // SAFETY: `p_dst` points to a live, write-capable `ufbx_strblob` to write
     // (fn contract).
     let p_dst: &View<Strblob> = unsafe { View::<_, Mut>::from_ptr(p_dst) };
-    // `dst`/`tmp_length` describe the string just interned in `uc`'s pool.
-    strblob_set(p_dst, dst, tmp_length, raw);
+    // `dst`/`tmp_length` describe the string just interned in `uc`'s pool. The
+    // discriminator visibly selects the matching union member for publication.
+    let dst = String::new_c(dst, tmp_length);
+    if raw {
+        strblob_set_blob(p_dst, blob_from_string(dst));
+    } else {
+        strblob_set_string(p_dst, dst);
+    }
 
     Ok(())
 }

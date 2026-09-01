@@ -60,7 +60,7 @@ use crate::native::api::{
     add_blend_vertex_offsets_run, catch_get_skin_vertex_matrix, compute_normals, compute_topology,
     generate_normal_mapping, sample_geometry_cache_vec3, transform_position, ZERO_VEC3,
 };
-use crate::native::api::{coordinate_axes_valid, default_open_file, open_file_ctx};
+use crate::native::api::{coordinate_axes_valid, default_open_file, open_file_ctx, EMPTY_STRING};
 use crate::native::api::{
     euler_to_quat, evaluate_anim_value_real_flags, evaluate_anim_value_vec3_flags,
     evaluate_curve_flags, evaluate_prop_flags_len_view, evaluate_prop_len_view, init_ref,
@@ -884,7 +884,7 @@ pub(crate) unsafe fn load_imp(uc: &Context) -> Result<(), Fail> {
     uc.scene_view()
         .metadata_view()
         .creator_view()
-        .set_data(EMPTY_CHAR.as_ptr());
+        .set(EMPTY_STRING.0);
 
     uc.set_unit_scale(1.0);
     if uc.data().is_null() {
@@ -952,7 +952,7 @@ pub(crate) unsafe fn load_imp(uc: &Context) -> Result<(), Fail> {
         // write-capable arena allocation that outlives this frame.
         let dom_root_view: &View<DomNode, Mut> =
             unsafe { View::<DomNode, Mut>::from_ptr(dom_root) };
-        dom_root_view.name_view().set_data(EMPTY_CHAR.as_ptr());
+        dom_root_view.name_view().set(EMPTY_STRING.0);
         // SAFETY: `dom_root` is that same non-null result-buffer node, which
         // lives as long as the scene the `Ref` is stored into.
         uc.scene_view()

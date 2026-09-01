@@ -10503,44 +10503,30 @@ pub(crate) fn trim_delimiters(uc: &Context, data: &[u8]) -> usize {
 // ufbx.c:16500-16529 `ufbxi_init_file_paths`
 #[inline(never)]
 pub(crate) fn init_file_paths(uc: &Context) -> Result<(), Fail> {
-    if uc.opts_view().filename_view().length() > 0 {
-        uc.scene_view().metadata_view().set_filename(String::new_c(
-            uc.opts_view().filename_view().data(),
-            uc.opts_view().filename_view().length(),
-        ));
-    } else if uc.opts_view().raw_filename_view().size() > 0 {
-        uc.scene_view()
-            .metadata_view()
-            .filename_view()
-            .set_data(uc.opts_view().raw_filename_view().data());
-        uc.scene_view()
-            .metadata_view()
-            .filename_view()
-            .set_length(uc.opts_view().raw_filename_view().size());
+    let filename = uc.opts_view().filename_view();
+    let raw_filename = uc.opts_view().raw_filename_view();
+
+    if filename.length() > 0 {
+        let value = String::new_c(filename.data(), filename.length());
+        uc.scene_view().metadata_view().set_filename(value);
+    } else if raw_filename.size() > 0 {
+        let value = String::new_c(raw_filename.data(), raw_filename.size());
+        uc.scene_view().metadata_view().set_filename(value);
     }
 
-    if uc.opts_view().raw_filename_view().size() > 0 {
+    if raw_filename.size() > 0 {
         // SAFETY: the raw load-option filename is a caller-owned byte run that
         // stays live for the load; this metadata copy is interned below before
         // the load can return.
-        let raw_filename = unsafe {
-            Blob::new_c(
-                uc.opts_view().raw_filename_view().data(),
-                uc.opts_view().raw_filename_view().size(),
-            )
-        };
+        let raw_filename = unsafe { Blob::new_c(raw_filename.data(), raw_filename.size()) };
         uc.scene_view()
             .metadata_view()
             .set_raw_filename(raw_filename);
-    } else if uc.opts_view().filename_view().length() > 0 {
+    } else if filename.length() > 0 {
+        let filename = String::new_c(filename.data(), filename.length());
         uc.scene_view()
             .metadata_view()
-            .raw_filename_view()
-            .set_data(uc.opts_view().filename_view().data());
-        uc.scene_view()
-            .metadata_view()
-            .raw_filename_view()
-            .set_size(uc.opts_view().filename_view().length());
+            .set_raw_filename(blob_from_string(filename));
     }
 
     push_string_place_str(
@@ -10554,34 +10540,25 @@ pub(crate) fn init_file_paths(uc: &Context) -> Result<(), Fail> {
         true,
     )?;
 
+    let filename = uc.scene_view().metadata_view().filename_view();
+    let relative_root = String::new_c(filename.data(), trim_delimiters(uc, filename.bytes()));
     uc.scene_view()
         .metadata_view()
         .relative_root_view()
-        .set_data(uc.scene_view().metadata_view().filename_view().data());
-    uc.scene_view()
-        .metadata_view()
-        .relative_root_view()
-        .set_length(trim_delimiters(
-            uc,
-            uc.scene_view().metadata_view().filename_view().bytes(),
-        ));
+        .set(relative_root);
 
-    uc.scene_view()
-        .metadata_view()
-        .raw_relative_root_view()
-        .set_data(uc.scene_view().metadata_view().raw_filename_view().data());
+    let raw_filename = uc.scene_view().metadata_view().raw_filename_view();
     // SAFETY: the metadata raw filename's blob pointer is readable for its
-    // stored size and the scan's shared borrow ends before any blob mutation.
-    let raw_filename = unsafe {
-        slice_from_ptr(
-            uc.scene_view().metadata_view().raw_filename_view().data(),
-            uc.scene_view().metadata_view().raw_filename_view().size(),
-        )
+    // stored size. `trim_delimiters` returns a prefix length within that run,
+    // which therefore forms a valid blob descriptor over the same storage.
+    let raw_relative_root = unsafe {
+        let bytes = slice_from_ptr(raw_filename.data(), raw_filename.size());
+        Blob::new_c(raw_filename.data(), trim_delimiters(uc, bytes))
     };
     uc.scene_view()
         .metadata_view()
         .raw_relative_root_view()
-        .set_size(trim_delimiters(uc, raw_filename));
+        .set(raw_relative_root);
 
     push_string_place_str(
         uc.string_pool_view(),
@@ -10611,32 +10588,44 @@ pub(crate) union Strblob {
 const _: () = assert!(size_of::<Strblob>() == size_of::<String>());
 const _: () = assert!(size_of::<Strblob>() == size_of::<Blob>());
 
-// ufbx.c:16536-16545 `ufbxi_strblob_set`
+/// Reinterpret an already valid String byte-run descriptor as a Blob. This
+/// weakens the interpretation from UTF-8 string bytes to arbitrary bytes while
+/// preserving the same storage and lifetime.
+#[inline(always)]
+pub(crate) fn blob_from_string(value: String) -> Blob {
+    // SAFETY: a valid `String` already promises that `data` addresses
+    // `length` readable bytes for every use of the descriptor and its copies;
+    // `Blob` requires exactly that same run invariant without UTF-8 semantics.
+    unsafe { Blob::new_c(value.data, value.length) }
+}
+
+// ufbx.c:16536-16545 `ufbxi_strblob_set` string member
 #[inline(never)]
-pub(crate) fn strblob_set(dst: &View<Strblob>, data: *const u8, length: usize, raw: bool) {
-    // The two members are layout-identical pointer/length pairs (asserted
-    // above) overlaid at offset zero, so either projection covers the whole
-    // union; callers thread the same `raw` discriminator through the matching
-    // reads.
-    if raw {
-        let blob: &BlobView = view_project!(dst, blob);
-        blob.set_data(data);
-        blob.set_size(length);
+pub(crate) fn strblob_set_string(dst: &View<Strblob>, value: String) {
+    // C canonicalizes an empty string to `ufbxi_empty_char`, regardless of the
+    // input pointer. The projected member covers the whole layout-identical
+    // union descriptor.
+    let value = if value.length == 0 {
+        EMPTY_STRING.0
     } else {
-        let str_: &StringView = view_project!(dst, str_);
-        str_.set_data(if length == 0 {
-            EMPTY_CHAR.as_ptr()
-        } else {
-            data
-        });
-        str_.set_length(length);
-    }
+        value
+    };
+    let str_: &StringView = view_project!(dst, str_);
+    str_.set(value);
+}
+
+// ufbx.c:16536-16545 `ufbxi_strblob_set` blob member
+#[inline(never)]
+pub(crate) fn strblob_set_blob(dst: &View<Strblob>, value: Blob) {
+    // The projected member covers the whole layout-identical union descriptor.
+    let blob: &BlobView = view_project!(dst, blob);
+    blob.set(value);
 }
 
 // ufbx.c:16547-16550 `ufbxi_strblob_data`
 #[inline(always)]
 pub(crate) fn strblob_data<M: Mode>(strblob: &View<Strblob, M>, raw: bool) -> *const u8 {
-    // `raw` selects the same member used by `strblob_set`.
+    // `raw` selects the same member used by the typed `strblob_set_*` calls.
     if raw {
         view_read_shared!(strblob, blob).data
     } else {
@@ -10647,7 +10636,7 @@ pub(crate) fn strblob_data<M: Mode>(strblob: &View<Strblob, M>, raw: bool) -> *c
 // ufbx.c:16552-16555 `ufbxi_strblob_length`
 #[inline(always)]
 pub(crate) fn strblob_length<M: Mode>(strblob: &View<Strblob, M>, raw: bool) -> usize {
-    // `raw` selects the same member used by `strblob_set`.
+    // `raw` selects the same member used by the typed `strblob_set_*` calls.
     if raw {
         view_read_shared!(strblob, blob).size
     } else {
@@ -10688,7 +10677,11 @@ pub(crate) fn resolve_relative_filename<M: Mode>(
         src_length -= 1;
     }
     if src_length == 0 {
-        strblob_set(p_dst, core::ptr::null(), 0, raw);
+        if raw {
+            strblob_set_blob(p_dst, Blob::empty());
+        } else {
+            strblob_set_string(p_dst, EMPTY_STRING.0);
+        }
         return Ok(());
     }
 
@@ -10827,8 +10820,13 @@ pub(crate) fn resolve_relative_filename<M: Mode>(
         pop::<u8>(uc.tmp_stack_view(), result_cap, core::ptr::null_mut());
     }
 
-    // `dst` is the interned string, which outlives the popped scratch run.
-    strblob_set(p_dst, dst.data, dst.length, raw);
+    // `dst` is the interned string, which outlives the popped scratch run. The
+    // discriminator visibly selects the matching union member for publication.
+    if raw {
+        strblob_set_blob(p_dst, blob_from_string(dst));
+    } else {
+        strblob_set_string(p_dst, dst);
+    }
 
     Ok(())
 }
@@ -11159,5 +11157,73 @@ mod tests {
         assert_eq!(short_prop.value_vec4.x, 6.5);
         assert_eq!(short_prop.value_int, 6);
         assert_eq!(short_prop._internal_key, 0);
+    }
+
+    #[test]
+    fn typed_strblob_publication_preserves_member_and_empty_policy() {
+        static STRING_BYTES: &[u8] = b"string";
+        static BLOB_BYTES: &[u8] = b"blob\0bytes";
+
+        let mut storage = Strblob {
+            str_: EMPTY_STRING.0,
+        };
+        let storage = View::<Strblob, Mut>::from_mut(&mut storage);
+
+        let string = String::new_c(STRING_BYTES.as_ptr(), STRING_BYTES.len());
+        strblob_set_string(storage, string);
+        assert_eq!(strblob_data(storage, false), STRING_BYTES.as_ptr());
+        assert_eq!(strblob_length(storage, false), STRING_BYTES.len());
+
+        strblob_set_string(storage, String::new_c(core::ptr::null(), 0));
+        assert_eq!(strblob_data(storage, false), EMPTY_CHAR.as_ptr());
+        assert_eq!(strblob_length(storage, false), 0);
+
+        let blob_string = String::new_c(BLOB_BYTES.as_ptr(), BLOB_BYTES.len());
+        strblob_set_blob(storage, blob_from_string(blob_string));
+        assert_eq!(strblob_data(storage, true), BLOB_BYTES.as_ptr());
+        assert_eq!(strblob_length(storage, true), BLOB_BYTES.len());
+
+        strblob_set_blob(storage, Blob::empty());
+        assert!(strblob_data(storage, true).is_null());
+        assert_eq!(strblob_length(storage, true), 0);
+    }
+
+    #[test]
+    fn filename_options_publish_sanitized_and_raw_metadata() {
+        let path = format!(
+            "{}/../../data/maya_cube_7500_binary.fbx",
+            env!("CARGO_MANIFEST_DIR")
+        );
+        let data = std::fs::read(path).expect("read filename metadata fixture");
+
+        let scene = crate::load_memory(
+            &data,
+            crate::LoadOpts {
+                filename: crate::StringOpt::Ref("path\0/file.fbx"),
+                ..Default::default()
+            },
+        )
+        .expect("load with string filename option");
+        assert_eq!(scene.metadata.filename.as_ref(), "path\u{fffd}/file.fbx");
+        assert_eq!(scene.metadata.filename.length, 16);
+        assert_eq!(&*scene.metadata.raw_filename, b"path\0/file.fbx");
+        assert_eq!(scene.metadata.relative_root.as_ref(), "path\u{fffd}");
+        assert_eq!(&*scene.metadata.raw_relative_root, b"path\0");
+        assert!(!scene.nodes.is_empty());
+
+        let scene = crate::load_memory(
+            &data,
+            crate::LoadOpts {
+                raw_filename: crate::BlobOpt::Ref(b"path\0/file.fbx"),
+                ..Default::default()
+            },
+        )
+        .expect("load with raw filename option");
+        assert_eq!(scene.metadata.filename.as_ref(), "path\u{fffd}/file.fbx");
+        assert_eq!(scene.metadata.filename.length, 16);
+        assert_eq!(&*scene.metadata.raw_filename, b"path\0/file.fbx");
+        assert_eq!(scene.metadata.relative_root.as_ref(), "path\u{fffd}");
+        assert_eq!(&*scene.metadata.raw_relative_root, b"path\0");
+        assert!(!scene.nodes.is_empty());
     }
 }

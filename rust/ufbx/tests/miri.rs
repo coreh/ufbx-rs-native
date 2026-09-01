@@ -181,7 +181,24 @@ fn load_with_boxed_allocator() {
 
 #[test]
 fn load_obj() {
-    assert!(load_and_walk("blender_279_default.obj").is_finite());
+    let data = read_data("blender_279_default.obj");
+    let scene = ufbx::load_memory(
+        &data,
+        LoadOpts {
+            retain_dom: true,
+            ..Default::default()
+        },
+    )
+    .expect("OBJ load with retained DOM");
+    assert!(walk(&scene).is_finite());
+    assert!(scene.metadata.creator.as_ref().is_empty());
+    assert!(scene
+        .dom_root
+        .as_ref()
+        .expect("fake OBJ DOM root")
+        .name
+        .as_ref()
+        .is_empty());
 }
 
 /// Pre-7000 binary: legacy `Takes` animation and the 6100-era element layout.
@@ -1181,6 +1198,7 @@ fn tessellate_nurbs_curve() {
         let is_open = curve.basis.topology == ufbx::NurbsTopology::Open;
         let num_vertices = num_indices - usize::from(!is_open);
 
+        assert!(line.element.name.as_ref().is_empty());
         assert_eq!(line.control_points.len(), num_vertices);
         assert_eq!(line.point_indices.len(), num_indices);
         assert_eq!(line.segments.len(), 1);
@@ -1327,6 +1345,7 @@ fn tessellate_nurbs_surface() {
         sub_u: usize,
         sub_v: usize,
     ) -> (usize, usize) {
+        assert!(mesh.element.name.as_ref().is_empty());
         let spans_u = surface.basis_u.spans.len();
         let spans_v = surface.basis_v.spans.len();
         let expected_faces = spans_u
