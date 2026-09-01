@@ -140,6 +140,33 @@ fn load_cube_ascii() {
     assert!(load_and_walk("maya_cube_7500_ascii.fbx").is_finite());
 }
 
+#[test]
+fn load_line_curves() {
+    for name in [
+        "max_curve_line_7500_ascii.fbx",
+        "max_curve_line_7500_binary.fbx",
+    ] {
+        let scene = load(name);
+        assert_eq!(scene.line_curves.len(), 2);
+
+        let mut index_counts = Vec::new();
+        for line in &scene.line_curves {
+            assert_eq!(line.segments.len(), 1);
+            assert_eq!(line.segments[0].index_begin, 0);
+            assert_eq!(
+                line.segments[0].num_indices as usize,
+                line.point_indices.len()
+            );
+            for &index in &line.point_indices {
+                assert!((index as usize) < line.control_points.len());
+            }
+            index_counts.push(line.point_indices.len());
+        }
+        index_counts.sort_unstable();
+        assert_eq!(index_counts, [7, 15]);
+    }
+}
+
 /// A user-supplied boxed allocator drives every temp/result allocation through
 /// the `allocator_imp_*` C-ABI callbacks, whose `user` pointer is the
 /// `Box<Box<dyn AllocatorInterface>>` leaked by `Allocator::to_raw_mut`. This

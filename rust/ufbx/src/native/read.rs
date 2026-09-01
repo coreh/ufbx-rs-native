@@ -5010,132 +5010,103 @@ pub(crate) fn read_line(uc: &Context, node: &NodeView, info: &ElementInfoView) -
         let points_index: *mut ValueArray = find_array(node, sp::PointsIndex.as_ptr(), b'i');
         ufbxi_check!(uc, !points.is_null(), "points");
         ufbxi_check!(uc, !points_index.is_null(), "points_index");
-        // SAFETY: `points` is non-null (checked above) and `find_array` returns
-        // the node's own array descriptor, live for as long as the parse tree.
-        ufbxi_check!(
-            uc,
-            unsafe { (*points).size } % 3 == 0,
-            "points->size % 3 == 0"
-        );
+        // SAFETY: all three pointers are non-null (checked above). `line` is
+        // the fresh element pushed into uc's stable temporary arena, while
+        // `points`/`points_index` are the node's own live array descriptors;
+        // all were reached through write-capable pointers.
+        let (line, points, points_index): (&View<LineCurve>, &View<ValueArray>, &View<ValueArray>) = unsafe {
+            (
+                View::<LineCurve>::from_ptr(line),
+                View::<ValueArray>::from_ptr(points),
+                View::<ValueArray>::from_ptr(points_index),
+            )
+        };
+        ufbxi_check!(uc, points.size() % 3 == 0, "points->size % 3 == 0");
 
-        // SAFETY: as above.
-        if unsafe { (*points).size } > 0 {
-            // SAFETY: `line` is the fresh non-null element pushed above;
-            // `points`/`points_index` are the live array descriptors checked
-            // non-null above, whose `'r'`/`'i'` payloads are `size` reals and
-            // `size` `u32`s — `points.size` being a multiple of 3 (checked) makes
-            // it `size / 3` `ufbx_vec3` control points.
+        if points.size() > 0 {
+            let num_control_points: usize = points.size() / 3;
+            let num_point_indices: usize = points_index.size();
+
+            // SAFETY: the `'r'`/`'i'` payloads are initialized runs of `size`
+            // reals/u32s owned by the parse tree and retained by the scene.
+            // `points.size` is a multiple of three (checked), so its payload is
+            // exactly `num_control_points` repr(C) three-Real `Vec3` values;
+            // both payload pointers retain their original stable provenance.
             unsafe {
-                (*line).control_points.count = (*points).size / 3;
-                (*line).control_points.data = (*points).data as *const Vec3;
-                (*line).point_indices.count = (*points_index).size;
-                (*line).point_indices.data = (*points_index).data as *const u32;
+                line.control_points_view().set(List::from_raw_parts(
+                    points.data().cast::<Vec3>(),
+                    num_control_points,
+                ));
+                line.point_indices_view().set(List::from_raw_parts(
+                    points_index.data().cast::<u32>(),
+                    num_point_indices,
+                ));
             }
 
-            // SAFETY: `line` is the fresh non-null element.
             ufbxi_check!(
                 uc,
-                unsafe { (*line).control_points.count } < i32::MAX as usize,
+                line.control_points_view().count() < i32::MAX as usize,
                 "line->control_points.count < INT32_MAX"
             );
 
             // Count end points
             let mut num_segments: usize = 1;
-            // SAFETY: `line` is the fresh non-null element.
-            if unsafe { (*line).point_indices.count } > 0 {
-                // SAFETY: as above.
-                for i in 0..unsafe { (*line).point_indices.count } - 1 {
-                    // SAFETY: `point_indices` was set above to the
-                    // `points_index` payload of `count` `u32`s and
-                    // `i < count - 1`, so the read is in bounds.
-                    let ix: u32 = unsafe { *(*line).point_indices.data.add(i) };
+            let point_indices = line.point_indices_view();
+            if num_point_indices > 0 {
+                for i in 0..num_point_indices - 1 {
+                    let ix: u32 = point_indices.copy_at(i);
                     num_segments =
                         num_segments.wrapping_add(if (ix as i32) < 0 { 1usize } else { 0usize });
                 }
             }
 
             let mut prev_end: usize = 0;
-            // SAFETY: `line` is the fresh non-null element and `result` is uc's
-            // own result buffer, so the freshly pushed `num_segments` run is
-            // owned by the scene being built.
-            unsafe {
-                (*line).segments.data =
-                    uc.result_view().push::<LineSegment>(num_segments) as *const LineSegment;
-            }
-            // SAFETY: `line` is the fresh non-null element.
-            ufbxi_check!(
-                uc,
-                !unsafe { (*line).segments.data }.is_null(),
-                "line->segments.data"
-            );
-            // SAFETY: `line` is the fresh non-null element.
-            for i in 0..unsafe { (*line).point_indices.count } {
-                // SAFETY: `point_indices` spans `count` `u32`s and `i < count`.
-                let mut ix: u32 = unsafe { *(*line).point_indices.data.add(i) };
+            let segment_data: *mut LineSegment = uc.result_view().push::<LineSegment>(num_segments);
+            ufbxi_check!(uc, !segment_data.is_null(), "line->segments.data");
+            // SAFETY: the non-null push above allocated `num_segments`
+            // contiguous, write-capable `LineSegment` slots in uc's stable
+            // result arena. The slots may be initialized through `Mut` views.
+            let segments: Run<'_, LineSegment> =
+                unsafe { Run::from_raw_parts(segment_data, num_segments) };
+            let mut num_segments_written: usize = 0;
+
+            for i in 0..num_point_indices {
+                let p_dst: &View<u32> = point_indices.at(i);
+                let mut ix: u32 = point_indices.copy_at(i);
                 if (ix as i32) < 0 {
                     ix = !ix;
-                    // SAFETY: `line` is the fresh non-null element.
-                    if i + 1 < unsafe { (*line).point_indices.count } {
+                    if i + 1 < num_point_indices {
                         // C: `&line->segments.data[line->segments.count++]` —
                         // the index uses the pre-increment value.
-                        // SAFETY: `segments.data` is the non-null `num_segments`
-                        // run allocated above; this branch is taken once per
-                        // negative index bar the last, so `segments.count` stays
-                        // below `num_segments` and the offset is in bounds.
-                        let segment: *mut LineSegment = unsafe {
-                            ((*line).segments.data as *mut LineSegment).add((*line).segments.count)
-                        };
-                        // SAFETY: `line` is the fresh non-null element and
-                        // `segment` is the in-bounds slot just computed.
-                        unsafe {
-                            (*line).segments.count += 1;
-                            (*segment).index_begin = prev_end as u32;
-                            (*segment).num_indices = i.wrapping_sub(prev_end) as u32;
-                        }
+                        let segment: &View<LineSegment> = segments.at(num_segments_written);
+                        num_segments_written += 1;
+                        segment.set_index_begin(prev_end as u32);
+                        segment.set_num_indices(i.wrapping_sub(prev_end) as u32);
                         prev_end = i;
                     }
                 }
 
-                // SAFETY: `line` is the fresh non-null element.
-                if (ix as usize) < unsafe { (*line).control_points.count } {
-                    // SAFETY: `point_indices` points into the parse tree's own
-                    // mutable `'i'` payload of `count` `u32`s and `i < count`, so
-                    // the const-to-mut cast writes back through its original
-                    // provenance, in bounds.
-                    unsafe { *((*line).point_indices.data as *mut u32).add(i) = ix };
+                if (ix as usize) < num_control_points {
+                    p_dst.write_value(ix);
                 } else {
-                    // SAFETY: as above — the `i`-th index slot of the
-                    // `point_indices` payload is a live, write-capable `u32`,
-                    // an adequate mint for the `Mut` index-slot view; `line` is
-                    // the fresh non-null element, so its `control_points`
-                    // header is readable.
-                    let (p_dst, count): (&View<u32>, usize) = unsafe {
-                        (
-                            View::<u32, Mut>::from_ptr(
-                                ((*line).point_indices.data as *mut u32).add(i),
-                            ),
-                            (*line).control_points.count,
-                        )
-                    };
-                    fix_index(uc, p_dst, ix, count)?;
+                    fix_index(uc, p_dst, ix, num_control_points)?;
                 }
             }
 
-            // SAFETY: `segments.data` is the non-null `num_segments` run and the
-            // loop above consumed at most `num_segments - 1` slots, so this final
-            // slot is in bounds.
-            let segment: *mut LineSegment =
-                unsafe { ((*line).segments.data as *mut LineSegment).add((*line).segments.count) };
-            // SAFETY: `line` is the fresh non-null element and `segment` is the
-            // in-bounds slot just computed.
+            let segment: &View<LineSegment> = segments.at(num_segments_written);
+            num_segments_written += 1;
+            segment.set_index_begin(prev_end as u32);
+            segment
+                .set_num_indices(to_size(num_point_indices.wrapping_sub(prev_end) as isize) as u32);
+            ufbx_assert!(num_segments_written == num_segments);
+
+            // SAFETY: every slot in the result-arena run was fully initialized
+            // above, the count assertion proves the complete allocated run was
+            // consumed, and result storage remains stable for the scene.
             unsafe {
-                (*line).segments.count += 1;
-                (*segment).index_begin = prev_end as u32;
-                (*segment).num_indices =
-                    to_size((*line).point_indices.count.wrapping_sub(prev_end) as isize) as u32;
+                line.segments_view()
+                    .set(List::from_raw_parts(segment_data, num_segments));
             }
-            // SAFETY: `line` is the fresh non-null element.
-            ufbx_assert!(unsafe { (*line).segments.count } == num_segments);
         }
     }
 

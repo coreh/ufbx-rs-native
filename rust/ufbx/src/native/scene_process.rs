@@ -7929,6 +7929,15 @@ pub(crate) fn finalize_mesh_material(
     );
 
     let face_material: *mut u32 = mesh.face_material().data as *mut u32;
+    let mut face_material_list = if face_material.is_null() {
+        None
+    } else {
+        // SAFETY: every caller provides a writable `num_faces`-item run when
+        // `face_material` is non-null. The local descriptor carries that
+        // construction-time bound without changing the mesh's public header.
+        Some(unsafe { List::from_raw_parts(face_material, num_faces) })
+    };
+    let face_material = face_material_list.as_mut().map(View::<List<u32>>::from_mut);
 
     // Count the number of faces and triangles per material
     // C: `ufbxi_nounroll for (size_t i = 0; i < num_faces; i++)`
@@ -7936,15 +7945,11 @@ pub(crate) fn finalize_mesh_material(
         let face: Face = mesh.faces_view().copy_at(i);
         let mut mat_ix: u32 = 0;
 
-        if !face_material.is_null() {
-            // SAFETY: a non-null `face_material` run is per-face, so it holds
-            // `num_faces` writable `u32`s and `i < num_faces` stays inside it.
-            unsafe {
-                mat_ix = *face_material.add(i);
-                if mat_ix as usize >= num_materials {
-                    *face_material.add(i) = 0;
-                    mat_ix = 0;
-                }
+        if let Some(face_material) = face_material {
+            mat_ix = face_material.copy_at(i);
+            if mat_ix as usize >= num_materials {
+                Run::from_list(face_material).write_at(i, 0);
+                mat_ix = 0;
             }
         }
 
@@ -7990,10 +7995,8 @@ pub(crate) fn finalize_mesh_material(
         // Fetch the per-material face indices
         // C: `ufbxi_nounroll for (size_t i = 0; i < num_faces; i++)`
         for i in 0..num_faces {
-            let mat_ix: u32 = if !face_material.is_null() {
-                // SAFETY: a non-null `face_material` run is per-face, so it holds
-                // `num_faces` `u32`s and `i < num_faces` stays inside it.
-                unsafe { *face_material.add(i) }
+            let mat_ix: u32 = if let Some(face_material) = face_material {
+                face_material.copy_at(i)
             } else {
                 0
             };

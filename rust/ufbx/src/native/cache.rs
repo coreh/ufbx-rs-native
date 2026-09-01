@@ -1674,8 +1674,7 @@ pub(crate) fn cache_load_frame_files(cc: &CacheContext) -> Result<(), Fail> {
     let mut prefix_len: usize = cc.xml_filename_view().length();
     let mut i: usize = prefix_len;
     while i > 0 {
-        // SAFETY: `i - 1 < length`, an in-bounds byte of the interned filename.
-        if unsafe { *cc.xml_filename_view().data().add(i - 1) } == b'.' {
+        if cc.xml_filename_view().bytes()[i - 1] == b'.' {
             prefix_len = i - 1;
             break;
         }
