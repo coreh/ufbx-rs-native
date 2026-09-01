@@ -5891,9 +5891,6 @@ pub(crate) fn read_animation_curve(
     let keys: *mut Keyframe = uc.result_view().push::<Keyframe>(num_keys);
     ufbxi_check!(uc, !keys.is_null(), "keys");
 
-    curve.keyframes_view().set_data(keys);
-    curve.keyframes_view().set_count(num_keys);
-
     // C: `int64_t *p_time = (int64_t*)times->data;`
     //    `ufbx_real *p_value = (ufbx_real*)values->data;`
     //    `int32_t *p_flag = (int32_t*)attr_flags->data;`
@@ -5944,11 +5941,12 @@ pub(crate) fn read_animation_curve(
     }
 
     // SAFETY: `keys` is the non-null `num_keys`-element run just pushed on the
-    // result buffer — one contiguous `push`-materialized allocation run, live and
-    // unmoved for the rest of this function.
-    let keys_iter = unsafe { SliceViewIter::<Keyframe>::from_raw_parts(keys, num_keys) };
+    // result buffer — one contiguous allocated, write-capable run, live and
+    // unmoved for the rest of this function. Its slots may remain
+    // uninitialized until their loop iteration writes every keyframe field.
+    let keys_run = unsafe { Run::<Keyframe, Mut>::from_raw_parts(keys, num_keys) };
     // C: `for (size_t i = 0; i < num_keys; i++) { ufbx_keyframe *key = &keys[i]; ... }`
-    for (i, key) in keys_iter.enumerate() {
+    for (i, key) in keys_run.iter().enumerate() {
         ufbxi_check!(uc, refs_left > 0, "refs_left > 0");
 
         let value: Real = values_data[i];
@@ -6280,6 +6278,13 @@ pub(crate) fn read_animation_curve(
         }
         // C: `p_time++; p_value++;` — the `enumerate` counter advances both.
     }
+
+    // SAFETY: every slot in the result-owned run was fully initialized by the
+    // completed loop above, and the result buffer keeps it live and unmoved for
+    // every subsequent use of the curve.
+    curve
+        .keyframes_view()
+        .set(unsafe { List::from_raw_parts(keys, num_keys) });
 
     Ok(())
 }
@@ -8211,10 +8216,13 @@ pub(crate) unsafe fn read_take_anim_channel(
         find_val1::<usize>(node, sp::KeyCount.as_ptr()),
         "ufbxi_find_val1(node, ufbxi_KeyCount, \"Z\", &num_keys)"
     );
-    let keyframes: &ListView<Keyframe> = curve.keyframes_view();
-    keyframes.set_data(uc.result_view().push::<Keyframe>(num_keys));
-    keyframes.set_count(num_keys);
-    ufbxi_check!(uc, !keyframes.data().is_null(), "curve->keyframes.data");
+    let keyframes_data: *mut Keyframe = uc.result_view().push::<Keyframe>(num_keys);
+    ufbxi_check!(uc, !keyframes_data.is_null(), "curve->keyframes.data");
+    // SAFETY: `keyframes_data` is the non-null, contiguous `num_keys`-slot run
+    // just pushed on the result buffer. It is allocated and write-capable, and
+    // remains live and unmoved while this function initializes it and for the
+    // lifetime of the published curve list.
+    let keyframes = unsafe { Run::<Keyframe, Mut>::from_raw_parts(keyframes_data, num_keys) };
 
     let mut slope_left: f32 = 0.0f32;
     let mut weight_left: f32 = 0.333333f32;
@@ -8484,6 +8492,13 @@ pub(crate) unsafe fn read_take_anim_channel(
     }
 
     ufbxi_check!(uc, data == data_end, "data == data_end");
+
+    // SAFETY: every keyframe slot was fully initialized by the completed loop,
+    // the terminal payload-consumption check above succeeded, and the result
+    // buffer keeps the run live and unmoved for every later curve use.
+    curve
+        .keyframes_view()
+        .set(unsafe { List::from_raw_parts(keyframes_data, num_keys) });
 
     Ok(())
 }

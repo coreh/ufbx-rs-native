@@ -2846,22 +2846,23 @@ pub(crate) unsafe fn subdivide_mesh_level(
     vertices.set_data(result.vertex_position().values().data);
     vertices.set_count(result.num_vertices());
 
-    let faces: &ListView<Face> = result.faces_view();
-    faces.set_count(result.num_faces());
-    faces.set_data(sc.result_view().push::<Face>(result.num_faces()));
-    ufbxi_check_err!(
-        sc.error_view(),
-        !faces.data().is_null(),
-        "result->faces.data"
-    );
+    let num_faces = result.num_faces();
+    let faces = sc.result_view().push::<Face>(num_faces);
+    ufbxi_check_err!(sc.error_view(), !faces.is_null(), "result->faces.data");
+    // SAFETY: `faces` is the checked fresh `num_faces`-slot result-arena push.
+    // The run permits initialization before the completed list is published.
+    let faces_write = unsafe { Run::<Face>::from_raw_parts(faces, num_faces) };
 
     let mut i: usize = 0;
-    while i < result.num_faces() {
-        let face = faces.at(i);
+    while i < num_faces {
+        let face = faces_write.at(i);
         face.set_index_begin(i.wrapping_mul(4) as u32);
         face.set_num_indices(4);
         i += 1;
     }
+    // SAFETY: the loop initialized every slot of the stable result-arena run.
+    let faces = unsafe { List::from_raw_parts(faces, num_faces) };
+    result.faces_view().set(faces);
 
     if !mesh.edges().data.is_null() {
         let edges: &ListView<Edge> = result.edges_view();
