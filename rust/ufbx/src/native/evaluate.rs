@@ -57,7 +57,7 @@ use crate::native::allocator::{
 use crate::native::allocator::{grow_array, BAKED_ANIM_IMP_MAGIC};
 #[cfg(feature = "skinning-eval")]
 use crate::native::api::{
-    add_blend_vertex_offsets, catch_get_skin_vertex_matrix, compute_normals, compute_topology,
+    add_blend_vertex_offsets_run, catch_get_skin_vertex_matrix, compute_normals, compute_topology,
     generate_normal_mapping, sample_geometry_cache_vec3, transform_position, ZERO_VEC3,
 };
 use crate::native::api::{coordinate_axes_valid, default_open_file, open_file_ctx};
@@ -362,17 +362,16 @@ pub(crate) fn evaluate_skinning(
                 ptr::copy_nonoverlapping(mesh.vertices_view().data(), result_pos, num_vertices)
             };
 
+            // SAFETY: the freshly pushed `result_pos` run was initialized by
+            // the copy above and stays allocated and writable for evaluation.
+            // The capability forms no exclusive slice over arena memory.
+            let result_vertices = unsafe { Run::<Vec3>::from_raw_parts(result_pos, num_vertices) };
+
             // C: `ufbxi_for_ptr_list(ufbx_blend_deformer, p_blend, mesh->blend_deformers)`
             let blend_deformers = mesh.blend_deformers_view();
             for i_blend in 0..blend_deformers.count() {
                 let p_blend = blend_deformers.at(i_blend);
-                // SAFETY: `p_blend` views a live scene-owned
-                // `ufbx_blend_deformer` of the mesh's own deformer list and
-                // `result_pos` addresses `num_vertices` writable `ufbx_vec3`
-                // slots — `add_blend_vertex_offsets`'s contract.
-                unsafe {
-                    add_blend_vertex_offsets(p_blend.as_ptr(), result_pos, num_vertices, 1.0)
-                };
+                add_blend_vertex_offsets_run(p_blend, Some(result_vertices), 1.0);
             }
 
             // TODO: What should we do about multiple skins??

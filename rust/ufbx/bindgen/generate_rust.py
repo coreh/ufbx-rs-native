@@ -828,6 +828,29 @@ pub fn get_blend_vertex_offset(blend: &BlendDeformer, vertex: usize) -> Vec3 {
 }
 """
 
+# The input object remains frozen while the exclusive destination slice is
+# carried as a bounded interior-mutable run. Even an empty slice is `Some`,
+# matching Rust slices' non-null pointer representation.
+override_functions["ufbx_add_blend_shape_vertex_offsets"] = """
+pub fn add_blend_shape_vertex_offsets(shape: &BlendShape, vertices: &mut [Vec3], weight: Real) {
+    crate::native::api::add_blend_shape_vertex_offsets_run(
+        crate::native::view::View::<BlendShape, crate::native::view::Const>::from_ref(shape),
+        Some(crate::native::view::Run::from_mut_slice(vertices)),
+        weight,
+    )
+}
+"""
+
+override_functions["ufbx_add_blend_vertex_offsets"] = """
+pub fn add_blend_vertex_offsets(blend: &BlendDeformer, vertices: &mut [Vec3], weight: Real) {
+    crate::native::api::add_blend_vertex_offsets_run(
+        crate::native::view::View::<BlendDeformer, crate::native::view::Const>::from_ref(blend),
+        Some(crate::native::view::Run::from_mut_slice(vertices)),
+        weight,
+    )
+}
+"""
+
 # NURBS evaluation navigates read-only `Const` views. Safe Rust references mint
 # them directly; the nullable/overlapping-output raw adapters are the C-ABI
 # boundaries.
@@ -1273,6 +1296,78 @@ override_functions["ufbx_as_mesh"] = """
 #[allow(clippy::needless_lifetimes)]
 pub fn as_mesh<'a>(element: &'a Element) -> Option<&'a Mesh> {
     let result = crate::native::api::downcast_element::<Mesh>(element, ElementType::Mesh);
+    if result.is_null() {
+        None
+    } else {
+        unsafe { Some(&*result) }
+    }
+}
+"""
+
+override_functions["ufbx_as_lod_group"] = """
+#[allow(clippy::needless_lifetimes)]
+pub fn as_lod_group<'a>(element: &'a Element) -> Option<&'a LodGroup> {
+    let result = crate::native::api::downcast_element::<LodGroup>(element, ElementType::LodGroup);
+    if result.is_null() {
+        None
+    } else {
+        unsafe { Some(&*result) }
+    }
+}
+"""
+
+override_functions["ufbx_as_skin_deformer"] = """
+#[allow(clippy::needless_lifetimes)]
+pub fn as_skin_deformer<'a>(element: &'a Element) -> Option<&'a SkinDeformer> {
+    let result = crate::native::api::downcast_element::<SkinDeformer>(element, ElementType::SkinDeformer);
+    if result.is_null() {
+        None
+    } else {
+        unsafe { Some(&*result) }
+    }
+}
+"""
+
+override_functions["ufbx_as_skin_cluster"] = """
+#[allow(clippy::needless_lifetimes)]
+pub fn as_skin_cluster<'a>(element: &'a Element) -> Option<&'a SkinCluster> {
+    let result = crate::native::api::downcast_element::<SkinCluster>(element, ElementType::SkinCluster);
+    if result.is_null() {
+        None
+    } else {
+        unsafe { Some(&*result) }
+    }
+}
+"""
+
+override_functions["ufbx_as_blend_deformer"] = """
+#[allow(clippy::needless_lifetimes)]
+pub fn as_blend_deformer<'a>(element: &'a Element) -> Option<&'a BlendDeformer> {
+    let result = crate::native::api::downcast_element::<BlendDeformer>(element, ElementType::BlendDeformer);
+    if result.is_null() {
+        None
+    } else {
+        unsafe { Some(&*result) }
+    }
+}
+"""
+
+override_functions["ufbx_as_blend_channel"] = """
+#[allow(clippy::needless_lifetimes)]
+pub fn as_blend_channel<'a>(element: &'a Element) -> Option<&'a BlendChannel> {
+    let result = crate::native::api::downcast_element::<BlendChannel>(element, ElementType::BlendChannel);
+    if result.is_null() {
+        None
+    } else {
+        unsafe { Some(&*result) }
+    }
+}
+"""
+
+override_functions["ufbx_as_blend_shape"] = """
+#[allow(clippy::needless_lifetimes)]
+pub fn as_blend_shape<'a>(element: &'a Element) -> Option<&'a BlendShape> {
+    let result = crate::native::api::downcast_element::<BlendShape>(element, ElementType::BlendShape);
     if result.is_null() {
         None
     } else {

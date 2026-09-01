@@ -5472,25 +5472,19 @@ pub fn get_blend_vertex_offset(blend: &BlendDeformer, vertex: usize) -> Vec3 {
 }
 
 pub fn add_blend_shape_vertex_offsets(shape: &BlendShape, vertices: &mut [Vec3], weight: Real) {
-    unsafe {
-        crate::native::api::add_blend_shape_vertex_offsets(
-            shape as *const BlendShape,
-            vertices.as_mut_ptr(),
-            vertices.len(),
-            weight,
-        )
-    };
+    crate::native::api::add_blend_shape_vertex_offsets_run(
+        crate::native::view::View::<BlendShape, crate::native::view::Const>::from_ref(shape),
+        Some(crate::native::view::Run::from_mut_slice(vertices)),
+        weight,
+    )
 }
 
 pub fn add_blend_vertex_offsets(blend: &BlendDeformer, vertices: &mut [Vec3], weight: Real) {
-    unsafe {
-        crate::native::api::add_blend_vertex_offsets(
-            blend as *const BlendDeformer,
-            vertices.as_mut_ptr(),
-            vertices.len(),
-            weight,
-        )
-    };
+    crate::native::api::add_blend_vertex_offsets_run(
+        crate::native::view::View::<BlendDeformer, crate::native::view::Const>::from_ref(blend),
+        Some(crate::native::view::Run::from_mut_slice(vertices)),
+        weight,
+    )
 }
 
 pub fn evaluate_nurbs_basis(
@@ -6129,7 +6123,7 @@ pub fn as_marker<'a>(element: &'a Element) -> Option<&'a Marker> {
 
 #[allow(clippy::needless_lifetimes)]
 pub fn as_lod_group<'a>(element: &'a Element) -> Option<&'a LodGroup> {
-    let result = unsafe { crate::native::api::as_lod_group(element as *const Element) };
+    let result = crate::native::api::downcast_element::<LodGroup>(element, ElementType::LodGroup);
     if result.is_null() {
         None
     } else {
@@ -6139,7 +6133,8 @@ pub fn as_lod_group<'a>(element: &'a Element) -> Option<&'a LodGroup> {
 
 #[allow(clippy::needless_lifetimes)]
 pub fn as_skin_deformer<'a>(element: &'a Element) -> Option<&'a SkinDeformer> {
-    let result = unsafe { crate::native::api::as_skin_deformer(element as *const Element) };
+    let result =
+        crate::native::api::downcast_element::<SkinDeformer>(element, ElementType::SkinDeformer);
     if result.is_null() {
         None
     } else {
@@ -6149,7 +6144,8 @@ pub fn as_skin_deformer<'a>(element: &'a Element) -> Option<&'a SkinDeformer> {
 
 #[allow(clippy::needless_lifetimes)]
 pub fn as_skin_cluster<'a>(element: &'a Element) -> Option<&'a SkinCluster> {
-    let result = unsafe { crate::native::api::as_skin_cluster(element as *const Element) };
+    let result =
+        crate::native::api::downcast_element::<SkinCluster>(element, ElementType::SkinCluster);
     if result.is_null() {
         None
     } else {
@@ -6159,7 +6155,8 @@ pub fn as_skin_cluster<'a>(element: &'a Element) -> Option<&'a SkinCluster> {
 
 #[allow(clippy::needless_lifetimes)]
 pub fn as_blend_deformer<'a>(element: &'a Element) -> Option<&'a BlendDeformer> {
-    let result = unsafe { crate::native::api::as_blend_deformer(element as *const Element) };
+    let result =
+        crate::native::api::downcast_element::<BlendDeformer>(element, ElementType::BlendDeformer);
     if result.is_null() {
         None
     } else {
@@ -6169,7 +6166,8 @@ pub fn as_blend_deformer<'a>(element: &'a Element) -> Option<&'a BlendDeformer> 
 
 #[allow(clippy::needless_lifetimes)]
 pub fn as_blend_channel<'a>(element: &'a Element) -> Option<&'a BlendChannel> {
-    let result = unsafe { crate::native::api::as_blend_channel(element as *const Element) };
+    let result =
+        crate::native::api::downcast_element::<BlendChannel>(element, ElementType::BlendChannel);
     if result.is_null() {
         None
     } else {
@@ -6179,7 +6177,8 @@ pub fn as_blend_channel<'a>(element: &'a Element) -> Option<&'a BlendChannel> {
 
 #[allow(clippy::needless_lifetimes)]
 pub fn as_blend_shape<'a>(element: &'a Element) -> Option<&'a BlendShape> {
-    let result = unsafe { crate::native::api::as_blend_shape(element as *const Element) };
+    let result =
+        crate::native::api::downcast_element::<BlendShape>(element, ElementType::BlendShape);
     if result.is_null() {
         None
     } else {

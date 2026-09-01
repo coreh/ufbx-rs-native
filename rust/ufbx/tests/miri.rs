@@ -563,11 +563,19 @@ fn load_lod_groups() {
         let attrib = node.attrib.as_ref().expect("LOD node has no attrib");
         let lod = ufbx::as_lod_group(attrib.as_ref()).expect("attrib is not LodGroup");
         assert_eq!(lod.element.type_, ufbx::ElementType::LodGroup);
+        let listed = scene
+            .lod_groups
+            .iter()
+            .find(|candidate| core::ptr::eq(&candidate.element, attrib.as_ref()))
+            .expect("LOD group missing from typed scene list");
+        assert!(core::ptr::eq(lod, listed.as_ref()));
+        assert!(ufbx::as_skin_deformer(attrib.as_ref()).is_none());
         (node, lod)
     }
 
     let scene = load("maya_lod_group_7500_binary.fbx");
     assert_eq!(scene.lod_groups.len(), 2);
+    assert!(ufbx::as_lod_group(&scene.root_node.element).is_none());
 
     let (node1, lod1) = get(&scene, "LOD_Group_1");
     assert_eq!(node1.children.len(), 3);
@@ -661,9 +669,18 @@ fn load_selection_sets() {
 fn load_skinned() {
     let scene = load("blender_293_half_skinned_7400_binary.fbx");
     assert!(!scene.skin_deformers.is_empty());
+    assert!(!scene.skin_clusters.is_empty());
     let mut acc = 0.0f64;
     for skin in &scene.skin_deformers {
+        let downcast = ufbx::as_skin_deformer(&skin.element).expect("skin downcast");
+        assert!(core::ptr::eq(downcast, skin));
+        assert!(ufbx::as_skin_cluster(&skin.element).is_none());
+        acc += downcast.dq_weights.len() as f64;
         for cluster in &skin.clusters {
+            let downcast = ufbx::as_skin_cluster(&cluster.element).expect("cluster downcast");
+            assert!(core::ptr::eq(downcast, cluster));
+            assert!(ufbx::as_skin_deformer(&cluster.element).is_none());
+            acc += downcast.weights.len() as f64;
             assert!(cluster.bone_node.is_some());
             acc += cluster.weights.len() as f64;
             for w in &cluster.weights {
@@ -683,13 +700,29 @@ fn load_skinned() {
 fn load_blend_shapes() {
     let scene = load("blender_279_shape_weights_7400_binary.fbx");
     assert!(!scene.blend_deformers.is_empty());
+    assert!(!scene.blend_channels.is_empty());
+    assert!(!scene.blend_shapes.is_empty());
     let mut acc = 0.0f64;
     for deformer in &scene.blend_deformers {
+        let downcast = ufbx::as_blend_deformer(&deformer.element).expect("blend deformer downcast");
+        assert!(core::ptr::eq(downcast, deformer));
+        assert!(ufbx::as_blend_channel(&deformer.element).is_none());
+        acc += downcast.channels.len() as f64;
         for channel in &deformer.channels {
+            let downcast =
+                ufbx::as_blend_channel(&channel.element).expect("blend channel downcast");
+            assert!(core::ptr::eq(downcast, channel));
+            assert!(ufbx::as_blend_shape(&channel.element).is_none());
+            acc += downcast.target_shape.is_some() as u8 as f64;
             acc += channel.weight as f64;
-            for shape in &channel.keyframes {
-                acc += shape.target_weight as f64;
-                acc += shape.shape.num_offsets as f64;
+            for keyframe in &channel.keyframes {
+                let shape: &ufbx::BlendShape = keyframe.shape.as_ref();
+                let downcast = ufbx::as_blend_shape(&shape.element).expect("blend shape downcast");
+                assert!(core::ptr::eq(downcast, shape));
+                assert!(ufbx::as_blend_deformer(&shape.element).is_none());
+                acc += downcast.offset_weights.len() as f64;
+                acc += keyframe.target_weight as f64;
+                acc += shape.num_offsets as f64;
             }
         }
     }
@@ -2394,6 +2427,23 @@ fn public_deform_helpers_from_shared_refs() {
         ufbx::get_bone_pose(pose, node)
     }
 
+    fn weighted_shape_offset(shape: &ufbx::BlendShape, vertex: usize) -> ufbx::Vec3 {
+        let index = ufbx::get_blend_shape_offset_index(shape, vertex);
+        if index == u32::MAX {
+            return ufbx::Vec3::default();
+        }
+        let mut offset = ufbx::get_blend_shape_vertex_offset(shape, vertex);
+        let weight = shape
+            .offset_weights
+            .get(index as usize)
+            .copied()
+            .unwrap_or(1.0);
+        offset.x *= weight;
+        offset.y *= weight;
+        offset.z *= weight;
+        offset
+    }
+
     let mut acc = 0.0f64;
 
     let root = load("blender_293_half_skinned_7400_binary.fbx");
@@ -2467,6 +2517,50 @@ fn public_deform_helpers_from_shared_refs() {
     let scene: &Scene = &root;
     let anim: &ufbx::Anim = &scene.anim;
     for deformer in &scene.blend_deformers {
+        let sentinel = ufbx::Vec3 {
+            x: 1.0,
+            y: -2.0,
+            z: 3.0,
+        };
+        let mut vertices = [sentinel; 8];
+        let blend_weight = 0.75;
+        let expected: Vec<ufbx::Vec3> = (0..vertices.len())
+            .map(|vertex| {
+                let mut offset = ufbx::Vec3::default();
+                for channel in &deformer.channels {
+                    for keyframe in &channel.keyframes {
+                        if keyframe.effective_weight == 0.0 {
+                            continue;
+                        }
+                        let key_offset = weighted_shape_offset(keyframe.shape.as_ref(), vertex);
+                        offset.x += key_offset.x * keyframe.effective_weight;
+                        offset.y += key_offset.y * keyframe.effective_weight;
+                        offset.z += key_offset.z * keyframe.effective_weight;
+                    }
+                }
+                ufbx::Vec3 {
+                    x: sentinel.x + offset.x * blend_weight,
+                    y: sentinel.y + offset.y * blend_weight,
+                    z: sentinel.z + offset.z * blend_weight,
+                }
+            })
+            .collect();
+        ufbx::add_blend_vertex_offsets(deformer, &mut vertices, blend_weight);
+        for (actual, expected) in vertices.iter().zip(expected) {
+            assert!((actual.x - expected.x).abs() < 1.0e-5);
+            assert!((actual.y - expected.y).abs() < 1.0e-5);
+            assert!((actual.z - expected.z).abs() < 1.0e-5);
+        }
+        let unchanged = vertices;
+        ufbx::add_blend_vertex_offsets(deformer, &mut vertices, 0.0);
+        for (actual, expected) in vertices.iter().zip(unchanged) {
+            assert_eq!(
+                (actual.x, actual.y, actual.z),
+                (expected.x, expected.y, expected.z)
+            );
+        }
+        ufbx::add_blend_vertex_offsets(deformer, &mut [], 1.0);
+
         for vertex in 0..4 {
             acc += ufbx::get_blend_vertex_offset(deformer, vertex).x as f64;
         }
@@ -2477,6 +2571,26 @@ fn public_deform_helpers_from_shared_refs() {
                 let s: &ufbx::BlendShape = shape.shape.as_ref();
                 acc += ufbx::get_blend_shape_offset_index(s, 0) as f64;
                 acc += ufbx::get_blend_shape_vertex_offset(s, 0).x as f64;
+
+                let mut shape_vertices = [sentinel; 8];
+                let shape_weight = 0.5;
+                let shape_expected: Vec<ufbx::Vec3> = (0..shape_vertices.len())
+                    .map(|vertex| {
+                        let offset = weighted_shape_offset(s, vertex);
+                        ufbx::Vec3 {
+                            x: sentinel.x + offset.x * shape_weight,
+                            y: sentinel.y + offset.y * shape_weight,
+                            z: sentinel.z + offset.z * shape_weight,
+                        }
+                    })
+                    .collect();
+                ufbx::add_blend_shape_vertex_offsets(s, &mut shape_vertices, shape_weight);
+                for (actual, expected) in shape_vertices.iter().zip(shape_expected) {
+                    assert!((actual.x - expected.x).abs() < 1.0e-5);
+                    assert!((actual.y - expected.y).abs() < 1.0e-5);
+                    assert!((actual.z - expected.z).abs() < 1.0e-5);
+                }
+                ufbx::add_blend_shape_vertex_offsets(s, &mut [], 1.0);
             }
         }
     }

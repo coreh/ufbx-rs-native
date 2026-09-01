@@ -62,8 +62,8 @@ use crate::generated::RawBakeOpts;
 use crate::generated::{
     Anim, AnimCurve, AnimLayer, AnimProp, AnimStack, AnimValue, AudioClip, AudioLayer, BakedAnim,
     BakedElement, BakedKeyFlags, BakedNode, BakedQuat, BakedVec3, BlendChannel, BlendDeformer,
-    BlendKeyframe, BlendShape, Bone, BonePose, CacheChannel, CacheDeformer, CacheFile, CacheFrame,
-    Camera, CameraSwitcher, Character, Constraint, CoordinateAxes, CoordinateAxis, CurvePoint,
+    BlendShape, Bone, BonePose, CacheChannel, CacheDeformer, CacheFile, CacheFrame, Camera,
+    CameraSwitcher, Character, Constraint, CoordinateAxes, CoordinateAxis, CurvePoint,
     DisplayLayer, DomNode, DomValue, DomValueType, Element, ElementType, Empty, Error, ErrorFrame,
     ErrorType, Face, GeometryCache, Light, LineCurve, LodGroup, Marker, Material, MaterialTexture,
     Matrix, Mesh, MetadataObject, Node, NurbsBasis, NurbsCurve, NurbsSurface, NurbsTrimBoundary,
@@ -132,7 +132,7 @@ use crate::native::parse::{
     MeshImp, Refcount, SceneImp, ELEMENT_TYPE_COUNT,
 };
 use crate::native::platform::{
-    add_ptr, atomic_counter_dec, atomic_counter_free, atomic_counter_inc, atomic_counter_init,
+    atomic_counter_dec, atomic_counter_free, atomic_counter_inc, atomic_counter_init,
     macro_lower_bound_eq, math, min_sz, ufbx_assert, ufbxi_ignore, ufbxi_unreachable, NO_INDEX,
     SOURCE_VERSION, THREAD_SAFE,
 };
@@ -3908,6 +3908,54 @@ pub(crate) unsafe fn get_blend_vertex_offset(blend: *const BlendDeformer, vertex
 }
 
 // ufbx.c:32062-32081 `ufbx_add_blend_shape_vertex_offsets`
+fn add_blend_shape_vertex_offsets_prepared<M: Mode>(
+    shape: &View<BlendShape, M>,
+    vertices: Run<'_, Vec3>,
+    weight: Real,
+) {
+    let num_offsets = shape.num_offsets();
+    let vertex_indices = shape.offset_vertices_view();
+    let offsets = shape.position_offsets_view();
+    let weights = shape.offset_weights_view();
+    let weights_count = weights.count();
+
+    for i in 0..num_offsets {
+        let index = vertex_indices.copy_at(i);
+        // C: `index < num_vertices` — `uint32_t` widens to `size_t`.
+        if (index as usize) < vertices.len() {
+            let mut vertex_weight = weight;
+            if i < weights_count {
+                vertex_weight *= weights.copy_at(i);
+            }
+
+            // C computes `&vertices[index]` before the offset value in the
+            // existing Rust evaluation order, then updates x/y/z in sequence.
+            let vertex = vertices.at(index as usize);
+            let offset = offsets.copy_at(i);
+            vertex.set_x(vertex.x() + offset.x * vertex_weight);
+            vertex.set_y(vertex.y() + offset.y * vertex_weight);
+            vertex.set_z(vertex.z() + offset.z * vertex_weight);
+        }
+    }
+}
+
+pub(crate) fn add_blend_shape_vertex_offsets_run<M: Mode>(
+    shape: &View<BlendShape, M>,
+    vertices: Option<Run<'_, Vec3>>,
+    weight: Real,
+) {
+    if weight == 0.0 {
+        return;
+    }
+    let Some(vertices) = vertices else {
+        return;
+    };
+
+    add_blend_shape_vertex_offsets_prepared(shape, vertices, weight);
+}
+
+// Raw adapter retaining the C entry point's early-return order and overlapping
+// raw-buffer behavior. Safe Rust callers use the bounded core above.
 pub(crate) unsafe fn add_blend_shape_vertex_offsets(
     shape: *const BlendShape,
     vertices: *mut Vec3,
@@ -3921,43 +3969,49 @@ pub(crate) unsafe fn add_blend_shape_vertex_offsets(
         return;
     }
 
-    // SAFETY: `shape` points at a live `BlendShape` per this fn's contract;
-    // every field read below is one of its own list fields.
-    let (num_offsets, vertex_indices, offsets, weights_data, weights_count) = unsafe {
+    // SAFETY: after the two C-order guards, `shape` is this adapter's live
+    // readable scene object and `vertices` describes its caller's writable
+    // output run. The list data stays raw, preserving C overlap without an
+    // exclusive slice or freezing the separately allocated offset elements.
+    let (shape, vertices) = unsafe {
         (
-            (*shape).num_offsets,
-            (*shape).offset_vertices.data,
-            (*shape).position_offsets.data,
-            (*shape).offset_weights.data,
-            (*shape).offset_weights.count,
+            View::<BlendShape, Const>::from_ptr(shape),
+            Run::from_raw_parts(vertices, num_vertices),
         )
     };
-    for i in 0..num_offsets {
-        // SAFETY: `i < num_offsets`, so `vertex_indices.add(i)` addresses a live
-        // `u32` in the shape's `offset_vertices` list.
-        let index: u32 = unsafe { *vertex_indices.add(i) };
-        // C: `index < num_vertices` — `uint32_t` widens to `size_t`.
-        if (index as usize) < num_vertices {
-            let mut vertex_weight: Real = weight;
-            if i < weights_count {
-                // SAFETY: `i < weights_count`, so `weights_data.add(i)` addresses a
-                // live `Real` in the shape's `offset_weights` list.
-                vertex_weight *= unsafe { *weights_data.add(i) };
+    add_blend_shape_vertex_offsets_prepared(shape, vertices, weight);
+}
+
+// ufbx.c:32083-32095 `ufbx_add_blend_vertex_offsets`
+pub(crate) fn add_blend_vertex_offsets_run<M: Mode>(
+    blend: &View<BlendDeformer, M>,
+    vertices: Option<Run<'_, Vec3>>,
+    weight: Real,
+) {
+    // C traverses every channel/keyframe even when `vertices` is NULL or the
+    // top-level weight is zero. Each nested shape call owns those no-op guards.
+    let channels = blend.channels_view();
+    let num_channels = channels.count();
+    for chan_ix in 0..num_channels {
+        let chan = channels.at(chan_ix);
+        let keyframes = chan.keyframes_view();
+        let num_keyframes = keyframes.count();
+        for key_ix in 0..num_keyframes {
+            let key = keyframes.at(key_ix);
+            if key.effective_weight() == 0.0 {
+                continue;
             }
-            // SAFETY: `index < num_vertices` bounds `vertices.add(index)` within
-            // the caller's writable `vertices` buffer; `i < num_offsets` bounds
-            // `offsets.add(i)` within the shape's `position_offsets` list. The
-            // target stays a raw pointer (C: `&vertices[index]`): the buffer may
-            // be arena memory other raw pointers also address, so no `&mut`
-            // retag is taken over it.
-            unsafe {
-                add_weighted_vec3(vertices.add(index as usize), *offsets.add(i), vertex_weight)
-            };
+            add_blend_shape_vertex_offsets_run(
+                key.shape_view(),
+                vertices,
+                weight * key.effective_weight(),
+            );
         }
     }
 }
 
-// ufbx.c:32083-32095 `ufbx_add_blend_vertex_offsets`
+// Raw adapter for the C ABI shim. The assertion/null check stays outside the
+// safe core so the raw entry point retains the C boundary behavior.
 pub(crate) unsafe fn add_blend_vertex_offsets(
     blend: *const BlendDeformer,
     vertices: *mut Vec3,
@@ -3969,49 +4023,21 @@ pub(crate) unsafe fn add_blend_vertex_offsets(
         return;
     }
 
-    // C: `ufbxi_for_ptr_list(ufbx_blend_channel, p_chan, blend->channels)`
-    // SAFETY: `blend` is non-null here (checked above) and points at a live
-    // `BlendDeformer` per this fn's contract; `channels.data`/`.count` are its
-    // own list fields, so `add_ptr` yields the one-past-end pointer.
-    let mut p_chan: *mut *mut BlendChannel =
-        unsafe { (*blend).channels.data } as *mut *mut BlendChannel;
-    // SAFETY: same live `BlendDeformer`, reading its own `channels.count`.
-    let p_chan_end: *mut *mut BlendChannel = unsafe { add_ptr(p_chan, (*blend).channels.count) };
-    while p_chan != p_chan_end {
-        // SAFETY: `p_chan` is in `[data, end)` of the channel pointer list, so it
-        // addresses a live `*mut BlendChannel` element.
-        let chan: *mut BlendChannel = unsafe { *p_chan };
-        // C: `ufbxi_for_list(ufbx_blend_keyframe, key, chan->keyframes)` —
-        // indexed here because the body `continue`s (the C `for` advances the
-        // iterator in its increment clause).
-        // SAFETY: `chan` is a live `BlendChannel`; reading its own
-        // `keyframes.count`.
-        for key_ix in 0..unsafe { (*chan).keyframes.count } {
-            // SAFETY: same live `BlendChannel`; `key_ix < keyframes.count`, so
-            // `keyframes.data.add(key_ix)` addresses a live `BlendKeyframe`.
-            let key: *mut BlendKeyframe =
-                unsafe { ((*chan).keyframes.data as *mut BlendKeyframe).add(key_ix) };
-            // SAFETY: `key` is a live `BlendKeyframe`; reading its own
-            // `effective_weight` field.
-            if unsafe { (*key).effective_weight } == 0.0 {
-                continue;
-            }
-            // SAFETY: same live `BlendKeyframe`; its own `shape` ref is read out
-            // by value (`Ref` is `Copy`) and forwarded as the bare C pointer, and
-            // the weight reads its own `effective_weight`.
-            unsafe {
-                add_blend_shape_vertex_offsets(
-                    core::ptr::read(&raw const (*key).shape).ptr(),
-                    vertices,
-                    num_vertices,
-                    weight * (*key).effective_weight,
-                )
-            };
-        }
-        // SAFETY: `p_chan` is before `p_chan_end`, so stepping one element stays
-        // within the channel pointer list (up to one-past-end).
-        p_chan = unsafe { p_chan.add(1) };
-    }
+    // SAFETY: `blend` is the live readable scene object required by this
+    // adapter. A non-null `vertices` describes the caller's writable output
+    // run; NULL is retained as `None` so traversal still occurs and nested
+    // shape calls no-op.
+    let (blend, vertices) = unsafe {
+        (
+            View::<BlendDeformer, Const>::from_ptr(blend),
+            if vertices.is_null() {
+                None
+            } else {
+                Some(Run::from_raw_parts(vertices, num_vertices))
+            },
+        )
+    };
+    add_blend_vertex_offsets_run(blend, vertices, weight);
 }
 
 fn evaluate_nurbs_basis_run(
@@ -7518,6 +7544,7 @@ mod tests {
     // through their non-zeroable fields, so `invalid_value` is allowed for the tests.
     #![allow(invalid_value)]
     use super::*;
+    use crate::generated::BlendKeyframe;
     use crate::generated::Error;
     use crate::generated::NameElement;
     use crate::generated::RawAllocatorOpts;
@@ -9013,6 +9040,105 @@ mod tests {
             add_blend_shape_vertex_offsets(shape, verts.as_mut_ptr(), verts.len(), 0.0);
             assert_eq!((verts[1].x, verts[3].y), (1.0, 4.0));
             add_blend_shape_vertex_offsets(shape, core::ptr::null_mut(), verts.len(), 2.0);
+
+            // Both early-return paths precede every shape read/mint.
+            add_blend_shape_vertex_offsets(core::ptr::null(), verts.as_mut_ptr(), verts.len(), 0.0);
+            add_blend_shape_vertex_offsets(core::ptr::null(), core::ptr::null_mut(), 3, 2.0);
+
+            // A non-null zero-length destination is not the C NULL sentinel:
+            // the shape is still read, but every sparse index is out of range.
+            let mut empty: [Vec3; 0] = [];
+            add_blend_shape_vertex_offsets(shape, empty.as_mut_ptr(), 0, 2.0);
+
+            // Raw C callers may use the shape's own offset storage as output.
+            // Each offset is copied before its destination fields are updated.
+            let overlap_indices = [0u32, 1u32];
+            let mut overlap_offsets = [vec3(1.0, 2.0, 3.0), vec3(4.0, 5.0, 6.0)];
+            let overlap_ptr = overlap_offsets.as_mut_ptr();
+            let mut overlap_storage = MaybeUninit::<BlendShape>::zeroed();
+            let overlap_shape = overlap_storage.as_mut_ptr();
+            (&raw mut (*overlap_shape).num_offsets).write(overlap_indices.len());
+            (&raw mut (*overlap_shape).offset_vertices).write(List::from_slice(&overlap_indices));
+            // The stored source pointer and destination share one
+            // write-capable raw provenance, matching C's aliasing model.
+            (&raw mut (*overlap_shape).position_offsets.data).write(overlap_ptr);
+            (&raw mut (*overlap_shape).position_offsets.count).write(overlap_offsets.len());
+            (&raw mut (*overlap_shape).offset_weights).write(List::from_slice(&[]));
+            add_blend_shape_vertex_offsets(overlap_shape, overlap_ptr, overlap_offsets.len(), 1.0);
+            assert_eq!(
+                (
+                    overlap_offsets[0].x,
+                    overlap_offsets[0].y,
+                    overlap_offsets[0].z
+                ),
+                (2.0, 4.0, 6.0)
+            );
+            assert_eq!(
+                (
+                    overlap_offsets[1].x,
+                    overlap_offsets[1].y,
+                    overlap_offsets[1].z
+                ),
+                (8.0, 10.0, 12.0)
+            );
+        }
+    }
+
+    #[test]
+    fn test_add_blend_vertex_offsets() {
+        unsafe {
+            let indices = [0u32, 2u32];
+            let offsets = [vec3(1.0, 2.0, 3.0), vec3(4.0, 5.0, 6.0)];
+            let shape_weights = [0.5 as Real, 1.0 as Real];
+            let mut shape_storage = MaybeUninit::<BlendShape>::zeroed();
+            let shape = write_blend_shape(&mut shape_storage, &indices, &offsets, &shape_weights);
+
+            let keyframes = [
+                BlendKeyframe {
+                    shape: Ref::from_ptr(shape),
+                    target_weight: 100.0,
+                    effective_weight: 0.5,
+                },
+                // Zero-effective keys skip the shape before the nested call.
+                BlendKeyframe {
+                    shape: Ref::from_ptr(shape),
+                    target_weight: 100.0,
+                    effective_weight: 0.0,
+                },
+            ];
+            let mut channel_storage = MaybeUninit::<BlendChannel>::uninit();
+            let channel = channel_storage.as_mut_ptr();
+            (&raw mut (*channel).keyframes).write(List::from_slice(&keyframes));
+            let channel_refs = [Ref::from_ptr(channel)];
+
+            let mut blend_storage = MaybeUninit::<BlendDeformer>::uninit();
+            let blend = blend_storage.as_mut_ptr();
+            (&raw mut (*blend).channels.data).write(channel_refs.as_ptr());
+            (&raw mut (*blend).channels.count).write(channel_refs.len());
+
+            let mut vertices = [vec3(10.0, 20.0, 30.0); 4];
+            add_blend_vertex_offsets(blend, vertices.as_mut_ptr(), vertices.len(), 2.0);
+            assert_eq!(
+                (vertices[0].x, vertices[0].y, vertices[0].z),
+                (10.5, 21.0, 31.5)
+            );
+            assert_eq!(
+                (vertices[2].x, vertices[2].y, vertices[2].z),
+                (14.0, 25.0, 36.0)
+            );
+            assert_eq!((vertices[1].x, vertices[3].z), (10.0, 30.0));
+
+            // Blend traversal owns no output early return. Nested shape calls
+            // receive `None`, or receive zero weight, and perform the no-op.
+            add_blend_vertex_offsets(blend, core::ptr::null_mut(), vertices.len(), 2.0);
+            let before = vertices;
+            add_blend_vertex_offsets(blend, vertices.as_mut_ptr(), vertices.len(), 0.0);
+            for (actual, expected) in vertices.iter().zip(before) {
+                assert_eq!(
+                    (actual.x, actual.y, actual.z),
+                    (expected.x, expected.y, expected.z)
+                );
+            }
         }
     }
 }
