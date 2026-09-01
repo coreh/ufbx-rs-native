@@ -2506,12 +2506,9 @@ pub(crate) unsafe fn read_vertex_element(
                     index = index_run[face_ix];
                 }
                 if index as usize >= num_elems {
-                    // SAFETY: `&raw mut index` addresses an unaliased local,
-                    // live and unmoved across the call — a write-capable
-                    // `uint32_t` slot, an adequate mint for the `Mut`
-                    // index-slot view.
-                    let p_dst: &View<u32> = unsafe { View::<u32, Mut>::from_ptr(&raw mut index) };
-                    fix_index(uc, p_dst, index, num_elems)?;
+                    let invalid_index = index;
+                    let p_dst: &View<u32> = View::<u32, Mut>::from_mut(&mut index);
+                    fix_index(uc, p_dst, invalid_index, num_elems)?;
                 }
                 for i in 0..face.num_indices as usize {
                     // SAFETY: every face's `index_begin + num_indices` stays

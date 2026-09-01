@@ -140,6 +140,47 @@ fn load_cube_ascii() {
     assert!(load_and_walk("maya_cube_7500_ascii.fbx").is_finite());
 }
 
+/// Indexed `ByPolygon` attributes expand one repaired index across every
+/// polygon vertex. Exercise both writable-local repair policies directly.
+#[test]
+fn load_indexed_by_polygon_invalid_index() {
+    let source =
+        std::string::String::from_utf8(read_data("synthetic_direct_by_polygon_7700_ascii.fbx"))
+            .expect("ASCII fixture");
+    let source = source.replacen(
+        "ReferenceInformationType: \"Direct\"",
+        "ReferenceInformationType: \"IndexToDirect\"",
+        1,
+    );
+    let source = source.replacen(
+        "\t\t}\n\t\tLayerElementUV: 0 {",
+        "\t\t\tNormalsIndex: *2 {\n\t\t\t\ta: 0,99\n\t\t\t}\n\t\t}\n\t\tLayerElementUV: 0 {",
+        1,
+    );
+    assert!(source.contains("NormalsIndex: *2"));
+
+    for (handling, repaired) in [
+        (ufbx::IndexErrorHandling::Clamp, 1),
+        (ufbx::IndexErrorHandling::NoIndex, u32::MAX),
+    ] {
+        let scene = ufbx::load_memory(
+            source.as_bytes(),
+            LoadOpts {
+                index_error_handling: handling,
+                ..Default::default()
+            },
+        )
+        .expect("indexed ByPolygon fixture");
+        let mesh = scene.meshes.first().expect("mesh");
+        let normal_indices = mesh.vertex_normal.indices.as_ref();
+        assert_eq!(&normal_indices[..4], &[0, 0, 0, 0]);
+        assert_eq!(
+            &normal_indices[4..],
+            &[repaired, repaired, repaired, repaired]
+        );
+    }
+}
+
 #[test]
 fn load_line_curves() {
     for name in [

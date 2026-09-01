@@ -7964,9 +7964,7 @@ pub(crate) fn finalize_mesh_material(
         // an index when fetching the face indices).
         let mut part_index: u32 = 0;
         // C: `ufbxi_for(ufbx_mesh_part, part, parts, num_parts)`
-        // SAFETY: a non-null `parts` addresses one contiguous arena run of the
-        // mesh's `num_parts` live, initialized material parts.
-        let part_views = unsafe { SliceViewIter::<MeshPart>::from_raw_parts(parts, num_parts) };
+        let part_views = Run::from_list(mesh.material_parts_view()).iter();
         for part in part_views {
             // C: `part->index = part_index++;` — assigns the pre-increment value.
             part.set_index(part_index);
@@ -11500,8 +11498,7 @@ pub(crate) fn update_blend_channel(channel_view: &BlendChannelView) {
     let channel: *mut BlendChannel = channel_view.get();
     let weight: Real =
         find_real(channel_view.props_view(), &sp::DeformPercent, 0.0) * (0.01 as Real);
-    // SAFETY: `channel` is the blend-channel view's own storage.
-    unsafe { (*channel).weight = weight };
+    channel_view.set_weight(weight);
 
     // SAFETY: `channel` as above.
     let num_keys: isize = unsafe { (*channel).keyframes.count } as isize;
