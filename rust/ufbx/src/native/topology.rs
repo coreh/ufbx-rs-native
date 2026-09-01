@@ -776,12 +776,9 @@ pub(crate) unsafe fn triangulate_ngon(nc: &NgonContext, indices: Run<'_, u32>) -
     let face: Face = nc.face();
     ufbx_assert!(face.num_indices > 4);
 
-    // Form an orthonormal basis to project the polygon into a 2D plane
-    // SAFETY: `positions_mut_ptr()` is the address of `nc`'s own live
-    // `positions`, and `face` is `nc`'s own face — the pairing
-    // `get_weighted_face_normal` requires.
+    // Form an orthonormal basis to project the polygon into a 2D plane.
     let mut normal: Vec3 =
-        unsafe { crate::native::api::get_weighted_face_normal(nc.positions_mut_ptr(), face) };
+        crate::native::api::catch_get_weighted_face_normal(None, nc.positions_view(), face);
     let len: Real = length3(normal);
     if len > math::EPSILON {
         normal = mul3(normal, 1.0 / len);
@@ -1057,20 +1054,13 @@ pub(crate) unsafe fn triangulate_ngon(nc: &NgonContext, indices: Run<'_, u32>) -
 
     // Copy over the last triangles
     ufbx_assert!(num_triangles == max_triangles);
-    // SAFETY: `num_last_triangles * 3` elements of the `last_triangles` source
-    // are copied to `indices + (max_triangles - num_last_triangles) * 3`, the
-    // tail of the `max_triangles`-triangle output region in `indices`; source
-    // (stack) and destination (caller buffer) are distinct objects.
     let tail_begin = max_triangles
         .wrapping_sub(num_last_triangles)
         .wrapping_mul(3) as usize;
     let tail_count = num_last_triangles.wrapping_mul(3) as usize;
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            last_triangles.as_ptr(),
-            indices.subrun(tail_begin, tail_count).as_mut_ptr(),
-            tail_count,
-        );
+    let tail = indices.subrun(tail_begin, tail_count);
+    for (i, &value) in last_triangles[..tail_count].iter().enumerate() {
+        tail.write_at(i, value);
     }
 
     num_triangles

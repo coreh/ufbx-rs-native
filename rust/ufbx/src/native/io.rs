@@ -29,10 +29,29 @@ use crate::native::error::{
 };
 use crate::native::parse::{get_read_offset, report_progress, Context};
 use crate::native::platform::{max64, max_sz, min64, min_sz, to_size, ufbx_assert, MAX_SKIP_SIZE};
-use crate::native::view::{view_raw_mut, view_read, view_write, Const, View};
+use crate::native::view::{view_raw_mut, view_read, view_write, Const, Run, View};
 use crate::prelude::OpenFileContext;
 
 // -- IO
+
+/// Project the current read cursor forward inside its buffered window.
+#[inline(always)]
+fn cursor_after(uc: &Context, consumed: usize) -> *const u8 {
+    let available = uc
+        .yield_size()
+        .checked_add(uc.data_size())
+        .expect("buffered read window overflow");
+    assert!(consumed <= available);
+    if consumed == 0 {
+        return uc.data();
+    }
+
+    // SAFETY: an initialized context's `data` cursor has `yield_size +
+    // data_size` readable bytes left in its current buffered window. The run
+    // stays local, so refill cannot move or free that window while it exists.
+    let window = unsafe { Run::<u8, Const>::from_const_raw_parts(uc.data(), available) };
+    window.subrun(consumed, available - consumed).as_ptr()
+}
 
 // ufbx.c:6716-6781 `ufbxi_refill`
 // C: `static ufbxi_noinline const char *` — returns NULL on failure.
@@ -238,11 +257,9 @@ pub(crate) fn read_bytes(uc: &Context, size: usize) -> *const u8 {
     }
 
     // Advance the read position inside the current buffer
+    let next_data = cursor_after(uc, size);
     uc.set_yield_size(uc.yield_size() - size);
-    // SAFETY: `ret` points into the current buffer, which holds at least `size`
-    // bytes here (checked above / guaranteed by `yield_`), so advancing by
-    // `size` stays in-bounds.
-    uc.set_data(unsafe { ret.add(size) });
+    uc.set_data(next_data);
     ret
 }
 
@@ -251,11 +268,9 @@ pub(crate) fn read_bytes(uc: &Context, size: usize) -> *const u8 {
 pub(crate) fn consume_bytes(uc: &Context, size: usize) {
     // Bytes must have been checked first with `ufbxi_peek_bytes()`
     ufbx_assert!(size <= uc.yield_size());
+    let next_data = cursor_after(uc, size);
     uc.set_yield_size(uc.yield_size() - size);
-    // SAFETY: `size <= yield_size()` is asserted above (`ufbx_assert!` is an
-    // unconditional `assert!`), so the cursor stays inside the buffered read
-    // window (`data .. data + yield_size + data_size`).
-    uc.set_data(unsafe { uc.data().add(size) });
+    uc.set_data(next_data);
 }
 
 // ufbx.c:6851-6896 `ufbxi_skip_bytes`
@@ -266,9 +281,7 @@ pub(crate) fn skip_bytes(uc: &Context, mut size: u64) -> Result<(), Fail> {
 
         if size > uc.data_size() as u64 {
             size -= uc.data_size() as u64;
-            // SAFETY: advancing the read cursor by exactly the bytes still
-            // buffered lands on the end of the buffered window.
-            uc.set_data(unsafe { uc.data().add(uc.data_size()) });
+            uc.set_data(cursor_after(uc, uc.data_size()));
             uc.set_data_size(0);
 
             uc.set_data_offset(uc.data_offset().wrapping_add(size));
@@ -318,9 +331,7 @@ pub(crate) fn skip_bytes(uc: &Context, mut size: u64) -> Result<(), Fail> {
                 );
             }
         } else {
-            // SAFETY: this branch has `size <= data_size`, so the advance stays
-            // inside the buffered read window.
-            uc.set_data(unsafe { uc.data().add(size as usize) });
+            uc.set_data(cursor_after(uc, size as usize));
             uc.set_data_size(uc.data_size() - size as usize);
         }
 
@@ -355,20 +366,22 @@ pub(crate) unsafe fn read_to(uc: &Context, dst: *mut c_void, mut size: usize) ->
 
     // Copy data from the current buffer first
     let len: usize = min_sz(uc.data_size(), size);
-    // C-parity: `memcpy(ptr, uc->data, len)` — `uc->data` may be NULL when
-    // `len == 0` (memory input fully consumed), as in C.
-    // SAFETY: `len <= uc.data_size()`, so `uc.data()` has `len` readable bytes
-    // in the buffered window, and `dst` has at least `size >= len` writable
-    // bytes (the raw-pointer contract of this `unsafe fn`); the caller's
-    // destination and `uc`'s read buffer are distinct allocations.
-    unsafe { core::ptr::copy_nonoverlapping(uc.data(), ptr, len) };
-    // SAFETY: `len <= uc.data_size()`, so the cursor stays inside the buffered
-    // read window.
-    uc.set_data(unsafe { uc.data().add(len) });
+    // C-parity: `memcpy(ptr, uc->data, len)` accepts NULL pointers when `len ==
+    // 0`, while Rust pointer operations require skipping that case entirely.
+    // SAFETY: `dst` has `size` writable bytes by this `unsafe fn`'s contract;
+    // `len <= uc.data_size()` makes the source readable, and the caller's
+    // destination is distinct from the context's read buffer. The zero-length
+    // branch mints an empty run without dereferencing either null pointer.
+    let next_ptr = unsafe {
+        let dst_run = Run::<u8>::from_raw_parts(ptr, size);
+        if len > 0 {
+            core::ptr::copy_nonoverlapping(uc.data(), dst_run.as_mut_ptr(), len);
+        }
+        dst_run.subrun(len, size - len).as_mut_ptr()
+    };
+    uc.set_data(cursor_after(uc, len));
     uc.set_data_size(uc.data_size() - len);
-    // SAFETY: `len` bytes of `dst` were consumed above, so `ptr + len` is at
-    // most one past the end of the caller's destination buffer.
-    ptr = unsafe { ptr.add(len) };
+    ptr = next_ptr;
     size -= len;
 
     // If there's data left to copy try to read from user IO
@@ -1096,6 +1109,17 @@ mod tests {
         n
     }
 
+    unsafe extern "C" fn slice_skip(user: *mut c_void, size: usize) -> bool {
+        // SAFETY: the tests install this callback with `read_user` pointing at
+        // their live, exclusively callback-owned `SliceReader`.
+        let r = unsafe { &mut *(user as *mut SliceReader) };
+        if size > r.data.len() - r.pos {
+            return false;
+        }
+        r.pos += size;
+        true
+    }
+
     #[test]
     fn test_refill_read_bytes_and_skip() {
         static DATA: [u8; 64] = {
@@ -1210,6 +1234,80 @@ mod tests {
             // own temp allocator, torn down once here.
             free_ator(AllocatorView::from_ptr(&raw mut uc.ator_tmp));
         }
+    }
+
+    #[test]
+    fn test_skip_callback_advances_buffered_and_streamed_data() {
+        static DATA: [u8; 64] = {
+            let mut d = [0u8; 64];
+            let mut i = 0;
+            while i < 64 {
+                d[i] = i as u8;
+                i += 1;
+            }
+            d
+        };
+        let mut reader = SliceReader {
+            data: &DATA,
+            pos: 0,
+            chunk: 7,
+        };
+        let mut uc = zeroed_context();
+        unsafe {
+            init_tmp_ator(Context::from_ptr(&raw mut *uc));
+            uc.read_fn = Some(slice_read);
+            uc.skip_fn = Some(slice_skip);
+            uc.read_user = &mut reader as *mut SliceReader as *mut c_void;
+            uc.opts = MaybeUninit::<RawLoadOpts>::zeroed().assume_init();
+            uc.opts.read_buffer_size = 16;
+            uc.progress_interval = 0x4000;
+
+            let context = Context::from_ptr(&raw mut *uc);
+            assert!(!peek_bytes(context, 8).is_null());
+
+            // Exercise direct consumption and a skip wholly inside the
+            // buffered window, then make a second skip drain the window and
+            // invoke `skip_fn` for the remaining distance.
+            consume_bytes(context, 2);
+            let p = read_bytes(context, 3);
+            assert_eq!(core::slice::from_raw_parts(p, 3), &DATA[2..5]);
+            assert!(skip_bytes(context, 3).is_ok());
+            assert!(skip_bytes(context, 30).is_ok());
+            let p = read_bytes(context, 4);
+            assert_eq!(core::slice::from_raw_parts(p, 4), &DATA[38..42]);
+            assert_eq!(get_read_offset(context), 42);
+
+            free(
+                Some(AllocatorView::from_ptr(&raw mut uc.ator_tmp)),
+                uc.read_buffer,
+                uc.read_buffer_size,
+            );
+            free_ator(AllocatorView::from_ptr(&raw mut uc.ator_tmp));
+        }
+    }
+
+    #[test]
+    fn test_read_to_accepts_null_for_zero_size() {
+        static LIVE_BASE: [u8; 1] = [0];
+        let mut uc = zeroed_context();
+        uc.progress_interval = 1;
+        // Zero-byte cursor operations preserve the empty context's exact NULL
+        // base rather than attempting pointer arithmetic on it.
+        let context = unsafe { Context::from_ptr(&raw mut *uc) };
+        assert!(read_bytes(context, 0).is_null());
+        consume_bytes(context, 0);
+        assert!(uc.data.is_null());
+
+        // `read_to` progress accounting expects the cursor pair to share one
+        // live allocation even when the remaining window is empty.
+        context.set_data(LIVE_BASE.as_ptr());
+        context.set_data_begin(LIVE_BASE.as_ptr() as *mut u8);
+
+        // SAFETY: zero bytes require no writable destination; C explicitly
+        // permits NULL for this case, and `read_to` must not dereference it.
+        assert!(unsafe { read_to(context, core::ptr::null_mut(), 0) }.is_ok());
+        assert_eq!(uc.data, LIVE_BASE.as_ptr());
+        assert_eq!(uc.data_size, 0);
     }
 
     // The `ufbx_open_file`/`ufbx_open_memory` entry-point tests live in

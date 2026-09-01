@@ -3140,6 +3140,7 @@ fn geometry_cache_through_scene() {
             .expect("cache deformer resolves its file");
         let downcast_file = ufbx::as_cache_file(&file.element).expect("cache file downcast");
         assert!(core::ptr::eq(downcast_file, file.as_ref()));
+        assert_eq!(downcast_file.format, ufbx::CacheFileFormat::Mc);
         assert_eq!(
             downcast_file.external_cache.is_some(),
             file.external_cache.is_some()

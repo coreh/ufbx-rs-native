@@ -8827,13 +8827,14 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
         ));
 
         let type_: i64 = api_find_int_len(cache_view.props_view(), b"CacheFileType", 0);
-        if type_ >= 0 && type_ <= CacheFileFormat::Mc as i64 {
-            // C: `(ufbx_cache_file_format)type` — the guard above pins `type`
-            // into `0..=UFBX_CACHE_FILE_FORMAT_MC`, exactly the enum range.
-            // SAFETY: the guard pins `type_` into `0..=UFBX_CACHE_FILE_FORMAT_MC`,
-            // exactly the discriminants of the `u32`-repr `CacheFileFormat`.
-            cache_view
-                .set_format(unsafe { core::mem::transmute::<u32, CacheFileFormat>(type_ as u32) });
+        let format = match type_ {
+            0 => Some(CacheFileFormat::Unknown),
+            1 => Some(CacheFileFormat::Pc2),
+            2 => Some(CacheFileFormat::Mc),
+            _ => None,
+        };
+        if let Some(format) = format {
+            cache_view.set_format(format);
         }
 
         // SAFETY: each `*_raw()` addresses one of the viewed cache file's own
