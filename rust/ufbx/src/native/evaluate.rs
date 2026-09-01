@@ -63,8 +63,8 @@ use crate::native::api::{
 use crate::native::api::{coordinate_axes_valid, default_open_file, open_file_ctx};
 use crate::native::api::{
     euler_to_quat, evaluate_anim_value_real_flags, evaluate_anim_value_vec3_flags,
-    evaluate_curve_flags, evaluate_prop_flags_len, evaluate_prop_len, init_ref, quat_slerp,
-    quat_to_euler, IDENTITY_QUAT,
+    evaluate_curve_flags, evaluate_prop_flags_len_view, evaluate_prop_len_view, init_ref,
+    quat_slerp, quat_to_euler, EvalPropName, IDENTITY_QUAT,
 };
 #[cfg(feature = "baking")]
 use crate::native::api::{evaluate_baked_vec3_slice, evaluate_transform_flags, quat_fix_antipodal};
@@ -1857,19 +1857,12 @@ fn combine_anim_layer_rec(
         && prop_name == sp::Lcl_Rotation.as_ptr()
         && !ctx.has_rotation_order
     {
-        // SAFETY: `ctx`'s `anim`/`element` are `Const` views, so their pointees
-        // are live for the ctx's lifetime by the mint contract the view carries,
-        // and the name run is the interned `RotationOrder` static —
-        // `evaluate_prop_len`'s contract.
-        let rp: Prop = unsafe {
-            evaluate_prop_len(
-                ctx.anim.as_ptr(),
-                ctx.element.as_ptr(),
-                sp::RotationOrder.as_ptr(),
-                sp::RotationOrder.len() - 1,
-                ctx.time,
-            )
-        };
+        let rp: Prop = evaluate_prop_len_view(
+            ctx.anim,
+            ctx.element,
+            EvalPropName::from_slice(&sp::RotationOrder[..sp::RotationOrder.len() - 1]),
+            ctx.time,
+        );
         // NOTE: Defaults to 0 (UFBX_ROTATION_XYZ) gracefully if property is not found
         if rp.value_int >= 0 && rp.value_int <= RotationOrder::Spheric as i64 {
             // C: `(ufbx_rotation_order)rp.value_int` — in-range by the guard.
@@ -2248,19 +2241,13 @@ fn evaluate_connected_prop_rec(
     };
     if terminal {
         let conn = conn.expect("terminal connection checked above");
-        // SAFETY: `anim` and `conn` borrow live scene-owned values. The source
-        // element and property name stored in `conn` remain live for the
-        // evaluation, and this call preserves C's fields and call structure.
-        let ep: Prop = unsafe {
-            evaluate_prop_flags_len(
-                anim.as_ptr(),
-                conn.src().ptr(),
-                conn.src_prop().data,
-                conn.src_prop().length,
-                time,
-                flags,
-            )
-        };
+        let ep: Prop = evaluate_prop_flags_len_view(
+            anim,
+            conn.src_view(),
+            EvalPropName::from_string(conn.src_prop_view()),
+            time,
+            flags,
+        );
         prop.set_value_vec4(ep.value_vec4);
         prop.set_value_int(ep.value_int);
         prop.set_value_str(ep.value_str);
@@ -7571,14 +7558,13 @@ pub(crate) unsafe fn bake_anim_prop(
         let bake_time: BakeTime = unsafe { *times.data.add(i) };
         let eval_time: f64 = bake_time_sample_time(bake_time);
         // SAFETY: `bc.anim()` is the `ufbx_anim` `bake_anim_imp` stored into
-        // `bc`, `element` is the caller's live scene element (this `unsafe fn`'s
-        // contract), and `name` describes the `prop_name` span measured above.
+        // `bc`, and `element` is the caller's live scene element (this
+        // `unsafe fn`'s contract). Both are read-only during evaluation.
         let prop: Prop = unsafe {
-            evaluate_prop_flags_len(
-                bc.anim(),
-                element,
-                name.data,
-                name.length,
+            evaluate_prop_flags_len_view(
+                View::<Anim, Const>::from_ptr(bc.anim()),
+                View::<Element, Const>::from_ptr(element),
+                EvalPropName::from_string(View::<String, Const>::from_ref(&name)),
                 eval_time,
                 bc.opts_view().evaluate_flags(),
             )

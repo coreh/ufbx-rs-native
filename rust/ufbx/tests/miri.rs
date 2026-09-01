@@ -1530,7 +1530,8 @@ fn recursive_connected_property_cycles_preserve_local_values() {
             .expect("missing connected property");
         assert!(stored.flags.has_any(ufbx::PropFlags::CONNECTED));
 
-        let value = ufbx::evaluate_prop(&scene.anim, &node.element, "Lcl Translation", 0.5);
+        let value =
+            ufbx::evaluate_prop_flags(&scene.anim, &node.element, "Lcl Translation", 0.5, 0);
         assert_eq!(
             [
                 value.value_vec4.x as f64,
@@ -1599,6 +1600,37 @@ fn public_find_wrappers_from_shared_refs() {
         direct.map(core::ptr::from_ref),
         by_name.map(core::ptr::from_ref)
     );
+
+    // Find a stored property with a matching object-property connection in the
+    // already-loaded binary fixture. This guarantees a direct hit without
+    // pulling an unrelated parser path into the boundary regression.
+    let (connected_element, connected_prop, connected_type, connected_result) = scene
+        .connections_dst
+        .iter()
+        .find_map(|connection| {
+            if connection.dst_prop.length == 0 || connection.src_prop.length != 0 {
+                return None;
+            }
+            let element: &ufbx::Element = connection.dst.as_ref();
+            let prop = element.props.find_prop(connection.dst_prop.as_ref())?;
+            let type_ = connection.src.type_;
+            let result = ufbx::get_prop_element(element, prop, type_)?;
+            Some((element, prop, type_, result))
+        })
+        .expect("fixture has no resolvable property connection");
+    let connected_by_name = ufbx::find_prop_element(
+        connected_element,
+        connected_prop.name.as_ref(),
+        connected_type,
+    )
+    .expect("missing named property connection");
+    assert!(core::ptr::eq(connected_result, connected_by_name));
+    assert!(ufbx::get_prop_element(
+        connected_element,
+        connected_prop,
+        ufbx::ElementType::Unknown,
+    )
+    .is_none());
 
     // Anim-eval path: evaluate_prop_flags reads props through the same roots,
     // and evaluate_props builds a stack `Props` whose defaults chain crosses
@@ -1793,6 +1825,29 @@ fn public_anim_eval_from_shared_refs() {
     let anim: &ufbx::Anim = &scene.anim;
     let mut acc = 0.0f64;
 
+    let (stored_element, stored) = scene
+        .elements
+        .iter()
+        .find_map(|element| element.props.props.first().map(|prop| (element, prop)))
+        .expect("fixture has no stored property");
+    let hit = ufbx::evaluate_prop(anim, stored_element, stored.name.as_ref(), 0.25);
+    assert!(!hit.flags.has_any(ufbx::PropFlags::NOT_FOUND));
+    assert_eq!(hit.name.as_ref().as_ptr(), stored.name.as_ref().as_ptr());
+
+    // Miss results retain the caller's original base, including a non-null
+    // empty string base, instead of canonicalizing either representation.
+    let owned_miss = std::string::String::from("__owned_property_miss__");
+    let miss = ufbx::evaluate_prop(anim, &scene.root_node.element, &owned_miss, 0.25);
+    assert!(miss.flags.has_any(ufbx::PropFlags::NOT_FOUND));
+    assert_eq!(miss.name.as_ref().as_ptr(), owned_miss.as_ptr());
+    assert_eq!(miss.name.length, owned_miss.len());
+
+    let nonnull_empty = std::string::String::new();
+    let empty_miss =
+        ufbx::evaluate_prop_flags(anim, &scene.root_node.element, &nonnull_empty, 0.25, 0);
+    assert!(empty_miss.flags.has_any(ufbx::PropFlags::NOT_FOUND));
+    assert_eq!(empty_miss.name.length, 0);
+
     for curve in &scene.anim_curves {
         acc += ufbx::evaluate_curve(curve, 0.4, 0.0) as f64;
         acc += ufbx::evaluate_curve_flags(curve, 0.4, 0.0, 0) as f64;
@@ -1830,6 +1885,16 @@ fn public_anim_eval_from_shared_refs() {
         .next()
         .expect("fixture has no animated properties");
     let animated_element: &ufbx::Element = animated_prop.element.as_ref();
+    let animated = ufbx::evaluate_prop_flags(
+        anim,
+        animated_element,
+        animated_prop.prop_name.as_ref(),
+        0.25,
+        0,
+    );
+    assert!(animated.flags.has_any(ufbx::PropFlags::ANIMATED));
+    acc += animated.value_vec4.x as f64;
+
     {
         let seed = ufbx::evaluate_prop(
             anim,
@@ -1984,6 +2049,10 @@ fn public_anim_eval_from_shared_refs() {
     acc += ufbx::evaluate_prop(over_anim, &node.element, "Lcl Translation", 0.25)
         .value_vec4
         .x as f64;
+    let overridden =
+        ufbx::evaluate_prop_flags(over_anim, &node.element, "Lcl Translation", 0.25, 0);
+    assert!(overridden.flags.has_any(ufbx::PropFlags::OVERRIDDEN));
+    assert_eq!(overridden.value_vec4.x as f64, 1.0);
 
     // Baked-keyframe interpolation over slices from a baked result.
     let baked = ufbx::bake_anim(scene, anim, Default::default()).expect("bake_anim");

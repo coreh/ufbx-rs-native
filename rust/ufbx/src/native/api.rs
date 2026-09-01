@@ -1092,6 +1092,25 @@ pub(crate) fn find_element_len<M: Mode>(
 }
 
 // ufbx.c:30743-30748 `ufbx_get_prop_element`
+// Safe typed root for Rust callers. The nullable stored name pointer is kept
+// distinct from every non-null empty interned name by `ConnectionPropKey`.
+pub(crate) fn get_prop_element_view<ME: Mode, MP: Mode>(
+    element: &View<Element, ME>,
+    prop: &View<Prop, MP>,
+    type_: ElementType,
+) -> *mut Element {
+    // C reads `prop->name` only after both object arguments have passed the raw
+    // adapter's null checks, then searches the element's destination links.
+    let prop_name = prop.name_view();
+    fetch_dst_element_header(
+        element,
+        ConnectionPropKey::from_nullable_string(prop_name),
+        type_,
+    )
+}
+
+// Raw adapter retaining the C entry point's pointer validation and C-string
+// measurement semantics; the safe Rust surface uses the typed core above.
 pub(crate) unsafe fn get_prop_element(
     element: *const Element,
     prop: *const Prop,
@@ -1535,6 +1554,40 @@ pub(crate) fn evaluate_anim_value_vec3_flags(
 }
 
 // ufbx.c:30951-30954 `ufbx_evaluate_prop_len`
+#[derive(Clone, Copy)]
+pub(crate) struct EvalPropName<'a> {
+    data: *const u8,
+    bytes: &'a [u8],
+}
+
+impl<'a> EvalPropName<'a> {
+    #[inline(always)]
+    pub(crate) fn from_slice(bytes: &'a [u8]) -> Self {
+        Self::with_base(bytes.as_ptr(), bytes)
+    }
+
+    #[inline(always)]
+    pub(crate) fn from_string<M: Mode>(name: &'a View<String, M>) -> Self {
+        Self::with_base(name.data(), name.bytes())
+    }
+
+    #[inline(always)]
+    pub(crate) fn with_base(data: *const u8, bytes: &'a [u8]) -> Self {
+        assert!(bytes.is_empty() || data == bytes.as_ptr());
+        Self { data, bytes }
+    }
+}
+
+#[inline(never)]
+pub(crate) fn evaluate_prop_len_view(
+    anim: &View<Anim, Const>,
+    element: &View<Element, Const>,
+    name: EvalPropName<'_>,
+    time: f64,
+) -> Prop {
+    evaluate_prop_flags_len_view(anim, element, name, time, 0)
+}
+
 #[inline(never)]
 pub(crate) unsafe fn evaluate_prop_len(
     anim: *const Anim,
@@ -1543,39 +1596,34 @@ pub(crate) unsafe fn evaluate_prop_len(
     name_len: usize,
     time: f64,
 ) -> Prop {
-    // SAFETY: the pointers are this `unsafe fn`'s own params — `anim`/`element`
-    // live, `name`/`name_len` the caller's key buffer — forwarded unchanged.
-    unsafe { evaluate_prop_flags_len(anim, element, name, name_len, time, 0) }
+    // SAFETY: the pointers are this `unsafe fn`'s own params. The views retain
+    // the readable object provenance, while the carrier retains the caller's
+    // original name base even for a zero-length run.
+    unsafe {
+        let bytes = crate::prelude::slice_from_ptr(name, name_len);
+        evaluate_prop_len_view(
+            View::<Anim, Const>::from_ptr(anim),
+            View::<Element, Const>::from_ptr(element),
+            EvalPropName::with_base(name, bytes),
+            time,
+        )
+    }
 }
 
 // ufbx.c:30956-30989 `ufbx_evaluate_prop_flags_len`
 #[inline(never)]
-pub(crate) unsafe fn evaluate_prop_flags_len(
-    anim: *const Anim,
-    element: *const Element,
-    name: *const u8,
-    name_len: usize,
+pub(crate) fn evaluate_prop_flags_len_view(
+    anim: &View<Anim, Const>,
+    element: &View<Element, Const>,
+    name: EvalPropName<'_>,
     time: f64,
     flags: u32,
 ) -> Prop {
     // C: `ufbx_prop result;`
     let mut result: Prop;
 
-    // Public-boundary root: caller-owned `*const Element` whose provenance can
-    // be a read-only `&Element` (safe Rust wrapper), so mint a read-only
-    // `Const` view — legal for any readable provenance (Miri SB, topology
-    // finding). `ufbx_evaluate_prop_flags` takes `const ufbx_element *`, so the
-    // element stays frozen for the whole body and its `props` table and
-    // `element_id` are reached through the view's accessors.
-    // SAFETY: `element` points at a live `Element` — the raw-pointer contract of
-    // this `unsafe fn`.
-    let element_view: &View<Element, Const> = unsafe { View::<Element, Const>::from_ptr(element) };
-    let props: &View<Props, Const> = element_view.props();
-    // SAFETY: `name`/`name_len` are the caller's key-buffer params, minted as
-    // the query slice (`slice_from_ptr` maps the null/0 case to empty).
-    let prop: Option<&View<Prop, Const>> = find_prop_len(props, unsafe {
-        crate::prelude::slice_from_ptr(name, name_len)
-    });
+    let props: &View<Props, Const> = element.props();
+    let prop: Option<&View<Prop, Const>> = find_prop_len(props, name.bytes);
     if let Some(found) = prop {
         // SAFETY: `found.as_ptr()` addresses the matched live `Prop`; the read
         // copies it out by value (C struct assignment).
@@ -1585,11 +1633,9 @@ pub(crate) unsafe fn evaluate_prop_flags_len(
         // SAFETY: `Prop` is a plain-data struct of pointers, spans and scalars,
         // so the all-zero bit pattern is a valid value (C `memset(&result, 0)`).
         result = unsafe { MaybeUninit::zeroed().assume_init() };
-        result.name.data = name;
-        result.name.length = name_len;
-        // SAFETY: `name`/`name_len` describe the caller's key bytes.
-        result._internal_key =
-            unsafe { get_name_key(crate::prelude::slice_from_ptr(name, name_len)) };
+        result.name.data = name.data;
+        result.name.length = name.bytes.len();
+        result._internal_key = get_name_key(name.bytes);
         result.flags = PropFlags::NOT_FOUND;
         result.value_str.data = EMPTY_CHAR.as_ptr();
         result.value_str.length = 0;
@@ -1597,19 +1643,12 @@ pub(crate) unsafe fn evaluate_prop_flags_len(
         result.value_blob.size = 0;
     }
 
-    // SAFETY: `anim` points at a live `Anim` — the raw-pointer contract of this
-    // `unsafe fn`; reading its own `prop_overrides.count`.
-    if unsafe { (*anim).prop_overrides.count } > 0 {
-        // SAFETY: `&raw const (*anim).prop_overrides` addresses the live anim's
-        // own overrides list (read-only during evaluation — the `Const` mint's
-        // freeze); the result view is rooted on the local prop.
-        unsafe {
-            evaluate::find_prop_override(
-                View::<_, Const>::from_ptr(&raw const (*anim).prop_overrides),
-                element_view.element_id(),
-                View::<_, Mut>::from_mut(&mut result),
-            )
-        };
+    if anim.prop_overrides_view().count() > 0 {
+        evaluate::find_prop_override(
+            anim.prop_overrides_view(),
+            element.element_id(),
+            View::<_, Mut>::from_mut(&mut result),
+        );
         return result;
     }
 
@@ -1619,9 +1658,7 @@ pub(crate) unsafe fn evaluate_prop_flags_len(
 
     // C-parity: `prop->flags` — `prop` is non-NULL here because the NOT_FOUND
     // branch above always takes the early return.
-    // SAFETY: live `anim` per above; reading its own `ignore_connections` flag.
-    if (prop.unwrap().flags().raw() & PropFlags::CONNECTED.raw()) != 0
-        && !unsafe { (*anim).ignore_connections }
+    if (prop.unwrap().flags().raw() & PropFlags::CONNECTED.raw()) != 0 && !anim.ignore_connections()
     {
         // SAFETY: the raw address identifies the local prop, `anim`/`element` are the
         // live params, and `prop.unwrap().name().data` is the matched prop's own
@@ -1629,8 +1666,8 @@ pub(crate) unsafe fn evaluate_prop_flags_len(
         unsafe {
             evaluate::evaluate_connected_prop(
                 &raw mut result,
-                anim,
-                element,
+                anim.as_ptr(),
+                element.as_ptr(),
                 prop.unwrap().name().data,
                 time,
                 flags,
@@ -1642,8 +1679,8 @@ pub(crate) unsafe fn evaluate_prop_flags_len(
     // the initialized local prop as a write-capable one-element run.
     unsafe {
         evaluate::evaluate_props(
-            anim,
-            element,
+            anim.as_ptr(),
+            element.as_ptr(),
             time,
             Run::from_raw_parts(&raw mut result, 1),
             flags,
@@ -1651,6 +1688,30 @@ pub(crate) unsafe fn evaluate_prop_flags_len(
     };
 
     result
+}
+
+#[inline(never)]
+pub(crate) unsafe fn evaluate_prop_flags_len(
+    anim: *const Anim,
+    element: *const Element,
+    name: *const u8,
+    name_len: usize,
+    time: f64,
+    flags: u32,
+) -> Prop {
+    // SAFETY: the pointers are this `unsafe fn`'s own params. The byte slice is
+    // minted only in this raw adapter and the original base is retained for a
+    // miss result, including either representation of an empty name.
+    unsafe {
+        let bytes = crate::prelude::slice_from_ptr(name, name_len);
+        evaluate_prop_flags_len_view(
+            View::<Anim, Const>::from_ptr(anim),
+            View::<Element, Const>::from_ptr(element),
+            EvalPropName::with_base(name, bytes),
+            time,
+            flags,
+        )
+    }
 }
 
 // ufbx.c:30991-30994 `ufbx_evaluate_props`
@@ -1919,11 +1980,12 @@ pub(crate) fn evaluate_transform_flags(
                     break;
                 };
                 // C: `ufbx_prop scale = ufbx_evaluate_prop(anim, &p->scale_helper->element, ufbxi_Lcl_Scaling, time);`
-                // SAFETY: `anim` and the helper element are frozen views;
-                // `sp::Lcl_Scaling` is a NUL-terminated static name.
-                let scale: Prop = unsafe {
-                    evaluate_prop(anim, helper.element(), sp::Lcl_Scaling.as_ptr(), time)
-                };
+                let scale: Prop = evaluate_prop_len_view(
+                    anim,
+                    helper.element(),
+                    EvalPropName::from_slice(&sp::Lcl_Scaling[..sp::Lcl_Scaling.len() - 1]),
+                    time,
+                );
                 // C: `scale.value_vec3.{x,y,z}` — the value union's 3-real view.
                 scale_factor.x *= scale.value_vec4.x;
                 scale_factor.y *= scale.value_vec4.y;
@@ -1938,11 +2000,12 @@ pub(crate) fn evaluate_transform_flags(
             .scale_helper_view()
             .filter(|_| (flags & TransformFlags::IGNORE_SCALE_HELPER.raw()) == 0)
         {
-            // SAFETY: `anim` and the helper element are frozen views;
-            // `sp::Lcl_Scaling` is a NUL-terminated static name.
-            helper_scale.write(unsafe {
-                evaluate_prop(anim, helper.element(), sp::Lcl_Scaling.as_ptr(), time)
-            });
+            helper_scale.write(evaluate_prop_len_view(
+                anim,
+                helper.element(),
+                EvalPropName::from_slice(&sp::Lcl_Scaling[..sp::Lcl_Scaling.len() - 1]),
+                time,
+            ));
             let hs: *mut Prop = helper_scale.as_mut_ptr();
             // SAFETY: `hs` is the just-written local `Prop` storage; reading and
             // writing its own value fields.
@@ -7278,10 +7341,12 @@ pub(crate) unsafe fn evaluate_prop(
     name: *const u8,
     time: f64,
 ) -> Prop {
-    // SAFETY: `anim`/`element` address live pointees frozen for the call (the
-    // views' own mint contract); `name` is this fn's NUL-terminated raw-pointer
-    // string param — `strlen` measures it and all forward to `_len`.
-    unsafe { evaluate_prop_len(anim.as_ptr(), element.as_ptr(), name, strlen(name), time) }
+    // SAFETY: `name` is this fn's NUL-terminated raw-pointer string param. The
+    // raw adapter measures and mints its byte span while retaining its base.
+    unsafe {
+        let bytes = crate::prelude::slice_from_ptr(name, strlen(name));
+        evaluate_prop_len_view(anim, element, EvalPropName::with_base(name, bytes), time)
+    }
 }
 
 // ufbx.c:33156 `ufbx_evaluate_prop_flags`
@@ -7292,9 +7357,18 @@ pub(crate) unsafe fn evaluate_prop_flags(
     time: f64,
     flags: u32,
 ) -> Prop {
-    // SAFETY: `name` is this fn's NUL-terminated raw-pointer string param;
-    // `strlen` measures it and all forward (with `anim`/`element`) to `_len`.
-    unsafe { evaluate_prop_flags_len(anim, element, name, strlen(name), time, flags) }
+    // SAFETY: all pointers are this fn's raw parameters. The adapter measures
+    // and mints the NUL-form name span, retaining its original base.
+    unsafe {
+        let bytes = crate::prelude::slice_from_ptr(name, strlen(name));
+        evaluate_prop_flags_len_view(
+            View::<Anim, Const>::from_ptr(anim),
+            View::<Element, Const>::from_ptr(element),
+            EvalPropName::with_base(name, bytes),
+            time,
+            flags,
+        )
+    }
 }
 
 // ufbx.c:33157 `ufbx_find_prop_texture`
@@ -7455,6 +7529,79 @@ mod tests {
     use crate::prelude::Ref;
     use core::ffi::c_void;
     use core::mem::size_of;
+
+    #[test]
+    fn evaluate_prop_miss_preserves_name_base() {
+        let mut anim = MaybeUninit::<Anim>::uninit();
+        let anim_ptr = anim.as_mut_ptr();
+        let mut element = MaybeUninit::<Element>::uninit();
+        let element_ptr = element.as_mut_ptr();
+
+        // Only fields reached by the miss/inert path are initialized. Views
+        // read these leaves without forming references to either whole struct.
+        unsafe {
+            (&raw mut (*anim_ptr).prop_overrides).write(List::from_slice(&[]));
+            (&raw mut (*element_ptr).props).write(Props {
+                props: List::from_slice(&[]),
+                num_animated: 0,
+                defaults: None,
+            });
+        }
+
+        let owned = b"owned miss".to_vec();
+        // SAFETY: the initialized leaves above are exactly those reached by an
+        // empty property table, and `owned` is the live name run.
+        let owned_result = unsafe {
+            evaluate_prop_flags_len(anim_ptr, element_ptr, owned.as_ptr(), owned.len(), 0.0, 0)
+        };
+        assert_eq!(owned_result.name.data, owned.as_ptr());
+        assert_eq!(owned_result.name.length, owned.len());
+        assert_eq!(owned_result._internal_key, get_name_key(&owned));
+        assert_eq!(owned_result.flags.raw(), PropFlags::NOT_FOUND.raw());
+        assert_eq!(owned_result.value_str.data, EMPTY_CHAR.as_ptr());
+        assert_eq!(owned_result.value_str.length, 0);
+        assert!(owned_result.value_blob.data.is_null());
+        assert_eq!(owned_result.value_blob.size, 0);
+
+        // SAFETY: zero bytes are read from either empty-name base; the object
+        // leaves are the same initialized miss/inert-path fields as above.
+        let null_result =
+            unsafe { evaluate_prop_len(anim_ptr, element_ptr, core::ptr::null(), 0, 0.0) };
+        assert!(null_result.name.data.is_null());
+        assert_eq!(null_result.name.length, 0);
+        let null_flags_result =
+            unsafe { evaluate_prop_flags_len(anim_ptr, element_ptr, core::ptr::null(), 0, 0.0, 0) };
+        assert!(null_flags_result.name.data.is_null());
+        assert_eq!(null_flags_result.name.length, 0);
+
+        let nonnull_empty = [0u8; 1];
+        let nonnull_result =
+            unsafe { evaluate_prop_len(anim_ptr, element_ptr, nonnull_empty.as_ptr(), 0, 0.0) };
+        assert_eq!(nonnull_result.name.data, nonnull_empty.as_ptr());
+        assert_eq!(nonnull_result.name.length, 0);
+
+        let safe_nonnull_result = evaluate_prop_len_view(
+            unsafe { View::<Anim, Const>::from_ptr(anim_ptr) },
+            unsafe { View::<Element, Const>::from_ptr(element_ptr) },
+            EvalPropName::from_slice(&nonnull_empty[..0]),
+            0.0,
+        );
+        assert_eq!(safe_nonnull_result.name.data, nonnull_empty.as_ptr());
+        assert_eq!(safe_nonnull_result.name.length, 0);
+
+        let anim_view = unsafe { View::<Anim, Const>::from_ptr(anim_ptr) };
+        let element_view = unsafe { View::<Element, Const>::from_ptr(element_ptr) };
+        // SAFETY: the local byte is a live NUL-terminated name. The NUL-form
+        // adapter measures zero bytes and preserves the supplied non-null base.
+        let nul_result =
+            unsafe { evaluate_prop(anim_view, element_view, nonnull_empty.as_ptr(), 0.0) };
+        assert_eq!(nul_result.name.data, nonnull_empty.as_ptr());
+        assert_eq!(nul_result.name.length, 0);
+        let nul_flags_result =
+            unsafe { evaluate_prop_flags(anim_ptr, element_ptr, nonnull_empty.as_ptr(), 0.0, 0) };
+        assert_eq!(nul_flags_result.name.data, nonnull_empty.as_ptr());
+        assert_eq!(nul_flags_result.name.length, 0);
+    }
 
     // Build a refcounted object the way the C setup code does: an allocator
     // feeding a result buffer, with the `ufbxi_refcount` header pushed into

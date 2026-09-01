@@ -554,6 +554,29 @@ override_functions["ufbx_find_prop_concat"] = """
 // TODO: ufbx_find_prop_concat()
 """
 
+# Safe references mint frozen views for the typed lookup core. The returned
+# pointer is still converted only after the search, with its lifetime rooted in
+# `element`; `prop` is an independent key.
+override_functions["ufbx_get_prop_element"] = """
+#[allow(clippy::needless_lifetimes)]
+pub fn get_prop_element<'a>(
+    element: &'a Element,
+    prop: &Prop,
+    type_: ElementType,
+) -> Option<&'a Element> {
+    let result = crate::native::api::get_prop_element_view(
+        crate::native::view::View::<Element, crate::native::view::Const>::from_ref(element),
+        crate::native::view::View::<Prop, crate::native::view::Const>::from_ref(prop),
+        type_,
+    );
+    if result.is_null() {
+        None
+    } else {
+        unsafe { Some(&*result) }
+    }
+}
+"""
+
 override_functions["ufbx_find_element_len"] = """
 #[allow(clippy::needless_lifetimes)]
 pub fn find_element<'a>(scene: &'a Scene, type_: ElementType, name: &str) -> Option<&'a Element> {
@@ -1048,7 +1071,31 @@ override_functions["ufbx_evaluate_prop_len"] = """
 pub fn evaluate_prop<'a, 'b>(anim: &'a Anim, element: &'a Element, name: &'b str, time: f64) -> ExternalRef<'b, Prop>
     where 'a: 'b
 {
-    let result = unsafe { ufbx_evaluate_prop_len(anim as *const Anim, element as *const Element, name.as_ptr(), name.len(), time) };
+    let result = crate::native::api::evaluate_prop_len_view(
+        crate::native::view::View::<Anim, crate::native::view::Const>::from_ref(anim),
+        crate::native::view::View::<Element, crate::native::view::Const>::from_ref(element),
+        crate::native::api::EvalPropName::from_slice(name.as_bytes()),
+        time,
+    );
+    unsafe { ExternalRef::new(result) }
+}
+"""
+
+# A miss stores the caller's name pointer in the returned `Prop`, so both
+# wrappers retain the name borrow in `ExternalRef`. `Prop` remains `Copy`, so
+# callers can still copy through `Deref`; the wrapper binds its own value to the
+# name borrow but does not prevent that separate copy escape.
+override_functions["ufbx_evaluate_prop_flags_len"] = """
+pub fn evaluate_prop_flags<'a, 'b>(anim: &'a Anim, element: &'a Element, name: &'b str, time: f64, flags: u32) -> ExternalRef<'b, Prop>
+    where 'a: 'b
+{
+    let result = crate::native::api::evaluate_prop_flags_len_view(
+        crate::native::view::View::<Anim, crate::native::view::Const>::from_ref(anim),
+        crate::native::view::View::<Element, crate::native::view::Const>::from_ref(element),
+        crate::native::api::EvalPropName::from_slice(name.as_bytes()),
+        time,
+        flags,
+    );
     unsafe { ExternalRef::new(result) }
 }
 """

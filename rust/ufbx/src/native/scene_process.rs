@@ -2339,6 +2339,19 @@ impl<'a> ConnectionPropKey<'a> {
             data: prop.data(),
         }
     }
+
+    /// Key from the nullable stored string accepted by `ufbx_get_prop_element`:
+    /// a null data pointer selects `ufbxi_empty_char`, while every non-null
+    /// pointer — including a distinct zero-length interned name — keeps its
+    /// stored identity.
+    #[inline(always)]
+    pub(crate) fn from_nullable_string<M: Mode>(prop: &'a View<String, M>) -> Self {
+        if prop.data().is_null() {
+            Self::from_option(None)
+        } else {
+            Self::from_string(prop)
+        }
+    }
 }
 
 #[inline(always)]
@@ -12883,6 +12896,27 @@ mod tests {
     const FBX_MAP_COUNT: u8 = MaterialFbxMap::VectorDisplacement as u8 + 1;
     const PBR_MAP_COUNT: u8 = MaterialPbrMap::TransmissionGlossiness as u8 + 1;
     const FEATURE_COUNT: u8 = MaterialFeature::TransmissionRoughnessAsGlossiness as u8 + 1;
+
+    #[test]
+    fn connection_prop_key_preserves_empty_pointer_identity() {
+        static DISTINCT_EMPTY: [u8; 1] = [0];
+
+        // The non-null descriptor points at immutable static storage; the null
+        // descriptor has zero length and is never dereferenced.
+        let distinct = String::new_c(DISTINCT_EMPTY.as_ptr(), 0);
+        let null = String::new_c(core::ptr::null(), 0);
+
+        let distinct_key =
+            ConnectionPropKey::from_nullable_string(View::<String, Const>::from_ref(&distinct));
+        assert!(distinct_key.bytes.is_empty());
+        assert_eq!(distinct_key.data, DISTINCT_EMPTY.as_ptr());
+
+        let null_key =
+            ConnectionPropKey::from_nullable_string(View::<String, Const>::from_ref(&null));
+        assert!(null_key.bytes.is_empty());
+        assert_eq!(null_key.data, EMPTY_CHAR.as_ptr());
+        assert_ne!(null_key.data, distinct_key.data);
+    }
 
     #[test]
     fn element_node_walks_helpers_and_instances() {

@@ -4737,9 +4737,11 @@ pub fn get_prop_element<'a>(
     prop: &Prop,
     type_: ElementType,
 ) -> Option<&'a Element> {
-    let result = unsafe {
-        crate::native::api::get_prop_element(element as *const Element, prop as *const Prop, type_)
-    };
+    let result = crate::native::api::get_prop_element_view(
+        crate::native::view::View::<Element, crate::native::view::Const>::from_ref(element),
+        crate::native::view::View::<Prop, crate::native::view::Const>::from_ref(prop),
+        type_,
+    );
     if result.is_null() {
         None
     } else {
@@ -5026,37 +5028,33 @@ pub fn evaluate_prop<'a, 'b>(
 where
     'a: 'b,
 {
-    let result = unsafe {
-        ufbx_evaluate_prop_len(
-            anim as *const Anim,
-            element as *const Element,
-            name.as_ptr(),
-            name.len(),
-            time,
-        )
-    };
+    let result = crate::native::api::evaluate_prop_len_view(
+        crate::native::view::View::<Anim, crate::native::view::Const>::from_ref(anim),
+        crate::native::view::View::<Element, crate::native::view::Const>::from_ref(element),
+        crate::native::api::EvalPropName::from_slice(name.as_bytes()),
+        time,
+    );
     unsafe { ExternalRef::new(result) }
 }
 
-#[allow(clippy::let_and_return)]
-pub fn evaluate_prop_flags(
-    anim: &Anim,
-    element: &Element,
-    name: &str,
+pub fn evaluate_prop_flags<'a, 'b>(
+    anim: &'a Anim,
+    element: &'a Element,
+    name: &'b str,
     time: f64,
     flags: u32,
-) -> Prop {
-    let result = unsafe {
-        crate::native::api::evaluate_prop_flags_len(
-            anim as *const Anim,
-            element as *const Element,
-            name.as_ptr(),
-            name.len(),
-            time,
-            flags,
-        )
-    };
-    result
+) -> ExternalRef<'b, Prop>
+where
+    'a: 'b,
+{
+    let result = crate::native::api::evaluate_prop_flags_len_view(
+        crate::native::view::View::<Anim, crate::native::view::Const>::from_ref(anim),
+        crate::native::view::View::<Element, crate::native::view::Const>::from_ref(element),
+        crate::native::api::EvalPropName::from_slice(name.as_bytes()),
+        time,
+        flags,
+    );
+    unsafe { ExternalRef::new(result) }
 }
 
 pub fn evaluate_props<'a, 'b>(
