@@ -7933,9 +7933,7 @@ pub(crate) fn finalize_mesh_material(
     // Count the number of faces and triangles per material
     // C: `ufbxi_nounroll for (size_t i = 0; i < num_faces; i++)`
     for i in 0..num_faces {
-        // SAFETY: `num_faces` is the length of the mesh's own face run, so
-        // `i < num_faces` addresses a live, initialized face.
-        let face: Face = unsafe { *mesh.faces().data.add(i) };
+        let face: Face = mesh.faces_view().copy_at(i);
         let mut mat_ix: u32 = 0;
 
         if !face_material.is_null() {
@@ -9686,10 +9684,7 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
                         // SAFETY: `num_faces` is at most the tmp mesh texture's own
                         // `num_faces`, the length of its per-face run.
                         let texture_id: i32 = unsafe { *(*tex).face_texture.add(i) } as i32;
-                        // SAFETY: `num_faces` is at most the mesh's `num_faces`; the
-                        // `face_material` list is non-empty here (checked above), so
-                        // it is the per-face run of that length.
-                        let material_id: i32 = unsafe { *mesh.face_material().data.add(i) } as i32;
+                        let material_id: i32 = mesh.face_material_view().copy_at(i) as i32;
                         if texture_id < 0 || (texture_id as usize) >= textures_view.count() {
                             continue;
                         }

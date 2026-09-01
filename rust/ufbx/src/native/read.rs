@@ -3786,18 +3786,12 @@ pub(crate) fn update_face_groups(
 
     // C: `ufbxi_nounroll for (size_t i = 0; i < num_faces; i++)`
     for i in 0..num_faces {
-        // SAFETY: `i < num_faces` bounds the `face_group` and `faces` reads
-        // (both runs are `num_faces` long), and every `face_group` entry is a
-        // group index below `face_group_parts.count == num_groups`, which
-        // bounds the part slot.
-        let part: &View<MeshPart> = unsafe {
-            View::<MeshPart>::from_ptr(
-                (mesh.face_group_parts().data as *mut MeshPart)
-                    .add(*mesh.face_group().data.add(i) as usize),
-            )
-        };
-        // SAFETY: `i < num_faces` bounds the `faces` read.
-        let num_indices: u32 = unsafe { (*mesh.faces().data.add(i)).num_indices };
+        // `i < num_faces` bounds the parallel per-face runs, and every
+        // `face_group` entry is a group index below
+        // `face_group_parts.count == num_groups`.
+        let group_ix = mesh.face_group_view().copy_at(i) as usize;
+        let part: &View<MeshPart> = mesh.face_group_parts_view().at(group_ix);
+        let num_indices: u32 = mesh.faces_view().at(i).num_indices();
         mesh_part_add_face(part, num_indices);
     }
 
@@ -3820,14 +3814,10 @@ pub(crate) fn update_face_groups(
     // C: `ufbxi_nounroll for (uint32_t i = 0; i < num_faces; i++)`
     let mut i: u32 = 0;
     while (i as usize) < num_faces {
-        // SAFETY: as the counting loop above — `i < num_faces` bounds the
-        // `face_group` read and its entry is a group index below `num_groups`.
-        let part: &View<MeshPart> = unsafe {
-            View::<MeshPart>::from_ptr(
-                (mesh.face_group_parts().data as *mut MeshPart)
-                    .add(*mesh.face_group().data.add(i as usize) as usize),
-            )
-        };
+        // As in the counting loop, `i < num_faces` and the stored group index
+        // is below `num_groups`.
+        let group_ix = mesh.face_group_view().copy_at(i as usize) as usize;
+        let part: &View<MeshPart> = mesh.face_group_parts_view().at(group_ix);
         // C: `part->face_indices.data[part->face_indices.count++] = i;`
         // SAFETY: `part`'s `face_indices` is the sub-range assigned above,
         // sized to the part's `num_faces`; `count` was reset to zero and is
