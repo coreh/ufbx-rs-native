@@ -81,19 +81,6 @@ impl<M: Mode> View<SubdivideInput, M> {
     }
 }
 
-#[cfg(feature = "subdivision")]
-impl View<SubdivideInput> {
-    #[inline(always)]
-    pub(crate) fn set_data(&self, data: *const c_void) {
-        view_write!(self, data, data)
-    }
-
-    #[inline(always)]
-    pub(crate) fn set_weight(&self, weight: Real) {
-        view_write!(self, weight, weight)
-    }
-}
-
 // ufbx.c:28830 `typedef int ufbxi_subdivide_sum_fn(void *user, void *output,
 // const ufbxi_subdivide_input *inputs, size_t num_inputs);`
 // C passes function designators (`&ufbxi_subdivide_sum_vec3`) — fn pointers,
@@ -185,9 +172,9 @@ pub(crate) struct SubdivideLayerOutput {
     pub unique_per_vertex: bool,
 }
 
-// Checked read/write surface over the subdivision layer out-struct. Callers
-// read these fields only after a successful `subdivide_layer()` initializes
-// them; the layer itself writes them in C statement order through the setters.
+// Checked read surface over the subdivision layer out-struct. Callers read
+// these fields only after `subdivide_layer()` publishes the complete record on
+// successful initialization.
 #[cfg(feature = "subdivision")]
 impl<M: Mode> View<SubdivideLayerOutput, M> {
     #[inline(always)]
@@ -208,34 +195,6 @@ impl<M: Mode> View<SubdivideLayerOutput, M> {
     #[inline(always)]
     pub(crate) fn num_indices(&self) -> usize {
         view_read_shared!(self, num_indices)
-    }
-}
-
-#[cfg(feature = "subdivision")]
-impl View<SubdivideLayerOutput> {
-    #[inline(always)]
-    pub(crate) fn set_values(&self, values: *mut c_void) {
-        view_write!(self, values, values)
-    }
-
-    #[inline(always)]
-    pub(crate) fn set_num_values(&self, num_values: usize) {
-        view_write!(self, num_values, num_values)
-    }
-
-    #[inline(always)]
-    pub(crate) fn set_indices(&self, indices: *mut u32) {
-        view_write!(self, indices, indices)
-    }
-
-    #[inline(always)]
-    pub(crate) fn set_num_indices(&self, num_indices: usize) {
-        view_write!(self, num_indices, num_indices)
-    }
-
-    #[inline(always)]
-    pub(crate) fn set_unique_per_vertex(&self, unique_per_vertex: bool) {
-        view_write!(self, unique_per_vertex, unique_per_vertex)
     }
 }
 
@@ -1258,7 +1217,7 @@ pub(crate) fn subdivide_layer(
     let inputs_write = unsafe { Run::<SubdivideInput>::from_raw_parts(inputs, min_inputs) };
 
     // Assume initially unique per vertex, remove if not the case
-    output.set_unique_per_vertex(true);
+    let mut unique_per_vertex = true;
 
     let mut sharp_corners: bool = false;
     let mut sharp_splits: bool = false;
@@ -1324,8 +1283,7 @@ pub(crate) fn subdivide_layer(
                     as *const c_void
             };
             let input_slot = inputs_write.at(ci as usize);
-            input_slot.set_data(data);
-            input_slot.set_weight(weight);
+            input_slot.write_value(SubdivideInput { data, weight });
             ci += 1;
         }
 
@@ -1369,7 +1327,7 @@ pub(crate) fn subdivide_layer(
         let split: bool = unsafe { is_edge_split(input, input_indices, topo_view, ix) };
 
         if split || topo_edge.flags().has_any(TopoFlags::NON_MANIFOLD) {
-            output.set_unique_per_vertex(false);
+            unique_per_vertex = false;
         }
 
         let mut crease: Real = 0.0;
@@ -1409,18 +1367,22 @@ pub(crate) fn subdivide_layer(
                     stride,
                 )
                 .as_ptr();
-            let input_slot = inputs_write.at(0);
-            input_slot.set_data(v0 as *const c_void);
-            input_slot.set_weight(0.25);
-            let input_slot = inputs_write.at(1);
-            input_slot.set_data(v1 as *const c_void);
-            input_slot.set_weight(0.25);
-            let input_slot = inputs_write.at(2);
-            input_slot.set_data(f0 as *const c_void);
-            input_slot.set_weight(0.25);
-            let input_slot = inputs_write.at(3);
-            input_slot.set_data(f1 as *const c_void);
-            input_slot.set_weight(0.25);
+            inputs_write.at(0).write_value(SubdivideInput {
+                data: v0 as *const c_void,
+                weight: 0.25,
+            });
+            inputs_write.at(1).write_value(SubdivideInput {
+                data: v1 as *const c_void,
+                weight: 0.25,
+            });
+            inputs_write.at(2).write_value(SubdivideInput {
+                data: f0 as *const c_void,
+                weight: 0.25,
+            });
+            inputs_write.at(3).write_value(SubdivideInput {
+                data: f1 as *const c_void,
+                weight: 0.25,
+            });
             ufbxi_check_err!(
                 sc.error_view(),
                 // SAFETY: `sum_fn`/`sum_user`/`dst` and the 4 inputs satisfy the
@@ -1436,12 +1398,14 @@ pub(crate) fn subdivide_layer(
                 "sum_fn(sum_user, dst, inputs, 4)"
             );
         } else if crease >= 1.0 {
-            let input_slot = inputs_write.at(0);
-            input_slot.set_data(v0 as *const c_void);
-            input_slot.set_weight(0.5);
-            let input_slot = inputs_write.at(1);
-            input_slot.set_data(v1 as *const c_void);
-            input_slot.set_weight(0.5);
+            inputs_write.at(0).write_value(SubdivideInput {
+                data: v0 as *const c_void,
+                weight: 0.5,
+            });
+            inputs_write.at(1).write_value(SubdivideInput {
+                data: v1 as *const c_void,
+                weight: 0.5,
+            });
             ufbxi_check_err!(
                 sc.error_view(),
                 // SAFETY: `sum_fn`/`sum_user`/`dst` and the 2 inputs satisfy the
@@ -1469,18 +1433,22 @@ pub(crate) fn subdivide_layer(
             let w0: Real = 0.25 + 0.25 * crease;
             let w1: Real = 0.25 - 0.25 * crease;
 
-            let input_slot = inputs_write.at(0);
-            input_slot.set_data(v0 as *const c_void);
-            input_slot.set_weight(w0);
-            let input_slot = inputs_write.at(1);
-            input_slot.set_data(v1 as *const c_void);
-            input_slot.set_weight(w0);
-            let input_slot = inputs_write.at(2);
-            input_slot.set_data(f0 as *const c_void);
-            input_slot.set_weight(w1);
-            let input_slot = inputs_write.at(3);
-            input_slot.set_data(f1 as *const c_void);
-            input_slot.set_weight(w1);
+            inputs_write.at(0).write_value(SubdivideInput {
+                data: v0 as *const c_void,
+                weight: w0,
+            });
+            inputs_write.at(1).write_value(SubdivideInput {
+                data: v1 as *const c_void,
+                weight: w0,
+            });
+            inputs_write.at(2).write_value(SubdivideInput {
+                data: f0 as *const c_void,
+                weight: w1,
+            });
+            inputs_write.at(3).write_value(SubdivideInput {
+                data: f1 as *const c_void,
+                weight: w1,
+            });
             ufbxi_check_err!(
                 sc.error_view(),
                 // SAFETY: `sum_fn`/`sum_user`/`dst` and the 4 inputs satisfy the
@@ -1537,7 +1505,7 @@ pub(crate) fn subdivide_layer(
         original_start = start;
         while start != NO_INDEX {
             if start != original_start {
-                output.set_unique_per_vertex(false);
+                unique_per_vertex = false;
             }
 
             let value_index: u32 = num_vertex_values as u32;
@@ -1992,10 +1960,7 @@ pub(crate) fn subdivide_layer(
         )
     };
 
-    output.set_values(new_values as *mut c_void);
-    output.set_num_values(num_values);
-
-    if !input.ignore_indices() {
+    let (new_indices, num_new_indices) = if !input.ignore_indices() {
         let num_new_indices = mesh.num_indices().wrapping_mul(4);
         let new_indices: *mut u32 = sc.result_view().push::<u32>(num_new_indices);
         ufbxi_check_err!(sc.error_view(), !new_indices.is_null(), "new_indices");
@@ -2038,12 +2003,18 @@ pub(crate) fn subdivide_layer(
             );
             ix += 1;
         }
-        output.set_indices(new_indices);
-        output.set_num_indices(num_new_indices);
+        (new_indices, num_new_indices)
     } else {
-        output.set_indices(core::ptr::null_mut());
-        output.set_num_indices(0);
-    }
+        (core::ptr::null_mut(), 0)
+    };
+
+    output.write_value(SubdivideLayerOutput {
+        values: new_values as *mut c_void,
+        num_values,
+        indices: new_indices,
+        num_indices: num_new_indices,
+        unique_per_vertex,
+    });
 
     Ok(())
 }

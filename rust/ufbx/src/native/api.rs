@@ -3621,9 +3621,7 @@ pub(crate) fn catch_get_skin_vertex_matrix<M: Mode>(
     if skin.as_ptr().is_null() || vertex >= skin.vertices().count {
         return IDENTITY_MATRIX;
     }
-    // SAFETY: `vertex < vertices.count` here, so `vertices.data.add(vertex)`
-    // addresses a live `SkinVertex` in the deformer's vertex list.
-    let skin_vertex: SkinVertex = unsafe { *skin.vertices().data.add(vertex) };
+    let skin_vertex: SkinVertex = skin.vertices_view().copy_at(vertex);
 
     // C: `ufbx_matrix mat = { 0.0f };` / `ufbx_quat q0 = { 0.0f }, qe = { 0.0f };`
     // / `ufbx_quat first_q0 = { 0.0f };` — partial initializers zero the rest.
@@ -3645,32 +3643,18 @@ pub(crate) fn catch_get_skin_vertex_matrix<M: Mode>(
     for i in 0..skin_vertex.num_weights {
         // C: `skin->weights.data[skin_vertex.weight_begin + i]` — `uint32_t`
         // arithmetic, so the sum wraps before it indexes.
-        // SAFETY: `weight_begin + i` indexes within the deformer's own `weights`
-        // list (the cluster's weight range the C loop walks).
-        let weight: SkinWeight = unsafe {
-            *skin
-                .weights()
-                .data
-                .add(skin_vertex.weight_begin.wrapping_add(i) as usize)
-        };
-        // SAFETY: `weight.cluster_index` indexes the deformer's own `clusters`
-        // pointer list, yielding a live `*mut SkinCluster`.
-        let cluster: *mut SkinCluster = unsafe {
-            *(skin.clusters().data as *const *mut SkinCluster).add(weight.cluster_index as usize)
-        };
+        let weight: SkinWeight = skin
+            .weights_view()
+            .copy_at(skin_vertex.weight_begin.wrapping_add(i) as usize);
+        let cluster: &View<SkinCluster, M> = skin.clusters_view().at(weight.cluster_index as usize);
         // C: `const ufbx_node *node = cluster->bone_node; if (!node) continue;`
-        // SAFETY: `cluster` is a live `SkinCluster` from the list; reading its
-        // own `bone_node` field by value (`Option<Ref>` is `Copy`).
-        let node = unsafe { core::ptr::read(&raw const (*cluster).bone_node) };
-        if node.is_none() {
+        if cluster.bone_node().is_none() {
             continue;
         }
 
         total_weight += weight.weight;
         if skin_vertex.dq_weight > 0.0 {
-            // SAFETY: same live `SkinCluster`; reading its own
-            // `geometry_to_world_transform` field.
-            let t: Transform = unsafe { (*cluster).geometry_to_world_transform };
+            let t: Transform = cluster.geometry_to_world_transform();
             let mut vq0: Quat = t.rotation;
             if i == 0 {
                 first_q0 = vq0;
@@ -3700,11 +3684,10 @@ pub(crate) fn catch_get_skin_vertex_matrix<M: Mode>(
         }
 
         if skin_vertex.dq_weight < 1.0 {
+            let geometry_to_world: Matrix = cluster.geometry_to_world();
             add_weighted_mat(
                 &mut mat,
-                // SAFETY: `cluster` is a live `SkinCluster`; the borrow projects its
-                // own `geometry_to_world` field, which nothing writes for the call.
-                unsafe { &(*cluster).geometry_to_world },
+                &geometry_to_world,
                 (1.0 - skin_vertex.dq_weight) * weight.weight,
             );
         }

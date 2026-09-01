@@ -2447,17 +2447,15 @@ pub(crate) unsafe fn read_vertex_element(
             let new_index_data: *mut u32 = uc.result_view().push::<u32>(mesh.num_indices());
             ufbxi_check!(uc, !new_index_data.is_null(), "new_index_data");
 
-            // SAFETY: `mesh->vertex_indices` names the mesh's own contiguous run
-            // of `mesh->num_indices` vertex indices, live and unmoved; the loop
-            // writes only the disjoint fresh `new_index_data` run.
-            let vert_ix: &[u32] =
-                unsafe { slice_from_ptr(mesh.vertex_indices().data, mesh.num_indices()) };
+            // `vertex_indices` is the mesh's own initialized list; the loop
+            // reads it through the bounded list accessor and writes only the
+            // disjoint fresh `new_index_data` run.
             // SAFETY: `index_data` is the array descriptor's own contiguous
             // payload of `num_indices` `u32`s, live for the parse tree and
             // likewise unwritten by the loop.
             let index_run: &[u32] = unsafe { slice_from_ptr(index_data, num_indices) };
             for i in 0..mesh.num_indices() {
-                let ix: u32 = vert_ix[i];
+                let ix: u32 = mesh.vertex_indices_view().copy_at(i);
                 if (ix as usize) < num_indices {
                     // SAFETY: `i < mesh.num_indices` bounds the write inside
                     // the fresh `new_index_data` run.
@@ -2494,16 +2492,15 @@ pub(crate) unsafe fn read_vertex_element(
             ufbxi_check!(uc, !new_index_data.is_null(), "new_index_data");
 
             let num_faces: usize = mesh.num_faces();
-            // SAFETY: `mesh->faces` names the mesh's own contiguous run of
-            // `num_faces` faces, live and unmoved; the loop writes only the
-            // disjoint fresh `new_index_data` run.
-            let faces: &[Face] = unsafe { slice_from_ptr(mesh.faces().data, num_faces) };
+            // `faces` is the mesh's own initialized list; the loop reads it
+            // through the bounded list accessor and writes only the disjoint
+            // fresh `new_index_data` run.
             // SAFETY: `index_data` is the array descriptor's own contiguous
             // payload of `num_indices` `u32`s, live for the parse tree and
             // likewise unwritten by the loop.
             let index_run: &[u32] = unsafe { slice_from_ptr(index_data, num_indices) };
             for face_ix in 0..num_faces {
-                let face: Face = faces[face_ix];
+                let face: Face = mesh.faces_view().copy_at(face_ix);
                 let mut index: u32 = NO_INDEX;
                 if face_ix < num_indices {
                     index = index_run[face_ix];
@@ -2603,12 +2600,11 @@ pub(crate) unsafe fn read_vertex_element(
             ufbxi_check!(uc, !new_index_data.is_null(), "new_index_data");
 
             let num_faces: u32 = mesh.num_faces() as u32;
-            // SAFETY: `mesh->faces` names the mesh's own contiguous run of
-            // `num_faces` faces, live and unmoved; the loop writes only the
-            // disjoint fresh `new_index_data` run.
-            let faces: &[Face] = unsafe { slice_from_ptr(mesh.faces().data, num_faces as usize) };
+            // `faces` is the mesh's own initialized list; the loop reads it
+            // through the bounded list accessor and writes only the disjoint
+            // fresh `new_index_data` run.
             for face_ix in 0..num_faces {
-                let face: Face = faces[face_ix as usize];
+                let face: Face = mesh.faces_view().copy_at(face_ix as usize);
                 for i in 0..face.num_indices as usize {
                     // SAFETY: every face's `index_begin + num_indices` stays
                     // within the mesh's `num_indices`, the length of the fresh
