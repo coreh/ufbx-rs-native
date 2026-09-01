@@ -8912,9 +8912,7 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
             key.set_target_weight(1.0f32 as Real);
             if i < full_weights.count() {
                 if !uc.blender_full_weights() {
-                    // SAFETY: the full-weight list's own `data` run holds `count`
-                    // reals and `i` is below it.
-                    key.set_target_weight(unsafe { *full_weights.data().add(i) } / 100.0);
+                    key.set_target_weight(full_weights.copy_at(i) / 100.0);
                 } else if full_weights.count() == key.shape().view::<Mut>().num_offsets() {
                     if i == 0 {
                         // Duplicate `index_data` for modification if we retain DOM
@@ -8932,10 +8930,8 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
                         }
                         // C: `ufbxi_for_list(ufbx_real, p_weight, *full_weights)`
                         for weight_ix in 0..full_weights.count() {
-                            // SAFETY: `weight_ix` is below the list's own `count`,
-                            // so it addresses a live, writable entry of the run
-                            // the list header describes.
-                            unsafe { *(full_weights.data() as *mut Real).add(weight_ix) /= 100.0 };
+                            let weight = full_weights.copy_at(weight_ix) / 100.0;
+                            full_weights.at(weight_ix).write_value(weight);
                         }
                     }
                     // C: struct assignment (memcpy) of the `ufbx_real_list`

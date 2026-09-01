@@ -1184,7 +1184,7 @@ pub(crate) fn tessellate_nurbs_surface_imp(
     mesh_view.set_num_indices(dst_index);
     mesh_view.set_max_face_triangles(2);
 
-    if surface_view.material().is_some() {
+    if let Some(material) = surface_view.material() {
         mesh_view
             .face_material_view()
             .set_data(tc.result_view().push_zero::<u32>(num_faces) as *const u32);
@@ -1194,16 +1194,9 @@ pub(crate) fn tessellate_nurbs_surface_imp(
             "mesh->face_material.data"
         );
 
-        let mat: *mut *mut Material = tc.result_view().push_zero::<*mut Material>(1);
+        let material_ptr = material.ptr();
+        let mat: *mut *mut Material = tc.result_view().push_copy_ref(&material_ptr);
         ufbxi_check_err!(tc.error_view(), !mat.is_null(), "mat");
-
-        // SAFETY: `mat` is the fresh non-null single-element push just
-        // checked; the material it receives is the surface's own live ref.
-        unsafe {
-            *mat = surface_view
-                .material()
-                .map_or(core::ptr::null_mut(), |r| r.ptr());
-        }
         mesh_view
             .materials_view()
             .set_data(mat as *const Ref<Material>);

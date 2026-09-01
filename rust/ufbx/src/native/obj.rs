@@ -80,7 +80,7 @@ use crate::native::string_pool::{push_string_place_blob, push_string_place_str, 
 #[cfg(feature = "obj")]
 use crate::native::view::{view_read, view_write};
 #[cfg(feature = "obj")]
-use crate::native::view::{Mut, Run, SliceViewIter, View};
+use crate::native::view::{Mut, Run, View};
 #[cfg(feature = "obj")]
 use crate::native::warnings::ufbxi_warnf;
 #[cfg(feature = "obj")]
@@ -1524,6 +1524,9 @@ pub(crate) fn obj_pop_meshes(uc: &Context) -> Result<(), Fail> {
         .tmp_view()
         .push_pop::<ObjMesh>(uc.obj().tmp_meshes_view(), num_meshes);
     ufbxi_check!(uc, !meshes.is_null(), "meshes");
+    // SAFETY: `meshes` is the checked `num_meshes`-item run popped into uc's
+    // stable tmp arena, fully initialized with write-capable provenance.
+    let meshes: Run<'_, ObjMesh> = unsafe { Run::from_raw_parts(meshes, num_meshes) };
 
     if uc.obj().has_vertex_color() {
         obj_pad_colors(
@@ -1557,9 +1560,7 @@ pub(crate) fn obj_pop_meshes(uc: &Context) -> Result<(), Fail> {
     let mut max_indices: usize = 0;
 
     // Walk the popped `meshes` run as anchored views (contiguous `push_pop`).
-    // SAFETY: `meshes` is the fresh non-null `num_meshes`-item run popped
-    // above, so the whole walk stays inside that one allocation.
-    for mesh in unsafe { SliceViewIter::<ObjMesh>::from_raw_parts(meshes, num_meshes) } {
+    for mesh in meshes.iter() {
         max_indices = max_sz(max_indices, mesh.num_indices());
         // C: `ufbxi_nounroll for (uint32_t attrib = 0; attrib < UFBXI_OBJ_NUM_ATTRIBS; attrib++)`
         for attrib in 0..OBJ_NUM_ATTRIBS {
@@ -1605,9 +1606,7 @@ pub(crate) fn obj_pop_meshes(uc: &Context) -> Result<(), Fail> {
     // C: `for (size_t i = num_meshes; i > 0; i--)`
     let mut i: usize = num_meshes;
     while i > 0 {
-        // SAFETY: `i - 1 < num_meshes`, so this indexes the popped `meshes`
-        // run (one allocation) that anchors the view.
-        let mesh: &ObjMeshView = unsafe { ObjMeshView::from_ptr(meshes.add(i - 1)) };
+        let mesh: &ObjMeshView = meshes.at(i - 1);
 
         // SAFETY: `mesh->fbx_mesh` is this mesh's own `ufbx_mesh` element in
         // uc's element arena (non-null since `obj_push_mesh`), so its
@@ -1863,14 +1862,7 @@ pub(crate) fn obj_pop_meshes(uc: &Context) -> Result<(), Fail> {
             // NOTE: Consecutive and zero indices are always allocated so we can skip doing it here,
             // see HACK(consecutiv-faces)..
             if fbx_mesh.face_group_parts_view().count() > 0 {
-                // SAFETY: `part` is the first entry of the `face_group_parts`
-                // run pushed above onto uc's result arena (write-capable
-                // provenance), taken only when its count is non-zero.
-                let part: &View<MeshPart> = unsafe {
-                    View::<MeshPart>::from_ptr(
-                        fbx_mesh.face_group_parts_view().data() as *mut MeshPart
-                    )
-                };
+                let part: &View<MeshPart> = fbx_mesh.face_group_parts_view().at(0);
                 // C-parity: `part->num_faces` is assigned twice in a row
                 // (ufbx.c:17662-17663); the second write wins. Both are kept.
                 part.set_num_faces(fbx_mesh.num_faces());
