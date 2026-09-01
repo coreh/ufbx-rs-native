@@ -4900,19 +4900,22 @@ pub(crate) fn create_anim_imp(ac: &CreateAnimContext) -> Result<FinishedImp<Anim
         );
         // SAFETY: `override_layer_weights` was just checked to hold exactly
         // `num_layers` entries, so the copy reads that whole caller run into a
-        // fresh push on ac's own result buf.
-        anim.override_layer_weights_view().set_data(unsafe {
-            ac.result_view().push_copy_raw::<Real>(
+        // fresh push on ac's own result buf. After the non-null check, that run
+        // remains live with the finished animation.
+        let override_layer_weights = unsafe {
+            let data = ac.result_view().push_copy_raw::<Real>(
                 num_layers,
                 ac.opts_view().override_layer_weights_view().data(),
-            )
-        });
-        ufbxi_check_err!(
-            ac.error_view(),
-            !anim.override_layer_weights_view().data().is_null(),
-            "anim->override_layer_weights.data"
-        );
-        anim.override_layer_weights_view().set_count(num_layers);
+            );
+            ufbxi_check_err!(
+                ac.error_view(),
+                !data.is_null(),
+                "anim->override_layer_weights.data"
+            );
+            List::from_raw_parts(data, num_layers)
+        };
+        anim.override_layer_weights_view()
+            .set(override_layer_weights);
     }
 
     // C: `scene->anim_layers` — the scene is the caller's finished, immutable
@@ -5126,21 +5129,24 @@ pub(crate) fn create_anim_imp(ac: &CreateAnimContext) -> Result<FinishedImp<Anim
     }
 
     if ac.opts_view().transform_overrides_view().count() > 0 {
-        anim.transform_overrides_view()
-            .set_count(ac.opts_view().transform_overrides_view().count());
+        let count = ac.opts_view().transform_overrides_view().count();
         // SAFETY: the copy reads exactly the caller's own transform-override
         // run into a fresh push of the same length on ac's own result buf.
-        anim.transform_overrides_view().set_data(unsafe {
-            ac.result_view().push_copy_raw::<TransformOverride>(
-                anim.transform_overrides_view().count(),
+        // After the non-null check, that run remains live with the finished
+        // animation.
+        let transform_overrides = unsafe {
+            let data = ac.result_view().push_copy_raw::<TransformOverride>(
+                count,
                 ac.opts_view().transform_overrides_view().data(),
-            )
-        });
-        ufbxi_check_err!(
-            ac.error_view(),
-            !anim.transform_overrides_view().data().is_null(),
-            "anim->transform_overrides.data"
-        );
+            );
+            ufbxi_check_err!(
+                ac.error_view(),
+                !data.is_null(),
+                "anim->transform_overrides.data"
+            );
+            List::from_raw_parts(data, count)
+        };
+        anim.transform_overrides_view().set(transform_overrides);
         // SAFETY: sorting the fresh non-null run just checked, over its own
         // count and from its own list base; the comparator takes no user data.
         unsafe {
@@ -5242,9 +5248,23 @@ pub(crate) struct BakeTimeList {
     pub count: usize,
 }
 
-// Typed interior-mutable VIEW over a `BakeTimeList` field, reinterpreted in place
-// (getters + setters; the list is built by writing `.count`/`.data`).
 #[cfg(feature = "baking")]
+impl BakeTimeList {
+    /// Construct a complete mutable bake-time list descriptor.
+    ///
+    /// # Safety
+    /// When `count > 0`, `data` must address `count` contiguous, aligned, fully
+    /// initialized `BakeTime` values that remain live and unmoved for every use
+    /// of the returned descriptor. Null is permitted only when `count == 0`.
+    #[inline(always)]
+    pub(crate) const unsafe fn from_raw_parts(data: *mut BakeTime, count: usize) -> BakeTimeList {
+        debug_assert!(count == 0 || !data.is_null());
+        BakeTimeList { data, count }
+    }
+}
+
+// Typed interior-mutable VIEW over a `BakeTimeList` field, reinterpreted in place
+// (getters + complete-descriptor publication).
 #[cfg(feature = "baking")]
 pub(crate) type BakeTimeListView = crate::native::view::View<BakeTimeList>;
 
@@ -5260,12 +5280,8 @@ impl BakeTimeListView {
         view_read!(self, data)
     }
     #[inline(always)]
-    pub(crate) fn set_count(&self, count: usize) {
-        view_write!(self, count, count)
-    }
-    #[inline(always)]
-    pub(crate) fn set_data(&self, data: *mut BakeTime) {
-        view_write!(self, data, data)
+    pub(crate) fn set(&self, value: BakeTimeList) {
+        self.write_value(value)
     }
 }
 
@@ -6606,12 +6622,17 @@ pub(crate) unsafe fn bake_postprocess_vec3(
     }
     p_constant.set(constant);
 
-    p_dst.set_count(src.count);
-    // SAFETY: `data` addresses `src.count` live elements, which is the run
+    let count = src.count;
+    // SAFETY: `data` addresses `count` live elements, which is the run
     // `push_copy` reads — this `unsafe fn`'s contract — and `bc.result` is
-    // `bc`'s own buffer.
-    p_dst.set_data(unsafe { bc.result_view().push_copy_raw::<BakedVec3>(src.count, data) });
-    ufbxi_check_err!(bc.error_view(), !p_dst.data().is_null(), "p_dst->data");
+    // `bc`'s own buffer. After the non-null check, the fresh copy remains live
+    // with the finished baked animation.
+    let keys = unsafe {
+        let data = bc.result_view().push_copy_raw::<BakedVec3>(count, data);
+        ufbxi_check_err!(bc.error_view(), !data.is_null(), "p_dst->data");
+        List::from_raw_parts(data, count)
+    };
+    p_dst.set(keys);
 
     Ok(())
 }
@@ -6786,12 +6807,17 @@ pub(crate) unsafe fn bake_postprocess_quat(
     }
     p_constant.set(constant);
 
-    p_dst.set_count(src.count);
-    // SAFETY: `data` addresses `src.count` live elements, which is the run
+    let count = src.count;
+    // SAFETY: `data` addresses `count` live elements, which is the run
     // `push_copy` reads — this `unsafe fn`'s contract — and `bc.result` is
-    // `bc`'s own buffer.
-    p_dst.set_data(unsafe { bc.result_view().push_copy_raw::<BakedQuat>(src.count, data) });
-    ufbxi_check_err!(bc.error_view(), !p_dst.data().is_null(), "p_dst->data");
+    // `bc`'s own buffer. After the non-null check, the fresh copy remains live
+    // with the finished baked animation.
+    let keys = unsafe {
+        let data = bc.result_view().push_copy_raw::<BakedQuat>(count, data);
+        ufbxi_check_err!(bc.error_view(), !data.is_null(), "p_dst->data");
+        List::from_raw_parts(data, count)
+    };
+    p_dst.set(keys);
 
     Ok(())
 }
@@ -7872,19 +7898,23 @@ pub(crate) fn bake_anim(bc: &BakeContext) -> Result<(), Fail> {
             let mut weight_times: BakeTimeList = unsafe { MaybeUninit::zeroed().assume_init() };
             finalize_bake_times(bc, &mut weight_times)?;
 
-            bc.layer_weight_times_view().set_count(weight_times.count);
+            let count = weight_times.count;
             // SAFETY: `finalize_bake_times` filled `weight_times` with a run of
             // exactly `count` `ufbxi_bake_time` items live in bc's own
-            // `tmp_prop` buf, which is what the copy reads into bc's `tmp`.
-            bc.layer_weight_times_view().set_data(unsafe {
-                bc.tmp_view()
-                    .push_copy_raw::<BakeTime>(weight_times.count, weight_times.data)
-            });
-            ufbxi_check_err!(
-                bc.error_view(),
-                !bc.layer_weight_times_view().data().is_null(),
-                "bc->layer_weight_times.data"
-            );
+            // `tmp_prop` buf. The checked copy is an initialized, stable run in
+            // bc's `tmp` buffer for every use of the published descriptor.
+            let layer_weight_times = unsafe {
+                let data = bc
+                    .tmp_view()
+                    .push_copy_raw::<BakeTime>(count, weight_times.data);
+                ufbxi_check_err!(
+                    bc.error_view(),
+                    !data.is_null(),
+                    "bc->layer_weight_times.data"
+                );
+                BakeTimeList::from_raw_parts(data, count)
+            };
+            bc.layer_weight_times_view().set(layer_weight_times);
 
             buf_clear(bc.tmp_prop_view());
         }

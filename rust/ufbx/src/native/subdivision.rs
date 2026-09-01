@@ -2564,29 +2564,29 @@ pub(crate) unsafe fn subdivide_mesh_level(
     let uv_sets = result.uv_sets_view();
     let color_sets = result.color_sets_view();
 
-    // SAFETY: `uv_sets` describes `result`'s live UV-set array, copied into
-    // `sc`'s result arena via `push_copy`.
-    uv_sets.set_data(unsafe {
-        sc.result_view()
-            .push_copy_raw::<UvSet>(uv_sets.count(), uv_sets.data())
-    });
-    ufbxi_check_err!(
-        sc.error_view(),
-        !uv_sets.data().is_null(),
-        "result->uv_sets.data"
-    );
+    // SAFETY: `uv_sets` describes `result`'s live UV-set array. `push_copy_raw`
+    // copies that complete run into `sc`'s result arena; after the null check it
+    // remains live and unmoved for every use of the published list.
+    unsafe {
+        let count = uv_sets.count();
+        let data = sc
+            .result_view()
+            .push_copy_raw::<UvSet>(count, uv_sets.data());
+        ufbxi_check_err!(sc.error_view(), !data.is_null(), "result->uv_sets.data");
+        uv_sets.set(List::from_raw_parts(data, count));
+    }
 
-    // SAFETY: `color_sets` describes `result`'s live color-set array, copied
-    // into `sc`'s result arena via `push_copy`.
-    color_sets.set_data(unsafe {
-        sc.result_view()
-            .push_copy_raw::<ColorSet>(color_sets.count(), color_sets.data())
-    });
-    ufbxi_check_err!(
-        sc.error_view(),
-        !color_sets.data().is_null(),
-        "result->color_sets.data"
-    );
+    // SAFETY: `color_sets` describes `result`'s live color-set array.
+    // `push_copy_raw` copies that complete run into `sc`'s result arena; after
+    // the null check it remains live and unmoved for every use of the list.
+    unsafe {
+        let count = color_sets.count();
+        let data = sc
+            .result_view()
+            .push_copy_raw::<ColorSet>(count, color_sets.data());
+        ufbxi_check_err!(sc.error_view(), !data.is_null(), "result->color_sets.data");
+        color_sets.set(List::from_raw_parts(data, count));
+    }
 
     // C: `ufbxi_for_list(ufbx_uv_set, set, result->uv_sets)`
     {
@@ -3265,7 +3265,10 @@ pub(crate) fn subdivide_mesh_imp(
         // exists and one past it is in bounds; `compute_normals` then fills
         // exactly the remaining `num_normals` through `normal_indices`, and
         // the mapping above guarantees those indices are `< num_normals`.
-        unsafe {
+        // `generate_normal_mapping` initialized all `mesh.num_indices()` index
+        // slots above. Both result-arena runs remain live and unmoved with the
+        // mesh, so complete descriptors can be constructed after the fill.
+        let (normal_values, normal_mapping) = unsafe {
             *normal_data.add(0) = ZERO_VEC3;
             normal_data = normal_data.add(1);
 
@@ -3277,16 +3280,17 @@ pub(crate) fn subdivide_mesh_imp(
                 normal_data,
                 num_normals,
             );
-        }
+
+            (
+                List::from_raw_parts(normal_data, num_normals),
+                List::from_raw_parts(normal_indices, mesh.num_indices()),
+            )
+        };
 
         mesh.set_generated_normals(true);
         mesh.vertex_normal().set_exists(true);
-        mesh.vertex_normal().values_view().set_data(normal_data);
-        mesh.vertex_normal().values_view().set_count(num_normals);
-        mesh.vertex_normal().indices_view().set_data(normal_indices);
-        mesh.vertex_normal()
-            .indices_view()
-            .set_count(mesh.num_indices());
+        mesh.vertex_normal().values_view().set(normal_values);
+        mesh.vertex_normal().indices_view().set(normal_mapping);
 
         // SAFETY: `vertex_normal` and `skinned_normal` are distinct live fields
         // of the same mesh, so the copy is non-overlapping.
