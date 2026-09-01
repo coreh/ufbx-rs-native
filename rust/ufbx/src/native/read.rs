@@ -2165,10 +2165,14 @@ pub(crate) fn fix_index(
 }
 
 // ufbx.c:12692-12728 `ufbxi_check_indices`
+/// # Safety
+/// `indices` must address `num_indices` initialized `u32`s and be writable when
+/// `owns_indices` is true. `dst.count()` must equal `num_indexers`. Any input
+/// run published without copying must stay live and unmoved with `dst`.
 #[inline(never)]
 pub(crate) unsafe fn check_indices(
     uc: &Context,
-    p_dst: *mut *mut u32,
+    dst: &ListView<u32>,
     indices: *mut u32,
     owns_indices: bool,
     num_indices: usize,
@@ -2224,8 +2228,11 @@ pub(crate) unsafe fn check_indices(
         }
     }
 
-    // SAFETY: `p_dst` is the caller's writable `uint32_t *` out-pointer.
-    unsafe { *p_dst = indices };
+    // SAFETY: the normalization above leaves `indices` addressing at least the
+    // destination's already-established logical count of initialized `u32`s;
+    // the caller vouches that the input or result-buffer run stays live for
+    // the enclosing attribute.
+    dst.set(unsafe { List::from_raw_parts(indices, dst.count()) });
 
     Ok(())
 }
@@ -2421,13 +2428,13 @@ pub(crate) unsafe fn read_vertex_element(
 
         if mapping == sp::ByPolygonVertex.as_ptr() {
             // Indexed by polygon vertex: We can use the provided indices directly.
-            // SAFETY: `index_data` spans `num_indices` `u32`s (the array
-            // descriptor's payload); the out-pointer is the attribute's own
-            // `indices.data` slot.
+            // SAFETY: `index_data` spans `num_indices` initialized `u32`s (the
+            // array descriptor's payload), and the destination already carries
+            // its `mesh.num_indices()` logical count.
             unsafe {
                 check_indices(
                     uc,
-                    attrib.indices_view().data_raw() as *mut *mut u32,
+                    attrib.indices_view(),
                     index_data,
                     true,
                     num_indices,
@@ -2466,13 +2473,13 @@ pub(crate) unsafe fn read_vertex_element(
                 }
             }
 
-            // SAFETY: `new_index_data` is the fresh `num_indices`-long run
-            // filled in by the loop above; the out-pointer is the attribute's
-            // own `indices.data` slot.
+            // SAFETY: `new_index_data` is the fresh `mesh.num_indices()`-long
+            // run filled in by the loop above, and the destination already
+            // carries that logical count.
             unsafe {
                 check_indices(
                     uc,
-                    attrib.indices_view().data_raw() as *mut *mut u32,
+                    attrib.indices_view(),
                     new_index_data,
                     true,
                     mesh.num_indices(),
@@ -2557,13 +2564,13 @@ pub(crate) unsafe fn read_vertex_element(
                     // run at `index_data`.
                     unsafe { *index_data.add(i) = i as u32 };
                 }
-                // SAFETY: `index_data` is the fresh `num_indices`-long run
-                // filled in by the loop above; the out-pointer is the
-                // attribute's own `indices.data` slot.
+                // SAFETY: `index_data` is the fresh `mesh.num_indices()`-long
+                // run filled in by the loop above, and the destination already
+                // carries that logical count.
                 unsafe {
                     check_indices(
                         uc,
-                        attrib.indices_view().data_raw() as *mut *mut u32,
+                        attrib.indices_view(),
                         index_data,
                         true,
                         mesh.num_indices(),
@@ -2576,12 +2583,12 @@ pub(crate) unsafe fn read_vertex_element(
             // Direct by vertex: We can re-use the position indices..
             // SAFETY: the mesh's `vertex_position.indices` spans its own
             // `num_indices` entries and stays owned by the mesh
-            // (`owns_indices` is `false`); the out-pointer is the attribute's
-            // own `indices.data` slot.
+            // (`owns_indices` is `false`); the destination already carries the
+            // same logical count.
             unsafe {
                 check_indices(
                     uc,
-                    attrib.indices_view().data_raw() as *mut *mut u32,
+                    attrib.indices_view(),
                     mesh.vertex_position().indices().data as *mut u32,
                     false,
                     mesh.num_indices(),
@@ -2610,13 +2617,13 @@ pub(crate) unsafe fn read_vertex_element(
                 }
             }
 
-            // SAFETY: `new_index_data` is the fresh `num_indices`-long run
-            // filled in by the loop above; the out-pointer is the attribute's
-            // own `indices.data` slot.
+            // SAFETY: `new_index_data` is the fresh `mesh.num_indices()`-long
+            // run filled in by the loop above, and the destination already
+            // carries that logical count.
             unsafe {
                 check_indices(
                     uc,
-                    attrib.indices_view().data_raw() as *mut *mut u32,
+                    attrib.indices_view(),
                     new_index_data,
                     true,
                     mesh.num_indices(),
@@ -2679,11 +2686,14 @@ pub(crate) unsafe fn read_vertex_element(
 }
 
 // ufbx.c:12928-12960 `ufbxi_read_truncated_array`
+/// # Safety
+/// `fmt` must select array elements with the same size, alignment and value
+/// validity as `T`. The source array payload, or the result-buffer copy made
+/// here, must remain live and unmoved for every later use of `dst`.
 #[inline(never)]
-pub(crate) unsafe fn read_truncated_array(
+pub(crate) unsafe fn read_truncated_array<T>(
     uc: &Context,
-    p_data: *mut c_void,
-    p_count: *mut usize,
+    dst: &ListView<T>,
     node: &NodeView,
     name: *const u8,
     fmt: u8,
@@ -2704,10 +2714,6 @@ pub(crate) unsafe fn read_truncated_array(
         );
         return Ok(());
     }
-
-    // SAFETY: `p_count` is the caller's writable `size_t` out-slot (fn
-    // contract).
-    unsafe { *p_count = size };
 
     // SAFETY (this group): `arr` is non-null (the null case returned above) and points at
     // the node's own array descriptor, live for as long as the parse tree.
@@ -2759,8 +2765,10 @@ pub(crate) unsafe fn read_truncated_array(
         data = new_data;
     }
 
-    // SAFETY: `p_data` is the caller's writable pointer out-slot (fn contract).
-    unsafe { *(p_data as *mut *mut c_void) = data };
+    // SAFETY: the `fmt`/`T` compatibility and escaping lifetime are the
+    // caller's contract. The source payload already contains `size` elements,
+    // or the truncated branch initialized exactly that many in `new_data`.
+    dst.set(unsafe { List::from_raw_parts(data.cast::<T>(), size) });
     Ok(())
 }
 
@@ -4332,15 +4340,13 @@ pub(crate) fn read_mesh(uc: &Context, node: &NodeView, info: &ElementInfoView) -
                 if mesh.edge_crease().count != 0 {
                     continue;
                 }
-                // SAFETY: `read_truncated_array` is an `unsafe fn`; the `data_raw()`
-                // and `count_raw()` projections address the mesh's own live
-                // `edge_crease` list field, the `b'r'` element format matches its
-                // `Real` payload and `mesh.num_edges()` is the truncation limit.
+                // SAFETY: `b'r'` has the size, alignment and value validity of
+                // the explicit `T = Real`; its payload stays live with the
+                // loader, and the destination is the mesh's own list field.
                 unsafe {
-                    read_truncated_array(
+                    read_truncated_array::<Real>(
                         uc,
-                        mesh.edge_crease_view().data_raw() as *mut c_void,
-                        mesh.edge_crease_view().count_raw(),
+                        mesh.edge_crease_view(),
                         n,
                         sp::EdgeCrease.as_ptr(),
                         b'r',
@@ -4364,15 +4370,13 @@ pub(crate) fn read_mesh(uc: &Context, node: &NodeView, info: &ElementInfoView) -
                 if mesh.edge_smoothing().count != 0 {
                     continue;
                 }
-                // SAFETY: `read_truncated_array` is an `unsafe fn`; the `data_raw()`
-                // and `count_raw()` projections address the mesh's own live
-                // `edge_smoothing` list field, the `b'b'` element format matches its
-                // `bool` payload and `mesh.num_edges()` is the truncation limit.
+                // SAFETY: `b'b'` has the size, alignment and value validity of
+                // the explicit `T = bool`; its payload stays live with the
+                // loader, and the destination is the mesh's own list field.
                 unsafe {
-                    read_truncated_array(
+                    read_truncated_array::<bool>(
                         uc,
-                        mesh.edge_smoothing_view().data_raw() as *mut c_void,
-                        mesh.edge_smoothing_view().count_raw(),
+                        mesh.edge_smoothing_view(),
                         n,
                         sp::Smoothing.as_ptr(),
                         b'b',
@@ -4383,15 +4387,13 @@ pub(crate) fn read_mesh(uc: &Context, node: &NodeView, info: &ElementInfoView) -
                 if mesh.face_smoothing().count != 0 {
                     continue;
                 }
-                // SAFETY: `read_truncated_array` is an `unsafe fn`; the `data_raw()`
-                // and `count_raw()` projections address the mesh's own live
-                // `face_smoothing` list field, the `b'b'` element format matches its
-                // `bool` payload and `mesh.num_faces()` is the truncation limit.
+                // SAFETY: `b'b'` has the size, alignment and value validity of
+                // the explicit `T = bool`; its payload stays live with the
+                // loader, and the destination is the mesh's own list field.
                 unsafe {
-                    read_truncated_array(
+                    read_truncated_array::<bool>(
                         uc,
-                        mesh.face_smoothing_view().data_raw() as *mut c_void,
-                        mesh.face_smoothing_view().count_raw(),
+                        mesh.face_smoothing_view(),
                         n,
                         sp::Smoothing.as_ptr(),
                         b'b',
@@ -4415,15 +4417,13 @@ pub(crate) fn read_mesh(uc: &Context, node: &NodeView, info: &ElementInfoView) -
                 if mesh.edge_visibility().count != 0 {
                     continue;
                 }
-                // SAFETY: `read_truncated_array` is an `unsafe fn`; the `data_raw()`
-                // and `count_raw()` projections address the mesh's own live
-                // `edge_visibility` list field, the `b'b'` element format matches its
-                // `bool` payload and `mesh.num_edges()` is the truncation limit.
+                // SAFETY: `b'b'` has the size, alignment and value validity of
+                // the explicit `T = bool`; its payload stays live with the
+                // loader, and the destination is the mesh's own list field.
                 unsafe {
-                    read_truncated_array(
+                    read_truncated_array::<bool>(
                         uc,
-                        mesh.edge_visibility_view().data_raw() as *mut c_void,
-                        mesh.edge_visibility_view().count_raw(),
+                        mesh.edge_visibility_view(),
                         n,
                         sp::Visibility.as_ptr(),
                         b'b',
@@ -4447,15 +4447,13 @@ pub(crate) fn read_mesh(uc: &Context, node: &NodeView, info: &ElementInfoView) -
                 mapping = got.0;
             }
             if mapping == sp::ByPolygon.as_ptr() {
-                // SAFETY: `read_truncated_array` is an `unsafe fn`; the `data_raw()`
-                // and `count_raw()` projections address the mesh's own live
-                // `face_material` list field, the `b'i'` element format matches its
-                // `u32` payload and `mesh.num_faces()` is the truncation limit.
+                // SAFETY: `b'i'` has the size, alignment and value validity of
+                // the explicit `T = u32`; its payload stays live with the
+                // loader, and the destination is the mesh's own list field.
                 unsafe {
-                    read_truncated_array(
+                    read_truncated_array::<u32>(
                         uc,
-                        mesh.face_material_view().data_raw() as *mut c_void,
-                        mesh.face_material_view().count_raw(),
+                        mesh.face_material_view(),
                         n,
                         sp::Materials.as_ptr(),
                         b'i',
@@ -4527,15 +4525,13 @@ pub(crate) fn read_mesh(uc: &Context, node: &NodeView, info: &ElementInfoView) -
             )
             .0;
             if mapping == sp::ByPolygon.as_ptr() {
-                // SAFETY: `read_truncated_array` is an `unsafe fn`; the `data_raw()`
-                // and `count_raw()` projections address the mesh's own live
-                // `face_group` list field, the `b'i'` element format matches its
-                // `u32` payload and `mesh.num_faces()` is the truncation limit.
+                // SAFETY: `b'i'` has the size, alignment and value validity of
+                // the explicit `T = u32`; its payload stays live with the
+                // loader, and the destination is the mesh's own list field.
                 unsafe {
-                    read_truncated_array(
+                    read_truncated_array::<u32>(
                         uc,
-                        mesh.face_group_view().data_raw() as *mut c_void,
-                        mesh.face_group_view().count_raw(),
+                        mesh.face_group_view(),
                         n,
                         sp::PolygonGroup.as_ptr(),
                         b'i',
@@ -4555,15 +4551,13 @@ pub(crate) fn read_mesh(uc: &Context, node: &NodeView, info: &ElementInfoView) -
             )
             .0;
             if mapping == sp::ByPolygon.as_ptr() {
-                // SAFETY: `read_truncated_array` is an `unsafe fn`; the `data_raw()`
-                // and `count_raw()` projections address the mesh's own live
-                // `face_hole` list field, the `b'b'` element format matches its
-                // `bool` payload and `mesh.num_faces()` is the truncation limit.
+                // SAFETY: `b'b'` has the size, alignment and value validity of
+                // the explicit `T = bool`; its payload stays live with the
+                // loader, and the destination is the mesh's own list field.
                 unsafe {
-                    read_truncated_array(
+                    read_truncated_array::<bool>(
                         uc,
-                        mesh.face_hole_view().data_raw() as *mut c_void,
-                        mesh.face_hole_view().count_raw(),
+                        mesh.face_hole_view(),
                         n,
                         sp::Hole.as_ptr(),
                         b'b',
@@ -10033,14 +10027,13 @@ pub(crate) fn read_legacy_mesh(
         )
         .0;
         if mapping == sp::ByPolygon.as_ptr() {
-            // SAFETY: the `data`/`count` out-slots are the mesh's own live
-            // `face_material` list field, whose element type the `'i'` array
-            // shape matches.
+            // SAFETY: `b'i'` has the size, alignment and value validity of the
+            // explicit `T = u32`; its payload stays live with the loader, and
+            // the destination is the mesh's own list field.
             unsafe {
-                read_truncated_array(
+                read_truncated_array::<u32>(
                     uc,
-                    mesh.face_material_view().data_raw() as *mut c_void,
-                    mesh.face_material_view().count_raw(),
+                    mesh.face_material_view(),
                     node,
                     sp::Materials.as_ptr(),
                     b'i',

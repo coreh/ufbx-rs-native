@@ -6,7 +6,7 @@ use crate::generated::format_error;
 use crate::generated::{
     Error, Progress, ProgressResult, RawAllocator, RawStream, RawVertexStream, Vec2, Vec3, Vec4,
 };
-use crate::native::view::{view_raw_mut, view_read, view_read_shared, view_write};
+use crate::native::view::{view_read, view_read_shared, view_write};
 use crate::{OpenFileInfo, RawThreadPool};
 use std::alloc::{self, GlobalAlloc, Layout, System};
 use std::any::Any;
@@ -55,13 +55,28 @@ pub struct List<T> {
 }
 
 impl<T> List<T> {
-    #[cfg(test)]
-    pub(crate) unsafe fn from_slice(slice: &[T]) -> List<T> {
+    /// Construct a complete native list descriptor from an escaping raw run.
+    ///
+    /// # Safety
+    /// When `count > 0`, `data` must address `count` contiguous, aligned, fully
+    /// initialized `T` values that remain live and unmoved for every use of the
+    /// returned descriptor and its enclosing native object. Null is permitted
+    /// only when `count == 0`.
+    #[inline(always)]
+    pub(crate) const unsafe fn from_raw_parts(data: *const T, count: usize) -> List<T> {
+        debug_assert!(count == 0 || !data.is_null());
         List {
-            data: slice.as_ptr(),
-            count: slice.len(),
+            data,
+            count,
             _marker: PhantomData,
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) unsafe fn from_slice(slice: &[T]) -> List<T> {
+        // SAFETY: the caller already promises that the returned descriptor is
+        // not used after `slice`'s storage expires.
+        unsafe { List::from_raw_parts(slice.as_ptr(), slice.len()) }
     }
     pub(crate) unsafe fn as_static_ref(&self) -> &'static [T] {
         // SAFETY: the caller vouches `data`/`count` describe a live `T` run for
@@ -562,6 +577,11 @@ impl<T, M: crate::native::view::Mode> crate::native::view::View<List<T>, M> {
 }
 
 impl<T> ListView<T> {
+    /// Publish a complete list descriptor in one logical write.
+    #[inline(always)]
+    pub(crate) fn set(&self, value: List<T>) {
+        self.write_value(value)
+    }
     #[inline(always)]
     pub(crate) fn set_count(&self, count: usize) {
         view_write!(self, count, count)
@@ -569,17 +589,6 @@ impl<T> ListView<T> {
     #[inline(always)]
     pub(crate) fn set_data(&self, data: *const T) {
         view_write!(self, data, data)
-    }
-    /// Address-of-parity projections for the C `&list->data` / `&list->count`
-    /// out-param idiom (`ufbxi_read_truncated_array`): a single-leaf `&raw mut`
-    /// carrying the view's own provenance, so the caller writes no `unsafe`.
-    #[inline(always)]
-    pub(crate) fn data_raw(&self) -> *mut *const T {
-        view_raw_mut!(self, data)
-    }
-    #[inline(always)]
-    pub(crate) fn count_raw(&self) -> *mut usize {
-        view_raw_mut!(self, count)
     }
 }
 

@@ -62,7 +62,7 @@ use crate::native::view::{view_project, view_read, view_write};
 use crate::native::view::{Const, Run};
 use crate::prelude::Real;
 #[cfg(feature = "tessellation")]
-use crate::prelude::Ref;
+use crate::prelude::{List, Ref};
 
 // ufbx.c:64-66 `UFBXI_MAX_NURBS_ORDER` (top-of-file config constant, owned by
 // this section — only the NURBS evaluation entry points read it)
@@ -671,9 +671,17 @@ pub(crate) fn tessellate_nurbs_curve_imp(
 
     // SAFETY: `line` is the context's live, zero-initialized output slot; its
     // nested color field has the same write-capable provenance and lifetime.
-    let (line_view, color) = unsafe {
+    // The three result-arena runs were fully initialized above and remain live,
+    // stable, and unwritten for the returned line curve's lifetime.
+    let (line_view, color, control_points, point_indices, segments) = unsafe {
         let line_view = View::<LineCurve>::from_ptr(line);
-        (line_view, View::<Vec3>::from_ptr(line_view.color_raw()))
+        (
+            line_view,
+            View::<Vec3>::from_ptr(line_view.color_raw()),
+            List::from_raw_parts(vertices, num_vertices),
+            List::from_raw_parts(indices, num_indices),
+            List::from_raw_parts(segments, 1),
+        )
     };
     line_view.element().name_view().set(EMPTY_STRING.0);
     line_view.element().set_type(ElementType::LineCurve);
@@ -684,12 +692,9 @@ pub(crate) fn tessellate_nurbs_curve_imp(
     color.set_y(1.0f32 as Real);
     color.set_z(1.0f32 as Real);
 
-    line_view.control_points_view().set_data(vertices);
-    line_view.control_points_view().set_count(num_vertices);
-    line_view.point_indices_view().set_data(indices);
-    line_view.point_indices_view().set_count(num_indices);
-    line_view.segments_view().set_data(segments);
-    line_view.segments_view().set_count(1);
+    line_view.control_points_view().set(control_points);
+    line_view.point_indices_view().set(point_indices);
+    line_view.segments_view().set(segments);
 
     line_view.set_from_tessellated_nurbs(true);
 
