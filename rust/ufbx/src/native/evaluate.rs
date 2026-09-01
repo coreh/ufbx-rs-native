@@ -7938,36 +7938,35 @@ pub(crate) fn bake_anim(bc: &BakeContext) -> Result<(), Fail> {
     let num_nodes: usize = bc.tmp_nodes_view().num_items();
     let num_elements: usize = bc.tmp_elements_view().num_items();
 
-    bc.bake_view().nodes_view().set_count(num_nodes);
     // Pops bc's node stack into bc's result buf; `num_nodes` is that stack's
     // own item count, so the pop is exact.
-    bc.bake_view().nodes_view().set_data(
-        bc.result_view()
-            .push_pop::<BakedNode>(bc.tmp_nodes_view(), num_nodes),
-    );
-    ufbxi_check_err!(
-        bc.error_view(),
-        !bc.bake_view().nodes_view().data().is_null(),
-        "bc->bake.nodes.data"
-    );
+    let nodes = bc
+        .result_view()
+        .push_pop::<BakedNode>(bc.tmp_nodes_view(), num_nodes);
+    ufbxi_check_err!(bc.error_view(), !nodes.is_null(), "bc->bake.nodes.data");
 
-    bc.bake_view().elements_view().set_count(num_elements);
     // Pops bc's element stack into bc's result buf; `num_elements` is that
     // stack's own item count, so the pop is exact.
-    bc.bake_view().elements_view().set_data(
-        bc.result_view()
-            .push_pop::<BakedElement>(bc.tmp_elements_view(), num_elements),
-    );
+    let elements = bc
+        .result_view()
+        .push_pop::<BakedElement>(bc.tmp_elements_view(), num_elements);
     ufbxi_check_err!(
         bc.error_view(),
-        !bc.bake_view().elements_view().data().is_null(),
+        !elements.is_null(),
         "bc->bake.elements.data"
     );
 
-    // SAFETY: both runs are the fresh non-null pops just checked, sorted over
-    // their own reported counts; neither comparator takes user data, so the
-    // null `user` is what they expect.
+    // SAFETY: both runs are the fresh non-null initialized pops just checked
+    // and remain stable in the result buffer for the finished baked animation.
+    // The sorts cover their respective complete published runs; neither
+    // comparator takes user data, so the null `user` is what they expect.
     unsafe {
+        bc.bake_view()
+            .nodes_view()
+            .set(List::from_raw_parts(nodes, num_nodes));
+        bc.bake_view()
+            .elements_view()
+            .set(List::from_raw_parts(elements, num_elements));
         unstable_sort(
             bc.bake_view().nodes_view().data() as *mut c_void,
             bc.bake_view().nodes_view().count(),

@@ -1401,18 +1401,21 @@ pub(crate) fn cache_load_xml_imp(cc: &CacheContext, doc: &XmlDocumentView) -> Re
             push_string_place_str(cc.string_pool_view(), extra, false)?;
             num_extra += 1;
         }
-        cc.cache_view().extra_info_view().set_count(num_extra);
         // Pops the `num_extra` strings pushed above from cc's tmp stack into
         // cc's result buffer.
-        cc.cache_view().extra_info_view().set_data(
-            cc.result_view()
-                .push_pop::<String>(cc.tmp_stack_view(), num_extra),
-        );
+        let extra_info_data: *mut String = cc
+            .result_view()
+            .push_pop::<String>(cc.tmp_stack_view(), num_extra);
         ufbxi_check_err!(
             cc.error_view(),
-            !cc.cache_view().extra_info_view().data().is_null(),
+            !extra_info_data.is_null(),
             "cc->cache.extra_info.data"
         );
+        // SAFETY: `extra_info_data` is the checked, fully initialized
+        // `num_extra`-string run in cc's stable result arena.
+        cc.cache_view()
+            .extra_info_view()
+            .set(unsafe { List::from_raw_parts(extra_info_data, num_extra) });
 
         if let Some(tag_type) = tag_type {
             let type_ = xml_find_attrib(tag_type, c"Type");
@@ -2018,16 +2021,19 @@ pub(crate) fn cache_setup_channels(cc: &CacheContext) -> Result<(), Fail> {
 
     // Pops the `num_channels` channels pushed above from cc's tmp stack into
     // cc's result buffer.
-    cc.cache_view().channels_view().set_data(
-        cc.result_view()
-            .push_pop::<CacheChannel>(cc.tmp_stack_view(), num_channels),
-    );
+    let channels_data: *mut CacheChannel = cc
+        .result_view()
+        .push_pop::<CacheChannel>(cc.tmp_stack_view(), num_channels);
     ufbxi_check_err!(
         cc.error_view(),
-        !cc.cache_view().channels_view().data().is_null(),
+        !channels_data.is_null(),
         "cc->cache.channels.data"
     );
-    cc.cache_view().channels_view().set_count(num_channels);
+    // SAFETY: `channels_data` is the checked, fully initialized
+    // `num_channels`-channel run in cc's stable result arena.
+    cc.cache_view()
+        .channels_view()
+        .set(unsafe { List::from_raw_parts(channels_data, num_channels) });
 
     Ok(())
 }
@@ -2092,16 +2098,19 @@ unsafe fn cache_load_imp(
     cache_load_frame_files(cc)?;
 
     let num_frames: usize = cc.tmp_stack_view().num_items();
-    cc.cache_view().frames_view().set_count(num_frames);
-    cc.cache_view().frames_view().set_data(
-        cc.result_view()
-            .push_pop::<CacheFrame>(cc.tmp_stack_view(), num_frames),
-    );
+    let frames_data: *mut CacheFrame = cc
+        .result_view()
+        .push_pop::<CacheFrame>(cc.tmp_stack_view(), num_frames);
     ufbxi_check_err!(
         cc.error_view(),
-        !cc.cache_view().frames_view().data().is_null(),
+        !frames_data.is_null(),
         "cc->cache.frames.data"
     );
+    // SAFETY: `frames_data` is the checked, fully initialized
+    // `num_frames`-frame run in cc's stable result arena.
+    cc.cache_view()
+        .frames_view()
+        .set(unsafe { List::from_raw_parts(frames_data, num_frames) });
 
     cache_sort_frames(cc, Run::from_list(cc.cache_view().frames_view()))?;
     cache_setup_channels(cc)?;

@@ -5313,12 +5313,11 @@ pub(crate) fn finalize_lod_group(uc: &Context, lod_view: &LodGroupView) -> Resul
         100.0 as Real,
     ));
 
-    lod_view.lod_levels_view().set_data(levels_data);
-    lod_view.lod_levels_view().set_count(num_levels);
-
     // SAFETY: `prop_name` is the local 64-byte buffer that `ufbxi_snprintf`
-    // NUL-terminates with the matching `len` before each property lookup.
-    unsafe {
+    // NUL-terminates with the matching `len` before each property lookup. The
+    // loop fully initializes the zeroed run before the result-arena descriptor
+    // is published; `levels_data` preserves the allocator's empty sentinel.
+    let levels_list = unsafe {
         for i in 0..num_levels {
             let level = levels.at(i);
 
@@ -5360,7 +5359,9 @@ pub(crate) fn finalize_lod_group(uc: &Context, lod_view: &LodGroupView) -> Resul
                 }
             }
         }
-    }
+        List::from_raw_parts(levels_data, num_levels)
+    };
+    lod_view.lod_levels_view().set(levels_list);
 
     Ok(())
 }
@@ -6192,21 +6193,20 @@ pub(crate) fn pop_texture_files(uc: &Context) -> Result<(), Fail> {
     let files: *mut TextureFile = uc.result_view().push(num_files as usize);
     ufbxi_check!(uc, !files.is_null(), "files");
 
-    uc.scene_view().texture_files_view().set_data(files);
-    uc.scene_view()
-        .texture_files_view()
-        .set_count(num_files as usize);
-
     let entries: *mut TextureFileEntry =
         uc.texture_file_map_view().items() as *mut TextureFileEntry;
     // SAFETY: `entries` is uc's own texture-file map storage, which holds
     // `num_files` live entries; `files` is the fresh non-null `num_files`-entry
-    // push above, so both sides of every copy are in bounds and disjoint.
-    unsafe {
+    // push above, so both sides of every copy are in bounds and disjoint. The
+    // loop initializes the full destination run before its result-arena
+    // descriptor is published, preserving the allocator's empty sentinel.
+    let files_list = unsafe {
         for i in 0..num_files as usize {
             ptr::copy_nonoverlapping((*entries.add(i)).file, files.add(i), 1);
         }
-    }
+        List::from_raw_parts(files, num_files as usize)
+    };
+    uc.scene_view().texture_files_view().set(files_list);
 
     Ok(())
 }
