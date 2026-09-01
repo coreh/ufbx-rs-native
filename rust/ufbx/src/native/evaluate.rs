@@ -4765,10 +4765,9 @@ pub(crate) unsafe fn check_string(
         ufbxi_check_err_msg!(error, valid_length == length, "Invalid UTF-8");
     }
 
-    // C: `dst->data = data; dst->length = length;` — the pair of member writes
-    // is spelled as the viewed slot's two leaf writes.
-    dst.set_data(data);
-    dst.set_length(length);
+    // C: `dst->data = data; dst->length = length;` — publish the validated
+    // descriptor as one complete value.
+    dst.set(String::new_c(data, length));
     Ok(())
 }
 
@@ -4788,7 +4787,7 @@ pub(crate) fn push_anim_string(ac: &CreateAnimContext, str_: &StringView) -> Res
         // SAFETY: `str_.length()` is `length`, the last slot of the
         // `length + 1` byte run just pushed.
         unsafe { *copy.add(str_.length()) = b'\0' };
-        str_.set_data(copy);
+        str_.set(String::new_c(copy, length));
     } else {
         ufbx_assert!(str_.data() == EMPTY_CHAR.as_ptr());
     }

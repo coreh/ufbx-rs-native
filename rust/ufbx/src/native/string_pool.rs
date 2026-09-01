@@ -382,11 +382,19 @@ pub(crate) fn remove_prefix_len(str_: &StringView, prefix: &[u8]) -> bool {
     // length) pair is the slice itself.
     let prefix_str: &[u8] = prefix;
     if starts_with(str_.bytes(), prefix_str) {
-        // SAFETY: `starts_with` just confirmed `str_->length >= prefix_len`, so
-        // `str_->data + prefix_len` stays within the run (at most one past its
-        // end) and the shortened length is non-negative.
-        str_.set_data(unsafe { str_.data().add(prefix.len()) });
-        str_.set_length(str_.length() - prefix.len());
+        // Preserve the pointer for an empty prefix: a valid zero-length String
+        // may carry C's null pointer, and even `null.add(0)` is invalid in Rust.
+        // Otherwise `starts_with` confirmed `length >= prefix_len`, so the
+        // advance stays within the run (at most one past its end).
+        let data = if prefix.is_empty() {
+            str_.data()
+        } else {
+            // SAFETY: the non-empty matched prefix proves a live run of at
+            // least `prefix.len()` bytes.
+            unsafe { str_.data().add(prefix.len()) }
+        };
+        let length = str_.length() - prefix.len();
+        str_.set(String::new_c(data, length));
         return true;
     }
     false
@@ -401,7 +409,9 @@ pub(crate) fn remove_suffix_len(str_: &StringView, suffix: &[u8]) -> bool {
     if ends_with(str_.bytes(), suffix_str) {
         // `ends_with` just confirmed `str_->length >= suffix_len`, so the
         // shortened length is non-negative.
-        str_.set_length(str_.length() - suffix.len());
+        let data = str_.data();
+        let length = str_.length() - suffix.len();
+        str_.set(String::new_c(data, length));
         return true;
     }
     false
@@ -2242,8 +2252,19 @@ mod tests {
             assert!(ends_with(b"NormalsW", b"W"));
             assert!(!ends_with(b"W", b"sW"));
 
+            let mut null_empty = String::default();
+            assert!(remove_prefix_len(
+                StringView::from_mut(&mut null_empty),
+                b""
+            ));
+            assert!(null_empty.data.is_null());
+            assert_eq!(null_empty.length, 0);
+
             let mut t = s(b"d|X");
+            let t_data = t.data;
             assert!(remove_prefix_len(StringView::from_mut(&mut t), b"d|"));
+            assert_eq!(t.data, t_data.add(2));
+            assert_eq!(t.length, 1);
             assert_eq!(bytes(t.data, t.length), b"X");
             let y = s(b"Y");
             assert!(!remove_prefix_str(
@@ -2251,7 +2272,10 @@ mod tests {
                 View::<String, crate::native::view::Const>::from_ref(&y)
             ));
             let mut u = s(b"FileName");
+            let u_data = u.data;
             assert!(remove_suffix_c(StringView::from_mut(&mut u), b"Name\0"));
+            assert_eq!(u.data, u_data);
+            assert_eq!(u.length, 4);
             assert_eq!(bytes(u.data, u.length), b"File");
             assert!(!remove_suffix_len(StringView::from_mut(&mut u), b"x"));
 

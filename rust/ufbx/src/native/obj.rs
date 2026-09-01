@@ -401,8 +401,8 @@ pub(crate) fn obj_init(uc: &Context) -> Result<(), Fail> {
     // .obj parsing does its own yield logic
     uc.set_data_size(uc.data_size() + uc.yield_size());
 
-    uc.obj().object_view().set_data(EMPTY_CHAR.as_ptr());
-    uc.obj().group_view().set_data(EMPTY_CHAR.as_ptr());
+    uc.obj().object_view().set(EMPTY_STRING.0);
+    uc.obj().group_view().set(EMPTY_STRING.0);
 
     // SAFETY: the group map is still fresh and empty. `uc`'s initialized temp
     // allocator remains live, unmoved, and write-capable until `obj_free()`
@@ -555,12 +555,12 @@ pub(crate) fn obj_read_line(uc: &Context) -> Result<(), Fail> {
     }
 
     let line_len: usize = offset;
+    let line_data = uc.data();
 
-    uc.obj().line_view().set_data(uc.data());
-    uc.obj().line_view().set_length(line_len);
+    uc.obj().line_view().set(String::new_c(line_data, line_len));
     // SAFETY: `line_len` bytes were just scanned out of uc's read window, so
     // advancing `data` past them stays inside the buffer.
-    unsafe { uc.set_data(uc.data().add(line_len)) };
+    unsafe { uc.set_data(line_data.add(line_len)) };
     uc.set_data_size(uc.data_size() - line_len);
 
     uc.obj()
@@ -581,10 +581,10 @@ pub(crate) fn obj_read_line(uc: &Context) -> Result<(), Fail> {
             core::ptr::copy_nonoverlapping(uc.obj().line_view().data(), new_data, line_len);
             *new_data.add(line_len) = b'\n';
         }
-        uc.obj().line_view().set_data(new_data);
+        let continued_length = uc.obj().line_view().length() + 1;
         uc.obj()
             .line_view()
-            .set_length(uc.obj().line_view().length() + 1);
+            .set(String::new_c(new_data, continued_length));
     }
 
     Ok(())
@@ -1988,13 +1988,17 @@ pub(crate) fn obj_parse_file(uc: &Context) -> Result<(), Fail> {
         // for `str_c`.
         } else if unsafe { str_equal(cmd.as_bytes(), b"mtllib") } {
             ufbxi_check!(uc, uc.obj().num_tokens() >= 2, "uc->obj.num_tokens >= 2");
-            let mut lib: String = obj_span_token(uc, 1, usize::MAX);
+            let lib: String = obj_span_token(uc, 1, usize::MAX);
             // SAFETY: copies the span (plus its terminator, still inside the
-            // line window) onto uc's own tmp arena.
-            lib.data = unsafe { uc.tmp_view().push_copy_raw::<u8>(lib.length + 1, lib.data) };
-            ufbxi_check!(uc, !lib.data.is_null(), "lib.data");
-            uc.obj().mtllib_relative_path_view().set_data(lib.data);
-            uc.obj().mtllib_relative_path_view().set_size(lib.length);
+            // line window) onto uc's own tmp arena. After the null check that
+            // stable tmp-owned run satisfies `Blob::new_c` for `lib.length`
+            // bytes, and the complete descriptor is published only then.
+            let lib = unsafe {
+                let data = uc.tmp_view().push_copy_raw::<u8>(lib.length + 1, lib.data);
+                ufbxi_check!(uc, !data.is_null(), "lib.data");
+                Blob::new_c(data, lib.length)
+            };
+            uc.obj().mtllib_relative_path_view().set(lib);
         // SAFETY: as for the `mtllib` comparison above.
         } else if unsafe { str_equal(cmd.as_bytes(), b"usemtl") } {
             obj_parse_material(uc)?;

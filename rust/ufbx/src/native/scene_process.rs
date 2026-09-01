@@ -5494,10 +5494,8 @@ pub(crate) fn push_prop_prefix<M: Mode>(
         StringView::from_mut(&mut prefix),
         false,
     )?;
-    // C: `*dst = prefix;` — the `ufbx_string` assignment (memcpy of the two
-    // POD members) is spelled as the viewed slot's two leaf writes.
-    dst.set_data(prefix.data);
-    dst.set_length(prefix.length);
+    // C: `*dst = prefix;` — publish the complete POD descriptor by value.
+    dst.set(prefix);
 
     if stack_size > 0 {
         // SAFETY: `stack_size > 0` only when the push above ran, so those bytes

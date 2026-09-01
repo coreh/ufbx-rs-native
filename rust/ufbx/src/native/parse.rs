@@ -6171,10 +6171,10 @@ pub(crate) fn next_line(line: &StringView, buf: &StringView, skip_space: bool) -
         .position(|&c| c == b'\n')
         .map_or(buf_bytes.len(), |newline| newline + 1);
 
-    line.set_data(buf_bytes.as_ptr());
-    line.set_length(length);
-    buf.set_data(buf_bytes[length..].as_ptr());
-    buf.set_length(buf_bytes.len() - length);
+    let line_value = String::new_c(buf_bytes.as_ptr(), length);
+    let buf_value = String::new_c(buf_bytes[length..].as_ptr(), buf_bytes.len() - length);
+    line.set(line_value);
+    buf.set(buf_value);
 
     if skip_space {
         let line_bytes = line.bytes();
@@ -6186,8 +6186,7 @@ pub(crate) fn next_line(line: &StringView, buf: &StringView, skip_space: bool) -
         while begin < end && is_space(line_bytes[end - 1]) {
             end -= 1;
         }
-        line.set_data(line_bytes[begin..].as_ptr());
-        line.set_length(end - begin);
+        line.set(String::new_c(line_bytes[begin..].as_ptr(), end - begin));
     }
 
     true

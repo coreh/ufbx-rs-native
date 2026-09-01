@@ -39,6 +39,7 @@ use crate::generated::{Error, ErrorFrame, ErrorType, Panic};
 use crate::native::platform::{min_sz, ufbx_assert, ufbxi_ignore};
 use crate::native::printf::{vprint, PrintArg, PrintBuffer};
 use crate::native::view::{view_project, view_raw_mut, view_read, view_write};
+use crate::prelude::String;
 
 // Zero-sized failure token: the C `return 0` failure channel. The actual
 // `ufbx_error` lives in the context, as in C (PORTING.md "Error threading").
@@ -422,8 +423,9 @@ pub(crate) fn fail_imp_err(
             // SAFETY: the leading byte read above is `'$'`, so the FailStr run
             // holds at least one more byte (its NUL), and `strlen` then walks
             // that same NUL-terminated run.
-            description.set_data(unsafe { cond.add(1) });
-            description.set_length(unsafe { strlen(description.data()) });
+            let description_data = unsafe { cond.add(1) };
+            let description_length = unsafe { strlen(description_data) };
+            description.set(String::new_c(description_data, description_length));
         }
 
         #[cfg(feature = "error-stack")]
@@ -452,10 +454,12 @@ pub(crate) fn fail_imp_err(
             // SAFETY (both `strlen` calls): `cond` and `func` are non-null
             // (asserted above) and come from `FailStr` carriers, whose
             // invariant is a NUL-terminated 'static run.
-            description.set_data(cond);
-            description.set_length(unsafe { strlen(cond) });
-            function.set_data(func);
-            function.set_length(unsafe { strlen(func) });
+            let description_data = cond;
+            let description_length = unsafe { strlen(description_data) };
+            description.set(String::new_c(description_data, description_length));
+            let function_data = func;
+            let function_length = unsafe { strlen(function_data) };
+            function.set(String::new_c(function_data, function_length));
             frame.set_source_line(line);
         }
     }
@@ -640,8 +644,9 @@ pub(crate) fn clear_error(err: Option<&ErrorView>) {
 
     err.set_type_(ErrorType::None);
     let description = err.description_view();
-    description.set_data(EMPTY_CHAR.as_ptr());
-    description.set_length(0);
+    let description_data = EMPTY_CHAR.as_ptr();
+    let description_length = 0;
+    description.set(String::new_c(description_data, description_length));
     err.set_stack_size(0);
     // SAFETY: writing the first byte of the error's own info buffer, which is
     // ERROR_INFO_LENGTH (>= 1) bytes long and sits inside the live `Error` this
@@ -1234,12 +1239,13 @@ pub(crate) fn fix_error_type(
     } else if c_strcmp(desc, b"Duplicate override\0") == 0 {
         error.set_type_(ErrorType::DuplicateOverride);
     }
-    error.description_view().set_data(desc.as_ptr());
     // C: `error->description.length = strlen(desc);` — the default literal
     // carries its trailing NUL inside the slice, so cut at the first NUL.
+    let description_data = desc.as_ptr();
+    let description_length = desc.iter().position(|&b| b == 0).unwrap_or(desc.len());
     error
         .description_view()
-        .set_length(desc.iter().position(|&b| b == 0).unwrap_or(desc.len()));
+        .set(String::new_c(description_data, description_length));
     if let Some(p_error) = p_error {
         // memcpy(p_error, error, sizeof(ufbx_error));
         // Every call site passes two distinct objects (the context error vs.
@@ -1271,13 +1277,11 @@ pub(crate) fn uninitialized_options(p_error: Option<&ErrorView>) -> *mut core::f
             core::ptr::write_bytes(p_error.get() as *mut u8, 0, core::mem::size_of::<Error>())
         };
         p_error.set_type_(ErrorType::UninitializedOptions);
+        let description_data = b"Uninitialized options\0".as_ptr();
+        let description_length = b"Uninitialized options".len();
         p_error
             .description_view()
-            .set_data(b"Uninitialized options\0".as_ptr());
-        // SAFETY: the argument is a NUL-terminated byte literal.
-        p_error
-            .description_view()
-            .set_length(unsafe { strlen(b"Uninitialized options\0".as_ptr()) });
+            .set(String::new_c(description_data, description_length));
     }
     core::ptr::null_mut()
 }

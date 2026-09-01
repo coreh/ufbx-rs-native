@@ -1166,11 +1166,11 @@ pub(crate) fn cache_load_mc(cc: &CacheContext) -> Result<(), Fail> {
                 // SAFETY: `name_buf` was just grown to `padded_length`, so it
                 // addresses cc's own storage for that many bytes (cc
                 // construction invariant).
-                unsafe {
-                    cache_read(cc, cc.name_buf() as *mut c_void, padded_length, false)?;
-                    cc.channel_name_view().set_data(cc.name_buf());
-                    cc.channel_name_view().set_length(length);
-                }
+                unsafe { cache_read(cc, cc.name_buf() as *mut c_void, padded_length, false)? };
+                let channel_name_data = cc.name_buf();
+                let channel_name_length = length;
+                cc.channel_name_view()
+                    .set(String::new_c(channel_name_data, channel_name_length));
                 push_string_place_str(cc.string_pool_view(), cc.channel_name_view(), false)?;
             }
             TAG_SIZE => cache_mc_read_u32(cc, &mut count)?,
@@ -2054,7 +2054,10 @@ unsafe fn cache_load_imp(
         cc.tmp_stack_view().set_ator(cc.ator_tmp());
     }
 
-    cc.channel_name_view().set_data(EMPTY_CHAR.as_ptr());
+    let channel_name_data = EMPTY_CHAR.as_ptr();
+    let channel_name_length = 0;
+    cc.channel_name_view()
+        .set(String::new_c(channel_name_data, channel_name_length));
 
     if cc.open_file_cb_view().fn_().is_none() {
         cc.open_file_cb_view()
@@ -2580,14 +2583,11 @@ pub(crate) fn load_external_cache(uc: &Context, file: &ExternalFileView) -> Resu
                 return Ok(());
             } else {
                 cc.error_view().set_type_(ErrorType::ExternalFileNotFound);
+                let description_data = b"External file not found\0".as_ptr();
+                let description_length = b"External file not found".len();
                 cc.error_view()
                     .description_view()
-                    .set_data(b"External file not found\0".as_ptr());
-                // SAFETY: the `strlen` argument is a NUL-terminated byte
-                // literal.
-                cc.error_view()
-                    .description_view()
-                    .set_length(unsafe { strlen(b"External file not found\0".as_ptr()) });
+                    .set(String::new_c(description_data, description_length));
             }
         }
 
