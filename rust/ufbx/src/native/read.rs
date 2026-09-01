@@ -3967,17 +3967,15 @@ pub(crate) fn read_mesh(uc: &Context, node: &NodeView, info: &ElementInfoView) -
     mesh.vertex_position().set_unique_per_vertex(true);
 
     // Check/make sure that the last index is negated (last of polygon)
+    let vertex_indices = mesh.vertex_indices_view();
     if mesh.num_indices() > 0 {
-        // SAFETY: `num_indices > 0` here, so `index_data` is the non-null run of
-        // that many `u32`s and its last slot is in bounds.
-        if unsafe { *index_data.add(mesh.num_indices() - 1) } as i32 >= 0 {
+        let last = mesh.num_indices() - 1;
+        if vertex_indices.copy_at(last) as i32 >= 0 {
             if uc.opts_view().strict() {
                 ufbxi_fail!(uc, "Non-negated last index");
             }
-            // SAFETY: as above — the last slot of the `index_data` run.
-            unsafe {
-                *index_data.add(mesh.num_indices() - 1) = !*index_data.add(mesh.num_indices() - 1);
-            }
+            let value = vertex_indices.copy_at(last);
+            vertex_indices.at(last).write_value(!value);
         }
     }
 
@@ -4012,15 +4010,9 @@ pub(crate) fn read_mesh(uc: &Context, node: &NodeView, info: &ElementInfoView) -
             // reached through `*mut` (write-capable provenance for `Mut`).
             let edge: &View<Edge> = unsafe { View::<Edge>::from_ptr(edges.add(dst_ix)) };
             edge.set_a(index_ix);
-            // SAFETY: the test above leaves `index_ix < mesh->num_indices`,
-            // which bounds the read in the `index_data` run.
-            if (unsafe { *index_data.add(index_ix as usize) } as i32) < 0 {
+            if (vertex_indices.copy_at(index_ix as usize) as i32) < 0 {
                 // Previous index is the last one of this polygon, rewind to first index.
-                // SAFETY: `index_ix > 0` short-circuits before the read, and
-                // `index_ix` only decreases from a value below `num_indices`, so
-                // `index_ix - 1` stays inside the `index_data` run.
-                while index_ix > 0 && unsafe { *index_data.add(index_ix as usize - 1) } as i32 >= 0
-                {
+                while index_ix > 0 && vertex_indices.copy_at(index_ix as usize - 1) as i32 >= 0 {
                     index_ix = index_ix.wrapping_sub(1);
                 }
             } else {
@@ -9871,18 +9863,15 @@ pub(crate) fn read_legacy_mesh(
     mesh.vertex_position().set_unique_per_vertex(true);
 
     // Check/make sure that the last index is negated (last of polygon)
+    let vertex_indices = mesh.vertex_indices_view();
     if mesh.num_indices() > 0 {
-        // SAFETY: `index_data` spans `num_indices` `uint32_t` values, so the last
-        // one is in bounds under `num_indices > 0`.
-        if unsafe { *index_data.add(mesh.num_indices() - 1) } as i32 >= 0 {
+        let last = mesh.num_indices() - 1;
+        if vertex_indices.copy_at(last) as i32 >= 0 {
             if uc.opts_view().strict() {
                 ufbxi_fail!(uc, "Non-negated last index");
             }
-            // SAFETY: as above — `index_data` is writable, being either the
-            // parse-tree array payload or the `result`-buf copy made above.
-            unsafe {
-                *index_data.add(mesh.num_indices() - 1) = !*index_data.add(mesh.num_indices() - 1);
-            }
+            let value = vertex_indices.copy_at(last);
+            vertex_indices.at(last).write_value(!value);
         }
     }
 

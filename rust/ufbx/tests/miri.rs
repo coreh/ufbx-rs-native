@@ -115,6 +115,19 @@ fn load_cube_binary() {
     drop(original);
 
     assert!(!retained.nodes.is_empty(), "retained scene has no nodes");
+    let mesh = retained.meshes.first().expect("cube mesh");
+    assert_eq!(mesh.edges.len(), 12);
+    assert!(mesh.edges.iter().any(|edge| (edge.a, edge.b) == (0, 1)));
+    assert!(mesh.edges.iter().any(|edge| (edge.a, edge.b) == (3, 0)));
+    assert_eq!(mesh.face_material.len(), mesh.num_faces);
+    assert!(mesh.face_material.iter().all(|&material| material == 0));
+    let part = mesh.material_parts.first().expect("cube material part");
+    assert_eq!(part.face_indices.len(), mesh.num_faces);
+    assert!(part
+        .face_indices
+        .iter()
+        .enumerate()
+        .all(|(index, &face)| face == index as u32));
     assert!(walk(&retained).is_finite());
     drop(retained);
 }
@@ -328,6 +341,55 @@ fn load_legacy_6100_ascii() {
     assert!(load_and_walk("blender_279_ball_6100_ascii.fbx").is_finite());
 }
 
+/// Both modern and legacy readers repair a final polygon index whose FBX
+/// end-of-face complement marker is missing in non-strict mode.
+#[test]
+fn load_repairs_non_negated_last_indices() {
+    fn check(name: &str, needle: &[u8], replacement: &[u8], expected: u32) {
+        assert_eq!(needle.len(), replacement.len());
+        let original = load(name);
+        let mut data = read_data(name);
+        let offset = data
+            .windows(needle.len())
+            .position(|window| window == needle)
+            .unwrap_or_else(|| panic!("missing final-index marker in {name}"));
+        data[offset..offset + needle.len()].copy_from_slice(replacement);
+
+        let scene = ufbx::load_memory(&data, LoadOpts::default())
+            .unwrap_or_else(|error| panic!("failed to load modified {name}: {error:?}"));
+        assert!(walk(&scene).is_finite());
+        assert_eq!(scene.meshes.len(), original.meshes.len());
+        for (actual, expected_mesh) in scene.meshes.iter().zip(&original.meshes) {
+            assert_eq!(
+                actual.vertex_indices.as_ref(),
+                expected_mesh.vertex_indices.as_ref()
+            );
+            assert_eq!(actual.faces.len(), expected_mesh.faces.len());
+            for (actual_face, expected_face) in actual.faces.iter().zip(&expected_mesh.faces) {
+                assert_eq!(actual_face.index_begin, expected_face.index_begin);
+                assert_eq!(actual_face.num_indices, expected_face.num_indices);
+            }
+        }
+        assert!(scene
+            .meshes
+            .iter()
+            .any(|mesh| mesh.vertex_indices.last().copied() == Some(expected)));
+    }
+
+    check(
+        "maya_cube_7500_ascii.fbx",
+        b",2,-5\n\t\t}",
+        b",2, 4\n\t\t}",
+        4,
+    );
+    check(
+        "maya_cube_6100_ascii.fbx",
+        b",2,-5\n\t\tEdges:",
+        b",2, 4\n\t\tEdges:",
+        4,
+    );
+}
+
 /// Legacy binary with one of nearly every node attribute type, and enough
 /// compressed array data to drive the inflate fast path's 16-byte match copies
 /// — including the deliberate over-read past the write cursor, which is how the
@@ -359,6 +421,22 @@ fn load_attribute_zoo_6100_binary() {
 /// Finalized UV and color set lists retain every layer and their indexed data.
 #[test]
 fn load_uv_and_color_sets_6100_binary() {
+    macro_rules! assert_vertex_attribute_header_eq {
+        ($actual:expr, $expected:expr) => {{
+            let actual = &$actual;
+            let expected = &$expected;
+            assert_eq!(actual.exists, expected.exists);
+            assert_eq!(actual.values.data, expected.values.data);
+            assert_eq!(actual.values.count, expected.values.count);
+            assert_eq!(actual.indices.data, expected.indices.data);
+            assert_eq!(actual.indices.count, expected.indices.count);
+            assert_eq!(actual.value_reals, expected.value_reals);
+            assert_eq!(actual.unique_per_vertex, expected.unique_per_vertex);
+            assert_eq!(actual.values_w.data, expected.values_w.data);
+            assert_eq!(actual.values_w.count, expected.values_w.count);
+        }};
+    }
+
     fn check(scene: &Scene, reversed_winding: bool) {
         assert!(walk(scene).is_finite());
         let mesh = scene.meshes.first().expect("missing mesh");
@@ -371,6 +449,10 @@ fn load_uv_and_color_sets_6100_binary() {
         assert_eq!(uv_names, ["UVA", "UVB"]);
         assert_eq!(color_names, ["ColorA", "ColorB"]);
         assert_eq!(mesh.reversed_winding, reversed_winding);
+        let first_uv = &mesh.uv_sets[0];
+        assert_vertex_attribute_header_eq!(mesh.vertex_uv, first_uv.vertex_uv);
+        assert_vertex_attribute_header_eq!(mesh.vertex_bitangent, first_uv.vertex_bitangent);
+        assert_vertex_attribute_header_eq!(mesh.vertex_tangent, first_uv.vertex_tangent);
         for edge in &mesh.edges {
             assert!(edge.a == u32::MAX || edge.a < mesh.num_indices as u32);
             assert!(edge.b == u32::MAX || edge.b < mesh.num_indices as u32);

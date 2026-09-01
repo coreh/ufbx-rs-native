@@ -8951,26 +8951,32 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
 
     {
         // Generate and patch procedural index buffers
-        let zero_indices: *mut u32 = uc.result_view().push::<u32>(uc.max_zero_indices());
-        let consecutive_indices: *mut u32 =
-            uc.result_view().push::<u32>(uc.max_consecutive_indices());
+        let num_zero_indices = uc.max_zero_indices();
+        let num_consecutive_indices = uc.max_consecutive_indices();
+        let zero_indices: *mut u32 = uc.result_view().push::<u32>(num_zero_indices);
+        let consecutive_indices: *mut u32 = uc.result_view().push::<u32>(num_consecutive_indices);
         ufbxi_check!(
             uc,
             !zero_indices.is_null() && !consecutive_indices.is_null(),
             "zero_indices && consecutive_indices"
         );
 
-        // SAFETY: `zero_indices` is the non-null run just pushed with
-        // `max_zero_indices()` `u32`s, exactly the span zeroed here.
-        unsafe { ptr::write_bytes(zero_indices, 0, uc.max_zero_indices()) };
-        for i in 0..uc.max_consecutive_indices() {
-            // SAFETY: `consecutive_indices` is the non-null run just pushed with
-            // `max_consecutive_indices()` `u32`s, and `i` is below that.
-            unsafe { *consecutive_indices.add(i) = i as u32 };
+        // SAFETY: the pointers are the two fresh result-arena allocations just
+        // pushed for these exact counts and checked non-null above. The zero
+        // fill retains C's `memset` operation before the consecutive fill.
+        let (zero_indices, consecutive_indices) = unsafe {
+            let zero_indices = Run::from_raw_parts(zero_indices, num_zero_indices);
+            let consecutive_indices =
+                Run::from_raw_parts(consecutive_indices, num_consecutive_indices);
+            ptr::write_bytes(zero_indices.as_mut_ptr(), 0, zero_indices.len());
+            (zero_indices, consecutive_indices)
+        };
+        for i in 0..consecutive_indices.len() {
+            consecutive_indices.write_at(i, i as u32);
         }
 
-        uc.set_zero_indices(zero_indices);
-        uc.set_consecutive_indices(consecutive_indices);
+        uc.set_zero_indices(zero_indices.as_mut_ptr());
+        uc.set_consecutive_indices(consecutive_indices.as_mut_ptr());
 
         // C: `ufbxi_for_ptr_list(ufbx_mesh, p_mesh, uc->scene.meshes)`
         let scene_meshes: &RefListView<Mesh> = uc.scene_view().meshes_view();
@@ -9011,29 +9017,15 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
                 let uv_set: &View<UvSet> = mesh.uv_sets_view().at(0);
                 // C: struct assignment (memcpy) of the vertex-attribute
                 // headers; the `Vertex*` structs are not `Copy` in the
-                // generated bindings, so the copy is spelled as a
-                // byte-identical `copy_nonoverlapping`.
-                // SAFETY: source and destination are the UV set's own
-                // `vertex_uv` header and the mesh's own `vertex_uv` header,
-                // distinct places of the same type.
+                // generated bindings, so each initialized, no-Drop header is
+                // read by value and published through its whole-value setter.
+                // SAFETY: the three source pointers name the first UV set's
+                // live, initialized headers. The mesh destinations are
+                // distinct, and the sequential writes preserve C's order.
                 unsafe {
-                    ptr::copy_nonoverlapping(uv_set.vertex_uv_ptr(), mesh.vertex_uv_raw(), 1)
-                };
-                // SAFETY: as above, for the `vertex_bitangent` headers.
-                unsafe {
-                    ptr::copy_nonoverlapping(
-                        uv_set.vertex_bitangent_ptr(),
-                        mesh.vertex_bitangent_raw(),
-                        1,
-                    )
-                };
-                // SAFETY: as above, for the `vertex_tangent` headers.
-                unsafe {
-                    ptr::copy_nonoverlapping(
-                        uv_set.vertex_tangent_ptr(),
-                        mesh.vertex_tangent_raw(),
-                        1,
-                    )
+                    mesh.set_vertex_uv(ptr::read(uv_set.vertex_uv_ptr()));
+                    mesh.set_vertex_bitangent(ptr::read(uv_set.vertex_bitangent_ptr()));
+                    mesh.set_vertex_tangent(ptr::read(uv_set.vertex_tangent_ptr()));
                 };
             }
             if mesh.color_sets().count > 0 {

@@ -1224,9 +1224,9 @@ pub(crate) unsafe fn init_static_huff(trees: *mut Trees, input: *const InflateIn
 
 // ufbx.c:2540-2602 `ufbxi_decode_dynamic_huff_bits`
 #[inline(never)]
-pub(crate) unsafe fn decode_dynamic_huff_bits(
+fn decode_dynamic_huff_bits(
     dc: &DeflateContext,
-    huff_code_length: *const HuffTree,
+    huff_code_length: &HuffTree,
     code_lengths: &mut [u8],
 ) -> isize {
     // `(*dc.get()).stream` holds a self-referential `buffer`→`local_buffer` pointer (see
@@ -1248,8 +1248,8 @@ pub(crate) unsafe fn decode_dynamic_huff_bits(
             return -28;
         }
 
-        // SAFETY: the caller's contract is that `huff_code_length` points at a
-        // valid, fully built `HuffTree`.
+        // SAFETY: `huff_code_length` is the fully built local code-length tree;
+        // this decoder only reads it for the duration of the call.
         let sym: HuffSym = unsafe {
             huff_decode_bits(
                 huff_code_length,
@@ -1322,14 +1322,10 @@ pub(crate) unsafe fn decode_dynamic_huff_bits(
 
 // ufbx.c:2603-2662 `ufbxi_init_dynamic_huff`
 #[inline(never)]
-pub(crate) unsafe fn init_dynamic_huff(dc: &DeflateContext, trees: *mut Trees) -> isize {
+fn init_dynamic_huff(dc: &DeflateContext, trees: &mut Trees) -> isize {
     // `(*dc.get()).stream` holds a self-referential `buffer`→`local_buffer` pointer (see
     // `bit_stream_init`), so `dc` stays raw and is derefed as `(*dc.get()).field` to
-    // avoid a whole-struct retag invalidating that interior pointer. `trees` is
-    // not self-referential, so a local exclusive borrow is kept for it.
-    // SAFETY: the caller's contract is that `trees` points at a valid, uniquely
-    // owned `Trees` for this call.
-    let trees = unsafe { &mut *trees };
+    // avoid a whole-struct retag invalidating that interior pointer.
 
     let mut bits = dc.stream_view().bits();
     let mut left = dc.stream_view().left();
@@ -1398,15 +1394,11 @@ pub(crate) unsafe fn init_dynamic_huff(dc: &DeflateContext, trees: *mut Trees) -
         return -14 + 1 + err;
     }
 
-    // SAFETY: `&huff_code_length` is the tree just built; the bounded mutable
-    // prefix spans exactly the `num_lit_lengths + num_dists` symbols decoded.
-    err = unsafe {
-        decode_dynamic_huff_bits(
-            dc,
-            &huff_code_length,
-            &mut code_lengths[..(num_lit_lengths + num_dists) as usize],
-        )
-    };
+    err = decode_dynamic_huff_bits(
+        dc,
+        &huff_code_length,
+        &mut code_lengths[..(num_lit_lengths + num_dists) as usize],
+    );
     if err != 0 {
         return err;
     }
@@ -2264,9 +2256,7 @@ pub(crate) unsafe fn inflate(
                 trees = unsafe { &raw mut (*ret_imp).static_trees };
             } else {
                 // Dynamic Huffman
-                // SAFETY: `dc` is live and the raw address identifies the local
-                // `Trees` scratch just zero-initialized.
-                err = unsafe { init_dynamic_huff(&dc, &raw mut tree_data) };
+                err = init_dynamic_huff(&dc, &mut tree_data);
                 if err != 0 {
                     return err;
                 }
