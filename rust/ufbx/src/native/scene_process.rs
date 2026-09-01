@@ -5624,9 +5624,7 @@ pub(crate) fn update_shader_texture(texture_view: &TextureView, shader_view: &Sh
             // C-parity: the re-lookup keys on the name of a prop that came from
             // this same prop list, so it always resolves (ufbx.c:20502-20506
             // dereferences it unconditionally).
-            // SAFETY: the lookup resolves (see above), so `found` holds the
-            // matched live `ufbx_prop`.
-            let prop: &PropView = unsafe { found.unwrap_unchecked() };
+            let prop: &PropView = found.expect("shader input value property remains present");
             input.set_value_vec4(prop.value_vec4());
             input.set_value_int(prop.value_int());
             input.set_value_str(prop.value_str());
@@ -5676,9 +5674,7 @@ pub(crate) fn update_shader_texture(texture_view: &TextureView, shader_view: &Sh
             // C-parity: the re-lookup keys on the name of a prop from this same
             // list, so it always resolves (ufbx.c:20519-20520 dereferences it
             // unconditionally).
-            // SAFETY: the lookup resolves (see above), so `found` holds the
-            // matched live `ufbx_prop`.
-            let prop: &PropView = unsafe { found.unwrap_unchecked() };
+            let prop: &PropView = found.expect("shader input enabled property remains present");
             input.set_texture_enabled(prop.value_int() != 0);
         }
     }

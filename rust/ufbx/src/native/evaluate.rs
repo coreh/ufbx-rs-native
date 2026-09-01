@@ -6487,25 +6487,19 @@ pub(crate) fn postprocess_step(
 
 // ufbx.c:27017-27097 `ufbxi_bake_postprocess_vec3`
 //
-// Stays an `unsafe fn` for one untypeable obligation: `src` is a C run —
-// `src.data` must address `src.count` live, WRITABLE `ufbx_baked_vec3`s, since
-// the postprocess passes compact the keys in place before `push_copy` reads
-// them. No pointer type carries that length-and-writability promise; the
-// destination slots are typed (`p_dst`, `p_constant`).
 #[cfg(feature = "baking")]
 #[inline(never)]
-pub(crate) unsafe fn bake_postprocess_vec3(
+pub(crate) fn bake_postprocess_vec3(
     bc: &BakeContext,
     p_dst: &ListView<BakedVec3>,
     p_constant: &ScalarView<bool>,
-    mut src: List<BakedVec3>,
+    src: &mut [BakedVec3],
 ) -> Result<(), Fail> {
-    if src.count == 0 {
+    if src.is_empty() {
         return Ok(());
     }
 
-    // C: `src.data[i]` — `ufbx_baked_vec3_list::data` is non-const in C.
-    let data: *mut BakedVec3 = src.data as *mut BakedVec3;
+    let mut count = src.len();
 
     // Offset times
     if bc.ktime_offset() != 0.0 {
@@ -6513,28 +6507,23 @@ pub(crate) unsafe fn bake_postprocess_vec3(
         // into `bc`, live for the bake.
         let scale: f64 = unsafe { (*bc.scene()).metadata.ktime_second } as f64;
         let offset: f64 = bc.ktime_offset();
-        for i in 0..src.count {
-            // SAFETY: this `unsafe fn` requires `src` to describe a live,
-            // writable run of `src.count` `ufbx_baked_vec3`s, and `i < src.count`.
-            unsafe {
-                (*data.add(i)).time = math::rint((*data.add(i)).time * scale + offset) / scale
-            };
+        for i in 0..count {
+            src[i].time = math::rint(src[i].time * scale + offset) / scale;
         }
     }
 
     // Postprocess stepped tangents
     {
         let mut dst: usize = 0;
-        // SAFETY: `src.count != 0` (the early return above), so slot 0 is in
-        // bounds of the run `src` describes.
-        let mut prev_time: f64 = unsafe { (*data.add(0)).time };
-        for i in 0..src.count {
-            // SAFETY: `i < src.count`, in bounds of the run; `BakedVec3` is
-            // `Copy`-shaped plain data, so reading it out leaves the slot valid.
-            let mut cur: BakedVec3 = unsafe { ptr::read(data.add(i)) };
-            let next_time: f64 = if i + 1 < src.count {
-                // SAFETY: `i + 1 < src.count` (checked), in bounds of the run.
-                unsafe { (*data.add(i + 1)).time }
+        let mut prev_time: f64 = src[0].time;
+        for i in 0..count {
+            let mut cur = BakedVec3 {
+                time: src[i].time,
+                value: src[i].value,
+                flags: src[i].flags,
+            };
+            let next_time: f64 = if i + 1 < count {
+                src[i + 1].time
             } else {
                 math::INFINITY
             };
@@ -6548,13 +6537,12 @@ pub(crate) unsafe fn bake_postprocess_vec3(
             if keep {
                 // C: `src.data[dst] = cur; dst++; prev_time = cur.time;`
                 let cur_time: f64 = cur.time;
-                // SAFETY: `dst <= i < src.count`, in bounds of the run.
-                unsafe { ptr::write(data.add(dst), cur) };
+                src[dst] = cur;
                 dst += 1;
                 prev_time = cur_time;
             }
         }
-        src.count = dst;
+        count = dst;
     }
 
     if bc.opts_view().key_reduction_enabled() {
@@ -6563,29 +6551,34 @@ pub(crate) unsafe fn bake_postprocess_vec3(
         for _pass in 0..bc.opts_view().key_reduction_passes() {
             let mut dst: usize = 1;
             let mut i: usize = 1;
-            while i < src.count {
-                // SAFETY: `i >= 1` and `i < src.count` (loop condition), so both
-                // `i - 1` and `i` are in bounds of the run `src` describes;
-                // `BakedVec3` is plain data, so reading leaves the slots valid.
-                let prev: BakedVec3 = unsafe { ptr::read(data.add(i - 1)) };
-                // SAFETY: as above, for slot `i`.
-                let cur: BakedVec3 = unsafe { ptr::read(data.add(i)) };
-                if i + 1 < src.count {
-                    // SAFETY: `i + 1 < src.count` (checked), in bounds of the run.
-                    let next: BakedVec3 = unsafe { ptr::read(data.add(i + 1)) };
+            while i < count {
+                let prev = BakedVec3 {
+                    time: src[i - 1].time,
+                    value: src[i - 1].value,
+                    flags: src[i - 1].flags,
+                };
+                let cur = BakedVec3 {
+                    time: src[i].time,
+                    value: src[i].value,
+                    flags: src[i].flags,
+                };
+                if i + 1 < count {
+                    let next = BakedVec3 {
+                        time: src[i + 1].time,
+                        value: src[i + 1].value,
+                        flags: src[i + 1].flags,
+                    };
                     let delta: f64 = (cur.time - prev.time) / (next.time - prev.time);
                     let tmp: Vec3 = lerp3(prev.value, next.value, delta as Real);
                     let mut error: f64 = 0.0;
-                    error +=
-                        (tmp.x as f64 - cur.value.x as f64) * (tmp.x as f64 - cur.value.x as f64);
-                    error +=
-                        (tmp.y as f64 - cur.value.y as f64) * (tmp.y as f64 - cur.value.y as f64);
-                    error +=
-                        (tmp.z as f64 - cur.value.z as f64) * (tmp.z as f64 - cur.value.z as f64);
+                    error += (as_f64!(tmp.x) - as_f64!(cur.value.x))
+                        * (as_f64!(tmp.x) - as_f64!(cur.value.x));
+                    error += (as_f64!(tmp.y) - as_f64!(cur.value.y))
+                        * (as_f64!(tmp.y) - as_f64!(cur.value.y));
+                    error += (as_f64!(tmp.z) - as_f64!(cur.value.z))
+                        * (as_f64!(tmp.z) - as_f64!(cur.value.z));
                     if error <= threshold {
-                        // SAFETY: `i + 1 < src.count` (checked) and `dst <= i`,
-                        // so both slots are in bounds of the run.
-                        unsafe { ptr::write(data.add(dst), ptr::read(data.add(i + 1))) };
+                        src[dst] = next;
                         i += 1;
                         dst += 1;
                         // C: `continue` — the `for` increment still runs.
@@ -6594,29 +6587,21 @@ pub(crate) unsafe fn bake_postprocess_vec3(
                     }
                 }
 
-                // SAFETY: `i < src.count` (loop condition) and `dst <= i`, so
-                // both slots are in bounds of the run.
-                unsafe { ptr::write(data.add(dst), ptr::read(data.add(i))) };
+                src[dst] = cur;
                 dst += 1;
                 i += 1;
             }
-            if dst == src.count {
+            if dst == count {
                 break;
             }
-            src.count = dst;
+            count = dst;
         }
     }
 
     let mut constant: bool = true;
-    // SAFETY: `data` addresses the original run, which holds at least one
-    // element (the `src.count == 0` early return above), so slot 0 is in
-    // bounds. The passes above only shrink `src.count` — they never move or
-    // reallocate the run — so slot 0 stays valid regardless of how many keys
-    // they keep.
-    let ref_: Vec3 = unsafe { (*data.add(0)).value };
-    for i in 1..src.count {
-        // SAFETY: `i < src.count`, in bounds of the run.
-        let v: Vec3 = unsafe { (*data.add(i)).value };
+    let ref_: Vec3 = src[0].value;
+    for i in 1..count {
+        let v: Vec3 = src[i].value;
         if v.x != ref_.x || v.y != ref_.y || v.z != ref_.z {
             constant = false;
             break;
@@ -6624,16 +6609,11 @@ pub(crate) unsafe fn bake_postprocess_vec3(
     }
     p_constant.set(constant);
 
-    let count = src.count;
-    // SAFETY: `data` addresses `count` live elements, which is the run
-    // `push_copy` reads — this `unsafe fn`'s contract — and `bc.result` is
-    // `bc`'s own buffer. After the non-null check, the fresh copy remains live
-    // with the finished baked animation.
-    let keys = unsafe {
-        let data = bc.result_view().push_copy_raw::<BakedVec3>(count, data);
-        ufbxi_check_err!(bc.error_view(), !data.is_null(), "p_dst->data");
-        List::from_raw_parts(data, count)
-    };
+    let data = bc.result_view().push_copy_slice(&src[..count]);
+    ufbxi_check_err!(bc.error_view(), !data.is_null(), "p_dst->data");
+    // SAFETY: `data` is the fresh non-null result-buffer copy checked above and
+    // remains live with the finished baked animation.
+    let keys = unsafe { List::from_raw_parts(data, count) };
     p_dst.set(keys);
 
     Ok(())
@@ -6641,24 +6621,19 @@ pub(crate) unsafe fn bake_postprocess_vec3(
 
 // ufbx.c:27099-27199 `ufbxi_bake_postprocess_quat`
 //
-// Stays an `unsafe fn` for one untypeable obligation: `src` is a C run —
-// `src.data` must address `src.count` live, WRITABLE `ufbx_baked_quat`s, since
-// the postprocess passes compact the keys in place before `push_copy` reads
-// them. No pointer type carries that length-and-writability promise; the
-// destination slots are typed (`p_dst`, `p_constant`).
 #[cfg(feature = "baking")]
 #[inline(never)]
-pub(crate) unsafe fn bake_postprocess_quat(
+pub(crate) fn bake_postprocess_quat(
     bc: &BakeContext,
     p_dst: &ListView<BakedQuat>,
     p_constant: &ScalarView<bool>,
-    mut src: List<BakedQuat>,
+    src: &mut [BakedQuat],
 ) -> Result<(), Fail> {
-    if src.count == 0 {
+    if src.is_empty() {
         return Ok(());
     }
 
-    let data: *mut BakedQuat = src.data as *mut BakedQuat;
+    let mut count = src.len();
 
     // Offset times
     if bc.ktime_offset() != 0.0 {
@@ -6666,28 +6641,23 @@ pub(crate) unsafe fn bake_postprocess_quat(
         // into `bc`, live for the bake.
         let scale: f64 = unsafe { (*bc.scene()).metadata.ktime_second } as f64;
         let offset: f64 = bc.ktime_offset();
-        for i in 0..src.count {
-            // SAFETY: this `unsafe fn` requires `src` to describe a live,
-            // writable run of `src.count` `ufbx_baked_quat`s, and `i < src.count`.
-            unsafe {
-                (*data.add(i)).time = math::rint((*data.add(i)).time * scale + offset) / scale
-            };
+        for i in 0..count {
+            src[i].time = math::rint(src[i].time * scale + offset) / scale;
         }
     }
 
     // Postprocess stepped tangents
     {
         let mut dst: usize = 0;
-        // SAFETY: `src.count != 0` (the early return above), so slot 0 is in
-        // bounds of the run `src` describes.
-        let mut prev_time: f64 = unsafe { (*data.add(0)).time };
-        for i in 0..src.count {
-            // SAFETY: `i < src.count`, in bounds of the run; `BakedQuat` is
-            // plain data, so reading it out leaves the slot valid.
-            let mut cur: BakedQuat = unsafe { ptr::read(data.add(i)) };
-            let next_time: f64 = if i + 1 < src.count {
-                // SAFETY: `i + 1 < src.count` (checked), in bounds of the run.
-                unsafe { (*data.add(i + 1)).time }
+        let mut prev_time: f64 = src[0].time;
+        for i in 0..count {
+            let mut cur = BakedQuat {
+                time: src[i].time,
+                value: src[i].value,
+                flags: src[i].flags,
+            };
+            let next_time: f64 = if i + 1 < count {
+                src[i + 1].time
             } else {
                 math::INFINITY
             };
@@ -6700,22 +6670,18 @@ pub(crate) unsafe fn bake_postprocess_quat(
             }
             if keep {
                 prev_time = cur.time;
-                // SAFETY: `dst <= i < src.count`, in bounds of the run.
-                unsafe { ptr::write(data.add(dst), cur) };
+                src[dst] = cur;
                 dst += 1;
             }
         }
-        src.count = dst;
+        count = dst;
     }
 
     // Fix quaternion antipodality
-    for i in 1..src.count {
-        // SAFETY: `i >= 1` and `i < src.count`, so both `i` and `i - 1` are in
-        // bounds of the run `src` describes.
-        unsafe {
-            (*data.add(i)).value =
-                quat_fix_antipodal((*data.add(i)).value, (*data.add(i - 1)).value)
-        };
+    for i in 1..count {
+        let value = src[i].value;
+        let prev_value = src[i - 1].value;
+        src[i].value = quat_fix_antipodal(value, prev_value);
     }
 
     if bc.opts_view().key_reduction_enabled() {
@@ -6724,53 +6690,58 @@ pub(crate) unsafe fn bake_postprocess_quat(
         for _pass in 0..bc.opts_view().key_reduction_passes() {
             let mut dst: usize = 1;
             let mut i: usize = 1;
-            while i < src.count {
-                // SAFETY: `i >= 1` and `i < src.count` (loop condition), so both
-                // `i - 1` and `i` are in bounds of the run `src` describes;
-                // `BakedQuat` is plain data, so reading leaves the slots valid.
-                let prev: BakedQuat = unsafe { ptr::read(data.add(i - 1)) };
-                // SAFETY: as above, for slot `i`.
-                let cur: BakedQuat = unsafe { ptr::read(data.add(i)) };
-                if i + 1 < src.count {
-                    // SAFETY: `i + 1 < src.count` (checked), in bounds of the run.
-                    let next: BakedQuat = unsafe { ptr::read(data.add(i + 1)) };
+            while i < count {
+                let prev = BakedQuat {
+                    time: src[i - 1].time,
+                    value: src[i - 1].value,
+                    flags: src[i - 1].flags,
+                };
+                let cur = BakedQuat {
+                    time: src[i].time,
+                    value: src[i].value,
+                    flags: src[i].flags,
+                };
+                if i + 1 < count {
+                    let next = BakedQuat {
+                        time: src[i + 1].time,
+                        value: src[i + 1].value,
+                        flags: src[i + 1].flags,
+                    };
                     let delta: f64 = (cur.time - prev.time) / (next.time - prev.time);
                     let mut error: f64 = 0.0;
 
                     if bc.opts_view().key_reduction_rotation() {
                         let tmp: Quat = quat_slerp(prev.value, next.value, delta as Real);
-                        error += (tmp.x as f64 - cur.value.x as f64)
-                            * (tmp.x as f64 - cur.value.x as f64);
-                        error += (tmp.y as f64 - cur.value.y as f64)
-                            * (tmp.y as f64 - cur.value.y as f64);
-                        error += (tmp.z as f64 - cur.value.z as f64)
-                            * (tmp.z as f64 - cur.value.z as f64);
-                        error += (tmp.w as f64 - cur.value.w as f64)
-                            * (tmp.w as f64 - cur.value.w as f64);
+                        error += (as_f64!(tmp.x) - as_f64!(cur.value.x))
+                            * (as_f64!(tmp.x) - as_f64!(cur.value.x));
+                        error += (as_f64!(tmp.y) - as_f64!(cur.value.y))
+                            * (as_f64!(tmp.y) - as_f64!(cur.value.y));
+                        error += (as_f64!(tmp.z) - as_f64!(cur.value.z))
+                            * (as_f64!(tmp.z) - as_f64!(cur.value.z));
+                        error += (as_f64!(tmp.w) - as_f64!(cur.value.w))
+                            * (as_f64!(tmp.w) - as_f64!(cur.value.w));
                     } else {
-                        error += (prev.value.x as f64 - cur.value.x as f64)
-                            * (prev.value.x as f64 - cur.value.x as f64);
-                        error += (prev.value.y as f64 - cur.value.y as f64)
-                            * (prev.value.y as f64 - cur.value.y as f64);
-                        error += (prev.value.z as f64 - cur.value.z as f64)
-                            * (prev.value.z as f64 - cur.value.z as f64);
-                        error += (prev.value.w as f64 - cur.value.w as f64)
-                            * (prev.value.w as f64 - cur.value.w as f64);
-                        error += (next.value.x as f64 - cur.value.x as f64)
-                            * (next.value.x as f64 - cur.value.x as f64);
-                        error += (next.value.y as f64 - cur.value.y as f64)
-                            * (next.value.y as f64 - cur.value.y as f64);
-                        error += (next.value.z as f64 - cur.value.z as f64)
-                            * (next.value.z as f64 - cur.value.z as f64);
-                        error += (next.value.w as f64 - cur.value.w as f64)
-                            * (next.value.w as f64 - cur.value.w as f64);
+                        error += (as_f64!(prev.value.x) - as_f64!(cur.value.x))
+                            * (as_f64!(prev.value.x) - as_f64!(cur.value.x));
+                        error += (as_f64!(prev.value.y) - as_f64!(cur.value.y))
+                            * (as_f64!(prev.value.y) - as_f64!(cur.value.y));
+                        error += (as_f64!(prev.value.z) - as_f64!(cur.value.z))
+                            * (as_f64!(prev.value.z) - as_f64!(cur.value.z));
+                        error += (as_f64!(prev.value.w) - as_f64!(cur.value.w))
+                            * (as_f64!(prev.value.w) - as_f64!(cur.value.w));
+                        error += (as_f64!(next.value.x) - as_f64!(cur.value.x))
+                            * (as_f64!(next.value.x) - as_f64!(cur.value.x));
+                        error += (as_f64!(next.value.y) - as_f64!(cur.value.y))
+                            * (as_f64!(next.value.y) - as_f64!(cur.value.y));
+                        error += (as_f64!(next.value.z) - as_f64!(cur.value.z))
+                            * (as_f64!(next.value.z) - as_f64!(cur.value.z));
+                        error += (as_f64!(next.value.w) - as_f64!(cur.value.w))
+                            * (as_f64!(next.value.w) - as_f64!(cur.value.w));
                         error *= 0.5;
                     }
 
                     if error <= threshold {
-                        // SAFETY: `i + 1 < src.count` (checked) and `dst <= i`,
-                        // so both slots are in bounds of the run.
-                        unsafe { ptr::write(data.add(dst), ptr::read(data.add(i + 1))) };
+                        src[dst] = next;
                         i += 1;
                         dst += 1;
                         // C: `continue` — the `for` increment still runs.
@@ -6779,29 +6750,21 @@ pub(crate) unsafe fn bake_postprocess_quat(
                     }
                 }
 
-                // SAFETY: `i < src.count` (loop condition) and `dst <= i`, so
-                // both slots are in bounds of the run.
-                unsafe { ptr::write(data.add(dst), ptr::read(data.add(i))) };
+                src[dst] = cur;
                 dst += 1;
                 i += 1;
             }
-            if dst == src.count {
+            if dst == count {
                 break;
             }
-            src.count = dst;
+            count = dst;
         }
     }
 
     let mut constant: bool = true;
-    // SAFETY: `data` addresses the original run, which holds at least one
-    // element (the `src.count == 0` early return above), so slot 0 is in
-    // bounds. The passes above only shrink `src.count` — they never move or
-    // reallocate the run — so slot 0 stays valid regardless of how many keys
-    // they keep.
-    let ref_: Quat = unsafe { (*data.add(0)).value };
-    for i in 1..src.count {
-        // SAFETY: `i < src.count`, in bounds of the run.
-        let v: Quat = unsafe { (*data.add(i)).value };
+    let ref_: Quat = src[0].value;
+    for i in 1..count {
+        let v: Quat = src[i].value;
         if v.x != ref_.x || v.y != ref_.y || v.z != ref_.z || v.w != ref_.w {
             constant = false;
             break;
@@ -6809,16 +6772,11 @@ pub(crate) unsafe fn bake_postprocess_quat(
     }
     p_constant.set(constant);
 
-    let count = src.count;
-    // SAFETY: `data` addresses `count` live elements, which is the run
-    // `push_copy` reads — this `unsafe fn`'s contract — and `bc.result` is
-    // `bc`'s own buffer. After the non-null check, the fresh copy remains live
-    // with the finished baked animation.
-    let keys = unsafe {
-        let data = bc.result_view().push_copy_raw::<BakedQuat>(count, data);
-        ufbxi_check_err!(bc.error_view(), !data.is_null(), "p_dst->data");
-        List::from_raw_parts(data, count)
-    };
+    let data = bc.result_view().push_copy_slice(&src[..count]);
+    ufbxi_check_err!(bc.error_view(), !data.is_null(), "p_dst->data");
+    // SAFETY: `data` is the fresh non-null result-buffer copy checked above and
+    // remains live with the finished baked animation.
+    let keys = unsafe { List::from_raw_parts(data, count) };
     p_dst.set(keys);
 
     Ok(())
@@ -7377,9 +7335,11 @@ pub(crate) unsafe fn bake_node_imp(
     // SAFETY: as above, for the pushed baked node's own `constant_scale` field.
     let constant_scale: &ScalarView<bool> =
         unsafe { &*(baked_node_view.constant_scale_raw() as *const ScalarView<bool>) };
-    // SAFETY: `keys_t` describes the live run of `ix_t` written keys pushed onto
-    // `bc.tmp_prop` — `bake_postprocess_vec3`'s run contract.
+    // SAFETY: `keys_t` describes a live run of `keys_t.count == ix_t`
+    // initialized keys pushed onto `bc.tmp_prop`; no other access to that run
+    // overlaps the mutable slice for the duration of the call.
     unsafe {
+        let keys_t = core::slice::from_raw_parts_mut(keys_t.data as *mut BakedVec3, keys_t.count);
         bake_postprocess_vec3(
             bc,
             baked_node_view.translation_keys_view(),
@@ -7393,9 +7353,11 @@ pub(crate) unsafe fn bake_node_imp(
     // storage the shared `&ScalarView` (`Cell`) writes through.
     let constant_rotation: &ScalarView<bool> =
         unsafe { &*(baked_node_view.constant_rotation_raw() as *const ScalarView<bool>) };
-    // SAFETY: `keys_r` describes the live run of `ix_r` written keys pushed onto
-    // `bc.tmp_prop` — `bake_postprocess_quat`'s run contract.
+    // SAFETY: `keys_r` describes a live run of `keys_r.count == ix_r`
+    // initialized keys pushed onto `bc.tmp_prop`; no other access to that run
+    // overlaps the mutable slice for the duration of the call.
     unsafe {
+        let keys_r = core::slice::from_raw_parts_mut(keys_r.data as *mut BakedQuat, keys_r.count);
         bake_postprocess_quat(
             bc,
             baked_node_view.rotation_keys_view(),
@@ -7403,9 +7365,11 @@ pub(crate) unsafe fn bake_node_imp(
             keys_r,
         )
     }?;
-    // SAFETY: `keys_s` describes the live run of `ix_s` written keys pushed onto
-    // `bc.tmp_prop` — `bake_postprocess_vec3`'s run contract.
+    // SAFETY: `keys_s` describes a live run of `keys_s.count == ix_s`
+    // initialized keys pushed onto `bc.tmp_prop`; no other access to that run
+    // overlaps the mutable slice for the duration of the call.
     unsafe {
+        let keys_s = core::slice::from_raw_parts_mut(keys_s.data as *mut BakedVec3, keys_s.count);
         bake_postprocess_vec3(
             bc,
             baked_node_view.scale_keys_view(),
@@ -7637,9 +7601,13 @@ pub(crate) unsafe fn bake_anim_prop(
     // storage the shared `&ScalarView` (`Cell`) writes through.
     let constant_value: &ScalarView<bool> =
         unsafe { &*(baked_prop_view.constant_value_raw() as *const ScalarView<bool>) };
-    // SAFETY: `keys` describes the run just written above —
-    // `bake_postprocess_vec3`'s run contract.
-    unsafe { bake_postprocess_vec3(bc, baked_prop_view.keys_view(), constant_value, keys) }?;
+    // SAFETY: `keys` describes the exact initialized run written above; no
+    // other access to that run overlaps the mutable slice for the duration of
+    // the call.
+    unsafe {
+        let keys = core::slice::from_raw_parts_mut(keys.data as *mut BakedVec3, keys.count);
+        bake_postprocess_vec3(bc, baked_prop_view.keys_view(), constant_value, keys)
+    }?;
 
     buf_clear(bc.tmp_prop_view());
 

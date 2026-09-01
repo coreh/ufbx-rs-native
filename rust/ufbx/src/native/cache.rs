@@ -898,6 +898,19 @@ pub(crate) unsafe fn cache_read(
     Ok(())
 }
 
+#[cfg(feature = "geometry-cache")]
+#[inline(always)]
+fn cache_read_array<const N: usize>(cc: &CacheContext, allow_eof: bool) -> Result<[u8; N], Fail> {
+    let mut data = MaybeUninit::<[u8; N]>::uninit();
+    // SAFETY: `data` supplies exactly `N` writable bytes. On success,
+    // `cache_read` initializes the complete destination, zero-filling any
+    // unread tail when EOF is allowed, so the array may then be assumed init.
+    unsafe {
+        cache_read(cc, data.as_mut_ptr() as *mut c_void, N, allow_eof)?;
+        Ok(data.assume_init())
+    }
+}
+
 // ufbx.c:24080-24116 `ufbxi_cache_skip`
 #[cfg(feature = "geometry-cache")]
 #[inline(never)]
@@ -1009,18 +1022,11 @@ pub(crate) const fn cache_mc_tag(a: u8, b: u8, c: u8, d: u8) -> u32 {
 // Safe fn: the out-param is an unaliased caller local, spelled `&mut u32`
 // (the panic-param policy applied to the cache readers).
 pub(crate) fn cache_mc_read_tag(cc: &CacheContext, p_tag: &mut u32) -> Result<(), Fail> {
-    let mut buf = MaybeUninit::<[u8; 4]>::uninit(); // ufbxi_uninit
-    let buf: *mut u8 = buf.as_mut_ptr() as *mut u8;
-    // SAFETY: `buf` is a local 4-byte buffer; `cache_read` writes exactly the
-    // 4 bytes it is asked for before Ok, so the byte reads below are of
-    // initialized memory.
-    unsafe {
-        cache_read(cc, buf as *mut c_void, 4, true)?;
-        *p_tag = (*buf.add(0) as u32) << 24u32
-            | (*buf.add(1) as u32) << 16
-            | (*buf.add(2) as u32) << 8u32
-            | (*buf.add(3) as u32);
-    }
+    let buf = cache_read_array::<4>(cc, true)?;
+    *p_tag = (buf[0] as u32) << 24u32
+        | (buf[1] as u32) << 16
+        | (buf[2] as u32) << 8u32
+        | (buf[3] as u32);
     if *p_tag == cache_mc_tag(b'F', b'O', b'R', b'8') {
         cc.set_mc_for8(true);
     }
@@ -1031,18 +1037,13 @@ pub(crate) fn cache_mc_read_tag(cc: &CacheContext, p_tag: &mut u32) -> Result<()
 #[cfg(feature = "geometry-cache")]
 #[inline(never)]
 pub(crate) fn cache_mc_read_u32(cc: &CacheContext, p_value: &mut u32) -> Result<(), Fail> {
-    let mut buf = MaybeUninit::<[u8; 4]>::uninit(); // ufbxi_uninit
-    let buf: *mut u8 = buf.as_mut_ptr() as *mut u8;
-    // SAFETY: local 4-byte buffer, fully written by `cache_read` before Ok.
-    unsafe {
-        cache_read(cc, buf as *mut c_void, 4, false)?;
-        *p_value = (*buf.add(0) as u32) << 24u32
-            | (*buf.add(1) as u32) << 16
-            | (*buf.add(2) as u32) << 8u32
-            | (*buf.add(3) as u32);
-        if cc.mc_for8() {
-            cache_read(cc, buf as *mut c_void, 4, false)?;
-        }
+    let buf = cache_read_array::<4>(cc, false)?;
+    *p_value = (buf[0] as u32) << 24u32
+        | (buf[1] as u32) << 16
+        | (buf[2] as u32) << 8u32
+        | (buf[3] as u32);
+    if cc.mc_for8() {
+        let _ = cache_read_array::<4>(cc, false)?;
     }
     Ok(())
 }
@@ -1056,21 +1057,16 @@ pub(crate) fn cache_mc_read_u64(cc: &CacheContext, p_value: &mut u64) -> Result<
         cache_mc_read_u32(cc, &mut v32)?;
         *p_value = v32 as u64;
     } else {
-        let mut buf = MaybeUninit::<[u8; 8]>::uninit(); // ufbxi_uninit
-        let buf: *mut u8 = buf.as_mut_ptr() as *mut u8;
-        // SAFETY: local 8-byte buffer, fully written by `cache_read` before Ok.
-        unsafe {
-            cache_read(cc, buf as *mut c_void, 8, false)?;
-            let hi: u32 = (*buf.add(0) as u32) << 24u32
-                | (*buf.add(1) as u32) << 16
-                | (*buf.add(2) as u32) << 8u32
-                | (*buf.add(3) as u32);
-            let lo: u32 = (*buf.add(4) as u32) << 24u32
-                | (*buf.add(5) as u32) << 16
-                | (*buf.add(6) as u32) << 8u32
-                | (*buf.add(7) as u32);
-            *p_value = (hi as u64) << 32u32 | (lo as u64);
-        }
+        let buf = cache_read_array::<8>(cc, false)?;
+        let hi: u32 = (buf[0] as u32) << 24u32
+            | (buf[1] as u32) << 16
+            | (buf[2] as u32) << 8u32
+            | (buf[3] as u32);
+        let lo: u32 = (buf[4] as u32) << 24u32
+            | (buf[5] as u32) << 16
+            | (buf[6] as u32) << 8u32
+            | (buf[7] as u32);
+        *p_value = (hi as u64) << 32u32 | (lo as u64);
     }
     Ok(())
 }
@@ -1104,8 +1100,6 @@ pub(crate) fn cache_load_mc(cc: &CacheContext) -> Result<(), Fail> {
     let mut time_end: u32 = 0;
     let mut count: u32 = 0;
     let mut time: u32 = 0;
-    let mut skip_buf = MaybeUninit::<[u8; 8]>::uninit(); // ufbxi_uninit
-
     loop {
         let mut tag: u32 = 0; // C: ufbxi_uninit (written before every read)
         let mut size: u64 = 0; // C: ufbxi_uninit (written before every read)
@@ -1118,8 +1112,7 @@ pub(crate) fn cache_load_mc(cc: &CacheContext) -> Result<(), Fail> {
             continue;
         }
         if cc.mc_for8() {
-            // SAFETY: local 8-byte skip buffer, 4 bytes requested.
-            unsafe { cache_read(cc, skip_buf.as_mut_ptr() as *mut c_void, 4, false)? };
+            let _ = cache_read_array::<4>(cc, false)?;
         }
 
         cache_mc_read_u64(cc, &mut size)?;
@@ -1230,20 +1223,7 @@ pub(crate) fn cache_load_mc(cc: &CacheContext) -> Result<(), Fail> {
 #[cfg(feature = "geometry-cache")]
 #[inline(never)]
 pub(crate) fn cache_load_pc2(cc: &CacheContext) -> Result<(), Fail> {
-    // C: `char header[32];` — ufbxi_uninit.
-    let mut header = MaybeUninit::<[u8; 32]>::uninit();
-    // SAFETY: `header` supplies the 32 writable bytes requested from
-    // `cache_read`, which fills them before returning success.
-    unsafe {
-        cache_read(
-            cc,
-            header.as_mut_ptr() as *mut c_void,
-            size_of::<[u8; 32]>(),
-            false,
-        )?;
-    }
-    // SAFETY: the successful read above initialized all 32 bytes.
-    let header = unsafe { header.assume_init() };
+    let header = cache_read_array::<32>(cc, false)?;
     let version = read_u32(&header[12..]);
     let num_points = read_u32(&header[16..]);
     let start_frame = read_f32(&header[20..]) as f64;
@@ -1267,10 +1247,8 @@ pub(crate) fn cache_load_pc2(cc: &CacheContext) -> Result<(), Fail> {
     // Skip almost to the end of the data and try to read one byte as there's
     // nothing after the data so we can't detect EOF..
     if total_points > 0 {
-        let mut last_byte = MaybeUninit::<[u8; 1]>::uninit(); // ufbxi_uninit
         cache_skip(cc, total_points * 12 - 1)?;
-        // SAFETY: local 1-byte buffer.
-        unsafe { cache_read(cc, last_byte.as_mut_ptr() as *mut c_void, 1, false)? };
+        let _ = cache_read_array::<1>(cc, false)?;
     }
 
     let mut i: u32 = 0;
