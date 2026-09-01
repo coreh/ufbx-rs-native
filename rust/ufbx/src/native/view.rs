@@ -116,6 +116,18 @@ impl<T> View<T, Mut> {
         cell.get().cast()
     }
 
+    /// Replace the whole viewed C-POD value without reading or dropping the
+    /// previous bytes. This is the whole-struct counterpart of `view_write!`:
+    /// callers can publish coupled fields (for example pointer/length pairs)
+    /// in one logical write after constructing and validating the complete
+    /// descriptor.
+    #[inline(always)]
+    pub(crate) fn write_value(&self, value: T) {
+        // SAFETY: `get()` is the receiver's live, write-capable storage. The
+        // no-Drop requirement is enforced by `write_no_drop`'s const assert.
+        unsafe { write_no_drop(self.get(), value) }
+    }
+
     /// The viewed element as a storable `Ref<T>` (the inverse of
     /// [`crate::prelude::Ref::view`]), for writing a `ufbx_element*` field
     /// from a view. `Mut` only — a `Ref` promises write-capable provenance to

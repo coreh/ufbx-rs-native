@@ -2732,6 +2732,45 @@ fn geometry_cache_rejects_stream_without_read_callback() {
     assert!(closed.load(std::sync::atomic::Ordering::Relaxed));
 }
 
+#[test]
+fn geometry_cache_xml_token_publication() {
+    let cache = ufbx::load_geometry_cache(
+        &data_path("caches/sine_xml_parse/cache.xml"),
+        ufbx::GeometryCacheOpts {
+            open_file_cb: ufbx::OpenFileCb::Ref(&open_from_memory),
+            ..Default::default()
+        },
+    )
+    .expect("XML cache fixture");
+
+    assert_eq!(cache.extra_info.len(), 2);
+    assert_eq!(
+        cache.extra_info[0].as_ref(),
+        "cdata! \"'&<><--&lt;&#x61;<tag></tag>-->!CDATA[]>aβカ😂]]"
+    );
+    assert_eq!(cache.extra_info[1].as_ref(), "\"'&<>aaaβββカカカ😂😂😂");
+
+    assert_eq!(cache.channels.len(), 2);
+    assert_eq!(cache.channels[0].name.as_ref(), "pCubeShape1");
+    assert_eq!(cache.channels[1].name.as_ref(), "pCubeShape2");
+    assert_eq!(
+        cache.channels[0].interpretation,
+        ufbx::CacheInterpretation::Unknown
+    );
+    assert_eq!(
+        cache.channels[1].interpretation,
+        ufbx::CacheInterpretation::Unknown
+    );
+    assert_eq!(
+        cache.channels[0].interpretation_name.as_ref(),
+        "<!--\"positions\"-->"
+    );
+    assert_eq!(
+        cache.channels[1].interpretation_name.as_ref(),
+        "<![CDATA[<positions>]]>"
+    );
+}
+
 /// Mirrors `ufbxt_test_sine_cache` (test_cache.h): the `pCubeShape1` channel
 /// of each sine cache, sampled at 1/240s steps, follows a known sine.
 fn check_sine_cache(path: &str, begin: f64, end: f64, err_threshold: f64) {

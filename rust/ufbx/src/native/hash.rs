@@ -222,8 +222,8 @@ pub(crate) type CmpFn =
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub(crate) struct AaNode {
-    pub left: Option<Ref<AaNode>>,
-    pub right: Option<Ref<AaNode>>,
+    left: Option<Ref<AaNode>>,
+    right: Option<Ref<AaNode>>,
     pub level: u32,
     pub index: u32,
 }
@@ -301,8 +301,8 @@ pub(crate) struct Map {
     pub cmp_fn: Option<CmpFn>,
     pub cmp_user: *mut c_void,
 
-    pub aa_buf: Buf,
-    pub aa_root: Option<Ref<AaNode>>,
+    aa_buf: Buf,
+    aa_root: Option<Ref<AaNode>>,
 }
 
 // Typed interior-mutable VIEW over an owned `Map` field, reinterpreted in place.
@@ -384,7 +384,7 @@ impl MapView {
     }
     // `aa_buf` (Buf) — typed VIEW handle (reinterpret-in-place); accessors on BufView.
     #[inline(always)]
-    pub(crate) fn aa_buf_view(&self) -> &BufView {
+    fn aa_buf_view(&self) -> &BufView {
         view_project!(self, aa_buf)
     }
 

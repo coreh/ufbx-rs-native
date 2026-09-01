@@ -33,7 +33,7 @@ use crate::native::platform::{math, min_real, min_sz, ufbx_assert, ufbxi_regress
 use crate::native::view::{view_raw_mut, view_read, view_write, Mode, View};
 use crate::native::warnings::{ufbxi_warnf_imp, Warnings};
 use crate::prelude::as_f64;
-use crate::prelude::{BlobView, Real, String, StringView};
+use crate::prelude::{Blob, BlobView, Real, String, StringView};
 
 // -- String pool (ufbx.c:4895)
 //
@@ -950,33 +950,6 @@ pub(crate) unsafe fn push_string(
     unsafe { push_string_imp(pool, str_, length, p_out_length, true, raw) }
 }
 
-// ufbx.c:5260-5269 `ufbxi_push_string_place`
-#[inline(always)]
-pub(crate) unsafe fn push_string_place(
-    pool: &StringPoolView,
-    p_str: *mut *const u8,
-    p_length: *mut usize,
-    raw: bool,
-) -> Result<(), Fail> {
-    // SAFETY: the caller vouches `p_str`/`p_length` address live, initialized
-    // in-out slots holding the string to intern.
-    let mut str_ = unsafe { *p_str };
-    let length = unsafe { *p_length };
-    ufbxi_check_err!(
-        pool.error_view(),
-        !str_.is_null() || length == 0,
-        "str || length == 0"
-    );
-    // SAFETY: the caller vouches `*p_str`/`*p_length` describe a run readable for
-    // `length` bytes (the check above additionally rejects a null `str_` with
-    // nonzero length), and `p_length` is the caller's live in-out length slot.
-    str_ = unsafe { push_string(pool, str_, length, p_length, raw) };
-    ufbxi_check_err!(pool.error_view(), !str_.is_null(), "str");
-    // SAFETY: `p_str` is the caller's live out-param.
-    unsafe { *p_str = str_ };
-    Ok(())
-}
-
 // ufbx.c:5271-5275 `ufbxi_push_string_place_str`
 #[inline(never)]
 pub(crate) fn push_string_place_str(
@@ -987,10 +960,24 @@ pub(crate) fn push_string_place_str(
     // C-parity: `ufbxi_check_err(pool->error, p_str)` is a null check on the
     // place pointer; a `&StringView` reference cannot be null, so the condition
     // holds by typing.
-    // SAFETY: `data_mut_ptr()`/`length_mut_ptr()` project `p_str`'s own live,
-    // initialized `data`/`length` leaves as the in-out slots
-    // `push_string_place` reads and writes.
-    unsafe { push_string_place(pool, p_str.data_mut_ptr(), p_str.length_mut_ptr(), raw) }
+    let data = p_str.data();
+    let mut length = p_str.length();
+    ufbxi_check_err!(
+        pool.error_view(),
+        !data.is_null() || length == 0,
+        "str || length == 0"
+    );
+
+    // SAFETY: `data`/`length` are the initialized descriptor read from `p_str`
+    // and describe its readable run; `length` is an unaliased local in-out
+    // slot. The complete result is checked before it is published to `p_str`.
+    let value = unsafe {
+        let data = push_string(pool, data, length, &raw mut length, raw);
+        ufbxi_check_err!(pool.error_view(), !data.is_null(), "str");
+        String::new_c(data, length)
+    };
+    p_str.set(value);
+    Ok(())
 }
 
 // ufbx.c:5277-5286 `ufbxi_push_string_place_blob`
@@ -1001,23 +988,21 @@ pub(crate) fn push_string_place_blob(
     raw: bool,
 ) -> Result<(), Fail> {
     if p_blob.size() == 0 {
-        p_blob.set_data(ptr::null());
+        p_blob.set(Blob::empty());
         return Ok(());
     }
-    // SAFETY: `p_blob`'s own `data`/`size` leaves describe its run, so `data` is
-    // readable for `size` bytes, and `size_mut_ptr()` is that same blob's live
-    // `usize` out-param slot — the `push_string` contract.
-    let data = unsafe {
-        push_string(
-            pool,
-            p_blob.data(),
-            p_blob.size(),
-            p_blob.size_mut_ptr(),
-            raw,
-        )
+    let data = p_blob.data();
+    let mut size = p_blob.size();
+    // SAFETY: `data`/`size` are the initialized descriptor read from `p_blob`
+    // and describe its readable run; `size` is an unaliased local in-out slot.
+    // The returned pointer is checked before constructing and publishing the
+    // complete pool-owned blob descriptor.
+    let value = unsafe {
+        let data = push_string(pool, data, size, &raw mut size, raw);
+        ufbxi_check_err!(pool.error_view(), !data.is_null(), "p_blob->data");
+        Blob::new_c(data, size)
     };
-    p_blob.set_data(data);
-    ufbxi_check_err!(pool.error_view(), !p_blob.data().is_null(), "p_blob->data");
+    p_blob.set(value);
     Ok(())
 }
 
@@ -1845,9 +1830,12 @@ mod tests {
     use core::mem::MaybeUninit;
 
     struct Fixture {
-        err: Error,
-        ator: Allocator,
-        pool: StringPool,
+        // Separate stable allocations: the pool stores pointers to `err` and
+        // `ator`, so moving or mutably borrowing the Fixture handle must not
+        // retag the pointees that those pointers name.
+        err: Box<Error>,
+        ator: Box<Allocator>,
+        pool: Box<StringPool>,
     }
 
     fn make_fixture(handling: UnicodeErrorHandling) -> Box<Fixture> {
@@ -1856,21 +1844,21 @@ mod tests {
         // field.
         let mut fx: Box<Fixture> = unsafe {
             Box::new(Fixture {
-                err: Error::default(),
-                ator: MaybeUninit::zeroed().assume_init(),
-                pool: MaybeUninit::zeroed().assume_init(),
+                err: Box::new(Error::default()),
+                ator: Box::new(MaybeUninit::zeroed().assume_init()),
+                pool: Box::new(MaybeUninit::zeroed().assume_init()),
             })
         };
-        // SAFETY: `err` is a field of the boxed fixture, live and unmoved for
-        // the test; the raw address is the one vouch for it.
+        // SAFETY: `err` has its own boxed allocation, live and unmoved for the
+        // test; the raw address is the one vouch for it.
         init_ator(
-            &raw mut fx.err,
-            AllocatorView::from_mut(&mut fx.ator),
+            &raw mut *fx.err,
+            AllocatorView::from_mut(fx.ator.as_mut()),
             NO_ATOR_OPTS,
             c"test",
         );
-        let ator = &mut fx.ator as *mut Allocator;
-        fx.pool.error = &mut fx.err;
+        let ator = fx.ator.as_mut() as *mut Allocator;
+        fx.pool.error = fx.err.as_mut();
         fx.pool.buf.ator = ator;
         // C: `ufbxi_map_init(&uc->string_pool.map, &uc->ator_tmp, &ufbxi_map_cmp_string, NULL)`
         // SAFETY: the boxed fixture's map is still fresh and empty. Its
@@ -2138,6 +2126,7 @@ mod tests {
             let mut fx = make_fixture(UnicodeErrorHandling::ReplacementCharacter);
 
             let mut str_ = s(b"Vertices");
+            let source_data = str_.data;
             assert_eq!(
                 push_string_place_str(
                     StringPoolView::from_mut(&mut fx.pool),
@@ -2148,6 +2137,7 @@ mod tests {
             );
             assert_eq!(str_.length, 8);
             assert_eq!(bytes(str_.data, 8), b"Vertices");
+            assert_ne!(str_.data, source_data);
             let interned = str_.data;
             // NULL data with zero length is allowed.
             let mut str2 = String::new_c(core::ptr::null(), 0);
@@ -2160,6 +2150,7 @@ mod tests {
                 Ok(())
             );
             assert_eq!(str2.data, EMPTY_CHAR.as_ptr());
+            assert_eq!(str2.length, 0);
 
             // Blob shares the pool with strings (same canonical pointer).
             let mut blob = MaybeUninit::<Blob>::zeroed().assume_init();
@@ -2174,6 +2165,7 @@ mod tests {
                 Ok(())
             );
             assert_eq!(blob.data, interned);
+            assert_eq!(blob.size, 8);
             // Zero-size blob: data forced to NULL.
             let mut blob2 = MaybeUninit::<Blob>::zeroed().assume_init();
             blob2.data = b"x".as_ptr();
@@ -2187,6 +2179,39 @@ mod tests {
                 Ok(())
             );
             assert!(blob2.data.is_null());
+            assert_eq!(blob2.size, 0);
+
+            // Sanitization changes both leaves: the invalid source byte grows
+            // to the three-byte replacement character before publication.
+            let mut sanitized = s(b"a\xffb");
+            let source_data = sanitized.data;
+            assert_eq!(
+                push_string_place_str(
+                    StringPoolView::from_mut(&mut fx.pool),
+                    StringView::from_mut(&mut sanitized),
+                    false,
+                ),
+                Ok(())
+            );
+            assert_ne!(sanitized.data, source_data);
+            assert_eq!(sanitized.length, 5);
+            assert_eq!(bytes(sanitized.data, sanitized.length), b"a\xef\xbf\xbdb");
+
+            free_fixture(&mut fx);
+
+            // A failed intern must not publish either locally computed leaf.
+            let mut fx = make_fixture(UnicodeErrorHandling::AbortLoading);
+            let mut rejected = s(b"a\xffb");
+            let original_data = rejected.data;
+            let original_length = rejected.length;
+            assert!(push_string_place_str(
+                StringPoolView::from_mut(&mut fx.pool),
+                StringView::from_mut(&mut rejected),
+                false,
+            )
+            .is_err());
+            assert_eq!(rejected.data, original_data);
+            assert_eq!(rejected.length, original_length);
 
             free_fixture(&mut fx);
         }

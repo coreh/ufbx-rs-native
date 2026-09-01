@@ -89,13 +89,6 @@ impl View<XmlTag> {
         }
     }
     #[inline(always)]
-    pub(crate) fn set_text_length(&self, length: usize) {
-        // SAFETY: storing the `text.length` field of a valid arena `XmlTag`.
-        unsafe {
-            (*self.get()).text.length = length;
-        }
-    }
-    #[inline(always)]
     pub(crate) fn text_view(&self) -> &View<String> {
         // SAFETY: in-place projection of the `text` field; liveness and
         // provenance carry over from this view's own mint.
@@ -549,6 +542,46 @@ pub(crate) fn xml_skip_while(xc: &XmlContext, ctypes: u32) {
     }
 }
 
+#[derive(Clone, Copy)]
+enum XmlTokenStringSlot {
+    Destination,
+    TagText,
+}
+
+// Publish the current NUL-terminated token as one complete `String`. The
+// result-buffer allocation must succeed before the destination exposes either
+// descriptor field, so safe string consumers can never observe a new length
+// paired with a null or stale data pointer.
+#[inline(never)]
+fn xml_publish_token_string(
+    xc: &XmlContext,
+    dst: &StringView,
+    slot: XmlTokenStringSlot,
+) -> Result<(), Fail> {
+    let tok_len = xc.tok_len();
+    // The token-building paths append a terminator before reaching this helper.
+    ufbx_assert!(tok_len > 0);
+    // SAFETY: `tok` contains the `tok_len` bytes pushed into xc's token
+    // allocation, including the trailing NUL. The token allocation and xc's
+    // result-buffer chunks are distinct, so the source cannot overlap the
+    // copied destination.
+    let data = unsafe { xc.result_view().push_copy_raw::<u8>(tok_len, xc.tok()) };
+    match slot {
+        XmlTokenStringSlot::Destination => {
+            ufbxi_check_err!(xc.error_view(), !data.is_null(), "dst->data");
+        }
+        XmlTokenStringSlot::TagText => {
+            ufbxi_check_err!(xc.error_view(), !data.is_null(), "tag->text.data");
+        }
+    }
+
+    // `data` is the checked-non-null stable result-buffer allocation above,
+    // readable for `tok_len - 1` bytes. Publish both descriptor leaves through
+    // the whole-value setter so no split state is observable.
+    dst.set(String::new_c(data, tok_len - 1));
+    Ok(())
+}
+
 // ufbx.c:7354-7386 `ufbxi_xml_skip_until_string`
 #[allow(unused_assignments)]
 #[inline(never)]
@@ -600,11 +633,7 @@ pub(crate) fn xml_skip_until_string(
 
     xml_push_token_char(xc, b'\0')?;
     if let Some(dst) = dst {
-        dst.set_length(xc.tok_len() - 1);
-        // SAFETY: `push_copy` copies `tok_len` bytes out of xc's own token
-        // buffer, which holds exactly that many, into xc's result buf.
-        dst.set_data(unsafe { xc.result_view().push_copy_raw::<u8>(xc.tok_len(), xc.tok()) });
-        ufbxi_check_err!(xc.error_view(), !dst.data().is_null(), "dst->data");
+        xml_publish_token_string(xc, dst, XmlTokenStringSlot::Destination)?;
     }
 
     Ok(())
@@ -714,11 +743,7 @@ pub(crate) fn xml_read_until(
 
     xml_push_token_char(xc, b'\0')?;
     if let Some(dst) = dst {
-        dst.set_length(xc.tok_len() - 1);
-        // SAFETY: `push_copy` copies `tok_len` bytes out of xc's own token
-        // buffer, which holds exactly that many, into xc's result buf.
-        dst.set_data(unsafe { xc.result_view().push_copy_raw::<u8>(xc.tok_len(), xc.tok()) });
-        ufbxi_check_err!(xc.error_view(), !dst.data().is_null(), "dst->data");
+        xml_publish_token_string(xc, dst, XmlTokenStringSlot::Destination)?;
     }
 
     Ok(())
@@ -812,17 +837,7 @@ unsafe fn xml_parse_tag_rec(
                 // `EMPTY_CHAR` is a NUL-terminated `'static` run.
                 tag.set_name_data(EMPTY_CHAR.as_ptr());
 
-                tag.set_text_length(xc.tok_len() - 1);
-                // SAFETY: `push_copy` copies the `tok_len` bytes the token
-                // buffer holds into xc's result buf.
-                tag.set_text_data(unsafe {
-                    xc.result_view().push_copy_raw::<u8>(xc.tok_len(), xc.tok())
-                });
-                ufbxi_check_err!(
-                    xc.error_view(),
-                    !tag.text().data.is_null(),
-                    "tag->text.data"
-                );
+                xml_publish_token_string(xc, tag.text_view(), XmlTokenStringSlot::TagText)?;
             }
         }
         return Ok(());

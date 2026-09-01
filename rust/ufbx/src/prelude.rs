@@ -343,6 +343,11 @@ impl<M: crate::native::view::Mode> crate::native::view::View<Blob, M> {
 }
 
 impl BlobView {
+    /// Publish a complete blob descriptor in one logical write.
+    #[inline(always)]
+    pub(crate) fn set(&self, value: Blob) {
+        self.write_value(value)
+    }
     #[inline(always)]
     pub(crate) fn set_data(&self, data: *const u8) {
         view_write!(self, data, data)
@@ -350,11 +355,6 @@ impl BlobView {
     #[inline(always)]
     pub(crate) fn set_size(&self, size: usize) {
         view_write!(self, size, size)
-    }
-    // `size` as an in-out slot for callees taking a `*mut usize` out-param.
-    #[inline(always)]
-    pub(crate) fn size_mut_ptr(&self) -> *mut usize {
-        view_raw_mut!(self, size)
     }
 }
 
@@ -708,6 +708,11 @@ impl<M: crate::native::view::Mode> crate::native::view::View<String, M> {
 }
 
 impl StringView {
+    /// Publish a complete string descriptor in one logical write.
+    #[inline(always)]
+    pub(crate) fn set(&self, value: String) {
+        self.write_value(value)
+    }
     #[inline(always)]
     pub(crate) fn set_data(&self, data: *const u8) {
         view_write!(self, data, data)
@@ -715,16 +720,6 @@ impl StringView {
     #[inline(always)]
     pub(crate) fn set_length(&self, length: usize) {
         view_write!(self, length, length)
-    }
-    // `data`/`length` as in-out slots for callees taking split `*mut` place
-    // out-params (`ufbxi_push_string_place`).
-    #[inline(always)]
-    pub(crate) fn data_mut_ptr(&self) -> *mut *const u8 {
-        view_raw_mut!(self, data)
-    }
-    #[inline(always)]
-    pub(crate) fn length_mut_ptr(&self) -> *mut usize {
-        view_raw_mut!(self, length)
     }
 }
 
