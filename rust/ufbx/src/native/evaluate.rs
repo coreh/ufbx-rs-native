@@ -3650,9 +3650,8 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
 
         // `keyframes` is that channel's own list, whose byte copy still
         // describes the source scene's keyframe run.
-        let keys: *mut BlendKeyframe = ec
-            .result_view()
-            .push::<BlendKeyframe>(chan.keyframes_view().count());
+        let count = chan.keyframes_view().count();
+        let keys: *mut BlendKeyframe = ec.result_view().push::<BlendKeyframe>(count);
         ufbxi_check_err!(ec.error_view(), !keys.is_null(), "keys");
         // C: `for (size_t i = 0; i < chan->keyframes.count; i++)` — one vouch
         // for the pushed run, then a safe walk.
@@ -3661,9 +3660,7 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
         // write-capable provenance for `Mut`; `from_raw_parts` admits such a
         // still-uninitialized run, and the loop below initializes every slot
         // before reading it.
-        let keys_run = unsafe {
-            SliceViewIter::<BlendKeyframe>::from_raw_parts(keys, chan.keyframes_view().count())
-        };
+        let keys_run = unsafe { SliceViewIter::<BlendKeyframe>::from_raw_parts(keys, count) };
         for (i, key) in keys_run.enumerate() {
             // C: `keys[i] = chan->keyframes.data[i];` (struct assignment)
             // SAFETY: `i` is below the keyframe count, so slot `i` is in bounds
@@ -3681,9 +3678,12 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
                     translate_element(ec, key.shape().ptr() as *mut c_void) as *mut BlendShape;
             }
         }
+        // SAFETY: all `count` slots were initialized and translated above; the
+        // result-buffer run remains stable with the evaluated scene.
+        let keys = unsafe { List::from_raw_parts(keys, count) };
         // C: `chan->keyframes.data = keys;` — the destination channel retargeted
-        // at the translated keyframe array.
-        chan.keyframes_view().set_data(keys);
+        // at the translated keyframe array, retaining its inherited count.
+        chan.keyframes_view().set(keys);
         // SAFETY: `target_shape` is that channel's own nullable
         // `Option<Ref<BlendShape>>` field; the byte copy left it naming a
         // source-scene element — `translate_element`'s contract — and the
@@ -3755,9 +3755,8 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
 
         // `textures` is that material's own list, whose byte copy still
         // describes the source scene's material-texture run.
-        let textures: *mut MaterialTexture = ec
-            .result_view()
-            .push::<MaterialTexture>(material.textures_view().count());
+        let count = material.textures_view().count();
+        let textures: *mut MaterialTexture = ec.result_view().push::<MaterialTexture>(count);
         ufbxi_check_err!(ec.error_view(), !textures.is_null(), "textures");
         // C: `for (size_t i = 0; i < material->textures.count; i++)` — one vouch
         // for the pushed run, then a safe walk.
@@ -3766,12 +3765,8 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
         // `*mut` — write-capable provenance for `Mut`; `from_raw_parts` admits
         // such a still-uninitialized run, and the loop below initializes every
         // slot before reading it.
-        let textures_run = unsafe {
-            SliceViewIter::<MaterialTexture>::from_raw_parts(
-                textures,
-                material.textures_view().count(),
-            )
-        };
+        let textures_run =
+            unsafe { SliceViewIter::<MaterialTexture>::from_raw_parts(textures, count) };
         for (i, texture) in textures_run.enumerate() {
             // C: `textures[i] = material->textures.data[i];` (struct assignment)
             // SAFETY: `i` is below the texture count, so slot `i` is in bounds
@@ -3789,9 +3784,12 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
                     translate_element(ec, texture.texture().ptr() as *mut c_void) as *mut Texture;
             }
         }
+        // SAFETY: all `count` slots were initialized and translated above; the
+        // result-buffer run remains stable with the evaluated scene.
+        let textures = unsafe { List::from_raw_parts(textures, count) };
         // C: `material->textures.data = textures;` — the destination material
-        // retargeted at the translated texture array.
-        material.textures_view().set_data(textures);
+        // retargeted at the translated texture array, retaining its count.
+        material.textures_view().set(textures);
     }
 
     // C: `ufbxi_for_ptr_list(ufbx_texture, p_texture, ec->scene.textures)`
@@ -3812,9 +3810,8 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
 
         // `layers` is that texture's own list, whose byte copy still describes
         // the source scene's texture-layer run.
-        let layers: *mut TextureLayer = ec
-            .result_view()
-            .push::<TextureLayer>(texture.layers_view().count());
+        let count = texture.layers_view().count();
+        let layers: *mut TextureLayer = ec.result_view().push::<TextureLayer>(count);
         ufbxi_check_err!(ec.error_view(), !layers.is_null(), "layers");
         // C: `for (size_t i = 0; i < texture->layers.count; i++)` — one vouch
         // for the pushed run, then a safe walk.
@@ -3823,9 +3820,7 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
         // write-capable provenance for `Mut`; `from_raw_parts` admits such a
         // still-uninitialized run, and the loop below initializes every slot
         // before reading it.
-        let layers_run = unsafe {
-            SliceViewIter::<TextureLayer>::from_raw_parts(layers, texture.layers_view().count())
-        };
+        let layers_run = unsafe { SliceViewIter::<TextureLayer>::from_raw_parts(layers, count) };
         for (i, layer) in layers_run.enumerate() {
             // C: `layers[i] = texture->layers.data[i];` (struct assignment)
             // SAFETY: `i` is below the layer count, so slot `i` is in bounds of
@@ -3843,9 +3838,12 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
                     translate_element(ec, layer.texture().ptr() as *mut c_void) as *mut Texture;
             }
         }
+        // SAFETY: all `count` slots were initialized and translated above; the
+        // result-buffer run remains stable with the evaluated scene.
+        let layers = unsafe { List::from_raw_parts(layers, count) };
         // C: `texture->layers.data = layers;` — the destination texture
-        // retargeted at the translated layer array.
-        texture.layers_view().set_data(layers);
+        // retargeted at the translated layer array, retaining its count.
+        texture.layers_view().set(layers);
 
         // SAFETY: `file_textures` is that texture's own `ufbx_element_list`,
         // whose byte copy still lists source-scene elements —
@@ -3873,19 +3871,21 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
             // provenance for `Mut`.
             let shader_view: &View<ShaderTexture> =
                 unsafe { View::<ShaderTexture>::from_ptr(shader) };
+            let count = shader_view.inputs_view().count();
             // SAFETY: `shader_view` views that freshly pushed copy, so its
-            // `inputs` list still describes the source scene's input run — the
-            // count/data pair `push_copy` copies from.
-            let inputs: *mut ShaderTextureInput = unsafe {
-                ec.result_view().push_copy_raw::<ShaderTextureInput>(
-                    shader_view.inputs_view().count(),
-                    shader_view.inputs_view().data(),
-                )
+            // `inputs` list still describes the source scene's initialized
+            // input run. The checked result-buffer copy remains stable with the
+            // evaluated scene.
+            let inputs = unsafe {
+                let data = ec
+                    .result_view()
+                    .push_copy_raw::<ShaderTextureInput>(count, shader_view.inputs_view().data());
+                ufbxi_check_err!(ec.error_view(), !data.is_null(), "inputs");
+                List::from_raw_parts(data, count)
             };
-            ufbxi_check_err!(ec.error_view(), !inputs.is_null(), "inputs");
             // C: `shader->inputs.data = inputs;` — the pushed copy retargeted at
-            // the pushed input array.
-            shader_view.inputs_view().set_data(inputs);
+            // the pushed input array, retaining its inherited count.
+            shader_view.inputs_view().set(inputs);
         }
     }
 
@@ -3986,9 +3986,8 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
 
         // `targets` is that constraint's own list, whose byte copy still
         // describes the source scene's target run.
-        let targets: *mut ConstraintTarget = ec
-            .result_view()
-            .push::<ConstraintTarget>(constraint.targets_view().count());
+        let count = constraint.targets_view().count();
+        let targets: *mut ConstraintTarget = ec.result_view().push::<ConstraintTarget>(count);
         ufbxi_check_err!(ec.error_view(), !targets.is_null(), "targets");
         // C: `for (size_t i = 0; i < constraint->targets.count; i++)` — one vouch
         // for the pushed run, then a safe walk.
@@ -3997,12 +3996,8 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
         // write-capable provenance for `Mut`; `from_raw_parts` admits such a
         // still-uninitialized run, and the loop below initializes every slot
         // before reading it.
-        let targets_run = unsafe {
-            SliceViewIter::<ConstraintTarget>::from_raw_parts(
-                targets,
-                constraint.targets_view().count(),
-            )
-        };
+        let targets_run =
+            unsafe { SliceViewIter::<ConstraintTarget>::from_raw_parts(targets, count) };
         for (i, target) in targets_run.enumerate() {
             // C: `targets[i] = constraint->targets.data[i];` (struct assignment)
             // SAFETY: `i` is below the target count, so slot `i` is in bounds of
@@ -4020,9 +4015,12 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
                     translate_element(ec, target.node().ptr() as *mut c_void) as *mut UfbxNode;
             }
         }
+        // SAFETY: all `count` slots were initialized and translated above; the
+        // result-buffer run remains stable with the evaluated scene.
+        let targets = unsafe { List::from_raw_parts(targets, count) };
         // C: `constraint->targets.data = targets;` — the destination constraint
-        // retargeted at the translated target array.
-        constraint.targets_view().set_data(targets);
+        // retargeted at the translated target array, retaining its count.
+        constraint.targets_view().set(targets);
     }
 
     // C: `ufbxi_for_ptr_list(ufbx_audio_layer, p_layer, ec->scene.audio_layers)`
@@ -4070,9 +4068,8 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
         unsafe { translate_element_list(ec, layer.anim_values_raw() as *mut c_void) }?;
         // `anim_props` is that layer's own list, whose byte copy still describes
         // the source scene's anim-prop run.
-        let props: *mut AnimProp = ec
-            .result_view()
-            .push::<AnimProp>(layer.anim_props_view().count() + 1);
+        let count = layer.anim_props_view().count();
+        let props: *mut AnimProp = ec.result_view().push::<AnimProp>(count + 1);
         ufbxi_check_err!(ec.error_view(), !props.is_null(), "props");
         // C: `for (size_t i = 0; i < layer->anim_props.count; i++)` — one vouch
         // for the pushed run, then a safe walk over its first `count` slots.
@@ -4081,9 +4078,7 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
         // `*mut` — write-capable provenance for `Mut`; `from_raw_parts` admits
         // such a still-uninitialized run, and the loop below initializes every
         // slot it walks before reading it.
-        let props_run = unsafe {
-            SliceViewIter::<AnimProp>::from_raw_parts(props, layer.anim_props_view().count())
-        };
+        let props_run = unsafe { SliceViewIter::<AnimProp>::from_raw_parts(props, count) };
         for (i, prop) in props_run.enumerate() {
             // C: `props[i] = layer->anim_props.data[i];` (struct assignment)
             // SAFETY: `i` is below the anim-prop count, so slot `i` is in bounds
@@ -4107,16 +4102,15 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
         // SAFETY: `props` is the base of that same pushed run of
         // `anim_props.count + 1` elements, so the slot at index `count` is the
         // spare one in bounds, and one `AnimProp` worth of bytes fits in it.
-        unsafe {
-            ptr::write_bytes(
-                props.add(layer.anim_props_view().count()) as *mut u8,
-                0,
-                size_of::<AnimProp>(),
-            );
-        }
+        let props = unsafe {
+            ptr::write_bytes(props.add(count) as *mut u8, 0, size_of::<AnimProp>());
+            // The logical list excludes the zeroed trailing sentinel bytes.
+            List::from_raw_parts(props, count)
+        };
         // C: `layer->anim_props.data = props;` — the destination layer retargeted
-        // at the translated anim-prop array.
-        layer.anim_props_view().set_data(props);
+        // at the translated anim-prop array, retaining its count and trailing
+        // sentinel.
+        layer.anim_props_view().set(props);
     }
 
     // C: `ufbxi_for_ptr_list(ufbx_pose, p_pose, ec->scene.poses)`
@@ -4127,9 +4121,8 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
 
         // `bone_poses` is that pose's own list, whose byte copy still describes
         // the source scene's bone-pose run.
-        let bones: *mut BonePose = ec
-            .result_view()
-            .push::<BonePose>(pose.bone_poses_view().count());
+        let count = pose.bone_poses_view().count();
+        let bones: *mut BonePose = ec.result_view().push::<BonePose>(count);
         ufbxi_check_err!(ec.error_view(), !bones.is_null(), "bones");
         // C: `for (size_t i = 0; i < pose->bone_poses.count; i++)` — one vouch
         // for the pushed run, then a safe walk.
@@ -4138,9 +4131,7 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
         // write-capable provenance for `Mut`; `from_raw_parts` admits such a
         // still-uninitialized run, and the loop below initializes every slot
         // before reading it.
-        let bones_run = unsafe {
-            SliceViewIter::<BonePose>::from_raw_parts(bones, pose.bone_poses_view().count())
-        };
+        let bones_run = unsafe { SliceViewIter::<BonePose>::from_raw_parts(bones, count) };
         for (i, bone) in bones_run.enumerate() {
             // C: `bones[i] = pose->bone_poses.data[i];` (struct assignment)
             // SAFETY: `i` is below the bone-pose count, so slot `i` is in bounds
@@ -4158,9 +4149,12 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
                     translate_element(ec, bone.bone_node().ptr() as *mut c_void) as *mut UfbxNode;
             }
         }
+        // SAFETY: all `count` slots were initialized and translated above; the
+        // result-buffer run remains stable with the evaluated scene.
+        let bones = unsafe { List::from_raw_parts(bones, count) };
         // C: `pose->bone_poses.data = bones;` — the destination pose retargeted
-        // at the translated bone-pose array.
-        pose.bone_poses_view().set_data(bones);
+        // at the translated bone-pose array, retaining its count.
+        pose.bone_poses_view().set(bones);
     }
 
     // SAFETY: `anim` is a field of `ec`'s own live context struct, declared

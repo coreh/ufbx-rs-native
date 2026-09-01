@@ -1672,30 +1672,32 @@ pub(crate) fn obj_pop_meshes(uc: &Context) -> Result<(), Fail> {
             );
 
             if uc.obj().has_face_smoothing() {
-                fbx_mesh.face_smoothing_view().set_count(num_faces);
-                fbx_mesh.face_smoothing_view().set_data(
-                    uc.result_view()
-                        .push_pop::<bool>(uc.obj().tmp_face_smoothing_view(), num_faces),
-                );
+                let face_smoothing_data: *mut bool = uc
+                    .result_view()
+                    .push_pop::<bool>(uc.obj().tmp_face_smoothing_view(), num_faces);
                 ufbxi_check!(
                     uc,
-                    !fbx_mesh.face_smoothing_view().data().is_null(),
+                    !face_smoothing_data.is_null(),
                     "fbx_mesh->face_smoothing.data"
                 );
+                // SAFETY: `face_smoothing_data` is the checked, fully
+                // initialized `num_faces`-bool run in uc's stable result arena.
+                fbx_mesh
+                    .face_smoothing_view()
+                    .set(unsafe { List::from_raw_parts(face_smoothing_data, num_faces) });
             }
 
             if uc.obj().has_face_group() {
                 if mesh.num_groups() > 1 {
-                    fbx_mesh.face_group_view().set_count(num_faces);
-                    fbx_mesh.face_group_view().set_data(
-                        uc.result_view()
-                            .push_pop::<u32>(uc.obj().tmp_face_group_view(), num_faces),
-                    );
-                    ufbxi_check!(
-                        uc,
-                        !fbx_mesh.face_group_view().data().is_null(),
-                        "fbx_mesh->face_group.data"
-                    );
+                    let face_group_data: *mut u32 = uc
+                        .result_view()
+                        .push_pop::<u32>(uc.obj().tmp_face_group_view(), num_faces);
+                    ufbxi_check!(uc, !face_group_data.is_null(), "fbx_mesh->face_group.data");
+                    // SAFETY: `face_group_data` is the checked, fully
+                    // initialized `num_faces`-index run in uc's stable result arena.
+                    fbx_mesh
+                        .face_group_view()
+                        .set(unsafe { List::from_raw_parts(face_group_data, num_faces) });
                 } else {
                     // SAFETY: the discarding pop takes this mesh's own faces
                     // off the obj parser's `tmp_face_group` arena.
@@ -1836,20 +1838,19 @@ pub(crate) fn obj_pop_meshes(uc: &Context) -> Result<(), Fail> {
         finalize_mesh(uc.result_view(), uc.error_view(), fbx_mesh)?;
 
         if uc.retain_mesh_parts() {
-            // The part run is freshly zero-pushed onto uc's result arena,
-            // checked below.
-            fbx_mesh
-                .face_group_parts_view()
-                .set_count(mesh.num_groups() as usize);
-            fbx_mesh.face_group_parts_view().set_data(
-                uc.result_view()
-                    .push_zero::<MeshPart>(mesh.num_groups() as usize),
-            );
+            let num_parts: usize = mesh.num_groups() as usize;
+            let face_group_parts_data: *mut MeshPart =
+                uc.result_view().push_zero::<MeshPart>(num_parts);
             ufbxi_check!(
                 uc,
-                !fbx_mesh.face_group_parts_view().data().is_null(),
+                !face_group_parts_data.is_null(),
                 "fbx_mesh->face_group_parts.data"
             );
+            // SAFETY: `face_group_parts_data` is the checked, zero-initialized
+            // `num_parts`-part run in uc's stable result arena.
+            fbx_mesh
+                .face_group_parts_view()
+                .set(unsafe { List::from_raw_parts(face_group_parts_data, num_parts) });
         }
 
         if mesh.num_groups() > 1 {

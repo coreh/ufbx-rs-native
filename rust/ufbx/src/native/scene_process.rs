@@ -2932,12 +2932,14 @@ pub(crate) fn fetch_textures<M: Mode>(
         }
     }
 
-    list.set_data(
-        uc.result_view()
-            .push_pop::<MaterialTexture>(uc.tmp_stack_view(), num_textures),
-    );
-    list.set_count(num_textures);
-    ufbxi_check!(uc, !list.data().is_null(), "list->data");
+    let textures = uc
+        .result_view()
+        .push_pop::<MaterialTexture>(uc.tmp_stack_view(), num_textures);
+    ufbxi_check!(uc, !textures.is_null(), "list->data");
+    // SAFETY: `push_pop` copied the `num_textures` fully initialized tmp-stack
+    // entries into this checked result-arena run, which remains live and
+    // unmoved for every use of the destination list.
+    list.set(unsafe { List::from_raw_parts(textures, num_textures) });
 
     Ok(())
 }
@@ -3079,12 +3081,14 @@ pub(crate) fn fetch_blend_keyframes(
         }
     }
 
-    list.set_data(
-        uc.result_view()
-            .push_pop::<BlendKeyframe>(uc.tmp_stack_view(), num_keyframes),
-    );
-    list.set_count(num_keyframes);
-    ufbxi_check!(uc, !list.data().is_null(), "list->data");
+    let keyframes = uc
+        .result_view()
+        .push_pop::<BlendKeyframe>(uc.tmp_stack_view(), num_keyframes);
+    ufbxi_check!(uc, !keyframes.is_null(), "list->data");
+    // SAFETY: `push_pop` copied the `num_keyframes` fully initialized tmp-stack
+    // entries into this checked result-arena run, which remains live and
+    // unmoved for every use of the destination list.
+    list.set(unsafe { List::from_raw_parts(keyframes, num_keyframes) });
 
     Ok(())
 }
@@ -3143,12 +3147,14 @@ pub(crate) fn fetch_texture_layers(
         }
     }
 
-    list.set_data(
-        uc.result_view()
-            .push_pop::<TextureLayer>(uc.tmp_stack_view(), num_layers),
-    );
-    list.set_count(num_layers);
-    ufbxi_check!(uc, !list.data().is_null(), "list->data");
+    let layers = uc
+        .result_view()
+        .push_pop::<TextureLayer>(uc.tmp_stack_view(), num_layers);
+    ufbxi_check!(uc, !layers.is_null(), "list->data");
+    // SAFETY: `push_pop` copied the `num_layers` fully initialized tmp-stack
+    // entries into this checked result-arena run, which remains live and
+    // unmoved for every use of the destination list.
+    list.set(unsafe { List::from_raw_parts(layers, num_layers) });
 
     Ok(())
 }
