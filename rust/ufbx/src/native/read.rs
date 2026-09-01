@@ -3381,10 +3381,6 @@ pub(crate) fn process_indices(uc: &Context, mesh: &View<Mesh>) -> Result<(), Fai
 }
 
 // ufbx.c:13219-13240 `ufbxi_patch_mesh_reals`
-// Safe `fn`: the mesh view is the only parameter, and each residual raw op
-// walks a run described by that same mesh's own list fields — which every
-// minted `View<Mesh>` keeps either zeroed (fresh `tmp_elements` element) or
-// pointing at a live `count`-long arena run, so the walks stay in bounds.
 #[inline(never)]
 pub(crate) fn patch_mesh_reals(mesh: &View<Mesh>) {
     mesh.vertex_position().set_value_reals(3);
@@ -3398,31 +3394,15 @@ pub(crate) fn patch_mesh_reals(mesh: &View<Mesh>) {
     mesh.skinned_normal().set_value_reals(3);
 
     // C: `ufbxi_nounroll ufbxi_for_list(ufbx_uv_set, set, mesh->uv_sets)`
-    // `uv_sets` is the mesh's own `count`-long run of `ufbx_uv_set`.
-    let mut set: *mut UvSet = mesh.uv_sets().data as *mut UvSet;
-    let set_end = add_ptr(set, mesh.uv_sets().count);
-    while set != set_end {
-        // SAFETY: `set` is inside the `uv_sets` run, short of `set_end`.
-        unsafe {
-            (*set).vertex_uv.value_reals = 2;
-            (*set).vertex_tangent.value_reals = 3;
-            (*set).vertex_bitangent.value_reals = 3;
-        }
-        // SAFETY: `set` is before `set_end`, so the advance lands at most one
-        // past the run's end.
-        set = unsafe { set.add(1) };
+    for set in Run::from_list(mesh.uv_sets_view()).iter() {
+        set.vertex_uv().set_value_reals(2);
+        set.vertex_tangent().set_value_reals(3);
+        set.vertex_bitangent().set_value_reals(3);
     }
 
     // C: `ufbxi_nounroll ufbxi_for_list(ufbx_color_set, set, mesh->color_sets)`
-    // `color_sets` is the mesh's own `count`-long run of `ufbx_color_set`.
-    let mut set: *mut ColorSet = mesh.color_sets().data as *mut ColorSet;
-    let set_end = add_ptr(set, mesh.color_sets().count);
-    while set != set_end {
-        // SAFETY: `set` is inside the `color_sets` run, short of `set_end`.
-        unsafe { (*set).vertex_color.value_reals = 4 };
-        // SAFETY: `set` is before `set_end`, so the advance lands at most one
-        // past the run's end.
-        set = unsafe { set.add(1) };
+    for set in Run::from_list(mesh.color_sets_view()).iter() {
+        set.vertex_color().set_value_reals(4);
     }
 }
 
@@ -6659,6 +6639,9 @@ pub(crate) fn read_binding_table(
     let bindings: *mut ShaderBinding =
         unsafe { push_element::<ShaderBinding>(uc, info, ElementType::ShaderBinding) };
     ufbxi_check!(uc, !bindings.is_null(), "bindings");
+    // SAFETY: `bindings` is the fresh non-null result-arena element checked
+    // above and stays live and unmoved for the rest of the load.
+    let bindings = unsafe { View::<ShaderBinding>::from_ptr(bindings) };
 
     let mut num_entries: usize = 0;
     // C: `ufbxi_for (ufbxi_node, n, node->children, node->num_children)`
@@ -6676,49 +6659,44 @@ pub(crate) fn read_binding_table(
         };
 
         if src_type == sp::FbxPropertyEntry.as_ptr() && dst_type == sp::FbxSemanticEntry.as_ptr() {
-            let bind: *mut ShaderPropBinding = uc.tmp_stack_view().push::<ShaderPropBinding>(1);
-            ufbxi_check!(uc, !bind.is_null(), "bind");
-            // SAFETY: `bind` is the non-null one-element run just pushed on
-            // `tmp_stack`; `src`/`dst` were written by the `"SCSC"` fetch above.
-            unsafe {
-                (*bind).material_prop = src;
-                (*bind).shader_prop = dst;
-            }
+            let bind = ShaderPropBinding {
+                material_prop: src,
+                shader_prop: dst,
+            };
+            ufbxi_check!(
+                uc,
+                !uc.tmp_stack_view().push_copy_ref(&bind).is_null(),
+                "bind"
+            );
             num_entries += 1;
         } else if src_type == sp::FbxSemanticEntry.as_ptr()
             && dst_type == sp::FbxPropertyEntry.as_ptr()
         {
-            let bind: *mut ShaderPropBinding = uc.tmp_stack_view().push::<ShaderPropBinding>(1);
-            ufbxi_check!(uc, !bind.is_null(), "bind");
-            // SAFETY: as above, with the roles of `src`/`dst` swapped.
-            unsafe {
-                (*bind).material_prop = dst;
-                (*bind).shader_prop = src;
-            }
+            let bind = ShaderPropBinding {
+                material_prop: dst,
+                shader_prop: src,
+            };
+            ufbxi_check!(
+                uc,
+                !uc.tmp_stack_view().push_copy_ref(&bind).is_null(),
+                "bind"
+            );
             num_entries += 1;
         }
     }
 
-    // SAFETY: `bindings` is the fresh non-null element pushed above, and the
-    // `num_entries` `ShaderPropBinding` values pushed by the loop are the top of
-    // `tmp_stack`, so `push_pop` moves exactly that run into the result buffer.
-    unsafe {
-        (*bindings).prop_bindings.count = num_entries;
-        (*bindings).prop_bindings.data = uc
-            .result_view()
-            .push_pop::<ShaderPropBinding>(uc.tmp_stack_view(), num_entries);
-    }
-    // SAFETY: `bindings` is the fresh non-null element.
-    ufbxi_check!(
-        uc,
-        !unsafe { (*bindings).prop_bindings.data }.is_null(),
-        "bindings->prop_bindings.data"
-    );
+    let prop_bindings = uc
+        .result_view()
+        .push_pop::<ShaderPropBinding>(uc.tmp_stack_view(), num_entries);
+    ufbxi_check!(uc, !prop_bindings.is_null(), "bindings->prop_bindings.data");
+    // SAFETY: the `num_entries` initialized values pushed by the loop were the
+    // top of `tmp_stack`; `push_pop` moved that complete run into the stable
+    // result arena, and its returned base was checked non-null above.
+    bindings
+        .prop_bindings_view()
+        .set(unsafe { List::from_raw_parts(prop_bindings, num_entries) });
 
-    // SAFETY: `bindings` is the fresh non-null element checked above and stays
-    // live in the result arena; its list was initialized immediately above.
-    let bindings_view = unsafe { View::<ShaderBinding>::from_ptr(bindings) };
-    sort_shader_prop_bindings(uc, Run::from_list(bindings_view.prop_bindings_view()))?;
+    sort_shader_prop_bindings(uc, Run::from_list(bindings.prop_bindings_view()))?;
 
     Ok(())
 }

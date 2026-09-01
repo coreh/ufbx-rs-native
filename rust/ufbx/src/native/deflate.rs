@@ -1119,18 +1119,7 @@ pub(crate) fn huff_build(
 // ufbx.c:2474-2508 `ufbxi_huff_decode_bits`
 // C: `static ufbxi_forceinline ufbxi_huff_sym`.
 #[inline(always)]
-pub(crate) unsafe fn huff_decode_bits(
-    tree: *const HuffTree,
-    bits: u64,
-    fast_bits: u32,
-    fast_mask: u32,
-) -> HuffSym {
-    // Sole raw pointer to `*tree` in this function (rule 4): local shared
-    // borrow for the whole body in place of repeated `(*tree).field` derefs.
-    // SAFETY: the caller's contract is that `tree` points at a valid, fully
-    // built `HuffTree` that stays borrowable for this call.
-    let tree = unsafe { &*tree };
-
+fn huff_decode_bits(tree: &HuffTree, bits: u64, fast_bits: u32, fast_mask: u32) -> HuffSym {
     let mut sym: HuffSym = tree.fast_sym[(bits & fast_mask as u64) as usize];
     ufbxi_regression_assert!(sym != HUFF_UNINITIALIZED_SYM);
 
@@ -1248,16 +1237,12 @@ fn decode_dynamic_huff_bits(
             return -28;
         }
 
-        // SAFETY: `huff_code_length` is the fully built local code-length tree;
-        // this decoder only reads it for the duration of the call.
-        let sym: HuffSym = unsafe {
-            huff_decode_bits(
-                huff_code_length,
-                bits,
-                HUFF_CODELEN_FAST_BITS,
-                HUFF_CODELEN_FAST_MASK,
-            )
-        };
+        let sym: HuffSym = huff_decode_bits(
+            huff_code_length,
+            bits,
+            HUFF_CODELEN_FAST_BITS,
+            HUFF_CODELEN_FAST_MASK,
+        );
         ufbxi_regression_assert!(sym != HUFF_UNINITIALIZED_SYM);
         if sym == HUFF_ERROR_SYM {
             return -21;
@@ -1593,9 +1578,7 @@ pub(crate) unsafe fn inflate_block_slow(
         unsafe { bit_refill(&mut bits, &mut left, &mut data, dc.stream_view()) };
         let sym_bits = bits;
 
-        // SAFETY: `trees.lit_length()` borrows the live built lit/length tree.
-        let sym0: HuffSym =
-            unsafe { huff_decode_bits(trees.lit_length(), bits, fast_bits, fast_mask) };
+        let sym0: HuffSym = huff_decode_bits(trees.lit_length(), bits, fast_bits, fast_mask);
         ufbxi_regression_assert!(sym0 != HUFF_UNINITIALIZED_SYM);
 
         let sym0_bits = huff_sym_total_bits(sym0);
@@ -1634,8 +1617,7 @@ pub(crate) unsafe fn inflate_block_slow(
         let length = (len_shift_base >> 16)
             + (wrap_shr64(sym_bits, len_shift_base) & len_mask as u64) as u32;
 
-        // SAFETY: `trees.dist()` borrows the live built distance tree.
-        let sym1: HuffSym = unsafe { huff_decode_bits(trees.dist(), bits, fast_bits, fast_mask) };
+        let sym1: HuffSym = huff_decode_bits(trees.dist(), bits, fast_bits, fast_mask);
         ufbxi_regression_assert!(sym1 != HUFF_UNINITIALIZED_SYM);
         if (sym1 as u32 & HUFF_SYM_END) != 0 {
             return -11;

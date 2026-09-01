@@ -448,6 +448,14 @@ fn load_uv_and_color_sets_6100_binary() {
             .collect();
         assert_eq!(uv_names, ["UVA", "UVB"]);
         assert_eq!(color_names, ["ColorA", "ColorB"]);
+        for set in &mesh.uv_sets {
+            assert_eq!(set.vertex_uv.value_reals, 2);
+            assert_eq!(set.vertex_tangent.value_reals, 3);
+            assert_eq!(set.vertex_bitangent.value_reals, 3);
+        }
+        for set in &mesh.color_sets {
+            assert_eq!(set.vertex_color.value_reals, 4);
+        }
         assert_eq!(mesh.reversed_winding, reversed_winding);
         let first_uv = &mesh.uv_sets[0];
         assert_vertex_attribute_header_eq!(mesh.vertex_uv, first_uv.vertex_uv);
