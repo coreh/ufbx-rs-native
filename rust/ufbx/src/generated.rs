@@ -6043,7 +6043,8 @@ pub fn as_line_curve<'a>(element: &'a Element) -> Option<&'a LineCurve> {
 
 #[allow(clippy::needless_lifetimes)]
 pub fn as_nurbs_curve<'a>(element: &'a Element) -> Option<&'a NurbsCurve> {
-    let result = unsafe { crate::native::api::as_nurbs_curve(element as *const Element) };
+    let result =
+        crate::native::api::downcast_element::<NurbsCurve>(element, ElementType::NurbsCurve);
     if result.is_null() {
         None
     } else {
@@ -6053,7 +6054,8 @@ pub fn as_nurbs_curve<'a>(element: &'a Element) -> Option<&'a NurbsCurve> {
 
 #[allow(clippy::needless_lifetimes)]
 pub fn as_nurbs_surface<'a>(element: &'a Element) -> Option<&'a NurbsSurface> {
-    let result = unsafe { crate::native::api::as_nurbs_surface(element as *const Element) };
+    let result =
+        crate::native::api::downcast_element::<NurbsSurface>(element, ElementType::NurbsSurface);
     if result.is_null() {
         None
     } else {
@@ -6208,7 +6210,7 @@ pub fn as_cache_file<'a>(element: &'a Element) -> Option<&'a CacheFile> {
 
 #[allow(clippy::needless_lifetimes)]
 pub fn as_material<'a>(element: &'a Element) -> Option<&'a Material> {
-    let result = unsafe { crate::native::api::as_material(element as *const Element) };
+    let result = crate::native::api::downcast_element::<Material>(element, ElementType::Material);
     if result.is_null() {
         None
     } else {
@@ -6218,7 +6220,7 @@ pub fn as_material<'a>(element: &'a Element) -> Option<&'a Material> {
 
 #[allow(clippy::needless_lifetimes)]
 pub fn as_texture<'a>(element: &'a Element) -> Option<&'a Texture> {
-    let result = unsafe { crate::native::api::as_texture(element as *const Element) };
+    let result = crate::native::api::downcast_element::<Texture>(element, ElementType::Texture);
     if result.is_null() {
         None
     } else {
@@ -6228,7 +6230,7 @@ pub fn as_texture<'a>(element: &'a Element) -> Option<&'a Texture> {
 
 #[allow(clippy::needless_lifetimes)]
 pub fn as_video<'a>(element: &'a Element) -> Option<&'a Video> {
-    let result = unsafe { crate::native::api::as_video(element as *const Element) };
+    let result = crate::native::api::downcast_element::<Video>(element, ElementType::Video);
     if result.is_null() {
         None
     } else {

@@ -1159,8 +1159,9 @@ pub(crate) unsafe fn opt_ref<T>(ptr: *mut T) -> Option<Ref<T>> {
     if ptr.is_null() {
         None
     } else {
-        // SAFETY: `ptr` is non-null (checked) and points to a live `T` the
-        // caller keeps alive for the returned `Ref`'s use (fn contract).
+        // SAFETY: `ptr` is non-null (checked) and the caller vouches that it
+        // addresses a live, stable, unmoved `T` with write-capable provenance
+        // for as long as the returned `Ref` or its containing struct exists.
         Some(unsafe { Ref::from_ptr(ptr) })
     }
 }

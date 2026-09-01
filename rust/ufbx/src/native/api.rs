@@ -152,7 +152,7 @@ use crate::native::string_pool::{
 use crate::native::string_pool::dot3;
 use crate::native::topology::is_edge_smooth;
 use crate::prelude::as_f64;
-use crate::prelude::{Blob, List, OpenFileContext, Real, String, ThreadPoolContext};
+use crate::prelude::{Blob, List, OpenFileContext, Real, Ref, String, ThreadPoolContext};
 
 // ufbx.c:30243-30247 `ufbxi_free_scene_imp`
 #[inline(never)]
@@ -1348,14 +1348,16 @@ impl<M: Mode> View<AnimValue, M> {
 }
 
 impl View<AnimValue, Mut> {
-    /// Store a nullable curve pointer into slot `index` (the write half of
-    /// `curve_view`, for the evaluated-scene patch loops).
+    /// Store a nullable stable curve reference into slot `index` (the write
+    /// half of `curve_view`, for the evaluated-scene patch loops).
     #[inline(always)]
-    pub(crate) fn set_curve_ptr(&self, index: usize, curve: *mut AnimCurve) {
+    pub(crate) fn set_curve_ref(&self, index: usize, curve: Option<Ref<AnimCurve>>) {
         assert!(index < 3);
+        let curve = curve.map_or(core::ptr::null_mut(), |curve| curve.ptr());
         // SAFETY: in-bounds slot write (checked above) through the `Mut` view's
-        // write-capable viewed memory, storing the nullable pointer as the
-        // niche-packed bare bits the `Option<Ref<AnimCurve>>` slot holds.
+        // write-capable viewed memory. `Ref` vouches that a non-null pointer is
+        // live and stable for every later safe `curve_view()` traversal; NULL
+        // is the niche representation of `None`.
         unsafe {
             *(&raw mut (*self.get()).curves)
                 .cast::<*mut AnimCurve>()

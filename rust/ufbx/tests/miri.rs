@@ -875,12 +875,22 @@ fn load_scale_helpers() {
 #[test]
 fn load_embedded_textures() {
     let scene = load("blender_279_internal_textures_7400_binary.fbx");
+    assert!(!scene.textures.is_empty());
+    assert!(!scene.videos.is_empty());
     let mut acc = 0.0f64;
     for texture in &scene.textures {
+        let downcast = ufbx::as_texture(&texture.element).expect("texture downcast");
+        assert!(core::ptr::eq(downcast, texture));
+        assert_eq!(downcast.uv_to_texture.m23, texture.uv_to_texture.m23);
+        assert!(ufbx::as_video(&texture.element).is_none());
         acc += texture.content.len() as f64;
         acc += texture.filename.as_ref().len() as f64;
     }
     for video in &scene.videos {
+        let downcast = ufbx::as_video(&video.element).expect("video downcast");
+        assert!(core::ptr::eq(downcast, video));
+        assert_eq!(downcast.content.len(), video.content.len());
+        assert!(ufbx::as_texture(&video.element).is_none());
         acc += video.content.len() as f64;
     }
     assert!(acc.is_finite());
@@ -894,12 +904,27 @@ fn load_texture_layers() {
     let node = scene.find_node("pCube1").expect("missing pCube1");
     let mesh = node.mesh.as_ref().expect("pCube1 has no mesh");
     assert_eq!(mesh.materials.len(), 1);
-    let layered = mesh.materials[0]
+    let material: &ufbx::Material = &mesh.materials[0];
+    let downcast_material = ufbx::as_material(&material.element).expect("material downcast");
+    assert!(core::ptr::eq(downcast_material, material));
+    assert_eq!(downcast_material.textures.len(), material.textures.len());
+    assert!(ufbx::as_texture(&material.element).is_none());
+    assert!(ufbx::as_video(&material.element).is_none());
+
+    let layered = material
         .fbx
         .diffuse_color
         .texture
         .as_ref()
         .expect("diffuse color has no layered texture");
+    let downcast_texture = ufbx::as_texture(&layered.element).expect("layered texture downcast");
+    assert!(core::ptr::eq(downcast_texture, layered.as_ref()));
+    assert_eq!(
+        downcast_texture.uv_to_texture.m23,
+        layered.uv_to_texture.m23
+    );
+    assert!(ufbx::as_material(&layered.element).is_none());
+    assert!(ufbx::as_video(&layered.element).is_none());
     assert_eq!(layered.type_, ufbx::TextureType::Layered);
 
     let expected = [
@@ -957,6 +982,36 @@ fn evaluate_and_bake_animation() {
     let anim = &scene.anim;
     let evaluated =
         ufbx::evaluate_scene(&scene, anim, 0.5, Default::default()).expect("evaluate_scene failed");
+    assert_eq!(evaluated.anim_values.len(), scene.anim_values.len());
+    let mut saw_curve_axis = [false; 3];
+    let mut saw_no_curves = false;
+    for (source, translated) in scene.anim_values.iter().zip(&evaluated.anim_values) {
+        saw_no_curves |= source.curves.iter().all(Option::is_none);
+        for (axis, (source_curve, translated_curve)) in
+            source.curves.iter().zip(&translated.curves).enumerate()
+        {
+            match (source_curve, translated_curve) {
+                (None, None) => {}
+                (Some(source_curve), Some(translated_curve)) => {
+                    saw_curve_axis[axis] = true;
+                    assert_eq!(
+                        translated_curve.element.element_id,
+                        source_curve.element.element_id
+                    );
+                    let listed = &evaluated.anim_curves[translated_curve.element.typed_id as usize];
+                    assert!(core::ptr::eq(translated_curve.as_ref(), listed));
+                    let key = translated_curve
+                        .keyframes
+                        .last()
+                        .expect("translated animation curve has no keyframes");
+                    acc += key.value as f64;
+                }
+                _ => panic!("translated animation curve nullability changed"),
+            }
+        }
+    }
+    assert!(saw_curve_axis.iter().any(|&seen| seen));
+    assert!(saw_no_curves);
     acc += walk(&evaluated);
 
     // Baking: resamples every animated property into keyframe lists.
@@ -1133,6 +1188,11 @@ fn tessellate_nurbs_curve() {
     let mut acc = 0.0f64;
     let mut topology_mask = 0u8;
     for curve in &scene.nurbs_curves {
+        let downcast = ufbx::as_nurbs_curve(&curve.element).expect("NURBS curve downcast");
+        assert!(core::ptr::eq(downcast, curve));
+        assert_eq!(downcast.control_points.len(), curve.control_points.len());
+        assert!(ufbx::as_nurbs_surface(&curve.element).is_none());
+
         let order = curve.basis.order as usize;
         assert!(order > 1);
         let degree = order - 1;
@@ -1348,6 +1408,13 @@ fn tessellate_nurbs_surface() {
     let sphere_scene = load("maya_nurbs_low_sphere_7500_ascii.fbx");
     assert!(!sphere_scene.nurbs_surfaces.is_empty());
     for surface in &sphere_scene.nurbs_surfaces {
+        let downcast = ufbx::as_nurbs_surface(&surface.element).expect("NURBS surface downcast");
+        assert!(core::ptr::eq(downcast, surface));
+        assert_eq!(downcast.control_points.len(), surface.control_points.len());
+        assert_eq!(downcast.span_subdivision_v, surface.span_subdivision_v);
+        assert_eq!(downcast.material.is_some(), surface.material.is_some());
+        assert!(ufbx::as_nurbs_curve(&surface.element).is_none());
+
         let sample_u = (surface.basis_u.t_min + surface.basis_u.t_max) * (0.5f32 as ufbx::Real);
         let sample_v = (surface.basis_v.t_min + surface.basis_v.t_max) * (0.5f32 as ufbx::Real);
         let point = ufbx::evaluate_nurbs_surface(surface, sample_u, sample_v);

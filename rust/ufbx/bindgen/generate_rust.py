@@ -1304,6 +1304,66 @@ pub fn as_mesh<'a>(element: &'a Element) -> Option<&'a Mesh> {
 }
 """
 
+override_functions["ufbx_as_nurbs_curve"] = """
+#[allow(clippy::needless_lifetimes)]
+pub fn as_nurbs_curve<'a>(element: &'a Element) -> Option<&'a NurbsCurve> {
+    let result = crate::native::api::downcast_element::<NurbsCurve>(element, ElementType::NurbsCurve);
+    if result.is_null() {
+        None
+    } else {
+        unsafe { Some(&*result) }
+    }
+}
+"""
+
+override_functions["ufbx_as_nurbs_surface"] = """
+#[allow(clippy::needless_lifetimes)]
+pub fn as_nurbs_surface<'a>(element: &'a Element) -> Option<&'a NurbsSurface> {
+    let result = crate::native::api::downcast_element::<NurbsSurface>(element, ElementType::NurbsSurface);
+    if result.is_null() {
+        None
+    } else {
+        unsafe { Some(&*result) }
+    }
+}
+"""
+
+override_functions["ufbx_as_material"] = """
+#[allow(clippy::needless_lifetimes)]
+pub fn as_material<'a>(element: &'a Element) -> Option<&'a Material> {
+    let result = crate::native::api::downcast_element::<Material>(element, ElementType::Material);
+    if result.is_null() {
+        None
+    } else {
+        unsafe { Some(&*result) }
+    }
+}
+"""
+
+override_functions["ufbx_as_texture"] = """
+#[allow(clippy::needless_lifetimes)]
+pub fn as_texture<'a>(element: &'a Element) -> Option<&'a Texture> {
+    let result = crate::native::api::downcast_element::<Texture>(element, ElementType::Texture);
+    if result.is_null() {
+        None
+    } else {
+        unsafe { Some(&*result) }
+    }
+}
+"""
+
+override_functions["ufbx_as_video"] = """
+#[allow(clippy::needless_lifetimes)]
+pub fn as_video<'a>(element: &'a Element) -> Option<&'a Video> {
+    let result = crate::native::api::downcast_element::<Video>(element, ElementType::Video);
+    if result.is_null() {
+        None
+    } else {
+        unsafe { Some(&*result) }
+    }
+}
+"""
+
 override_functions["ufbx_as_lod_group"] = """
 #[allow(clippy::needless_lifetimes)]
 pub fn as_lod_group<'a>(element: &'a Element) -> Option<&'a LodGroup> {

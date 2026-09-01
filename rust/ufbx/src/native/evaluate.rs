@@ -4182,17 +4182,17 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
         // pointer to its destination copy under `ec`'s live context — its own
         // contract; slot reads/writes go through the view accessors.
         unsafe {
-            value.set_curve_ptr(
+            value.set_curve_ref(
                 0,
-                translate_element(ec, value.curve_ptr(0) as *mut c_void) as *mut AnimCurve,
+                opt_ref(translate_element(ec, value.curve_ptr(0) as *mut c_void) as *mut AnimCurve),
             );
-            value.set_curve_ptr(
+            value.set_curve_ref(
                 1,
-                translate_element(ec, value.curve_ptr(1) as *mut c_void) as *mut AnimCurve,
+                opt_ref(translate_element(ec, value.curve_ptr(1) as *mut c_void) as *mut AnimCurve),
             );
-            value.set_curve_ptr(
+            value.set_curve_ref(
                 2,
-                translate_element(ec, value.curve_ptr(2) as *mut c_void) as *mut AnimCurve,
+                opt_ref(translate_element(ec, value.curve_ptr(2) as *mut c_void) as *mut AnimCurve),
             );
         }
     }
