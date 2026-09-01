@@ -1117,6 +1117,13 @@ fn load_texture_layers() {
 /// modes that make the curve evaluator take every branch.
 #[test]
 fn evaluate_and_bake_animation() {
+    fn close(actual: f64, expected: f64) {
+        assert!(
+            (actual - expected).abs() <= 1.0e-12,
+            "expected {expected}, got {actual}"
+        );
+    }
+
     let scene = load("maya_interpolation_modes_7500_binary.fbx");
     assert!(!scene.anim_stacks.is_empty());
 
@@ -1129,6 +1136,8 @@ fn evaluate_and_bake_animation() {
 
     // Whole-scene evaluation: allocates and populates a second scene.
     let anim = &scene.anim;
+    assert!(anim.time_begin > 0.0);
+    assert!(anim.time_end > anim.time_begin);
     let evaluated =
         ufbx::evaluate_scene(&scene, anim, 0.5, Default::default()).expect("evaluate_scene failed");
     assert_eq!(evaluated.anim_values.len(), scene.anim_values.len());
@@ -1165,6 +1174,9 @@ fn evaluate_and_bake_animation() {
 
     // Baking: resamples every animated property into keyframe lists.
     let baked = ufbx::bake_anim(&scene, anim, Default::default()).expect("bake_anim failed");
+    close(baked.playback_time_begin, anim.time_begin);
+    close(baked.playback_time_end, anim.time_end);
+    close(baked.playback_duration, anim.time_end - anim.time_begin);
     for node in &baked.nodes {
         for key in &node.translation_keys {
             acc += key.value.x as f64;
@@ -1173,6 +1185,42 @@ fn evaluate_and_bake_animation() {
             acc += key.value.w as f64;
         }
     }
+
+    // Trimming shifts baked key times while retaining the source playback span.
+    let trimmed = ufbx::bake_anim(
+        &scene,
+        anim,
+        ufbx::BakeOpts {
+            trim_start_time: true,
+            ..Default::default()
+        },
+    )
+    .expect("trimmed bake_anim failed");
+    close(trimmed.playback_time_begin, anim.time_begin);
+    close(trimmed.playback_time_end, anim.time_end);
+    close(trimmed.playback_duration, anim.time_end - anim.time_begin);
+
+    let (keys, trimmed_keys) = baked
+        .nodes
+        .iter()
+        .zip(&trimmed.nodes)
+        .find_map(|(node, trimmed_node)| {
+            (!node.translation_keys.is_empty()
+                && node.element_id == trimmed_node.element_id
+                && node.translation_keys.len() == trimmed_node.translation_keys.len())
+            .then_some((
+                node.translation_keys.as_ref(),
+                trimmed_node.translation_keys.as_ref(),
+            ))
+        })
+        .expect("fixture has no matching baked translation keys");
+    close(keys.first().unwrap().time, anim.time_begin);
+    close(keys.last().unwrap().time, anim.time_end);
+    close(trimmed_keys.first().unwrap().time, 0.0);
+    close(
+        trimmed_keys.last().unwrap().time,
+        anim.time_end - anim.time_begin,
+    );
     assert!(acc.is_finite());
 }
 
@@ -2312,6 +2360,70 @@ fn public_anim_eval_from_shared_refs() {
         acc += ufbx::evaluate_baked_quat(node.rotation_keys.as_ref(), 0.3).w as f64;
     }
     assert!(acc.is_finite());
+}
+
+/// Custom animation layer weights are copied into the animation while the
+/// selected layers remain owned by the source scene.
+#[test]
+fn public_anim_override_layer_weights() {
+    let root = load("synthetic_rotation_order_layers_7700_ascii.fbx");
+
+    // Keep every scene-derived reference and the custom animation inside the
+    // scene root's lifetime. `AnimOpts` borrows the two local arrays only for
+    // construction; the finished animation owns the copied weights.
+    {
+        let scene: &Scene = &root;
+        // Repeating a selected layer is supported by custom animations and
+        // keeps all three Visibility samples exactly one, making each later
+        // override weight directly observable without approximate arithmetic.
+        let names = ["BaseLayer", "Rotation", "BaseLayer"];
+        let layers: [&ufbx::AnimLayer; 3] = names.map(|name| {
+            (&scene.anim_layers)
+                .into_iter()
+                .find(|layer| layer.element.name.as_ref() == name)
+                .unwrap_or_else(|| panic!("missing animation layer {name}"))
+        });
+        let anim = {
+            let layer_ids = layers.map(|layer| layer.element.typed_id);
+            let weights: [ufbx::Real; 3] = [0.125, 0.5, 0.25];
+            ufbx::create_anim(
+                scene,
+                ufbx::AnimOpts {
+                    layer_ids: layer_ids.as_slice().into(),
+                    override_layer_weights: weights.as_slice().into(),
+                    ..Default::default()
+                },
+            )
+            .expect("create weighted animation")
+        };
+
+        assert_eq!(anim.layers.len(), layers.len());
+        assert_eq!(anim.override_layer_weights.as_ref(), &[0.125, 0.5, 0.25]);
+        for (actual, expected) in (&anim.layers).into_iter().zip(layers) {
+            assert!(core::ptr::eq(actual, expected));
+        }
+
+        let node = scene.find_node("pCube1").expect("pCube1");
+        for layer in layers {
+            assert!(layer.additive);
+            assert!(layer.blended);
+            assert!(!layer.weight_is_animated);
+            assert_eq!(layer.weight, 1.0);
+
+            let prop = layer
+                .find_anim_prop(&node.element, "Visibility")
+                .expect("animated Visibility on each selected layer");
+            assert_eq!(prop.anim_value.as_ref().evaluate_vec3(0.2).x, 1.0);
+        }
+
+        // The first layer establishes the result regardless of its override
+        // weight. The two following additive layers use their matching
+        // override weights: 1 + 1*0.5 + 1*0.25 = 1.75. Falling back to each
+        // layer's stored weight would instead produce 3.
+        let value = ufbx::evaluate_prop(&anim, &node.element, "Visibility", 0.2);
+        assert!(value.flags.has_any(ufbx::PropFlags::ANIMATED));
+        assert_eq!(value.value_vec4.x, 1.75);
+    }
 }
 
 #[test]

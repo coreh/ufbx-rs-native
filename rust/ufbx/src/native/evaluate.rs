@@ -2017,10 +2017,7 @@ pub(crate) unsafe fn evaluate_props(
         // Find the weight for the current layer
         // TODO: Should this be searched from multiple layers?
         let mut weight: Real = if layer_ix < anim_view.override_layer_weights_view().count() {
-            // SAFETY: the branch condition bounds `layer_ix` inside the anim's
-            // override-weight run, and the offset is taken from that list's own
-            // base pointer, so it stays inside the run.
-            unsafe { *anim_view.override_layer_weights_view().data().add(layer_ix) }
+            anim_view.override_layer_weights_view().copy_at(layer_ix)
         } else {
             layer_view.weight()
         };
@@ -7987,14 +7984,17 @@ pub(crate) unsafe fn bake_anim_imp(bc: &BakeContext, anim: *const Anim) -> Resul
         bc.opts_view().set_key_reduction_passes(4);
     }
 
-    // SAFETY (this condition): `anim` is the caller's live `ufbx_anim` — this
-    // `unsafe fn`'s contract.
-    if bc.opts_view().trim_start_time() && unsafe { (*anim).time_begin } > 0.0 {
-        // SAFETY: as above for `anim`; `bc.scene()` is the source `ufbx_scene`
-        // the bake context was built around, live for the bake.
-        bc.set_ktime_offset(unsafe {
-            -(*anim).time_begin * (*bc.scene()).metadata.ktime_second as f64
-        });
+    // SAFETY: `anim` is the caller's live `ufbx_anim` — this `unsafe fn`'s
+    // raw-pointer contract — and baking only reads it, so the frozen `Const`
+    // tag stays valid through its uses below.
+    let anim_view: &View<Anim, Const> = unsafe { View::<Anim, Const>::from_ptr(anim) };
+
+    if bc.opts_view().trim_start_time() && anim_view.time_begin() > 0.0 {
+        // SAFETY: `bc.scene()` is the source `ufbx_scene` the bake context was
+        // built around, live for the bake.
+        bc.set_ktime_offset(
+            -anim_view.time_begin() * unsafe { (*bc.scene()).metadata.ktime_second as f64 },
+        );
     }
 
     init_ator(
@@ -8034,11 +8034,9 @@ pub(crate) unsafe fn bake_anim_imp(bc: &BakeContext, anim: *const Anim) -> Resul
     }
 
     bc.set_anim(anim);
-    // SAFETY (this condition and the block it guards): `anim` is the caller's
-    // live `ufbx_anim`.
-    if unsafe { (*anim).time_begin } < unsafe { (*anim).time_end } {
-        bc.set_time_begin(unsafe { (*anim).time_begin });
-        bc.set_time_end(unsafe { (*anim).time_end });
+    if anim_view.time_begin() < anim_view.time_end() {
+        bc.set_time_begin(anim_view.time_begin());
+        bc.set_time_end(anim_view.time_end());
     }
     bc.set_time_min(math::INFINITY);
     bc.set_time_max(-math::INFINITY);
