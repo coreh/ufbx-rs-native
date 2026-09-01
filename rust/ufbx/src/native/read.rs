@@ -168,48 +168,46 @@ pub(crate) fn read_embedded_blob(
     };
 
     let content_arr: *mut ValueArray = get_array(node, b'C');
-    // SAFETY: `content_arr` is non-null (checked) and `get_array` returns the
-    // node's own array descriptor, live for as long as the parse tree.
-    if !content_arr.is_null() && unsafe { (*content_arr).size } > 0 {
+    if !content_arr.is_null() {
+        // SAFETY: `get_array` returned the node's own initialized array
+        // descriptor, which stays live and unwritten with the parse tree.
+        let content_arr = unsafe { View::<ValueArray, Const>::from_ptr(content_arr) };
+        if content_arr.size() == 0 {
+            return Ok(());
+        }
+
         let content: String;
-        // SAFETY: as above — `content_arr` is a live array descriptor whose
-        // `'C'` payload is a run of `size` `ufbx_string` values.
-        let (num_parts, parts): (usize, *mut String) =
-            unsafe { ((*content_arr).size, (*content_arr).data as *mut String) };
+        let num_parts = content_arr.size();
+        let parts_data = content_arr.data() as *const String;
+        // SAFETY: the nonempty `'C'` array payload contains `num_parts`
+        // initialized string descriptors and stays live and unwritten with the
+        // parse tree.
+        let parts = unsafe { Run::<String, Const>::from_const_raw_parts(parts_data, num_parts) };
 
         if num_parts == 1 && !uc.from_ascii() {
-            // SAFETY: `num_parts == 1`, so `parts` addresses one live `String`.
-            content = unsafe { *parts };
+            content = parts.copy_at(0);
         } else {
             let mut total_size: usize = 0;
             // C: `ufbxi_for(ufbx_string, part, parts, num_parts)`
-            let mut part = parts;
-            let part_end = add_ptr(parts, num_parts);
-            while part != part_end {
-                // SAFETY: `part` walks `parts..parts + num_parts`, all live
-                // `String` entries of the `'C'` array, and is before `part_end`,
-                // so the advance lands at most one past the array's end.
-                unsafe {
-                    total_size = total_size.wrapping_add((*part).length);
-                    part = part.add(1);
-                }
+            for part in parts.iter() {
+                total_size = total_size.wrapping_add(part.length());
             }
             let dst_begin: *mut u8 = uc.result_view().push::<u8>(total_size);
             ufbxi_check!(uc, !dst_begin.is_null(), "dst");
             content = String::new_c(dst_begin, total_size);
             let mut dst = dst_begin;
-            let mut part = parts;
-            while part != part_end {
-                // SAFETY: `part` addresses a live `String` whose `data` spans
-                // `length` bytes; `dst` walks the freshly pushed `total_size`
-                // buffer, which is the sum of every part's `length`, so the copy
-                // fits, its bytes are consumed from that destination, and the
-                // result arena is disjoint from the parts; `part` is before
-                // `part_end`, so the advance lands at most one past the end.
+            for part in parts.iter() {
+                let part_data = part.data();
+                let part_length = part.length();
+                // SAFETY: each part spans `part_length` readable bytes; `dst`
+                // walks the disjoint result-arena buffer sized to the wrapping
+                // sum above. The parser-owned part allocations coexist, so
+                // their valid lengths cannot overflow the address space; the
+                // wrapping sum retains C arithmetic. The copy and pointer
+                // advance therefore stay within the destination.
                 unsafe {
-                    core::ptr::copy_nonoverlapping((*part).data, dst, (*part).length);
-                    dst = dst.add((*part).length);
-                    part = part.add(1);
+                    core::ptr::copy_nonoverlapping(part_data, dst, part_length);
+                    dst = dst.add(part_length);
                 }
             }
         }

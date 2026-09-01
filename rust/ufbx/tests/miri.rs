@@ -1113,9 +1113,13 @@ fn load_scale_helpers() {
 /// Embedded textures: the base64/binary blob path and video elements.
 #[test]
 fn load_embedded_textures() {
-    let scene = load("blender_279_internal_textures_7400_binary.fbx");
+    let scene = load("max2009_cube_texture_6100_binary.fbx");
     assert!(!scene.textures.is_empty());
     assert!(!scene.videos.is_empty());
+    assert!(scene
+        .textures
+        .iter()
+        .any(|texture| !texture.content.is_empty()));
     let mut acc = 0.0f64;
     for texture in &scene.textures {
         let downcast = ufbx::as_texture(&texture.element).expect("texture downcast");
@@ -1133,6 +1137,36 @@ fn load_embedded_textures() {
         acc += video.content.len() as f64;
     }
     assert!(acc.is_finite());
+}
+
+/// ASCII base64 payloads retain their ordered decoded string parts, including
+/// the empty-content case.
+#[test]
+fn load_embedded_content_ascii() {
+    let mut data = read_data("synthetic_base64_parse_7700_ascii.fbx");
+    let hello = b"Content: , \"SGVsbG8gd29ybGQ=\"";
+    let split_hello = b"Content: , \"SGVsbG8g\", \"d29ybGQ=\"";
+    let begin = data
+        .windows(hello.len())
+        .position(|window| window == hello)
+        .expect("missing Hello content");
+    data.splice(begin..begin + hello.len(), split_hello.iter().copied());
+    let scene =
+        ufbx::load_memory(&data, LoadOpts::default()).expect("split ASCII content should load");
+
+    fn content<'a>(scene: &'a Scene, name: &str) -> &'a [u8] {
+        &scene
+            .videos
+            .iter()
+            .find(|video| video.element.name.as_ref() == name)
+            .unwrap_or_else(|| panic!("missing video {name:?}"))
+            .content
+    }
+
+    assert_eq!(content(&scene, "Hello"), b"Hello world");
+    assert_eq!(content(&scene, "Ufbx"), b"Hello ufbx");
+    assert_eq!(content(&scene, "World"), b"Hello world!");
+    assert_eq!(content(&scene, "Empty"), b"");
 }
 
 /// Layered textures retain the checked source texture Ref while deriving the

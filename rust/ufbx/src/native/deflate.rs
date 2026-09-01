@@ -483,17 +483,13 @@ pub(crate) unsafe fn bit_chunk_refill(s: &BitStreamView, ptr: *const u8) -> *con
 
 // ufbx.c:2088-2139 `ufbxi_bit_stream_init`
 #[inline(never)]
-pub(crate) unsafe fn bit_stream_init(s: &BitStreamView, input: *const InflateInput) {
+unsafe fn bit_stream_init(s: &BitStreamView, input: &InflateInput) {
     // `s.buffer` may point into `s.local_buffer` (set below), i.e. the
     // `BitStream` holds a raw pointer aliasing one of its own fields, so `s` is
     // an interior-mutable `&BitStreamView` and is derefed via the raw `s.get()`
     // (`UnsafeCell`, no retag) as `(*s.get()).field` to avoid a whole-struct
-    // retag invalidating that interior pointer. `input` has no such aliasing and
-    // is unconditionally dereferenced in the original C (never NULL), so a local
-    // shared borrow is kept for it.
-    // SAFETY: the original C dereferences `input` unconditionally (never NULL on
-    // this path), so a shared borrow over it is sound.
-    let input = unsafe { &*input };
+    // retag invalidating that interior pointer. `input` is only read while its
+    // raw data, buffer, and callback fields are copied into the stream.
 
     let mut data_size = input.data_size;
     if data_size > input.total_size {

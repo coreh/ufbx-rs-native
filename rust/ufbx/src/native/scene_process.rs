@@ -9744,42 +9744,39 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
                         // C admits a NULL slot here, so the entry is read as
                         // bare pointer bits off the list base rather than as a
                         // `Ref`.
-                        // SAFETY: `prev_material` came from a `mat_tex` entry, which
-                        // the pushes above bounded by `num_materials`, the mesh's
-                        // material-run length.
-                        let mat: *mut Material = unsafe {
-                            *(mesh.materials_view().data() as *const *mut Material)
-                                .add(prev_material as usize)
-                        };
-                        let mat: Option<&MaterialView> = if mat.is_null() {
-                            None
-                        } else {
-                            // SAFETY: a non-null `mat` is a live `ufbx_material` of
-                            // the uc-owned scene, so its provenance is
-                            // write-capable.
-                            Some(unsafe { MaterialView::from_ptr(mat) })
-                        };
-                        // C: `if (mat && mat->textures.count == 0)`
-                        if let Some(mat) = mat.filter(|mat| mat.textures_view().count() == 0) {
-                            let texs: *mut MaterialTexture =
-                                uc.result_view().push_pop::<MaterialTexture>(
-                                    uc.tmp_stack_view(),
-                                    num_textures_in_material,
-                                );
-                            ufbxi_check!(uc, !texs.is_null(), "texs");
-                            mat.textures_view().set_data(texs);
-                            mat.textures_view().set_count(num_textures_in_material);
-                        } else {
-                            // SAFETY: `uc`'s own live tmp stack holds the
-                            // `num_textures_in_material` material textures
-                            // pushed for this material.
-                            unsafe {
+                        // SAFETY: `prev_material` came from an entry bounded by
+                        // the mesh material-run length. A non-null slot points
+                        // at a live uc-owned material. The tmp stack holds the
+                        // `num_textures_in_material` initialized entries just
+                        // built for this material; `push_pop` moves them into
+                        // stable result storage and is checked before the List
+                        // is published, while the other branch discards exactly
+                        // that same top run.
+                        unsafe {
+                            let mat = *(mesh.materials_view().data() as *const *mut Material)
+                                .add(prev_material as usize);
+                            let mat = if mat.is_null() {
+                                None
+                            } else {
+                                Some(MaterialView::from_ptr(mat))
+                            };
+                            // C: `if (mat && mat->textures.count == 0)`
+                            if let Some(mat) = mat.filter(|mat| mat.textures_view().count() == 0) {
+                                let texs: *mut MaterialTexture =
+                                    uc.result_view().push_pop::<MaterialTexture>(
+                                        uc.tmp_stack_view(),
+                                        num_textures_in_material,
+                                    );
+                                ufbxi_check!(uc, !texs.is_null(), "texs");
+                                mat.textures_view()
+                                    .set(List::from_raw_parts(texs, num_textures_in_material));
+                            } else {
                                 pop::<MaterialTexture>(
                                     uc.tmp_stack_view(),
                                     num_textures_in_material,
                                     ptr::null_mut(),
-                                )
-                            };
+                                );
+                            }
                         }
                     }
 
