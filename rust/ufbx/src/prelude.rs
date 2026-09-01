@@ -328,7 +328,8 @@ impl RawBlobView {
     }
 }
 
-// Typed interior-mutable VIEW over the public `Blob` (Copy; subfields read+written).
+// Typed interior-mutable view over the public `Blob`: descriptor leaves are
+// readable, while replacement values are published as a whole.
 pub(crate) type BlobView = crate::native::view::View<Blob>;
 
 impl<M: crate::native::view::Mode> crate::native::view::View<Blob, M> {
@@ -347,14 +348,6 @@ impl BlobView {
     #[inline(always)]
     pub(crate) fn set(&self, value: Blob) {
         self.write_value(value)
-    }
-    #[inline(always)]
-    pub(crate) fn set_data(&self, data: *const u8) {
-        view_write!(self, data, data)
-    }
-    #[inline(always)]
-    pub(crate) fn set_size(&self, size: usize) {
-        view_write!(self, size, size)
     }
 }
 
@@ -683,8 +676,8 @@ pub struct String {
     _marker: PhantomData<u8>,
 }
 
-// Typed interior-mutable VIEW over a `String` field, reinterpreted in place — for
-// sites that read OR write String subfields (`err.description.data = ...`).
+// Typed interior-mutable view over a `String` field: descriptor leaves are
+// readable, while replacement values are published as a whole.
 pub(crate) type StringView = crate::native::view::View<String>;
 
 impl<M: crate::native::view::Mode> crate::native::view::View<String, M> {
@@ -712,14 +705,6 @@ impl StringView {
     #[inline(always)]
     pub(crate) fn set(&self, value: String) {
         self.write_value(value)
-    }
-    #[inline(always)]
-    pub(crate) fn set_data(&self, data: *const u8) {
-        view_write!(self, data, data)
-    }
-    #[inline(always)]
-    pub(crate) fn set_length(&self, length: usize) {
-        view_write!(self, length, length)
     }
 }
 
@@ -815,6 +800,17 @@ pub struct Blob {
 }
 
 impl Blob {
+    /// Reinterpret a valid string byte-run descriptor as arbitrary bytes while
+    /// preserving the same storage and lifetime.
+    #[inline(always)]
+    pub(crate) const fn from_string(value: String) -> Blob {
+        Blob {
+            data: value.data,
+            size: value.length,
+            _marker: PhantomData,
+        }
+    }
+
     /// Empty blob descriptor. Its data pointer is never dereferenced.
     pub(crate) const fn empty() -> Blob {
         Blob {

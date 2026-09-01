@@ -214,8 +214,10 @@ pub(crate) fn read_embedded_blob(
             }
         }
 
-        dst_blob.set_data(content.data);
-        dst_blob.set_size(content.length);
+        // `content` either borrows the retained parse-tree string run or the
+        // result-arena copy assembled above; the Blob interpretation preserves
+        // that descriptor's storage and lifetime.
+        dst_blob.set(Blob::from_string(content));
     }
 
     Ok(())
@@ -572,12 +574,10 @@ pub(crate) fn read_thumbnail(
     let data_arr: *mut ValueArray = find_array(node, sp::ImageData.as_ptr(), b'c');
     if !data_arr.is_null() {
         // SAFETY: `data_arr` is non-null (checked) and points at the node's own
-        // array descriptor.
-        thumbnail
-            .data_view()
-            .set_data(unsafe { (*data_arr).data } as *const u8);
-        // SAFETY: as above.
-        thumbnail.data_view().set_size(unsafe { (*data_arr).size });
+        // retained array descriptor; its payload spans `size` readable bytes
+        // and stays live and unwritten while the thumbnail references it.
+        let data = unsafe { Blob::new_c((*data_arr).data as *const u8, (*data_arr).size) };
+        thumbnail.data_view().set(data);
     }
 
     Ok(())
@@ -1580,8 +1580,8 @@ pub(crate) fn init_synthetic_vec3_prop(
     type_: PropType,
 ) {
     dst.set_type(type_);
-    dst.name_view().set_data(name.as_ptr());
-    dst.name_view().set_length(synthetic_name_length(name));
+    dst.name_view()
+        .set(String::new_c(name.as_ptr(), synthetic_name_length(name)));
     // C: `dst->value_vec3 = *value;` writes only x/y/z of the value union.
     // SAFETY: `value_vec4_raw()` addresses `dst`'s own 4-`Real` value union
     // arm; `Vec3` is its 3-real prefix, so the projected write stays inside it.
@@ -1595,7 +1595,7 @@ pub(crate) fn init_synthetic_vec3_prop(
     // `x` (C's `value_real`) the vec3 store above wrote.
     let value_real: Real = unsafe { (*dst.value_vec4_raw()).x };
     dst.set_value_int(f64_to_i64(as_f64!(value_real)));
-    dst.value_str_view().set_data(EMPTY_CHAR.as_ptr());
+    dst.value_str_view().set(EMPTY_STRING.0);
 
     assert!(
         dst.name_view().length() >= 4,
@@ -3616,7 +3616,7 @@ pub(crate) fn assign_face_groups(
     let group_views = unsafe { SliceViewIter::<FaceGroup>::from_raw_parts(groups, num_groups) };
     for (group, id) in group_views.zip(id_slots.iter()) {
         group.set_id(id.get() as i32);
-        group.name_view().set_data(EMPTY_CHAR.as_ptr());
+        group.name_view().set(EMPTY_STRING.0);
     }
 
     // `groups` is the `num_groups`-long run pushed on `buf`.
@@ -9986,7 +9986,7 @@ pub(crate) fn read_legacy_mesh(
         // `Mut`).
         let set: &View<UvSet> = unsafe { View::<UvSet>::from_ptr(set) };
         set.set_index(0);
-        set.name_view().set_data(EMPTY_CHAR.as_ptr());
+        set.name_view().set(EMPTY_STRING.0);
         // SAFETY: `set.vertex_uv_raw()` is the `ufbx_vertex_vec2` slot of the
         // fresh non-null set, result-arena memory reached through `*mut`
         // (write-capable provenance for `Mut`); the static asserts pin
@@ -10526,7 +10526,7 @@ pub(crate) fn init_file_paths(uc: &Context) -> Result<(), Fail> {
         let filename = String::new_c(filename.data(), filename.length());
         uc.scene_view()
             .metadata_view()
-            .set_raw_filename(blob_from_string(filename));
+            .set_raw_filename(Blob::from_string(filename));
     }
 
     push_string_place_str(
@@ -10587,17 +10587,6 @@ pub(crate) union Strblob {
 // assertions pin the layout identity that the C union relies on.
 const _: () = assert!(size_of::<Strblob>() == size_of::<String>());
 const _: () = assert!(size_of::<Strblob>() == size_of::<Blob>());
-
-/// Reinterpret an already valid String byte-run descriptor as a Blob. This
-/// weakens the interpretation from UTF-8 string bytes to arbitrary bytes while
-/// preserving the same storage and lifetime.
-#[inline(always)]
-pub(crate) fn blob_from_string(value: String) -> Blob {
-    // SAFETY: a valid `String` already promises that `data` addresses
-    // `length` readable bytes for every use of the descriptor and its copies;
-    // `Blob` requires exactly that same run invariant without UTF-8 semantics.
-    unsafe { Blob::new_c(value.data, value.length) }
-}
 
 // ufbx.c:16536-16545 `ufbxi_strblob_set` string member
 #[inline(never)]
@@ -10823,7 +10812,7 @@ pub(crate) fn resolve_relative_filename<M: Mode>(
     // `dst` is the interned string, which outlives the popped scratch run. The
     // discriminator visibly selects the matching union member for publication.
     if raw {
-        strblob_set_blob(p_dst, blob_from_string(dst));
+        strblob_set_blob(p_dst, Blob::from_string(dst));
     } else {
         strblob_set_string(p_dst, dst);
     }
@@ -11179,7 +11168,7 @@ mod tests {
         assert_eq!(strblob_length(storage, false), 0);
 
         let blob_string = String::new_c(BLOB_BYTES.as_ptr(), BLOB_BYTES.len());
-        strblob_set_blob(storage, blob_from_string(blob_string));
+        strblob_set_blob(storage, Blob::from_string(blob_string));
         assert_eq!(strblob_data(storage, true), BLOB_BYTES.as_ptr());
         assert_eq!(strblob_length(storage, true), BLOB_BYTES.len());
 
