@@ -5003,23 +5003,23 @@ macro_rules! vertex_attrib_views {
         impl<M: Mode> View<$ty, M> {
             #[inline(always)]
             pub(crate) fn indices_count(&self) -> usize {
-                // SAFETY: reading the `indices.count` field of a valid attrib.
-                unsafe { (*self.as_ptr()).indices.count }
+                let indices: &View<List<u32>, M> = view_project!(self, indices);
+                indices.count()
             }
             #[inline(always)]
             pub(crate) fn indices_data(&self) -> *const u32 {
-                // SAFETY: reading the `indices.data` run pointer (stored value).
-                unsafe { (*self.as_ptr()).indices.data }
+                let indices: &View<List<u32>, M> = view_project!(self, indices);
+                indices.data()
             }
             #[inline(always)]
             pub(crate) fn values_count(&self) -> usize {
-                // SAFETY: reading the `values.count` field of a valid attrib.
-                unsafe { (*self.as_ptr()).values.count }
+                let values: &View<List<$elem>, M> = view_project!(self, values);
+                values.count()
             }
             #[inline(always)]
             pub(crate) fn values_data(&self) -> *const $elem {
-                // SAFETY: reading the `values.data` run pointer (stored value).
-                unsafe { (*self.as_ptr()).values.data }
+                let values: &View<List<$elem>, M> = view_project!(self, values);
+                values.data()
             }
         }
     )*};
@@ -5034,13 +5034,13 @@ vertex_attrib_views! {
 impl<M: Mode> View<VertexVec3, M> {
     #[inline(always)]
     pub(crate) fn values_w_count(&self) -> usize {
-        // SAFETY: reading the `values_w.count` field of a valid attrib.
-        unsafe { (*self.as_ptr()).values_w.count }
+        let values_w: &View<List<Real>, M> = view_project!(self, values_w);
+        values_w.count()
     }
     #[inline(always)]
     pub(crate) fn values_w_data(&self) -> *const Real {
-        // SAFETY: reading the `values_w.data` run pointer (stored value).
-        unsafe { (*self.as_ptr()).values_w.data }
+        let values_w: &View<List<Real>, M> = view_project!(self, values_w);
+        values_w.data()
     }
 }
 

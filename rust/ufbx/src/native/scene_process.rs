@@ -7954,16 +7954,7 @@ pub(crate) fn finalize_mesh_material(
         }
 
         if !parts.is_null() {
-            // SAFETY: the assert above pins a non-null `parts` run to
-            // `material_parts.count` entries, with `count == num_materials` or
-            // `count == 1` when `num_materials == 0`, and `mat_ix` was clamped
-            // to `0` unless it is below `num_materials`, so the write lands
-            // inside the run for every `count > 0`. `material_parts` is
-            // allocated with `max(num_materials, 1)` entries, so the remaining
-            // `count == num_materials == 0` shape the assert also admits does
-            // not occur.
-            let part: &View<MeshPart> =
-                unsafe { View::<MeshPart>::from_ptr(parts.add(mat_ix as usize)) };
+            let part: &View<MeshPart> = mesh.material_parts_view().at(mat_ix as usize);
             mesh_part_add_face(part, face.num_indices);
         }
     }
@@ -8001,10 +7992,7 @@ pub(crate) fn finalize_mesh_material(
                 0
             };
             if (mat_ix as usize) < num_parts {
-                // SAFETY: `mat_ix < num_parts`, the length of the non-null `parts`
-                // run, so the offset addresses a live, initialized material part.
-                let part: &View<MeshPart> =
-                    unsafe { View::<MeshPart>::from_ptr(parts.add(mat_ix as usize)) };
+                let part: &View<MeshPart> = mesh.material_parts_view().at(mat_ix as usize);
                 // C: `part->face_indices.data[part->num_faces++] = (uint32_t)i;`
                 // SAFETY: the part's `face_indices` run was pushed with its counted
                 // face total and `num_faces` was reset to `0`, so it counts the

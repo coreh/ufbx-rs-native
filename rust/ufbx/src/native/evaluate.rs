@@ -7150,6 +7150,21 @@ pub(crate) unsafe fn bake_node_imp(
     }
     finalize_bake_times(bc, &mut times_s)?;
 
+    // SAFETY: each finalized descriptor is an initialized prefix in the
+    // chunk-stable `tmp_prop` arena. The runs remain live and unmoved through
+    // the merge below, which indexes them only below their published counts.
+    let (times_t_run, times_r_run, times_s_run): (
+        Run<'_, BakeTime>,
+        Run<'_, BakeTime>,
+        Run<'_, BakeTime>,
+    ) = unsafe {
+        (
+            Run::from_raw_parts(times_t.data, times_t.count),
+            Run::from_raw_parts(times_r.data, times_r.count),
+            Run::from_raw_parts(times_s.data, times_s.count),
+        )
+    };
+
     // C: `ufbx_baked_vec3_list keys_t; ufbx_baked_quat_list keys_r; ufbx_baked_vec3_list keys_s;`
     // SAFETY: these lists are pointer/length pairs, and an all-zero pattern
     // (null pointer, zero count) is a valid inhabitant of each.
@@ -7198,17 +7213,13 @@ pub(crate) unsafe fn bake_node_imp(
 
         let mut flags: u32 = 0;
         if ix_r < times_r.count {
-            // SAFETY: `times_r` is the run `finalize_bake_times` filled in, and
-            // `ix_r < times_r.count` (checked), so the slot is in bounds.
-            bake_time = unsafe { *times_r.data.add(ix_r) };
+            bake_time = times_r_run.at(ix_r).value();
             flags_r = bake_time.flags;
             bake_time.flags &= 0x7;
             flags |= TransformFlags::INCLUDE_ROTATION.raw();
         }
         if ix_t < times_t.count {
-            // SAFETY: `times_t` is the run `finalize_bake_times` filled in, and
-            // `ix_t < times_t.count` (checked), so the slot is in bounds.
-            let t: BakeTime = unsafe { *times_t.data.add(ix_t) };
+            let t: BakeTime = times_t_run.at(ix_t).value();
             let cmp: i32 = cmp_bake_time(t, bake_time);
             if cmp <= 0 {
                 if cmp < 0 {
@@ -7221,9 +7232,7 @@ pub(crate) unsafe fn bake_node_imp(
             }
         }
         if ix_s < times_s.count {
-            // SAFETY: `times_s` is the run `finalize_bake_times` filled in, and
-            // `ix_s < times_s.count` (checked), so the slot is in bounds.
-            let t: BakeTime = unsafe { *times_s.data.add(ix_s) };
+            let t: BakeTime = times_s_run.at(ix_s).value();
             let cmp: i32 = cmp_bake_time(t, bake_time);
             if cmp <= 0 {
                 if cmp < 0 {
