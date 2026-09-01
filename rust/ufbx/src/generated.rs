@@ -6190,7 +6190,8 @@ pub fn as_blend_shape<'a>(element: &'a Element) -> Option<&'a BlendShape> {
 
 #[allow(clippy::needless_lifetimes)]
 pub fn as_cache_deformer<'a>(element: &'a Element) -> Option<&'a CacheDeformer> {
-    let result = unsafe { crate::native::api::as_cache_deformer(element as *const Element) };
+    let result =
+        crate::native::api::downcast_element::<CacheDeformer>(element, ElementType::CacheDeformer);
     if result.is_null() {
         None
     } else {
@@ -6200,7 +6201,7 @@ pub fn as_cache_deformer<'a>(element: &'a Element) -> Option<&'a CacheDeformer> 
 
 #[allow(clippy::needless_lifetimes)]
 pub fn as_cache_file<'a>(element: &'a Element) -> Option<&'a CacheFile> {
-    let result = unsafe { crate::native::api::as_cache_file(element as *const Element) };
+    let result = crate::native::api::downcast_element::<CacheFile>(element, ElementType::CacheFile);
     if result.is_null() {
         None
     } else {
@@ -6310,7 +6311,8 @@ pub fn as_display_layer<'a>(element: &'a Element) -> Option<&'a DisplayLayer> {
 
 #[allow(clippy::needless_lifetimes)]
 pub fn as_selection_set<'a>(element: &'a Element) -> Option<&'a SelectionSet> {
-    let result = unsafe { crate::native::api::as_selection_set(element as *const Element) };
+    let result =
+        crate::native::api::downcast_element::<SelectionSet>(element, ElementType::SelectionSet);
     if result.is_null() {
         None
     } else {
@@ -6320,7 +6322,8 @@ pub fn as_selection_set<'a>(element: &'a Element) -> Option<&'a SelectionSet> {
 
 #[allow(clippy::needless_lifetimes)]
 pub fn as_selection_node<'a>(element: &'a Element) -> Option<&'a SelectionNode> {
-    let result = unsafe { crate::native::api::as_selection_node(element as *const Element) };
+    let result =
+        crate::native::api::downcast_element::<SelectionNode>(element, ElementType::SelectionNode);
     if result.is_null() {
         None
     } else {

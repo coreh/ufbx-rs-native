@@ -623,8 +623,19 @@ fn load_selection_sets() {
 
     let mut seen = 0u16;
     for set in &scene.selection_sets {
+        let downcast_set = ufbx::as_selection_set(&set.element).expect("selection set downcast");
+        assert!(core::ptr::eq(downcast_set, set));
+        assert_eq!(downcast_set.nodes.len(), set.nodes.len());
+        assert!(ufbx::as_selection_node(&set.element).is_none());
+
         assert_eq!(set.nodes.len(), 1);
         let selection = &set.nodes[0];
+        let downcast_node =
+            ufbx::as_selection_node(&selection.element).expect("selection node downcast");
+        assert!(core::ptr::eq(downcast_node, selection));
+        assert_eq!(downcast_node.faces.as_ref(), selection.faces.as_ref());
+        assert!(ufbx::as_selection_set(&selection.element).is_none());
+
         let mesh = selection
             .target_mesh
             .as_ref()
@@ -2823,15 +2834,31 @@ fn geometry_cache_through_scene() {
 
     assert!(!scene.cache_deformers.is_empty());
     for deformer in &scene.cache_deformers {
+        let downcast_deformer =
+            ufbx::as_cache_deformer(&deformer.element).expect("cache deformer downcast");
+        assert!(core::ptr::eq(downcast_deformer, deformer));
+        assert_eq!(
+            downcast_deformer.external_channel.is_some(),
+            deformer.external_channel.is_some()
+        );
+        assert!(ufbx::as_cache_file(&deformer.element).is_none());
+
         let file = deformer
             .file
             .as_ref()
             .expect("cache deformer resolves its file");
+        let downcast_file = ufbx::as_cache_file(&file.element).expect("cache file downcast");
+        assert!(core::ptr::eq(downcast_file, file.as_ref()));
+        assert_eq!(
+            downcast_file.external_cache.is_some(),
+            file.external_cache.is_some()
+        );
+        assert!(ufbx::as_cache_deformer(&file.element).is_none());
         assert!(
-            file.external_cache.is_some(),
+            downcast_file.external_cache.is_some(),
             "external cache loaded through the callback"
         );
-        assert!(deformer.external_cache.is_some());
+        assert!(downcast_deformer.external_cache.is_some());
     }
 
     let mut acc = 0.0f64;

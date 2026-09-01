@@ -1364,6 +1364,54 @@ pub fn as_video<'a>(element: &'a Element) -> Option<&'a Video> {
 }
 """
 
+override_functions["ufbx_as_cache_deformer"] = """
+#[allow(clippy::needless_lifetimes)]
+pub fn as_cache_deformer<'a>(element: &'a Element) -> Option<&'a CacheDeformer> {
+    let result = crate::native::api::downcast_element::<CacheDeformer>(element, ElementType::CacheDeformer);
+    if result.is_null() {
+        None
+    } else {
+        unsafe { Some(&*result) }
+    }
+}
+"""
+
+override_functions["ufbx_as_cache_file"] = """
+#[allow(clippy::needless_lifetimes)]
+pub fn as_cache_file<'a>(element: &'a Element) -> Option<&'a CacheFile> {
+    let result = crate::native::api::downcast_element::<CacheFile>(element, ElementType::CacheFile);
+    if result.is_null() {
+        None
+    } else {
+        unsafe { Some(&*result) }
+    }
+}
+"""
+
+override_functions["ufbx_as_selection_set"] = """
+#[allow(clippy::needless_lifetimes)]
+pub fn as_selection_set<'a>(element: &'a Element) -> Option<&'a SelectionSet> {
+    let result = crate::native::api::downcast_element::<SelectionSet>(element, ElementType::SelectionSet);
+    if result.is_null() {
+        None
+    } else {
+        unsafe { Some(&*result) }
+    }
+}
+"""
+
+override_functions["ufbx_as_selection_node"] = """
+#[allow(clippy::needless_lifetimes)]
+pub fn as_selection_node<'a>(element: &'a Element) -> Option<&'a SelectionNode> {
+    let result = crate::native::api::downcast_element::<SelectionNode>(element, ElementType::SelectionNode);
+    if result.is_null() {
+        None
+    } else {
+        unsafe { Some(&*result) }
+    }
+}
+"""
+
 override_functions["ufbx_as_lod_group"] = """
 #[allow(clippy::needless_lifetimes)]
 pub fn as_lod_group<'a>(element: &'a Element) -> Option<&'a LodGroup> {

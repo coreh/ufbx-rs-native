@@ -16,6 +16,7 @@ use crate::native::platform::{
     ufbx_assert, ufbxi_maybe_null, ufbxi_regression_assert, MAP_MAX_SCAN,
 };
 use crate::native::view::{view_project, view_read, view_write};
+use crate::prelude::Ref;
 
 // ufbx.c:4688-4691 `ufbxi_ptr_id` — key type of the hash-map unit; kept up
 // here (out of C declaration order) because `ufbxi_hash_ptr_id` takes it by
@@ -221,8 +222,8 @@ pub(crate) type CmpFn =
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub(crate) struct AaNode {
-    pub left: *mut AaNode,
-    pub right: *mut AaNode,
+    pub left: Option<Ref<AaNode>>,
+    pub right: Option<Ref<AaNode>>,
     pub level: u32,
     pub index: u32,
 }
@@ -231,31 +232,13 @@ pub(crate) struct AaNode {
 // arena, reinterpreted in place.
 pub(crate) type AaNodeView = crate::native::view::View<AaNode>;
 
-// Nullable `ufbxi_aa_node *` -> `Option<&AaNodeView>`: one named home for the
-// mint, so every raw-boundary site states the arena contract once.
-//
-// # Safety
-// `node` is null, or points at an `AaNode` that stays alive and unmoved for
-// `'a` with the write-capable provenance of the `aa_buf` arena it was pushed
-// from.
-#[inline(always)]
-unsafe fn aa_node_view<'a>(node: *mut AaNode) -> Option<&'a AaNodeView> {
-    if node.is_null() {
-        None
-    } else {
-        // SAFETY: non-null (checked) and live/arena-provenanced per this fn's
-        // contract.
-        Some(unsafe { AaNodeView::from_ptr(node) })
-    }
-}
-
 impl AaNodeView {
     #[inline(always)]
-    pub(crate) fn left(&self) -> *mut AaNode {
+    fn left_ref(&self) -> Option<Ref<AaNode>> {
         view_read!(self, left)
     }
     #[inline(always)]
-    pub(crate) fn right(&self) -> *mut AaNode {
+    fn right_ref(&self) -> Option<Ref<AaNode>> {
         view_read!(self, right)
     }
     #[inline(always)]
@@ -267,11 +250,11 @@ impl AaNodeView {
         view_read!(self, index)
     }
     #[inline(always)]
-    pub(crate) fn set_left(&self, left: *mut AaNode) {
+    fn set_left(&self, left: Option<Ref<AaNode>>) {
         view_write!(self, left, left)
     }
     #[inline(always)]
-    pub(crate) fn set_right(&self, right: *mut AaNode) {
+    fn set_right(&self, right: Option<Ref<AaNode>>) {
         view_write!(self, right, right)
     }
     #[inline(always)]
@@ -287,18 +270,12 @@ impl AaNodeView {
     // node of the same AA tree, pushed into the same `aa_buf` arena, so it
     // stays alive and unmoved for as long as the receiver's own view does.
     #[inline(always)]
-    pub(crate) fn left_view(&self) -> Option<&AaNodeView> {
-        let left = self.left();
-        // SAFETY: the link is null or an `AaNode` in the same arena as the
-        // receiver (tree invariant), live for the receiver's lifetime.
-        unsafe { aa_node_view(left) }
+    fn left_view(&self) -> Option<&AaNodeView> {
+        self.left_ref().map(Ref::view)
     }
     #[inline(always)]
-    pub(crate) fn right_view(&self) -> Option<&AaNodeView> {
-        let right = self.right();
-        // SAFETY: the link is null or an `AaNode` in the same arena as the
-        // receiver (tree invariant), live for the receiver's lifetime.
-        unsafe { aa_node_view(right) }
+    fn right_view(&self) -> Option<&AaNodeView> {
+        self.right_ref().map(Ref::view)
     }
 }
 
@@ -325,7 +302,7 @@ pub(crate) struct Map {
     pub cmp_user: *mut c_void,
 
     pub aa_buf: Buf,
-    pub aa_root: *mut AaNode,
+    pub aa_root: Option<Ref<AaNode>>,
 }
 
 // Typed interior-mutable VIEW over an owned `Map` field, reinterpreted in place.
@@ -392,16 +369,17 @@ impl MapView {
     pub(crate) fn set_cmp_user(&self, cmp_user: *mut c_void) {
         view_write!(self, cmp_user, cmp_user)
     }
-    // `aa_root` — the AA-tree overflow root, nullable, as a view.
+    // `aa_root` — the AA-tree overflow root, nullable, as a typed arena ref.
     #[inline(always)]
-    pub(crate) fn aa_root_view(&self) -> Option<&AaNodeView> {
-        let aa_root: *mut AaNode = view_read!(self, aa_root);
-        // SAFETY: the root is null or an `AaNode` pushed into this map's own
-        // `aa_buf` arena, live and unmoved for as long as the map is.
-        unsafe { aa_node_view(aa_root) }
+    fn aa_root_ref(&self) -> Option<Ref<AaNode>> {
+        view_read!(self, aa_root)
     }
     #[inline(always)]
-    pub(crate) fn set_aa_root(&self, aa_root: *mut AaNode) {
+    fn aa_root_view(&self) -> Option<&AaNodeView> {
+        self.aa_root_ref().map(Ref::view)
+    }
+    #[inline(always)]
+    fn set_aa_root(&self, aa_root: Option<Ref<AaNode>>) {
         view_write!(self, aa_root, aa_root)
     }
     // `aa_buf` (Buf) — typed VIEW handle (reinterpret-in-place); accessors on BufView.
@@ -540,6 +518,12 @@ pub(crate) unsafe fn map_init(
 // ufbx.c:4421-4440 `ufbxi_map_free`
 #[inline(never)]
 pub(crate) fn map_free(map: &MapView) {
+    // The typed root is live exactly while its backing `aa_buf` arena is live,
+    // so its null reset precedes C's remaining teardown sequence. This keeps
+    // it invalid during allocator callbacks dispatched while releasing the
+    // arena's chunks; all later field resets retain their C order.
+    map.set_aa_root(None);
+
     // The view is minted only over a live, writable `Map` (write provenance);
     // `get()` is the raw pointer the C body operates on.
     let map: *mut Map = map.get();
@@ -570,7 +554,6 @@ pub(crate) fn map_free(map: &MapView) {
     unsafe {
         (*map).entries = core::ptr::null_mut();
         (*map).items = core::ptr::null_mut();
-        (*map).aa_root = core::ptr::null_mut();
         // C: `map->mask = map->capacity = map->size = 0;` — decomposed, C
         // assignment order (rightmost first).
         (*map).size = 0;
@@ -602,7 +585,9 @@ pub(crate) fn map_free(map: &MapView) {
 // the wrapper is a plain call.
 //
 // # Safety
-// `value` points at a key of the map's own key discipline — the untyped
+// `node` must be `None` or the root of this map's own `aa_buf` tree, whose
+// links name nodes in that same live arena and whose indices address live map
+// items. `value` points at a key of the map's own key discipline — the untyped
 // `const void *` the map's `cmp_fn` was initialized for, whose pointees the
 // comparator may follow — and `item_size` is that map's element stride. Neither
 // is expressible in the signature: the map is key-type-erased in C and stays so
@@ -611,11 +596,11 @@ pub(crate) fn map_free(map: &MapView) {
 #[inline(never)]
 pub(crate) unsafe fn aa_tree_insert(
     map: &MapView,
-    node: Option<&AaNodeView>,
+    node: Option<Ref<AaNode>>,
     value: *const c_void,
     index: u32,
     item_size: usize,
-) -> *mut AaNode {
+) -> Option<Ref<AaNode>> {
     #[cfg(feature = "regression")]
     {
         std::thread_local! {
@@ -649,28 +634,30 @@ pub(crate) unsafe fn aa_tree_insert(
 // and `item_size` is that map's element stride.
 unsafe fn aa_tree_insert_rec(
     map: &MapView,
-    node: Option<&AaNodeView>,
+    node_ref: Option<Ref<AaNode>>,
     value: *const c_void,
     index: u32,
     item_size: usize,
-) -> *mut AaNode {
+) -> Option<Ref<AaNode>> {
     // C: `if (!node) { ... }` — the null check is the `None` arm.
-    let Some(mut node) = node else {
+    let Some(mut node_ref) = node_ref else {
         // `aa_buf` is the map's own AA-tree buffer, reached as a view over the
         // field in place; the push allocates one `AaNode`.
         let new_node = map.aa_buf_view().push::<AaNode>(1);
         if new_node.is_null() {
-            return core::ptr::null_mut();
+            return None;
         }
         // SAFETY: `new_node` is the freshly pushed `AaNode`, just proven
-        // non-null, so it is a live, writable slot in the map's own arena.
-        let new_node_view = unsafe { AaNodeView::from_ptr(new_node) };
-        new_node_view.set_left(core::ptr::null_mut());
-        new_node_view.set_right(core::ptr::null_mut());
+        // non-null, so it is a live, stable, writable slot in the map's arena.
+        let new_node_ref = unsafe { Ref::from_ptr(new_node) };
+        let new_node_view: &AaNodeView = new_node_ref.view();
+        new_node_view.set_left(None);
+        new_node_view.set_right(None);
         new_node_view.set_level(1);
         new_node_view.set_index(index);
-        return new_node;
+        return Some(new_node_ref);
     };
+    let mut node: &AaNodeView = node_ref.view();
 
     // SAFETY: `node`'s `index` addresses one of the map's `items`, whose
     // element stride is the matching `item_size` (this fn's contract), so the
@@ -685,37 +672,44 @@ unsafe fn aa_tree_insert_rec(
     if cmp < 0 {
         // SAFETY: forwards this fn's key contract (`value`/`item_size` of the
         // map's own key discipline) to the recursive call.
-        node.set_left(unsafe { aa_tree_insert(map, node.left_view(), value, index, item_size) });
+        node.set_left(unsafe { aa_tree_insert(map, node.left_ref(), value, index, item_size) });
     } else if cmp >= 0 {
         // SAFETY: forwards this fn's key contract (`value`/`item_size` of the
         // map's own key discipline) to the recursive call.
-        node.set_right(unsafe { aa_tree_insert(map, node.right_view(), value, index, item_size) });
+        node.set_right(unsafe { aa_tree_insert(map, node.right_ref(), value, index, item_size) });
     }
 
     // C: `if (node->left && node->left->level == node->level)` — the non-null
     // guard is the `Some` arm, the level compare the `filter` predicate,
     // evaluated in the same order and only on the non-null link.
-    if let Some(left) = node.left_view().filter(|left| left.level() == node.level()) {
-        node.set_left(left.right());
-        left.set_right(node.get());
+    if let Some(left_ref) = node
+        .left_ref()
+        .filter(|left_ref| left_ref.view::<crate::native::view::Mut>().level() == node.level())
+    {
+        let left: &AaNodeView = left_ref.view();
+        node.set_left(left.right_ref());
+        left.set_right(Some(node_ref));
+        node_ref = left_ref;
         node = left;
     }
 
     // C: `if (node->right && node->right->right && node->right->right->level
     // == node->level)` — same shape, the grandchild guard nested in the
     // predicate.
-    if let Some(right) = node.right_view().filter(|right| {
-        right
+    if let Some(right_ref) = node.right_ref().filter(|right_ref| {
+        right_ref
+            .view::<crate::native::view::Mut>()
             .right_view()
             .is_some_and(|rr| rr.level() == node.level())
     }) {
-        node.set_right(right.left());
-        right.set_left(node.get());
+        let right: &AaNodeView = right_ref.view();
+        node.set_right(right.left_ref());
+        right.set_left(Some(node_ref));
         right.set_level(right.level() + 1);
-        node = right;
+        node_ref = right_ref;
     }
 
-    node.get()
+    Some(node_ref)
 }
 
 // ufbx.c:4483-4498 `ufbxi_aa_tree_find`
@@ -1100,7 +1094,7 @@ pub(crate) unsafe fn map_insert_size(
             // SAFETY: `aa_tree_insert` re-roots the overflow tree with
             // `new_value`/`size` of the map's own key/element discipline.
             map.set_aa_root(unsafe {
-                aa_tree_insert(map, map.aa_root_view(), new_value, new_index, size)
+                aa_tree_insert(map, map.aa_root_ref(), new_value, new_index, size)
             });
             // SAFETY: `index` is this insertion's freshly claimed element slot
             // (< `map.size`), inside the items region.
@@ -1371,7 +1365,7 @@ mod tests {
         // C maps live inside zero-initialized contexts; `ufbxi_map_init` only
         // sets the fields it names.
         // SAFETY: an all-zero bit pattern is a valid `Map` (raw pointers null,
-        // integers zero, `Option<CmpFn>` None).
+        // integers zero, `Option<CmpFn>` and `Option<Ref<AaNode>>` both None).
         let mut map = unsafe { MaybeUninit::<Map>::zeroed().assume_init() };
         // SAFETY: `map` is freshly zeroed; the caller keeps `ator` live and
         // unmoved through the returned map's teardown. The null `cmp_user` is
@@ -1477,39 +1471,55 @@ mod tests {
     }
 
     // Degenerate hashing (all keys hash to 0) drives scan > UFBXI_MAP_MAX_SCAN
-    // and spills into the AA tree; find must still resolve every key.
+    // and spills into the AA tree. Ascending and descending keys exercise the
+    // tree's split and skew rotations; find must still resolve every key.
     #[test]
     fn map_collision_aa_tree() {
         unsafe {
-            let mut err = Error::default();
-            // SAFETY: `err` is a live local owned exclusively by this test for
-            // the whole view lifetime.
-            let err = ErrorView::from_ptr(&raw mut err);
-            let mut ator = make_test_ator(err);
-            // SAFETY: `ator` is the live, unmoved local initialized by
-            // `make_test_ator`, owned exclusively through `map_free()` below;
-            // this satisfies both the view mint and `make_map` contracts.
-            let ator_view = AllocatorView::from_ptr(&raw mut ator);
-            let mut map = make_map(ator_view, map_cmp_uint64);
-            let map = MapView::from_mut(&mut map);
-
             let n = (MAP_MAX_SCAN + 20) as u64;
-            for i in 0..n {
-                let p = map_insert::<u64>(map, 0, &i as *const u64 as *const c_void);
-                assert!(!p.is_null());
-                *p = i;
-            }
-            assert!(map.aa_root_view().is_some());
-            for i in 0..n {
-                let p = map_find::<u64>(map, 0, &i as *const u64 as *const c_void);
-                assert!(!p.is_null(), "missing {}", i);
-                assert_eq!(*p, i);
-            }
-            let missing = n + 1;
-            assert!(map_find::<u64>(map, 0, &missing as *const u64 as *const c_void).is_null());
+            for descending in [false, true] {
+                let mut err = Error::default();
+                // SAFETY: `err` is a live local owned exclusively by this test
+                // for the whole view lifetime.
+                let err = ErrorView::from_ptr(&raw mut err);
+                let mut ator = make_test_ator(err);
+                // SAFETY: `ator` is the live, unmoved local initialized by
+                // `make_test_ator`, owned exclusively through `map_free()`;
+                // this satisfies both the view mint and `make_map` contracts.
+                let ator_view = AllocatorView::from_ptr(&raw mut ator);
+                let mut map = make_map(ator_view, map_cmp_uint64);
+                let map = MapView::from_mut(&mut map);
 
-            map_free(map);
-            assert_eq!(ator.current_size, 0);
+                for step in 0..n {
+                    let value = if descending { n - step - 1 } else { step };
+                    let p = map_insert::<u64>(map, 0, &value as *const u64 as *const c_void);
+                    assert!(!p.is_null());
+                    *p = value;
+                    if step + 1 == MAP_MAX_SCAN as u64 {
+                        assert!(map.aa_root_view().is_none());
+                    } else if step + 1 == MAP_MAX_SCAN as u64 + 1 {
+                        assert!(map.aa_root_view().is_some());
+                    }
+                }
+                let root = map.aa_root_view().expect("collision overflow root");
+                let left = root.left_view().expect("balanced root left child");
+                let right = root.right_view().expect("balanced root right child");
+                assert!(root.level() > 1);
+                let items = map.items() as *const u64;
+                assert!(*items.add(left.index() as usize) < *items.add(root.index() as usize));
+                assert!(*items.add(root.index() as usize) < *items.add(right.index() as usize));
+                for value in 0..n {
+                    let p = map_find::<u64>(map, 0, &value as *const u64 as *const c_void);
+                    assert!(!p.is_null(), "missing {}", value);
+                    assert_eq!(*p, value);
+                }
+                let missing = n + 1;
+                assert!(map_find::<u64>(map, 0, &missing as *const u64 as *const c_void).is_null());
+
+                map_free(map);
+                assert!(map.aa_root_view().is_none());
+                assert_eq!(ator.current_size, 0);
+            }
         }
     }
 
