@@ -185,6 +185,41 @@ fn inflate_dynamic_codelen_repeat_overflow() {
     }
 }
 
+/// Fixed Huffman tables honor the caller-selected fast lookup width.
+#[test]
+fn inflate_static_huffman_fast_bits() {
+    let source =
+        b"\x78\x01\xcb\x48\xcd\xc9\xc9\x57\x48\xcb\xac\x48\x4d\x51\xc8\x28\x4d\x4b\xcb\x4d\xcc\x03\x00\x48\x6d\x07\x4a";
+    let expected = b"hello fixed huffman";
+    let input = ufbx::InflateInput {
+        total_size: source.len(),
+        data: source.as_ptr().cast(),
+        data_size: source.len(),
+        buffer: core::ptr::null_mut(),
+        buffer_size: 0,
+        read_fn: None,
+        read_user: core::ptr::null_mut(),
+        progress_cb: ufbx::RawProgressCb::default(),
+        progress_interval_hint: 0,
+        progress_size_before: 0,
+        progress_size_after: 0,
+        no_header: false,
+        no_checksum: false,
+        internal_fast_bits: 8,
+    };
+    let mut retain = ufbx::InflateRetain {
+        initialized: false,
+        data: [0; 1024],
+    };
+    let mut output = [0u8; 32];
+
+    assert_eq!(
+        ufbx::inflate(&mut output, &input, &mut retain),
+        expected.len() as isize
+    );
+    assert_eq!(&output[..expected.len()], expected);
+}
+
 #[test]
 fn load_cube_with_axis_conversion() {
     let data = read_data("maya_cube_7500_binary.fbx");
@@ -388,6 +423,55 @@ fn load_repairs_non_negated_last_indices() {
         b",2, 4\n\t\tEdges:",
         4,
     );
+}
+
+/// Modern AllSame material mapping fills every face with the selected nonzero
+/// material index.
+#[cfg(not(miri))]
+#[test]
+fn load_nonzero_all_same_material() {
+    let mut data = read_data("synthetic_empty_elements_7500_ascii.fbx");
+    let materials = b"Materials: *1 {\n\t\t\t\ta: 0";
+    let material_offset = data
+        .windows(materials.len())
+        .position(|window| window == materials)
+        .expect("missing AllSame material array");
+    data[material_offset + materials.len() - 1] = b'1';
+
+    let connection = b"C: \"OO\",1,4\n";
+    let connection_offset = data
+        .windows(connection.len())
+        .position(|window| window == connection)
+        .expect("missing empty material connection anchor");
+    data.splice(
+        connection_offset + connection.len()..connection_offset + connection.len(),
+        b"\tC: \"OO\",3,1907292239120\n".iter().copied(),
+    );
+
+    let scene = ufbx::load_memory(&data, LoadOpts::default())
+        .expect("modified AllSame material scene should load");
+    let mesh = scene
+        .nodes
+        .iter()
+        .filter(|node| node.element.name.as_ref() == "pCube1")
+        .find_map(|node| node.mesh.as_ref().filter(|mesh| mesh.num_faces > 0))
+        .expect("missing pCube1 mesh");
+    assert_eq!(mesh.materials.len(), 2);
+    assert_eq!(mesh.face_material.len(), mesh.num_faces);
+    assert!(mesh.face_material.iter().all(|&material| material == 1));
+}
+
+/// The pre-6000 reader retains a nonzero AllSame material index.
+#[cfg(not(miri))]
+#[test]
+fn load_nonzero_all_same_material_legacy() {
+    let scene = load("synthetic_legacy_nonzero_material_5800_ascii.fbx");
+    let mesh = scene
+        .find_node("Box01")
+        .and_then(|node| node.mesh.as_ref())
+        .expect("missing Box01 mesh");
+    assert_eq!(mesh.materials.len(), 2);
+    assert_eq!(mesh.face_material.as_ref(), [1]);
 }
 
 /// Legacy binary with one of nearly every node attribute type, and enough

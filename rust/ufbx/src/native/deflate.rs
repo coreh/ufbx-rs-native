@@ -1152,28 +1152,25 @@ fn huff_decode_bits(tree: &HuffTree, bits: u64, fast_bits: u32, fast_mask: u32) 
 }
 
 // ufbx.c:2510-2538 `ufbxi_init_static_huff`
-// NOTE: `input` may be NULL (called with NULL from `ufbxi_inflate_init_retain`).
+// `input` may be absent during eager retain initialization.
 #[inline(never)]
-pub(crate) unsafe fn init_static_huff(trees: *mut Trees, input: *const InflateInput) {
+unsafe fn init_static_huff(trees: *mut Trees, input: Option<&InflateInput>) {
     // `trees` is the sole raw pointer to that `Trees` in this function (rule
     // 4): local exclusive borrow in place of repeated `(*trees).field`
-    // derefs. `input` is left as a raw pointer — it may legitimately be
-    // NULL here (see the fn doc comment), so an unconditional `&*input`
-    // reference is not obviously sound.
+    // derefs. The optional input descriptor is only read while selecting the
+    // static table width.
     // SAFETY: the caller's contract is that `trees` points at a valid, uniquely
     // owned `Trees` for this call.
     let trees = unsafe { &mut *trees };
     let mut err: isize = 0;
 
     // Override `fast_bits` if necessary, this must always be valid as it's checked in the beginning of `ufbx_inflate()`.
-    // SAFETY: `(*input)` is only reached when `input` is non-null (short-circuit
-    // above); a non-null `input` is a valid `InflateInput` per the caller.
-    if !input.is_null() && unsafe { (*input).internal_fast_bits } != 0 {
-        // SAFETY: `input` is non-null here (checked above), so the deref is valid.
-        trees.fast_bits = unsafe { (*input).internal_fast_bits } as u32;
-        ufbx_assert!(!(trees.fast_bits < 1 || trees.fast_bits == 9 || trees.fast_bits > 10));
-    } else {
-        trees.fast_bits = HUFF_FAST_BITS;
+    match input {
+        Some(input) if input.internal_fast_bits != 0 => {
+            trees.fast_bits = input.internal_fast_bits as u32;
+            ufbx_assert!(!(trees.fast_bits < 1 || trees.fast_bits == 9 || trees.fast_bits > 10));
+        }
+        _ => trees.fast_bits = HUFF_FAST_BITS,
     }
     let fast_bits = trees.fast_bits;
 
@@ -2039,7 +2036,7 @@ pub(crate) unsafe fn inflate_init_retain(retain: *mut InflateRetain) {
     let ret_imp = retain.cast::<InflateRetainImp>();
     if !unsafe { (*ret_imp).initialized } {
         unsafe {
-            init_static_huff(&raw mut (*ret_imp).static_trees, core::ptr::null());
+            init_static_huff(&raw mut (*ret_imp).static_trees, None);
             (*ret_imp).initialized = true;
         }
     }
@@ -2225,7 +2222,7 @@ pub(crate) unsafe fn inflate(
                 // pointer; `init_static_huff` accepts the `input` borrow.
                 if !unsafe { (*ret_imp).initialized } {
                     unsafe {
-                        init_static_huff(&raw mut (*ret_imp).static_trees, input);
+                        init_static_huff(&raw mut (*ret_imp).static_trees, Some(input));
                         (*ret_imp).initialized = true;
                     }
                 }

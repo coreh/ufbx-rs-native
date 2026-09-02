@@ -4449,16 +4449,8 @@ pub(crate) fn read_mesh(uc: &Context, node: &NodeView, info: &ElementInfoView) -
                         "mesh->face_material.data"
                     );
                     // C: `ufbxi_for_list(uint32_t, p_mat, mesh->face_material)`
-                    // `face_material` is the non-null `count`-long run just
-                    // pushed on the result arena.
-                    let mut p_mat: *mut u32 = mesh.face_material().data as *mut u32;
-                    let p_mat_end = add_ptr(p_mat, mesh.face_material().count);
-                    while p_mat != p_mat_end {
-                        // SAFETY: `p_mat` is inside that run, short of the end.
-                        unsafe { *p_mat = material };
-                        // SAFETY: `p_mat` is before `p_mat_end`, so the advance
-                        // lands at most one past the run's end.
-                        p_mat = unsafe { p_mat.add(1) };
+                    for p_mat in Run::from_list(mesh.face_material_view()).iter() {
+                        p_mat.write_value(material);
                     }
                 }
             } else {
@@ -10008,18 +10000,8 @@ pub(crate) fn read_legacy_mesh(
                     "mesh->face_material.data"
                 );
                 // C: `ufbxi_for_list(uint32_t, p_mat, mesh->face_material)`
-                // The run just pushed holds `num_faces` `uint32_t`, which is also
-                // `face_material.count`.
-                let mut p_mat: *mut u32 = mesh.face_material().data as *mut u32;
-                let p_mat_end = add_ptr(p_mat, mesh.face_material().count);
-                while p_mat != p_mat_end {
-                    // SAFETY: `p_mat` walks the `face_material` run and stops at
-                    // `p_mat_end`, so it is in bounds; stepping one past the last
-                    // entry reaches `p_mat_end`, the one-past-the-end pointer.
-                    unsafe {
-                        *p_mat = material;
-                        p_mat = p_mat.add(1);
-                    }
+                for p_mat in Run::from_list(mesh.face_material_view()).iter() {
+                    p_mat.write_value(material);
                 }
             }
         }
