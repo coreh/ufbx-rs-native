@@ -710,13 +710,11 @@ pub(crate) unsafe fn bit_refill(
     // (`UnsafeCell`, no retag) as `(*s.get()).field` to avoid a whole-struct
     // retag invalidating that interior pointer.
 
-    // SAFETY: `chunk_yield` read through the live `s.get()` pointer (see fn header).
-    if *p_data > unsafe { (*s.get()).chunk_yield } {
+    if *p_data > s.chunk_yield() {
         // SAFETY: `bit_yield` takes this same `&BitStreamView` and the current
         // position `*p_data`.
         *p_data = unsafe { bit_yield(s, *p_data) };
-        // SAFETY: `cancelled` read through the live `s.get()` pointer.
-        if unsafe { (*s.get()).cancelled } {
+        if s.cancelled() {
             // Force an end-of-block symbol when cancelled so we don't need an
             // extra branch in the chunk decoding loop.
             // SAFETY: `cancel_bits` read through the live `s.get()` pointer.

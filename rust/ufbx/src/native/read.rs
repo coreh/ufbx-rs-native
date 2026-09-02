@@ -3967,26 +3967,34 @@ pub(crate) fn read_mesh(uc: &Context, node: &NodeView, info: &ElementInfoView) -
         let edges: *mut Edge = uc.result_view().push::<Edge>(num_edges);
         ufbxi_check!(uc, !edges.is_null(), "edges");
 
+        // SAFETY: the value array supplies `num_edges` initialized indices and
+        // `edges` is the checked fresh result-arena allocation of the same
+        // length. The output count remains unpublished until the filled prefix
+        // has been initialized.
+        let (edge_data, edges_write) = unsafe {
+            (
+                Run::<u32, Const>::from_const_raw_parts(
+                    edge_indices.data() as *const u32,
+                    num_edges,
+                ),
+                Run::<Edge>::from_raw_parts(edges, num_edges),
+            )
+        };
+
         let mut dst_ix: usize = 0;
 
         // Edges are represented using a single index into PolygonVertexIndex.
         // The edge is between two consecutive vertices in the polygon.
         // The `'i'` array's payload is a run of `size` `u32`s.
-        let edge_data: *mut u32 = edge_indices.data() as *mut u32;
         for i in 0..num_edges {
-            // SAFETY: `i < num_edges` bounds the read in the `edge_data` run.
-            let mut index_ix: u32 = unsafe { *edge_data.add(i) };
+            let mut index_ix: u32 = edge_data.copy_at(i);
             if index_ix as usize >= mesh.num_indices() {
                 if uc.opts_view().strict() {
                     ufbxi_fail!(uc, "Edge index out of bounds");
                 }
                 continue;
             }
-            // SAFETY: `edges` is the non-null `num_edges`-long run pushed above
-            // and `dst_ix` advances at most once per edge, so the slot derived
-            // from the run base is in bounds; the run is result-arena memory
-            // reached through `*mut` (write-capable provenance for `Mut`).
-            let edge: &View<Edge> = unsafe { View::<Edge>::from_ptr(edges.add(dst_ix)) };
+            let edge = edges_write.at(dst_ix);
             edge.set_a(index_ix);
             if (vertex_indices.copy_at(index_ix as usize) as i32) < 0 {
                 // Previous index is the last one of this polygon, rewind to first index.

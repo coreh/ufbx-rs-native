@@ -7669,14 +7669,17 @@ pub(crate) fn push_file_content(
     let content: *mut FileContent = uc.tmp_stack_view().push::<FileContent>(1);
     ufbxi_check!(uc, !content.is_null(), "content");
 
-    // SAFETY: `content` is the non-null one-element push just made into `uc`'s tmp
-    // stack, so it addresses writable storage for one `ufbxi_file_content`; the two
-    // C struct assignments are rebuilt from the source views' own leaf reads.
-    unsafe { (*content).absolute_filename = String::new_c(p_filename.data(), p_filename.length()) };
-    // SAFETY: as above for the destination; `p_data` is a live Blob view whose
-    // byte run belongs to the scene/result storage and outlives this temporary
-    // file-content entry.
-    unsafe { (*content).content = Blob::new_c(p_data.data(), p_data.size()) };
+    // SAFETY: `content` is the non-null one-element push just made into `uc`'s
+    // tmp stack. The source views' byte runs outlive this temporary entry.
+    unsafe {
+        ptr::write(
+            content,
+            FileContent {
+                absolute_filename: String::new_c(p_filename.data(), p_filename.length()),
+                content: Blob::new_c(p_data.data(), p_data.size()),
+            },
+        )
+    };
     Ok(())
 }
 
