@@ -638,6 +638,9 @@ pub fn find_material<'a>(scene: &'a Scene, name: &str) -> Option<&'a Material> {
 }
 """
 
+# NOTE(ufbx-rs-native): ufbx-rust 0.11.2 shares the result lifetime with the
+# `element` key; the result is an entry of `layer->anim_props` (ufbx.c:30775),
+# so only `layer` is borrowed. COMPAT.md §2.
 override_functions["ufbx_find_anim_prop_len"] = """
 #[allow(clippy::needless_lifetimes)]
 pub fn find_anim_prop<'a>(
@@ -665,6 +668,9 @@ pub fn find_anim_props<'a>(layer: &'a AnimLayer, element: &Element) -> &'a [Anim
 }
 """
 
+# NOTE(ufbx-rs-native): ufbx-rust 0.11.2 returns `&'a T` with `'a` bound to no
+# argument for `dom_find` and the `dom_as_*_list` family; the port binds the
+# result to the `&DomNode` (elided lifetime). COMPAT.md §2.
 # The dom_* family: native fns take mode-generic views; the safe wrappers mint
 # read-only `Const` views from the caller's `&DomNode` (the mint every readable
 # provenance supports) and call native directly. Returned nodes and array
@@ -680,6 +686,10 @@ pub fn dom_find<'a>(parent: &'a DomNode, name: &str) -> Option<&'a DomNode> {
 }
 """
 
+# NOTE(ufbx-rs-native): ufbx-rust 0.11.2 ties `find_shader_prop`'s result to
+# the `name` key (C returns a binding string or `ufbx_empty_string`,
+# ufbx.c:31425) and leaves `find_shader_texture_input`'s result unbound; the
+# port binds both to the shader. COMPAT.md §2.
 # The native shader finders take views (`Const` is legal over these
 # `&`-derived pointers), so the safe wrappers mint the view instead of casting
 # to a raw pointer.
@@ -889,6 +899,9 @@ pub fn evaluate_nurbs_surface(surface: &NurbsSurface, u: Real, v: Real) -> Surfa
 }
 """
 
+# NOTE(ufbx-rs-native): ufbx-rust 0.11.2 shares the result lifetime with the
+# `node` key; the result is an entry of `pose->bone_poses` (ufbx.c:31405), so
+# only `pose` is borrowed. COMPAT.md §2.
 override_functions["ufbx_get_bone_pose"] = """
 #[allow(clippy::needless_lifetimes)]
 pub fn get_bone_pose<'a>(pose: &'a Pose, node: &Node) -> Option<&'a BonePose> {
@@ -971,6 +984,10 @@ pub fn dom_as_blob_list(node: &DomNode) -> &[Blob] {
 """
 
 
+# NOTE(ufbx-rs-native): ufbx-rust 0.11.2 binds the result lifetime to the
+# `&mut Node`/`&mut Element` key (or to nothing for the `_by_*_id` variants);
+# the results live in `bake->nodes`/`bake->elements` (ufbx.c:31320), so the
+# port binds them to the `&mut BakedAnim`. COMPAT.md §2.
 # The baked-anim finders: native fns are safe over mode-generic views with
 # `Option` params for C's null checks. The upstream `&mut` signatures are
 # parity-locked (C non-const artifacts); wrappers keep them verbatim and mint
@@ -1104,6 +1121,10 @@ pub fn evaluate_prop<'a, 'b>(anim: &'a Anim, element: &'a Element, name: &'b str
 }
 """
 
+# NOTE(ufbx-rs-native): ufbx-rust 0.11.2 leaves `evaluate_prop_flags` /
+# `evaluate_props_flags` as raw bindgen output (`-> Prop`, `&mut Prop` +
+# `usize`); the port gives them the `ExternalRef` shape upstream already uses
+# for `evaluate_prop` / `evaluate_props`. COMPAT.md §2.
 # A miss stores the caller's name pointer in the returned `Prop`, so both
 # wrappers retain the name borrow in `ExternalRef`. `Prop` remains `Copy`, so
 # callers can still copy through `Deref`; the wrapper binds its own value to the

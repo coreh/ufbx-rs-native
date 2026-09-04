@@ -42,6 +42,8 @@
 +impl<T> core::panic::unwind_safe::RefUnwindSafe for ufbx::RawEnum<T>
 +impl<T> core::panic::unwind_safe::UnwindSafe for ufbx::RawEnum<T>
 +impl<T> ufbx::RawEnum<T>
++pub fn ufbx::AnimLayer::find_anim_prop<'a>(&'a self, &ufbx::Element, &str) -> core::option::Option<&'a ufbx::AnimProp>
++pub fn ufbx::AnimLayer::find_anim_props<'a>(&'a self, &ufbx::Element) -> &'a [ufbx::AnimProp]
 +pub fn ufbx::AnimProp::clone(&self) -> ufbx::AnimProp
 +pub fn ufbx::Blob::clone(&self) -> ufbx::Blob
 +pub fn ufbx::Connection::clone(&self) -> ufbx::Connection
@@ -59,14 +61,54 @@
 +pub fn ufbx::RawStream::clone(&self) -> ufbx::RawStream
 +pub fn ufbx::RawThreadPool::clone(&self) -> ufbx::RawThreadPool
 +pub fn ufbx::Ref<T>::clone(&self) -> Self
++pub fn ufbx::Shader::find_shader_prop<'a>(&'a self, &str) -> &'a str
 +pub fn ufbx::ShaderPropBinding::clone(&self) -> ufbx::ShaderPropBinding
 +pub fn ufbx::String::clone(&self) -> ufbx::String
++pub fn ufbx::dom_as_blob_list(&ufbx::DomNode) -> &[ufbx::Blob]
++pub fn ufbx::dom_as_double_list(&ufbx::DomNode) -> &[f64]
++pub fn ufbx::dom_as_float_list(&ufbx::DomNode) -> &[f32]
++pub fn ufbx::dom_as_int32_list(&ufbx::DomNode) -> &[i32]
++pub fn ufbx::dom_as_int64_list(&ufbx::DomNode) -> &[i64]
++pub fn ufbx::dom_as_real_list(&ufbx::DomNode) -> &[ufbx::Real]
++pub fn ufbx::dom_find<'a>(&'a ufbx::DomNode, &str) -> core::option::Option<&'a ufbx::DomNode>
++pub fn ufbx::evaluate_prop_flags<'a, 'b>(&'a ufbx::Anim, &'a ufbx::Element, &'b str, f64, u32) -> ufbx::ExternalRef<'b, ufbx::Prop> where 'a: 'b
++pub fn ufbx::evaluate_props_flags<'a, 'b>(&'a ufbx::Anim, &'a ufbx::Element, f64, &'b mut [ufbx::ExternalRef<'b, ufbx::Prop>], u32) -> ufbx::ExternalRef<'b, ufbx::Props> where 'a: 'b
++pub fn ufbx::find_anim_prop<'a>(&'a ufbx::AnimLayer, &ufbx::Element, &str) -> core::option::Option<&'a ufbx::AnimProp>
++pub fn ufbx::find_anim_props<'a>(&'a ufbx::AnimLayer, &ufbx::Element) -> &'a [ufbx::AnimProp]
++pub fn ufbx::find_baked_element<'a>(&'a mut ufbx::BakedAnim, &mut ufbx::Element) -> core::option::Option<&'a ufbx::BakedElement>
++pub fn ufbx::find_baked_element_by_element_id(&mut ufbx::BakedAnim, u32) -> core::option::Option<&ufbx::BakedElement>
++pub fn ufbx::find_baked_node<'a>(&'a mut ufbx::BakedAnim, &mut ufbx::Node) -> core::option::Option<&'a ufbx::BakedNode>
++pub fn ufbx::find_baked_node_by_typed_id(&mut ufbx::BakedAnim, u32) -> core::option::Option<&ufbx::BakedNode>
++pub fn ufbx::find_shader_prop<'a>(&'a ufbx::Shader, &str) -> &'a str
++pub fn ufbx::find_shader_texture_input<'a>(&'a ufbx::ShaderTexture, &str) -> core::option::Option<&'a ufbx::ShaderTextureInput>
++pub fn ufbx::get_bone_pose<'a>(&'a ufbx::Pose, &ufbx::Node) -> core::option::Option<&'a ufbx::BonePose>
 +pub fn ufbx::set_panic_handler(fn(&str))
 +pub ufbx::MaterialMap::value_components: u8
 +pub ufbx::RawProgressCb::fn_: core::option::Option<fn(*mut core::ffi::c_void, *const ufbx::Progress) -> ufbx::RawEnum<ufbx::ProgressResult>>
 +pub ufbx::ShaderTexture::main_texture: core::option::Option<ufbx::Ref<ufbx::Texture>>
 +pub ufbx::ShaderTextureInput::prop: core::option::Option<ufbx::Ref<ufbx::Prop>>
 +pub unsafe c fn ufbx::call_progress_cb<F>(*mut core::ffi::c_void, *const ufbx::Progress) -> ufbx::RawEnum<ufbx::ProgressResult> where F: core::ops::function::FnMut(&ufbx::Progress) -> ufbx::ProgressResult
+-pub fn ufbx::AnimLayer::find_anim_prop<'a>(&'a self, &'a ufbx::Element, &str) -> core::option::Option<&'a ufbx::AnimProp>
+-pub fn ufbx::AnimLayer::find_anim_props<'a>(&'a self, &'a ufbx::Element) -> &'a [ufbx::AnimProp]
+-pub fn ufbx::Shader::find_shader_prop<'a>(&'a self, &'a str) -> &'a str
+-pub fn ufbx::dom_as_blob_list<'a>(&ufbx::DomNode) -> &'a [ufbx::Blob]
+-pub fn ufbx::dom_as_double_list<'a>(&ufbx::DomNode) -> &'a [f64]
+-pub fn ufbx::dom_as_float_list<'a>(&ufbx::DomNode) -> &'a [f32]
+-pub fn ufbx::dom_as_int32_list<'a>(&ufbx::DomNode) -> &'a [i32]
+-pub fn ufbx::dom_as_int64_list<'a>(&ufbx::DomNode) -> &'a [i64]
+-pub fn ufbx::dom_as_real_list<'a>(&ufbx::DomNode) -> &'a [ufbx::Real]
+-pub fn ufbx::dom_find<'a>(&ufbx::DomNode, &str) -> core::option::Option<&'a ufbx::DomNode>
+-pub fn ufbx::evaluate_prop_flags(&ufbx::Anim, &ufbx::Element, &str, f64, u32) -> ufbx::Prop
+-pub fn ufbx::evaluate_props_flags(&ufbx::Anim, &ufbx::Element, f64, &mut ufbx::Prop, usize, u32) -> ufbx::Props
+-pub fn ufbx::find_anim_prop<'a>(&'a ufbx::AnimLayer, &'a ufbx::Element, &str) -> core::option::Option<&'a ufbx::AnimProp>
+-pub fn ufbx::find_anim_props<'a>(&'a ufbx::AnimLayer, &'a ufbx::Element) -> &'a [ufbx::AnimProp]
+-pub fn ufbx::find_baked_element<'a>(&mut ufbx::BakedAnim, &'a mut ufbx::Element) -> core::option::Option<&'a ufbx::BakedElement>
+-pub fn ufbx::find_baked_element_by_element_id<'a>(&mut ufbx::BakedAnim, u32) -> core::option::Option<&'a ufbx::BakedElement>
+-pub fn ufbx::find_baked_node<'a>(&mut ufbx::BakedAnim, &'a mut ufbx::Node) -> core::option::Option<&'a ufbx::BakedNode>
+-pub fn ufbx::find_baked_node_by_typed_id<'a>(&mut ufbx::BakedAnim, u32) -> core::option::Option<&'a ufbx::BakedNode>
+-pub fn ufbx::find_shader_prop<'a>(&'a ufbx::Shader, &'a str) -> &'a str
+-pub fn ufbx::find_shader_texture_input<'a>(&ufbx::ShaderTexture, &str) -> core::option::Option<&'a ufbx::ShaderTextureInput>
+-pub fn ufbx::get_bone_pose<'a>(&'a ufbx::Pose, &'a ufbx::Node) -> core::option::Option<&'a ufbx::BonePose>
 -pub static ufbx::ufbx_empty_blob: ufbx::Blob
 -pub static ufbx::ufbx_empty_string: ufbx::String
 -pub ufbx::MaterialMap::value_components: u32
