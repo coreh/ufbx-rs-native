@@ -43,8 +43,7 @@ use crate::native::hash::{hash_uptr, Map, PtrId};
 use crate::native::parse_ascii::is_space;
 use crate::native::parse_binary::{BINARY_HEADER_SIZE, BINARY_MAGIC, BINARY_MAGIC_SIZE};
 use crate::native::platform::{
-    add_ptr, min_sz, read_u32, to_size, ufbx_assert, ufbxi_dev_assert, ufbxi_unreachable,
-    AtomicCounter,
+    min_sz, read_u32, to_size, ufbx_assert, ufbxi_dev_assert, ufbxi_unreachable, AtomicCounter,
 };
 use crate::native::string_pool as sp;
 use crate::native::string_pool::{SanitizedString, StringPool};
@@ -52,7 +51,7 @@ use crate::native::thread::{ThreadPool, THREAD_GROUP_COUNT};
 use crate::native::view::{
     view_project, view_raw_const, view_raw_mut, view_read, view_read_shared, view_write,
 };
-use crate::native::view::{Mode, SliceViewIter, View};
+use crate::native::view::{Mode, Run, SliceViewIter, View};
 use crate::native::warnings::Warnings;
 use crate::prelude::{Blob, Real, Ref, ScalarView, String, StringView};
 
@@ -5938,12 +5937,18 @@ fn retain_dom_node_rec(
         p_dom_node.set(dst);
     }
 
-    // SAFETY: `dst` is the freshly pushed result `DomNode`; copy the node's name
-    // span across.
-    unsafe {
-        (*dst).name.data = node_view.name();
-        (*dst).name.length = node_view.name_len() as usize;
-    }
+    // SAFETY: `dst` is the freshly pushed, non-null `DomNode` in `uc`'s result
+    // buffer — arena-stable, write-capable memory that outlives this call and is
+    // reached by nothing else while the view lives. Every field write below goes
+    // through this one mint.
+    let dst_view: &View<DomNode> = unsafe { View::<DomNode>::from_ptr(dst) };
+
+    // C: `dst->name.data = node->name; dst->name.length = node->name_len;` —
+    // published as one descriptor write.
+    dst_view.name_view().set(String::new_c(
+        node_view.name(),
+        node_view.name_len() as usize,
+    ));
 
     {
         let mapping = DomMapping {
@@ -5966,10 +5971,7 @@ fn retain_dom_node_rec(
         }
     }
 
-    // SAFETY: `dst` is the live result `DomNode`, so its `name` leaf is a live
-    // `String` slot.
-    let dst_name = unsafe { View::<DomNode>::from_ptr(dst).name_view() };
-    sp::push_string_place_str(uc.string_pool_view(), dst_name, false)?;
+    sp::push_string_place_str(uc.string_pool_view(), dst_view.name_view(), false)?;
 
     if node_view.value_type_mask() == ValueType::Array as u16 {
         // `value_type_mask == Array` selects the `array` arm of `node`'s
@@ -5978,12 +5980,13 @@ fn retain_dom_node_rec(
         let val: *mut DomValue = uc.result_view().push_zero(1);
         ufbxi_check!(uc, !val.is_null(), "val");
 
-        // SAFETY: `dst` is the live result `DomNode`; `val` is the freshly pushed
-        // `DomValue`, and `arr` the node's array descriptor.
-        unsafe {
-            (*dst).values.data = val;
-            (*dst).values.count = 1;
+        // C: `dst->values.data = val; dst->values.count = 1;`
+        dst_view.values_view().set_data(val);
+        dst_view.values_view().set_count(1);
 
+        // SAFETY: `val` is the freshly pushed `DomValue` and `arr` the node's
+        // live array descriptor.
+        unsafe {
             let elem_size = array_type_size((*arr).type_);
             (*val).value_str.data = EMPTY_CHAR.as_ptr();
             (*val).value_blob.data = (*arr).data as *const u8;
@@ -5993,19 +5996,24 @@ fn retain_dom_node_rec(
             (*val).value_float = (*val).value_int as f64;
         }
 
-        // SAFETY: reads `arr`'s `type_` byte and writes `val`'s `type_`, both live.
-        match unsafe { (*arr).type_ } {
-            b'c' => unsafe { (*val).type_ = DomValueType::Blob },
-            b'b' => unsafe { (*val).type_ = DomValueType::Blob },
-            b'i' => unsafe { (*val).type_ = DomValueType::ArrayI32 },
-            b'l' => unsafe { (*val).type_ = DomValueType::ArrayI64 },
-            b'f' => unsafe { (*val).type_ = DomValueType::ArrayF32 },
-            b'd' => unsafe { (*val).type_ = DomValueType::ArrayF64 },
-            b's' => unsafe { (*val).type_ = DomValueType::ArrayBlob },
-            b'C' => unsafe { (*val).type_ = DomValueType::ArrayBlob },
-            b'-' => unsafe { (*val).type_ = DomValueType::ArrayIgnored },
+        // SAFETY: `arr` is the node's live array descriptor; read its `type_` byte.
+        let arr_type: u8 = unsafe { (*arr).type_ };
+        // C's `switch (arr->type)` selects the tag; the `default:` arm fails
+        // without writing, so the write below is reached only on a known type.
+        let val_type: DomValueType = match arr_type {
+            b'c' => DomValueType::Blob,
+            b'b' => DomValueType::Blob,
+            b'i' => DomValueType::ArrayI32,
+            b'l' => DomValueType::ArrayI64,
+            b'f' => DomValueType::ArrayF32,
+            b'd' => DomValueType::ArrayF64,
+            b's' => DomValueType::ArrayBlob,
+            b'C' => DomValueType::ArrayBlob,
+            b'-' => DomValueType::ArrayIgnored,
             _ => ufbxi_fail!(uc, "Bad array type"),
-        }
+        };
+        // SAFETY: `val` is the freshly pushed live `DomValue`; write its tag.
+        unsafe { (*val).type_ = val_type };
     } else {
         let mut ix: usize = 0;
         while ix < MAX_NON_ARRAY_VALUES {
@@ -6052,51 +6060,41 @@ fn retain_dom_node_rec(
             ix += 1;
         }
 
-        // SAFETY: `dst` is the live result `DomNode`.
-        unsafe { (*dst).values.count = ix };
+        // C: `dst->values.count = ix;` then the push, then `dst->values.data`.
+        dst_view.values_view().set_count(ix);
         let values_data = uc
             .result_view()
             .push_pop::<DomValue>(uc.tmp_stack_view(), ix);
-        // SAFETY: `dst` is the live result `DomNode`.
-        unsafe { (*dst).values.data = values_data };
-        // SAFETY: `dst` is the live result `DomNode`; reading back its
-        // `values.data` pointer.
+        dst_view.values_view().set_data(values_data);
         ufbxi_check!(
             uc,
-            !unsafe { (*dst).values.data }.is_null(),
+            !dst_view.values_view().data().is_null(),
             "dst->values.data"
         );
     }
 
     if node_view.num_children() > 0 {
-        // ufbxi_for(ufbxi_node, child, node->children, node->num_children)
-        // `children`/`num_children` describe a contiguous run of child nodes, so
-        // `child_end` is one-past-the-end.
-        let mut child = node_view.children();
-        let child_end = add_ptr(node_view.children(), node_view.num_children() as usize);
-        while child != child_end {
-            // SAFETY: `child` walks the child run, each a valid parse node
-            // living in `uc`'s arena, which outlives the call.
-            let child_view: &NodeView = unsafe { NodeView::from_ptr(child) };
+        // ufbxi_for(ufbxi_node, child, node->children, node->num_children) —
+        // `children`/`num_children` is the node's contiguous child run, walked
+        // through the node's own iterator. `retain_dom_node` only pushes into
+        // `uc`'s result/tmp buffers, so the run stays live and unmoved.
+        for child_view in node_view.children_iter() {
             retain_dom_node(uc, child_view, None)?;
-            // SAFETY: `child` is before `child_end` within the run, so `add(1)`
-            // stays in bounds (up to one-past-the-end).
-            child = unsafe { child.add(1) };
         }
 
-        // SAFETY: `dst` is the live result `DomNode`.
-        unsafe { (*dst).children.count = node_view.num_children() as usize };
+        // C: `dst->children.count = node->num_children;` then the push, then
+        // `dst->children.data`.
+        dst_view
+            .children_view()
+            .set_count(node_view.num_children() as usize);
         let children_data = uc
             .result_view()
             .push_pop::<*mut DomNode>(uc.tmp_dom_nodes_view(), node_view.num_children() as usize)
             as *const Ref<DomNode>;
-        // SAFETY: `dst` is the live result `DomNode`.
-        unsafe { (*dst).children.data = children_data };
-        // SAFETY: `dst` is the live result `DomNode`; reading back its
-        // `children.data` pointer.
+        dst_view.children_view().set_data(children_data);
         ufbxi_check!(
             uc,
-            !unsafe { (*dst).children.data }.is_null(),
+            !dst_view.children_view().data().is_null(),
             "dst->children.data"
         );
     }
@@ -6926,21 +6924,26 @@ pub(crate) unsafe fn parse_toplevel(uc: &Context, name: *const u8) -> Result<(),
             },
             "ufbxi_grow_array_size((&uc->ator_tmp), sizeof(**(&uc->top_nodes)), (&uc->top_nodes), (&uc->top_nodes_cap), (uc->top_nodes_len))"
         );
-        // SAFETY: `top_nodes_len >= 1` (just incremented), so `top_nodes_len - 1`
-        // indexes the just-grown array's last slot.
-        let node: *mut Node = unsafe { uc.top_nodes().add(uc.top_nodes_len() - 1) };
+        // SAFETY: after the grow above, `top_nodes` addresses `top_nodes_len`
+        // contiguous, write-capable `Node` slots in `uc`'s own array, and only
+        // this function grows or frees it — nothing reached below does, so the
+        // run stays live and unmoved until its last use at the end of this
+        // iteration.
+        let top_nodes: Run<'_, Node> =
+            unsafe { Run::<Node>::from_raw_parts(uc.top_nodes(), uc.top_nodes_len()) };
+        // `top_nodes_len >= 1` (just incremented), so `top_nodes_len - 1` indexes
+        // the just-grown array's last slot.
+        let node_view: &NodeView = top_nodes.at(uc.top_nodes_len() - 1);
+        let node: *mut Node = node_view.get();
         // SAFETY: the node parsed above is the top of `uc`'s own stack buffer
         // and `node` is a live slot receiving it — `pop`'s contract.
         unsafe { pop::<Node>(uc.tmp_stack_view(), 1, node) };
         if uc.opts_view().retain_dom() {
-            // SAFETY: `node` is a live top-node slot in `uc`'s own `top_nodes`
-            // array, which outlives the call.
-            retain_toplevel(uc, Some(unsafe { NodeView::from_ptr(node) }))?;
+            retain_toplevel(uc, Some(node_view))?;
         }
 
         // Return if we parsed the right one
-        // SAFETY: `node` is a live top-node slot; read its `name` field.
-        if unsafe { (*node).name } == name {
+        if node_view.name() == name {
             uc.set_top_node(node);
             uc.set_top_child_index(usize::MAX);
             return Ok(());
@@ -6948,9 +6951,9 @@ pub(crate) unsafe fn parse_toplevel(uc: &Context, name: *const u8) -> Result<(),
 
         // If not we need to parse all the children of the node for later
         let mut num_children: u32 = 0;
-        // SAFETY: `node` is a live top-node slot; `name` is its NUL-terminated
-        // interned name — `update_parse_state`'s contract.
-        let state: ParseState = unsafe { update_parse_state(ParseState::Root, (*node).name) };
+        // SAFETY: `name` is the node's NUL-terminated interned name —
+        // `update_parse_state`'s contract.
+        let state: ParseState = unsafe { update_parse_state(ParseState::Root, node_view.name()) };
         if uc.has_next_child() {
             loop {
                 if parse_toplevel_child_imp(uc, state, uc.tmp_view())? {
@@ -6967,19 +6970,13 @@ pub(crate) unsafe fn parse_toplevel(uc: &Context, name: *const u8) -> Result<(),
                 .tmp_view()
                 .push_pop::<Node>(uc.tmp_stack_view(), num_children as usize);
         }
-        // SAFETY: `node` is a live top-node slot; read back its `children` pointer.
-        ufbxi_check!(uc, !unsafe { (*node).children }.is_null(), "node->children");
+        ufbxi_check!(uc, !node_view.children().is_null(), "node->children");
 
         if uc.opts_view().retain_dom() {
-            // C: `for (size_t i = 0; i < num_children; i++)`
-            let mut i: usize = 0;
-            while i < num_children as usize {
-                // SAFETY: `node` is live; `i < num_children` bounds
-                // `children.add(i)` inside the just-populated child run, which
-                // lives in `uc`'s arena.
-                let child: &NodeView = unsafe { NodeView::from_ptr((*node).children.add(i)) };
+            // C: `for (size_t i = 0; i < num_children; i++)` over the child run
+            // just materialized into `uc`'s arena.
+            for child in node_view.children_iter() {
                 retain_toplevel_child(uc, child)?;
-                i += 1;
             }
         }
     }
