@@ -6709,39 +6709,30 @@ pub(crate) fn determine_format(uc: &Context) -> Result<(), Fail> {
     }
 
     if format == FileFormat::Unknown && !uc.opts_view().no_format_from_extension() {
-        if uc.opts_view().filename_view().length() > 0 {
+        let filename_view = uc.opts_view().filename_view();
+        if filename_view.length() > 0 {
             // C: `ufbx_string extension = uc->opts.filename;`
-            let mut extension: String = String::new_c(
-                uc.opts_view().filename_view().data(),
-                uc.opts_view().filename_view().length(),
-            );
-            // SAFETY: `extension` starts as `uc->opts.filename`, a
-            // `data`/`length` pair valid for `length` bytes (opts invariant);
-            // the scan only ever reads indices `< length` and only ever moves
-            // `data` forward inside that same run, shrinking `length` to match.
-            unsafe {
-                let mut i: usize = extension.length;
-                while i > 0 {
-                    if *extension.data.add(i - 1) == b'.' {
-                        extension.data = extension.data.add(i - 1);
-                        extension.length -= i - 1;
-                        break;
-                    }
-                    i -= 1;
+            // SAFETY: option fixup has normalized the descriptor; the load
+            // options contract keeps its `length` bytes readable for the parse.
+            let filename = unsafe {
+                crate::prelude::slice_from_ptr(filename_view.data(), filename_view.length())
+            };
+            let mut extension = filename;
+            let mut i: usize = filename.len();
+            while i > 0 {
+                if filename[i - 1] == b'.' {
+                    extension = &filename[i - 1..];
+                    break;
                 }
+                i -= 1;
             }
 
-            // SAFETY: `extension` is the valid `data`/`length` run established
-            // above — `String::as_bytes`' contract; the format strings are
-            // NUL-terminated literals, `r#match`'s contract.
-            unsafe {
-                if r#match(extension.as_bytes(), b"\\c\\.fbx\0".as_ptr()) {
-                    format = FileFormat::Fbx;
-                } else if r#match(extension.as_bytes(), b"\\c\\.obj\0".as_ptr()) {
-                    format = FileFormat::Obj;
-                } else if r#match(extension.as_bytes(), b"\\c\\.mtl\0".as_ptr()) {
-                    format = FileFormat::Mtl;
-                }
+            if extension.eq_ignore_ascii_case(b".fbx") {
+                format = FileFormat::Fbx;
+            } else if extension.eq_ignore_ascii_case(b".obj") {
+                format = FileFormat::Obj;
+            } else if extension.eq_ignore_ascii_case(b".mtl") {
+                format = FileFormat::Mtl;
             }
         }
     }

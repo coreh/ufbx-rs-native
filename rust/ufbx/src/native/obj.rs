@@ -609,10 +609,7 @@ pub(crate) fn obj_span_token(uc: &Context, start_token: usize, end_token: usize)
     };
     let num_between: usize = to_size(end.data as isize - start.data as isize);
 
-    // SAFETY: `String` is plain C data whose all-zero bit pattern is the valid
-    // `{ 0 }` initializer.
-    let mut result: String = unsafe { core::mem::zeroed() };
-    result.data = start.data;
+    let mut result = start;
     result.length = num_between + end.length;
     result
 }

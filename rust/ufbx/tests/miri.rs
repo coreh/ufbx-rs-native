@@ -370,6 +370,21 @@ fn load_obj() {
         .is_empty());
 }
 
+/// Unknown content falls back to the final case-insensitive filename
+/// extension.
+#[test]
+fn load_obj_from_filename_extension() {
+    let scene = ufbx::load_memory(
+        b"o empty\n",
+        LoadOpts {
+            filename: "archive.asset.OBJ".into(),
+            ..Default::default()
+        },
+    )
+    .expect("OBJ extension fallback");
+    assert_eq!(scene.metadata.file_format, ufbx::FileFormat::Obj);
+}
+
 /// Pre-7000 binary: legacy `Takes` animation and the 6100-era element layout.
 #[test]
 fn load_legacy_6100_ascii() {

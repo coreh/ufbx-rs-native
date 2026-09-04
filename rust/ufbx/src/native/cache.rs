@@ -2054,10 +2054,16 @@ unsafe fn cache_load_imp(
     ufbxi_check_err!(cc.error_view(), !filename_data.is_null(), "filename_data");
     // SAFETY: `filename_data` is a fresh non-null `len + 1` byte arena
     // allocation (checked above), distinct from the borrowed `filename` run.
-    unsafe { core::ptr::copy_nonoverlapping(filename.as_ptr(), filename_data, filename.len()) };
-    // SAFETY: the allocation is `length + 1` bytes, so index `length` is its
-    // last writable byte.
-    unsafe { *filename_data.add(filename.len()) = b'\0' };
+    let filename_copy = unsafe {
+        let filename_copy = Run::<u8>::from_raw_parts(filename_data, filename.len() + 1);
+        core::ptr::copy_nonoverlapping(
+            filename.as_ptr(),
+            filename_copy.as_mut_ptr(),
+            filename.len(),
+        );
+        filename_copy
+    };
+    filename_copy.write_at(filename.len(), b'\0');
     let filename_copy: String = String::new_c(filename_data, filename.len());
 
     let mut found: bool = false;
