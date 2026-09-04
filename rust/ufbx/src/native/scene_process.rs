@@ -5124,30 +5124,22 @@ pub(crate) fn add_constraint_prop(
     prop: &[u8],
 ) -> Result<(), Fail> {
     // C: `ufbxi_for(const ufbxi_constraint_prop, cprop, ufbxi_constraint_props, ufbxi_arraycount(ufbxi_constraint_props))`
-    let mut cprop: *const ConstraintProp = CONSTRAINT_PROPS.as_ptr();
-    let cprop_end: *const ConstraintProp = CONSTRAINT_PROPS
-        .as_ptr()
-        .wrapping_add(CONSTRAINT_PROPS.len());
-    while cprop != cprop_end {
+    // The table is a Rust `static` array, so the walk over its entries is safe.
+    for cprop in CONSTRAINT_PROPS.iter() {
         // C: `strcmp(cprop->name, prop)` over two NUL-terminated strings; the
         // table name is taken as the span up to its NUL and `prop` is
         // NUL-terminated at its length, so `c_strcmp` walks the same bytes.
-        // SAFETY: `cprop != cprop_end`, so it addresses a live entry of the
-        // static `CONSTRAINT_PROPS` table whose `name` is a NUL-terminated
-        // string literal: `strlen` bytes from it are readable.
-        let name: &[u8] = unsafe { slice_from_ptr((*cprop).name, strlen((*cprop).name)) };
+        // SAFETY: `cprop.name` is one of the static table's NUL-terminated
+        // string literals: `strlen` bytes from it are readable and frozen.
+        let name: &[u8] = unsafe { slice_from_ptr(cprop.name, strlen(cprop.name)) };
         if c_strcmp(name, prop) != 0 {
-            // SAFETY: `cprop != cprop_end`, so the advance lands at or before the
-            // one-past-the-end pointer of `CONSTRAINT_PROPS`.
-            cprop = unsafe { cprop.add(1) };
             continue;
         }
-        // SAFETY: `cprop` addresses a live table entry (see above), and `node`
-        // views a scene-arena `ufbx_node` (the caller's resolved connection
-        // endpoint), which outlives the constraint the ref is stored into
-        // (`to_ref` contract).
+        // SAFETY: `node` views a scene-arena `ufbx_node` (the caller's resolved
+        // connection endpoint), which outlives the constraint the ref is stored
+        // into (`to_ref` contract).
         let node_ref = unsafe { node.to_ref() };
-        match unsafe { (*cprop).type_ } {
+        match cprop.type_ {
             ConstraintPropType::Node => constraint.set_node(Some(node_ref)),
             ConstraintPropType::IkEffector => constraint.set_ik_effector(Some(node_ref)),
             ConstraintPropType::IkEndNode => constraint.set_ik_end_node(Some(node_ref)),
@@ -5178,9 +5170,6 @@ pub(crate) fn add_constraint_prop(
                 ufbxi_unreachable!("Unexpected constraint prop");
             }
         }
-        // SAFETY: `cprop != cprop_end`, so the advance lands at or before the
-        // one-past-the-end pointer of `CONSTRAINT_PROPS`.
-        cprop = unsafe { cprop.add(1) };
     }
 
     Ok(())
@@ -6920,13 +6909,18 @@ pub(crate) fn flip_winding(uc: &Context, mesh: &View<Mesh>) -> Result<(), Fail> 
             },
             "ufbxi_grow_array_size((&uc->ator_tmp), sizeof(**(&uc->tmp_arr)), (&uc->tmp_arr), (&uc->tmp_arr_size), ((mesh->num_indices + 1) * sizeof(uint32_t)))"
         );
+        // C: `uint32_t *index_mapping = (uint32_t*)uc->tmp_arr + 1;` — the
+        // reserved `index_mapping[-1]` slot is the tmp array's first element, so
+        // the C's `index_mapping[k]` is slot `k + 1` of the run below.
         // SAFETY: the grow above made `uc`'s tmp array at least
-        // `(num_indices + 1) * size_of::<u32>()` bytes, so offsetting one `u32`
-        // in stays inside that allocation.
-        let index_mapping: *mut u32 = unsafe { (uc.tmp_arr() as *mut u32).add(1) };
-        // SAFETY: `index_mapping` is offset one `u32` into the grown tmp array,
-        // so index `-1` is that array's first element.
-        unsafe { *index_mapping.offset(-1) = NO_INDEX };
+        // `(num_indices + 1) * size_of::<u32>()` bytes, so it heads
+        // `num_indices + 1` contiguous write-capable `u32` slots; nothing grows
+        // or frees that array again while this run is used.
+        let index_mapping: Run<'_, u32, Mut> = unsafe {
+            Run::from_raw_parts(uc.tmp_arr() as *mut u32, mesh.num_indices().wrapping_add(1))
+        };
+        // C: `index_mapping[-1] = UFBX_NO_INDEX;`
+        index_mapping.write_at(0, NO_INDEX);
         // C: `ufbxi_for_list(ufbx_face, face, mesh->faces)`
         for face in Run::from_list(mesh.faces_view()).iter() {
             if face.num_indices() == 0 {
@@ -6934,18 +6928,19 @@ pub(crate) fn flip_winding(uc: &Context, mesh: &View<Mesh>) -> Result<(), Fail> 
             }
             let begin: u32 = face.index_begin();
             let count: u32 = face.num_indices().wrapping_sub(1);
-            // SAFETY: every face's `[index_begin, index_begin + num_indices)` span
-            // lies inside the mesh's `num_indices` indices, and the tmp array holds
-            // `num_indices + 1` `u32`s starting one slot before `index_mapping`.
-            unsafe { *index_mapping.add(begin as usize) = begin };
+            // C: `index_mapping[begin] = begin;` — every face's `[index_begin,
+            // index_begin + num_indices)` span lies inside the mesh's
+            // `num_indices` indices, so `begin + 1` is inside the run.
+            index_mapping.write_at(begin as usize + 1, begin);
             let mut i: u32 = 0;
             while i < count {
-                // SAFETY: as above; `i < count = num_indices - 1` keeps
-                // `begin + 1 + i` inside the face's own index span.
-                unsafe {
-                    *index_mapping.add(begin.wrapping_add(1).wrapping_add(i) as usize) =
-                        begin.wrapping_add(count).wrapping_sub(i)
-                };
+                // C: `index_mapping[begin + 1 + i] = begin + count - i;` — as
+                // above; `i < count = num_indices - 1` keeps `begin + 1 + i`
+                // inside the face's own index span.
+                index_mapping.write_at(
+                    begin.wrapping_add(1).wrapping_add(i) as usize + 1,
+                    begin.wrapping_add(count).wrapping_sub(i),
+                );
                 i += 1;
             }
         }
@@ -6954,15 +6949,19 @@ pub(crate) fn flip_winding(uc: &Context, mesh: &View<Mesh>) -> Result<(), Fail> 
         for p_edge in Run::from_list(mesh.edges_view()).iter() {
             // C-parity: the `(int32_t)` casts are load-bearing — a
             // `UFBX_NO_INDEX` endpoint indexes `index_mapping[-1]`, the slot
-            // reserved above.
-            // SAFETY: every edge endpoint is either an index below `num_indices`
-            // or `UFBX_NO_INDEX`, which the `(int32_t)` cast turns into the
-            // reserved slot at offset `-1` — both inside the `num_indices + 1`
-            // `u32`s of the grown tmp array.
+            // reserved above, which is slot `0` of the run.
+            // SAFETY: `at` bounds both slots to the run vouched above, and the
+            // face walk plus the reservation initialized every slot an edge
+            // endpoint can select (an index below `num_indices`, or
+            // `UFBX_NO_INDEX` for the reserved slot).
             let (a, b) = unsafe {
                 (
-                    *index_mapping.offset(p_edge.a() as i32 as isize),
-                    *index_mapping.offset(p_edge.b() as i32 as isize),
+                    *index_mapping
+                        .at((p_edge.a() as i32 as isize + 1) as usize)
+                        .get(),
+                    *index_mapping
+                        .at((p_edge.b() as i32 as isize + 1) as usize)
+                        .get(),
                 )
             };
             p_edge.set_a(b);
@@ -9582,28 +9581,21 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
 
     // Ugh.. Patch the textures from meshes for legacy LayerElement-style textures
     {
-        // C: `ufbxi_for_ptr_list(ufbx_mesh, p_mesh, uc->scene.meshes)`
-        let mut p_mesh: *mut *mut Mesh = uc.scene_view().meshes_view().data() as *mut *mut Mesh;
-        let p_mesh_end: *mut *mut Mesh = add_ptr(p_mesh, uc.scene_view().meshes_view().count());
-        while p_mesh != p_mesh_end {
-            // SAFETY: `p_mesh != p_mesh_end`, so it addresses a live, initialized
-            // slot of the scene's mesh-pointer run; the stored entry is a
-            // context-owned mesh element, so its provenance is write-capable and
-            // `Mut` is the right mode.
-            let mesh = unsafe { View::<Mesh>::from_ptr(*p_mesh) };
+        // C: `ufbxi_for_ptr_list(ufbx_mesh, p_mesh, uc->scene.meshes)` — the
+        // scene's own viewed mesh-pointer list vouches for the run, so the walk
+        // over it is safe.
+        let scene_meshes: &RefListView<Mesh> = uc.scene_view().meshes_view();
+        for mesh_ix in 0..scene_meshes.count() {
+            // C: `ufbx_mesh *mesh = *p_mesh;`
+            let mesh: &View<Mesh> = scene_meshes.at(mesh_ix);
             let num_materials: usize = mesh.materials().count;
 
             let extra: *mut MeshExtra =
                 get_element_extra(uc, mesh.element().element_id()) as *mut MeshExtra;
             if extra.is_null() {
-                // SAFETY: `p_mesh != p_mesh_end`, so the advance lands at or before
-                // the run's one-past-the-end pointer.
-                p_mesh = unsafe { p_mesh.add(1) };
                 continue;
             }
             if num_materials == 0 {
-                // SAFETY: as above.
-                p_mesh = unsafe { p_mesh.add(1) };
                 continue;
             }
 
@@ -9818,9 +9810,6 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
                 tex.set_shader_prop(tex.material_prop());
                 num_textures_in_material += 1;
             }
-            // SAFETY: `p_mesh != p_mesh_end`, so the advance lands at or before the
-            // run's one-past-the-end pointer.
-            p_mesh = unsafe { p_mesh.add(1) };
         }
     }
 
@@ -11402,22 +11391,12 @@ pub(crate) fn update_line_curve(line_view: &LineCurveView) {
 // ufbx.c:23271-23287 `ufbxi_update_pose`
 #[inline(never)]
 pub(crate) fn update_pose(pose_view: &PoseView) {
-    let pose: *mut Pose = pose_view.get();
-    // C: `ufbxi_for_list(ufbx_bone_pose, bone, pose->bone_poses)`
-    // SAFETY: `pose` is the pose view's own live, initialized `ufbx_pose`
-    // storage, so its own bone-pose list is readable.
-    // `data`/`count` describe one arena run.
-    let (mut bone, bone_count) = unsafe {
-        (
-            (*pose).bone_poses.data as *mut BonePose,
-            (*pose).bone_poses.count,
-        )
-    };
-    let bone_end: *mut BonePose = add_ptr(bone, bone_count);
-    while bone != bone_end {
-        // SAFETY: `bone != bone_end`, so it addresses a live, initialized entry
-        // of the pose's bone-pose run, whose `bone_node` link is non-optional.
-        let node: &NodeView = unsafe { ptr::read(&raw const (*bone).bone_node) }.view();
+    // C: `ufbxi_for_list(ufbx_bone_pose, bone, pose->bone_poses)` — the pose's
+    // own viewed `bone_poses` field vouches for the `data`/`count` run, so the
+    // walk over it is safe.
+    for bone in Run::from_list(pose_view.bone_poses_view()).iter() {
+        // C: `ufbx_node *node = bone->bone_node;` — a non-optional link.
+        let node: &NodeView = bone.bone_node_view();
 
         let mut parent_to_world: *const Matrix = &raw const IDENTITY_MATRIX;
         if let Some(bone_pose) = get_bone_pose_entry(Some(pose_view), node.parent_view()) {
@@ -11433,20 +11412,14 @@ pub(crate) fn update_pose(pose_view: &PoseView) {
         // computation.
         let world_to_parent: Matrix =
             unsafe { matrix_invert(View::<Matrix, Const>::from_ptr(parent_to_world)) };
-        // SAFETY: `bone` addresses a live writable entry of the pose's own run;
-        // the input view ends at the first statement before the distinct output
-        // field is written.
-        unsafe {
-            let bone_to_parent = matrix_mul(
-                View::<Matrix, Const>::from_ref(&world_to_parent),
-                View::<Matrix, Const>::from_ptr(&raw const (*bone).bone_to_world),
-            );
-            (*bone).bone_to_parent = bone_to_parent;
-        }
-
-        // SAFETY: `bone != bone_end`, so the advance lands at or before the run's
-        // one-past-the-end pointer.
-        bone = unsafe { bone.add(1) };
+        // C: `bone->bone_to_parent = ufbxi_mul_matrix(&world_to_parent, &bone->bone_to_world);`
+        // — the input is read through the entry's own projected view before the
+        // distinct output field is written.
+        let bone_to_parent = matrix_mul(
+            View::<Matrix, Const>::from_ref(&world_to_parent),
+            bone.bone_to_world_view(),
+        );
+        bone.set_bone_to_parent(bone_to_parent);
     }
 }
 
@@ -11703,40 +11676,44 @@ pub(crate) fn find_bool3(
     // C: `char local[64];` — an uninitialized local; only `local[0..name_len]`
     // is ever read back (`local_len == name_len + 1` bytes are written first).
     let mut local_storage = MaybeUninit::<[u8; 64]>::uninit();
-    let local: *mut u8 = local_storage.as_mut_ptr() as *mut u8;
+    // SAFETY: `local_storage` is this fn's own live, aligned 64-byte local,
+    // stable and write-capable for the rest of the body; a `Mut` run may carry
+    // still-uninitialized slots, and only the bytes written below are read back.
+    let local: Run<'_, u8, Mut> =
+        unsafe { Run::from_raw_parts(local_storage.as_mut_ptr() as *mut u8, 64) };
     // C: `ufbx_assert(name_len < sizeof(local) - 2);`
     ufbx_assert!(name_len < size_of::<[u8; 64]>() - 2);
     // SAFETY: `name` addresses `name_len` readable bytes (its own slice run),
     // the assert above established `name_len < 62`, so the copy fits in the
-    // 64-byte local, and the two regions are distinct objects.
-    unsafe { ptr::copy_nonoverlapping(name.as_ptr(), local, name_len) };
+    // 64-byte local run, and the two regions are distinct objects.
+    unsafe { ptr::copy_nonoverlapping(name.as_ptr(), local.as_mut_ptr(), name_len) };
 
     let local_len: usize = name_len + 1;
-    // SAFETY: the assert above established `name_len < 62`, so
-    // `local_len = name_len + 1 < 63` indexes inside the 64-byte local.
-    unsafe { *local.add(local_len) = b'\0' };
+    // The assert above established `name_len < 62`, so `local_len` and
+    // `name_len` both index inside the 64-slot run.
+    local.write_at(local_len, b'\0');
 
     let def: i64 = if default_value { 1 } else { 0 };
-    // SAFETY: `name_len < 62` (asserted above) indexes inside the 64-byte local.
-    unsafe { *local.add(name_len) = b'X' };
+    local.write_at(name_len, b'X');
     // SAFETY: `dst.get()` addresses the viewed `[bool; 3]` (view mint invariant),
-    // so element 0 is a live writable place; `local` holds `local_len`
+    // so element 0 is a live writable place; the local run holds `local_len`
     // initialized bytes followed by a NUL, which is what `ufbx_find_int_len`
     // reads.
     unsafe {
-        (*dst.get())[0] = api_find_int_len(props, slice_from_ptr(local, local_len), def) != 0;
+        (*dst.get())[0] =
+            api_find_int_len(props, slice_from_ptr(local.as_ptr(), local_len), def) != 0;
     };
-    // SAFETY: as above, for the `Y` suffix.
-    unsafe { *local.add(name_len) = b'Y' };
+    local.write_at(name_len, b'Y');
     // SAFETY: as above, for element 1 of `dst`.
     unsafe {
-        (*dst.get())[1] = api_find_int_len(props, slice_from_ptr(local, local_len), def) != 0;
+        (*dst.get())[1] =
+            api_find_int_len(props, slice_from_ptr(local.as_ptr(), local_len), def) != 0;
     };
-    // SAFETY: as above, for the `Z` suffix.
-    unsafe { *local.add(name_len) = b'Z' };
+    local.write_at(name_len, b'Z');
     // SAFETY: as above, for element 2 of `dst`.
     unsafe {
-        (*dst.get())[2] = api_find_int_len(props, slice_from_ptr(local, local_len), def) != 0;
+        (*dst.get())[2] =
+            api_find_int_len(props, slice_from_ptr(local.as_ptr(), local_len), def) != 0;
     };
 }
 
@@ -11964,25 +11941,27 @@ pub(crate) fn mirror_matrix_dst(m: &View<Matrix>, axis: MirrorAxis) {
         return;
     }
     let ax: i32 = axis as i32 - 1;
-    let cols: *mut Vec3 = m.get() as *mut Vec3;
+    // The four `ufbx_vec3` columns are twelve consecutive `ufbx_real`s, so
+    // `m->cols[col].v[ax]` is flat slot `col * 3 + ax` of the run below.
     // SAFETY: the view covers a live, initialized, writable `ufbx_matrix` laid
-    // out as four consecutive `ufbx_vec3` columns, so column `0` is in bounds.
-    let c0: *mut Real = unsafe { cols.add(0) } as *mut Real;
-    // SAFETY: a column is three consecutive `ufbx_real`s, and the early return
-    // above established `axis != None`, so `ax = axis - 1` is in `0..3`.
-    unsafe { *c0.add(ax as usize) = -*c0.add(ax as usize) };
-    // SAFETY: as above, for column `1`.
-    let c1: *mut Real = unsafe { cols.add(1) } as *mut Real;
-    // SAFETY: as above; `ax` is in `0..3`.
-    unsafe { *c1.add(ax as usize) = -*c1.add(ax as usize) };
-    // SAFETY: as above, for column `2`.
-    let c2: *mut Real = unsafe { cols.add(2) } as *mut Real;
-    // SAFETY: as above; `ax` is in `0..3`.
-    unsafe { *c2.add(ax as usize) = -*c2.add(ax as usize) };
-    // SAFETY: as above, for column `3`.
-    let c3: *mut Real = unsafe { cols.add(3) } as *mut Real;
-    // SAFETY: as above; `ax` is in `0..3`.
-    unsafe { *c3.add(ax as usize) = -*c3.add(ax as usize) };
+    // out as exactly four consecutive `ufbx_vec3` columns, i.e. twelve
+    // contiguous write-capable `ufbx_real` slots that stay alive and unmoved
+    // for this borrow of `m`.
+    let reals: Run<'_, Real, Mut> = unsafe { Run::from_raw_parts(m.get() as *mut Real, 12) };
+    // The early return above established `axis != None`, so `ax = axis - 1` is
+    // in `0..3` and every `col * 3 + ax` is inside the twelve-slot run.
+    let negate = |col: usize| {
+        let slot: &View<Real> = reals.at(col * 3 + ax as usize);
+        // SAFETY: `at` bounds the slot to the run vouched above, whose
+        // `ufbx_real`s are initialized, so the value negated in place is read
+        // back from the same slot it is written to.
+        let value: Real = unsafe { *slot.get() };
+        slot.write_value(-value);
+    };
+    negate(0);
+    negate(1);
+    negate(2);
+    negate(3);
 }
 
 // ufbx.c:23507-23514 `ufbxi_mirror_matrix_src`
@@ -12304,43 +12283,40 @@ pub(crate) fn axis_matrix(mat: &View<Matrix>, src: CoordinateAxes, dst: Coordina
     // one `ufbx_matrix`, so the `size_of::<Matrix>()` bytes it covers may be
     // zeroed.
     unsafe { ptr::write_bytes(mat.get() as *mut u8, 0, size_of::<Matrix>()) };
-    // C: `mat->cols[i].v[j]` — the `cols[4]` / `v[3]` union overlay.
-    let cols: *mut Vec3 = mat.get() as *mut Vec3;
-    // SAFETY: the view covers writable `ufbx_matrix` storage laid out as four
-    // consecutive `ufbx_vec3` columns, and `src`/`dst` carry real axes
-    // (asserted above), so `src_x >> 1` is in `0..3` and selects a column in
-    // bounds.
-    let cx: *mut Real = unsafe { cols.add((src_x >> 1) as usize) } as *mut Real;
-    // SAFETY: the column `cx` addresses is three consecutive `ufbx_real`s and
-    // `dst_x >> 1` is in `0..3` (see above), so the element is in bounds — and
-    // initialized, having been zeroed by the `write_bytes` above.
-    unsafe {
-        *cx.add((dst_x >> 1) as usize) = if ((src_x ^ dst_x) & 1) == 0 {
+    // C: `mat->cols[i].v[j]` — the `cols[4]` / `v[3]` union overlay, flattened
+    // to the matrix's twelve consecutive `ufbx_real`s, where `cols[i].v[j]` is
+    // slot `i * 3 + j`.
+    // SAFETY: the view covers writable `ufbx_matrix` storage laid out as
+    // exactly four consecutive `ufbx_vec3` columns, i.e. twelve contiguous
+    // write-capable `ufbx_real` slots — zeroed by the `write_bytes` just above
+    // — that stay alive and unmoved for this borrow of `mat`.
+    let reals: Run<'_, Real, Mut> = unsafe { Run::from_raw_parts(mat.get() as *mut Real, 12) };
+    // `src`/`dst` carry real axes (asserted above), so each `>> 1` is in `0..3`
+    // and every `(src >> 1) * 3 + (dst >> 1)` is inside the twelve-slot run.
+    reals.write_at(
+        (src_x >> 1) as usize * 3 + (dst_x >> 1) as usize,
+        if ((src_x ^ dst_x) & 1) == 0 {
             1.0 as Real
         } else {
             -1.0 as Real
-        }
-    };
-    // SAFETY: as for `cx`, for the column selected by `src_y >> 1`.
-    let cy: *mut Real = unsafe { cols.add((src_y >> 1) as usize) } as *mut Real;
-    // SAFETY: as for the `cx` element write, for `dst_y >> 1` within `cy`.
-    unsafe {
-        *cy.add((dst_y >> 1) as usize) = if ((src_y ^ dst_y) & 1) == 0 {
+        },
+    );
+    reals.write_at(
+        (src_y >> 1) as usize * 3 + (dst_y >> 1) as usize,
+        if ((src_y ^ dst_y) & 1) == 0 {
             1.0 as Real
         } else {
             -1.0 as Real
-        }
-    };
-    // SAFETY: as for `cx`, for the column selected by `src_z >> 1`.
-    let cz: *mut Real = unsafe { cols.add((src_z >> 1) as usize) } as *mut Real;
-    // SAFETY: as for the `cx` element write, for `dst_z >> 1` within `cz`.
-    unsafe {
-        *cz.add((dst_z >> 1) as usize) = if ((src_z ^ dst_z) & 1) == 0 {
+        },
+    );
+    reals.write_at(
+        (src_z >> 1) as usize * 3 + (dst_z >> 1) as usize,
+        if ((src_z ^ dst_z) & 1) == 0 {
             1.0 as Real
         } else {
             -1.0 as Real
-        }
-    };
+        },
+    );
 
     true
 }
