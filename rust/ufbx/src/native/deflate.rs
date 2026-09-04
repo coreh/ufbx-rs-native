@@ -1711,9 +1711,10 @@ pub(crate) unsafe fn inflate_block_fast(dc: &DeflateContext, trees: *mut Trees) 
     // `(*dc.get()).stream` holds a self-referential `buffer`→`local_buffer` pointer (see
     // `bit_stream_init`), so `dc` stays raw and is derefed as `(*dc.get()).field` to
     // avoid a whole-struct retag invalidating that interior pointer. `trees` is
-    // not self-referential and only ever read here, so a shared borrow suffices;
-    // `tree_lit_length`/`tree_dist` stay raw pointers as-is since the
-    // refill/decode macro below dereferences them directly.
+    // not self-referential and only ever read here, so a shared borrow suffices.
+    // `tree_lit_length`/`tree_dist` are the two overlay members of that same
+    // borrow, so every `fast_sym`/`long_sym` lookup below — in the refill/decode
+    // macro and at its open-coded expansions — is a safe fixed-array index.
     // SAFETY: the caller's contract is that `trees` points at a valid, fully
     // built `Trees` that stays borrowable for this call.
     let trees = unsafe { &*trees };
@@ -1743,8 +1744,8 @@ pub(crate) unsafe fn inflate_block_fast(dc: &DeflateContext, trees: *mut Trees) 
     // `out_end`, so backing `out_end` up by that count stays within the buffer.
     let out_end: *mut u8 = unsafe { dc.out_end().sub(INFLATE_FAST_MIN_OUT) };
 
-    let tree_lit_length: *const HuffTree = trees.lit_length();
-    let tree_dist: *const HuffTree = trees.dist();
+    let tree_lit_length: &HuffTree = trees.lit_length();
+    let tree_dist: &HuffTree = trees.dist();
 
     let mut bits = dc.stream_view().bits();
     let mut left = dc.stream_view().left();
@@ -1768,12 +1769,12 @@ pub(crate) unsafe fn inflate_block_fast(dc: &DeflateContext, trees: *mut Trees) 
         () => {{
             macro_bit_refill_fast!(bits, left, data, refill_bits);
             sym01_bits = bits;
-            sym0 = (*tree_lit_length).fast_sym[(sym01_bits as usize) & HUFF_FAST_MASK];
-            sym1 = (*(if (sym0 as u32 & HUFF_SYM_MATCH) != 0 {
+            sym0 = tree_lit_length.fast_sym[(sym01_bits as usize) & HUFF_FAST_MASK];
+            sym1 = (if (sym0 as u32 & HUFF_SYM_MATCH) != 0 {
                 tree_dist
             } else {
                 tree_lit_length
-            }))
+            })
             .fast_sym[(wrap_shr64(sym01_bits, sym0 as u32) as usize) & HUFF_FAST_MASK];
             refill_bits = read_u64(crate::prelude::slice_from_ptr(data, 8));
         }};
@@ -1786,9 +1787,10 @@ pub(crate) unsafe fn inflate_block_fast(dc: &DeflateContext, trees: *mut Trees) 
         };
     }
 
-    // SAFETY: the macro refills `bits` from `data` (kept 8+ bytes before the
-    // chunk end) and indexes the two live `fast_sym` tables through
-    // `tree_lit_length`/`tree_dist`, whose targets are the borrowed `trees`.
+    // SAFETY: the macro's only unsafe step is the refill of `bits` from `data`,
+    // which the chunk bookkeeping keeps 8+ bytes before the chunk end; the two
+    // `fast_sym` lookups it performs are safe fixed-array indices on the
+    // borrowed `trees`.
     unsafe { fast_inflate_refill_and_decode!() };
 
     loop {
@@ -1811,8 +1813,8 @@ pub(crate) unsafe fn inflate_block_fast(dc: &DeflateContext, trees: *mut Trees) 
                     out_ptr = out_ptr.add(2);
                 }
 
-                // SAFETY: as at the first invocation — refills from `data` and
-                // indexes the live `fast_sym` tables.
+                // SAFETY: as at the first invocation — the unsafe step is the
+                // refill from `data`, kept 8+ bytes before the chunk end.
                 unsafe { fast_inflate_refill_and_decode!() };
                 // SAFETY: the macro compares `data_end`/`data` and
                 // `out_end`/`out_ptr`, each a pair in one object.
@@ -1836,9 +1838,7 @@ pub(crate) unsafe fn inflate_block_fast(dc: &DeflateContext, trees: *mut Trees) 
                 // This must fit as literals never have extra bits and the match length is fast so:
                 // 10 (lit) + 10 (len code) + 5 (len extra) + 15 (dist code) + 13 (dist extra) = 53 <= 56
                 sym0 = sym1;
-                // SAFETY: `tree_dist` targets the borrowed live distance tree;
-                // `fast_sym` is indexed by a `HUFF_FAST_MASK`-masked value.
-                sym1 = unsafe { (*tree_dist).fast_sym[(bits as usize) & HUFF_FAST_MASK] };
+                sym1 = tree_dist.fast_sym[(bits as usize) & HUFF_FAST_MASK];
 
                 if (sym1 as u32 & HUFF_SYM_FAST) == 0 {
                     // Slow sym1
@@ -1847,13 +1847,8 @@ pub(crate) unsafe fn inflate_block_fast(dc: &DeflateContext, trees: *mut Trees) 
                     }
                     let tail = (bits >> HUFF_FAST_BITS) as u32;
                     let long_mask = huff_sym_long_mask(sym1);
-                    // SAFETY: `tree_dist` targets the live distance tree; the
-                    // `long_sym` index is a built long-offset plus a masked tail,
-                    // which the tree construction sizes to fit.
-                    sym1 = unsafe {
-                        (*tree_dist).long_sym
-                            [(huff_sym_long_offset(sym1) + (tail & long_mask)) as usize]
-                    };
+                    sym1 = tree_dist.long_sym
+                        [(huff_sym_long_offset(sym1) + (tail & long_mask)) as usize];
                     if (sym1 as u32 & HUFF_SYM_END) != 0 {
                         return -11;
                     }
@@ -1870,13 +1865,8 @@ pub(crate) unsafe fn inflate_block_fast(dc: &DeflateContext, trees: *mut Trees) 
                 // Slow sym0
                 let tail = (sym01_bits >> HUFF_FAST_BITS) as u32;
                 let long_mask = huff_sym_long_mask(sym0);
-                // SAFETY: `tree_lit_length` targets the live lit/length tree; the
-                // `long_sym` index is a built long-offset plus a masked tail,
-                // sized to fit by tree construction.
-                sym0 = unsafe {
-                    (*tree_lit_length).long_sym
-                        [(huff_sym_long_offset(sym0) + (tail & long_mask)) as usize]
-                };
+                sym0 = tree_lit_length.long_sym
+                    [(huff_sym_long_offset(sym0) + (tail & long_mask)) as usize];
             }
 
             let sym0_bits = huff_sym_total_bits(sym0);
@@ -1895,9 +1885,7 @@ pub(crate) unsafe fn inflate_block_fast(dc: &DeflateContext, trees: *mut Trees) 
             }
 
             if (sym0 as u32 & HUFF_SYM_MATCH) != 0 {
-                // SAFETY: `tree_dist` targets the live distance tree; `fast_sym`
-                // is indexed by a `HUFF_FAST_MASK`-masked value.
-                sym1 = unsafe { (*tree_dist).fast_sym[(bits as usize) & HUFF_FAST_MASK] };
+                sym1 = tree_dist.fast_sym[(bits as usize) & HUFF_FAST_MASK];
 
                 if (sym1 as u32 & HUFF_SYM_FAST) == 0 {
                     // Slow sym1
@@ -1906,13 +1894,8 @@ pub(crate) unsafe fn inflate_block_fast(dc: &DeflateContext, trees: *mut Trees) 
                     }
                     let tail = (bits >> HUFF_FAST_BITS) as u32;
                     let long_mask = huff_sym_long_mask(sym1);
-                    // SAFETY: `tree_dist` targets the live distance tree; the
-                    // `long_sym` index is a built long-offset plus a masked tail,
-                    // sized to fit by tree construction.
-                    sym1 = unsafe {
-                        (*tree_dist).long_sym
-                            [(huff_sym_long_offset(sym1) + (tail & long_mask)) as usize]
-                    };
+                    sym1 = tree_dist.long_sym
+                        [(huff_sym_long_offset(sym1) + (tail & long_mask)) as usize];
                     if (sym1 as u32 & HUFF_SYM_END) != 0 {
                         return -11;
                     }
@@ -1929,8 +1912,8 @@ pub(crate) unsafe fn inflate_block_fast(dc: &DeflateContext, trees: *mut Trees) 
                     out_ptr = out_ptr.add(1);
                 }
 
-                // SAFETY: as at the first invocation — refills from `data` and
-                // indexes the live `fast_sym` tables.
+                // SAFETY: as at the first invocation — the unsafe step is the
+                // refill from `data`, kept 8+ bytes before the chunk end.
                 unsafe { fast_inflate_refill_and_decode!() };
                 // SAFETY: the macro compares `data_end`/`data` and
                 // `out_end`/`out_ptr`, each a pair in one object.
@@ -1953,8 +1936,8 @@ pub(crate) unsafe fn inflate_block_fast(dc: &DeflateContext, trees: *mut Trees) 
         let distance = (dist_shift_base >> 16)
             + (wrap_shr64(sym01_bits, dist_shift_base + sym0 as u32) & dist_mask as u64) as u32;
 
-        // SAFETY: as at the first invocation — refills from `data` and indexes
-        // the live `fast_sym` tables.
+        // SAFETY: as at the first invocation — the unsafe step is the refill
+        // from `data`, kept 8+ bytes before the chunk end.
         unsafe { fast_inflate_refill_and_decode!() };
 
         // Bounds checking: We don't actually handle the error here, just bail out to the slow implementation
