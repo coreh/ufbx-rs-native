@@ -987,10 +987,13 @@ pub(crate) fn push_synthetic_id(uc: &Context) -> u64 {
 pub(crate) fn synthetic_id_from_ptr_id(uc: &Context, ptr: usize, id: u64) -> u64 {
     let ptr_id = PtrId { ptr, id };
     let hash = hash_ptr_id(ptr_id);
-    let mut entry: *mut PtrFbxIdEntry = uc.ptr_fbx_id_map_view().find(hash, &ptr_id);
+    // SAFETY: `ptr_fbx_id_map` stores `PtrFbxIdEntry` items keyed by a `PtrId`
+    // value pair; `ptr_id` is a complete local key.
+    let mut entry: *mut PtrFbxIdEntry = unsafe { uc.ptr_fbx_id_map_view().find(hash, &ptr_id) };
 
     if entry.is_null() {
-        entry = uc.ptr_fbx_id_map_view().insert(hash, &ptr_id);
+        // SAFETY: as for the `find` above — same map, same key.
+        entry = unsafe { uc.ptr_fbx_id_map_view().insert(hash, &ptr_id) };
         ufbxi_check_return!(uc, !entry.is_null(), 0, "entry");
         // SAFETY: `entry` is the fresh non-null insert result checked above.
         unsafe {
@@ -1094,10 +1097,12 @@ pub(crate) fn split_type_and_name<M: Mode>(
 #[inline(never)]
 pub(crate) fn insert_fbx_id(uc: &Context, fbx_id: u64, element_id: u32) -> Result<(), Fail> {
     let hash = hash64(fbx_id);
-    let mut entry: *mut FbxIdEntry = uc.fbx_id_map_view().find(hash, &fbx_id);
+    // SAFETY: `fbx_id_map` stores `FbxIdEntry` items keyed by a `u64` value.
+    let mut entry: *mut FbxIdEntry = unsafe { uc.fbx_id_map_view().find(hash, &fbx_id) };
 
     if entry.is_null() {
-        entry = uc.fbx_id_map_view().insert(hash, &fbx_id);
+        // SAFETY: as for the `find` above — same map, same key.
+        entry = unsafe { uc.fbx_id_map_view().insert(hash, &fbx_id) };
         ufbxi_check!(uc, !entry.is_null(), "entry");
         // SAFETY: `entry` is the fresh non-null insert result checked above.
         unsafe {
@@ -1120,7 +1125,8 @@ pub(crate) fn insert_fbx_id(uc: &Context, fbx_id: u64, element_id: u32) -> Resul
 #[inline(never)]
 pub(crate) fn find_fbx_id(uc: &Context, fbx_id: u64) -> *mut FbxIdEntry {
     let hash = hash64(fbx_id);
-    uc.fbx_id_map_view().find(hash, &fbx_id)
+    // SAFETY: `fbx_id_map` stores `FbxIdEntry` items keyed by a `u64` value.
+    unsafe { uc.fbx_id_map_view().find(hash, &fbx_id) }
 }
 
 // ufbx.c:12331-12334 `ufbxi_fbx_id_exists`
@@ -1133,11 +1139,13 @@ pub(crate) fn fbx_id_exists(uc: &Context, fbx_id: u64) -> bool {
 #[inline(never)]
 pub(crate) fn insert_fbx_attr(uc: &Context, fbx_id: u64, attrib_fbx_id: u64) -> Result<(), Fail> {
     let hash = hash64(fbx_id);
-    let mut entry: *mut FbxAttrEntry = uc.fbx_attr_map_view().find(hash, &fbx_id);
+    // SAFETY: `fbx_attr_map` stores `FbxAttrEntry` items keyed by a `u64` value.
+    let mut entry: *mut FbxAttrEntry = unsafe { uc.fbx_attr_map_view().find(hash, &fbx_id) };
     // TODO: Strict / warn about duplicate objects
 
     if entry.is_null() {
-        entry = uc.fbx_attr_map_view().insert(hash, &fbx_id);
+        // SAFETY: as for the `find` above — same map, same key.
+        entry = unsafe { uc.fbx_attr_map_view().insert(hash, &fbx_id) };
         ufbxi_check!(uc, !entry.is_null(), "entry");
         // SAFETY: `entry` is the fresh non-null insert result checked above.
         unsafe {
@@ -6462,13 +6470,19 @@ pub(crate) fn read_anim_stack(
     // The map's comparator (`map_cmp_const_char_ptr`) only READS the key slot,
     // so a temporary holding the same interned name pointer stands in for C's
     // `&info->name.data`.
-    let mut entry: *mut TmpAnimStack = uc
-        .anim_stack_map_view()
-        .find::<TmpAnimStack, _>(hash, &info.name_view().data());
+    // SAFETY: `anim_stack_map` stores `TmpAnimStack` items keyed by interned
+    // name pointer (`map_cmp_const_char_ptr` follows the stored NUL-terminated
+    // string), and `info.name` is an interned string.
+    let mut entry: *mut TmpAnimStack = unsafe {
+        uc.anim_stack_map_view()
+            .find::<TmpAnimStack, _>(hash, &info.name_view().data())
+    };
     if entry.is_null() {
-        entry = uc
-            .anim_stack_map_view()
-            .insert::<TmpAnimStack, _>(hash, &info.name_view().data());
+        // SAFETY: as for the `find` above — same map, same key.
+        entry = unsafe {
+            uc.anim_stack_map_view()
+                .insert::<TmpAnimStack, _>(hash, &info.name_view().data())
+        };
         ufbxi_check!(uc, !entry.is_null(), "entry");
         // SAFETY: `entry` is the fresh non-null map entry checked above, an
         // arena `ufbxi_tmp_anim_stack` whose two fields are written here.
@@ -8735,9 +8749,12 @@ pub(crate) fn read_take(uc: &Context, node: &NodeView) -> Result<(), Fail> {
     // for fallback in case the information is missing in the stacks.
     if uc.version() >= 7000 {
         let hash: u32 = crate::native::hash::hash_ptr!(name);
-        let entry: *mut TmpAnimStack = uc
-            .anim_stack_map_view()
-            .find::<TmpAnimStack, _>(hash, &name);
+        // SAFETY: `anim_stack_map` stores `TmpAnimStack` items keyed by
+        // interned name pointer; `name` is the interned take name.
+        let entry: *mut TmpAnimStack = unsafe {
+            uc.anim_stack_map_view()
+                .find::<TmpAnimStack, _>(hash, &name)
+        };
 
         if !entry.is_null() {
             // SAFETY: a non-null entry was filled by `read_anim_stack` with

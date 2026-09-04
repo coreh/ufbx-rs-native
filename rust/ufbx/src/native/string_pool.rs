@@ -771,7 +771,9 @@ pub(crate) fn push_sanitized_string(
     );
     ufbxi_check_err!(
         pool.error_view(),
-        pool.map_view().grow::<String>(pool.initial_size()),
+        // SAFETY: the pool map stores `String` items (`map_init` in the pool's
+        // owner, compared by `map_cmp_string`).
+        unsafe { pool.map_view().grow::<String>(pool.initial_size()) },
         "ufbxi_map_grow_size((&pool->map), sizeof(ufbx_string), (pool->initial_size))"
     );
 
@@ -801,12 +803,15 @@ pub(crate) fn push_sanitized_string(
 
     let ref_ = String::new_c(total_data, total_length);
 
-    let entry: *mut String = pool.map_view().find::<String, _>(hash, &ref_);
+    // SAFETY: the pool map stores `String` items compared by `map_cmp_string`;
+    // `ref_` describes the `total_length` bytes assembled in `sanitized` above.
+    let entry: *mut String = unsafe { pool.map_view().find::<String, _>(hash, &ref_) };
     if !entry.is_null() {
         // SAFETY: `entry` is a non-null map slot addressing a live `String`.
         sanitized.set_raw_data(unsafe { (*entry).data });
     } else {
-        let entry = pool.map_view().insert::<String, _>(hash, &ref_);
+        // SAFETY: as for the `find` above — same map, same key run.
+        let entry = unsafe { pool.map_view().insert::<String, _>(hash, &ref_) };
         ufbxi_check_err!(pool.error_view(), !entry.is_null(), "entry");
         // SAFETY: `entry` is the just-inserted non-null map slot.
         unsafe { (*entry).length = total_length };
@@ -857,7 +862,9 @@ pub(crate) unsafe fn push_string_imp(
 
     ufbxi_check_return_err!(
         pool.error_view(),
-        pool.map_view().grow::<String>(pool.initial_size()),
+        // SAFETY: the pool map stores `String` items compared by
+        // `map_cmp_string`.
+        unsafe { pool.map_view().grow::<String>(pool.initial_size()) },
         ptr::null(),
         "ufbxi_map_grow_size((&pool->map), sizeof(ufbx_string), (pool->initial_size))"
     );
@@ -910,12 +917,15 @@ pub(crate) unsafe fn push_string_imp(
 
     let ref_ = String::new_c(str_, length);
 
-    let entry: *mut String = pool.map_view().find::<String, _>(hash, &ref_);
+    // SAFETY: the pool map stores `String` items compared by `map_cmp_string`;
+    // `ref_` describes the `length` readable bytes at `str_` (fn contract).
+    let entry: *mut String = unsafe { pool.map_view().find::<String, _>(hash, &ref_) };
     if !entry.is_null() {
         // SAFETY: `entry` is a non-null map slot addressing a live `String`.
         return unsafe { (*entry).data };
     }
-    let entry = pool.map_view().insert::<String, _>(hash, &ref_);
+    // SAFETY: as for the `find` above — same map, same key run.
+    let entry = unsafe { pool.map_view().insert::<String, _>(hash, &ref_) };
     ufbxi_check_return_err!(pool.error_view(), !entry.is_null(), ptr::null(), "entry");
     // SAFETY: `entry` is the just-inserted non-null map slot.
     unsafe { (*entry).length = length };

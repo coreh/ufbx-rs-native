@@ -54,7 +54,7 @@ use crate::native::io::refill;
 #[cfg(feature = "obj")]
 use crate::native::parse::{
     get_name_key, r#match, report_progress, Context, ElementInfo, FbxIdEntry, ObjAttrib,
-    ObjGroupEntry, ObjMesh, OBJ_NUM_ATTRIBS, OBJ_NUM_ATTRIBS_EXT,
+    ObjFastIndices, ObjGroupEntry, ObjMesh, OBJ_NUM_ATTRIBS, OBJ_NUM_ATTRIBS_EXT,
 };
 // The `#else`-branch stubs still take `&Context`.
 #[cfg(not(feature = "obj"))]
@@ -861,19 +861,22 @@ pub(crate) fn obj_parse_index<'a>(
             .tmp_indices_at(attrib as usize)
             .push::<u64>(num_push);
         ufbxi_check!(uc, !dst.is_null(), "dst");
-        uc.obj().fast_indices_at(attrib as usize).set_indices(dst);
-        uc.obj()
-            .fast_indices_at(attrib as usize)
-            .set_num_left(num_push);
+        // SAFETY: `dst` is the checked non-null `num_push`-slot push on this
+        // attribute's own `tmp_indices` arena.
+        fast_indices.set(unsafe { ObjFastIndices::from_raw_parts(dst, num_push) });
     }
 
     // C: `*fast_indices->indices++ = index;`
     let indices = fast_indices.indices();
-    // SAFETY: the writer's `indices` cursor has `num_left > 0` slots of its
-    // reserved run ahead of it; the refill above restores that at zero.
-    unsafe { *indices = index };
-    fast_indices.set_indices(indices.wrapping_add(1));
-    fast_indices.set_num_left(fast_indices.num_left() - 1);
+    let num_left = fast_indices.num_left();
+    // SAFETY: the cursor is only ever published through `from_raw_parts`, so
+    // with `num_left > 0` (ensured by the refill above) `indices` heads
+    // `num_left` reserved slots; advancing by one stays within or one past
+    // that run.
+    unsafe {
+        *indices = index;
+        fast_indices.set(ObjFastIndices::from_raw_parts(indices.add(1), num_left - 1));
+    }
 
     if index != u64::MAX {
         let a: usize = attrib as usize;
@@ -892,6 +895,10 @@ pub(crate) fn obj_parse_indices(
     token_begin: usize,
     num_tokens: usize,
 ) -> Result<(), Fail> {
+    // C's callers cut the window out of the tokenized line; the port checks
+    // it here so every token read below is inside the stored token run.
+    let line_tokens: usize = uc.obj().num_tokens();
+    assert!(token_begin <= line_tokens && num_tokens <= line_tokens - token_begin);
     let mut flush_mesh: bool = false;
     if uc.obj().object_dirty() {
         if !uc.opts_view().obj_merge_objects() {
@@ -988,9 +995,11 @@ pub(crate) fn obj_parse_indices(
         // SAFETY: looks the interned name pointer up in the obj parser's own
         // group map (keyed by that pointer, whose address is taken from an
         // unaliased local).
-        let mut entry: *mut ObjGroupEntry = uc.obj().group_map_view().find(hash, &name.data);
+        let mut entry: *mut ObjGroupEntry =
+            unsafe { uc.obj().group_map_view().find(hash, &name.data) };
         if entry.is_null() {
-            entry = uc.obj().group_map_view().insert(hash, &name.data);
+            // SAFETY: as for the `find` above — same map, same key.
+            entry = unsafe { uc.obj().group_map_view().insert(hash, &name.data) };
             ufbxi_check!(uc, !entry.is_null(), "entry");
             // SAFETY: `entry` is the fresh non-null insert result.
             unsafe {

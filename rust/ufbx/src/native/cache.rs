@@ -1138,6 +1138,16 @@ pub(crate) fn cache_load_mc(cc: &CacheContext) -> Result<(), Fail> {
                     "size > 0 && size < SIZE_MAX"
                 );
                 let length: usize = size as usize - 1;
+                // C computes `padded_length` with wrapping arithmetic
+                // (ufbx.c:24200): a `size` within `alignment` of `SIZE_MAX`
+                // wraps it to a tiny value while `length` stays huge, and the
+                // channel-name descriptor then overruns `name_buf`. The port
+                // rejects such a size instead.
+                ufbxi_check_err!(
+                    cc.error_view(),
+                    size as usize <= usize::MAX - alignment,
+                    "size + alignment - 1 does not wrap"
+                );
                 let padded_length: usize =
                     (size as usize).wrapping_add(alignment).wrapping_sub(1) & !(alignment - 1);
                 ufbxi_check_err!(

@@ -361,12 +361,16 @@ impl MapView {
     pub(crate) unsafe fn set_ator(&self, ator: *mut Allocator) {
         view_write!(self, ator, ator)
     }
+    /// Publish the comparator and its user pointer together.
+    ///
+    /// # Safety
+    /// `cmp_user` must be null or address a live value of the type `cmp_fn`
+    /// dereferences it as, for as long as the map performs lookups; every
+    /// later `find`/`insert` calls `cmp_fn` with exactly this pointer. The pair
+    /// is only meaningful jointly, so it has no split leaf setters.
     #[inline(always)]
-    pub(crate) fn set_cmp_fn(&self, cmp_fn: Option<CmpFn>) {
-        view_write!(self, cmp_fn, cmp_fn)
-    }
-    #[inline(always)]
-    pub(crate) fn set_cmp_user(&self, cmp_user: *mut c_void) {
+    pub(crate) unsafe fn set_cmp(&self, cmp_fn: Option<CmpFn>, cmp_user: *mut c_void) {
+        view_write!(self, cmp_fn, cmp_fn);
         view_write!(self, cmp_user, cmp_user)
     }
     // `aa_root` — the AA-tree overflow root, nullable, as a typed arena ref.
@@ -407,29 +411,34 @@ impl MapView {
     //   contract, same standing as the printf `%s` PrintArg contract.
 
     // ufbx.c:4657 `ufbxi_map_grow(map, type, min_size)`
+    /// # Safety
+    /// `T` must be this map's item type: `size_of::<T>()` is the element
+    /// stride the map was created and is later indexed with (impl-level note).
     #[inline(always)]
-    pub(crate) fn grow<T>(&self, min_size: usize) -> bool {
-        // SAFETY: `T` is this map's item type (see impl-level note), so
-        // `size_of::<T>()` is the element stride `map_grow` requires.
+    pub(crate) unsafe fn grow<T>(&self, min_size: usize) -> bool {
+        // SAFETY: forwarded from this fn's own contract.
         unsafe { map_grow::<T>(self, min_size) }
     }
 
     // ufbx.c:4658 `ufbxi_map_find(map, type, hash, key)`
+    /// # Safety
+    /// `T` must be this map's item type (element stride), and `key` must meet
+    /// the pointee contract of the comparator the map was initialized with —
+    /// the comparator may dereference pointers stored inside `K`.
     #[inline(always)]
-    pub(crate) fn find<T, K>(&self, hash: u32, key: &K) -> *mut T {
-        // SAFETY: `T` is this map's item type, so `size_of::<T>()` is its
-        // element stride; `cmp_fn` is the C-callback contract the map was
-        // initialized with, comparing `key` against stored items of the same
-        // key discipline (see impl-level note).
+    pub(crate) unsafe fn find<T, K>(&self, hash: u32, key: &K) -> *mut T {
+        // SAFETY: forwarded from this fn's own contract.
         unsafe { map_find::<T>(self, hash, key as *const K as *const c_void) }
     }
 
     // ufbx.c:4659 `ufbxi_map_insert(map, type, hash, key)`
+    /// # Safety
+    /// As for [`Self::find`]: `T` is this map's item type and `key` meets the
+    /// comparator's pointee contract.
     #[inline(always)]
     #[must_use]
-    pub(crate) fn insert<T, K>(&self, hash: u32, key: &K) -> *mut T {
-        // SAFETY: same as `find` — `T` is this map's item type and `key` meets
-        // the map's own key discipline.
+    pub(crate) unsafe fn insert<T, K>(&self, hash: u32, key: &K) -> *mut T {
+        // SAFETY: forwarded from this fn's own contract.
         unsafe { map_insert::<T>(self, hash, key as *const K as *const c_void) }
     }
 }
@@ -511,8 +520,9 @@ pub(crate) unsafe fn map_init(
         // every later chunk is allocated and freed through this pointer.
         unsafe { map.aa_buf_view().set_ator(ator.get()) };
     }
-    map.set_cmp_fn(Some(cmp_fn));
-    map.set_cmp_user(cmp_user);
+    // SAFETY: `cmp_user` meets this function's own key/user contract, which is
+    // exactly `set_cmp`'s; nothing has looked the map up yet.
+    unsafe { map.set_cmp(Some(cmp_fn), cmp_user) };
 }
 
 // ufbx.c:4421-4440 `ufbxi_map_free`

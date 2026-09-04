@@ -1649,7 +1649,8 @@ pub(crate) fn sort_connections(
 // ufbx.c:18655-18663 `ufbxi_find_attribute_fbx_id`
 pub(crate) fn find_attribute_fbx_id(uc: &Context, node_fbx_id: u64) -> u64 {
     let hash: u32 = hash64(node_fbx_id);
-    let entry: *mut FbxAttrEntry = uc.fbx_attr_map_view().find(hash, &node_fbx_id);
+    // SAFETY: `fbx_attr_map` stores `FbxAttrEntry` items keyed by a `u64` value.
+    let entry: *mut FbxAttrEntry = unsafe { uc.fbx_attr_map_view().find(hash, &node_fbx_id) };
     if !entry.is_null() {
         // SAFETY: `entry` is non-null (checked) and a valid FbxAttrEntry.
         return unsafe { (*entry).attr_fbx_id };
@@ -6131,9 +6132,12 @@ pub(crate) fn insert_texture_file(uc: &Context, texture: &TextureView) -> Result
         return Ok(());
     }
     let hash: u32 = hash_ptr!(key);
-    let mut entry: *mut TextureFileEntry = uc.texture_file_map_view().find(hash, &key);
+    // SAFETY: `texture_file_map` stores `TextureFileEntry` items keyed by the
+    // interned filename pointer, compared as a pointer value only.
+    let mut entry: *mut TextureFileEntry = unsafe { uc.texture_file_map_view().find(hash, &key) };
     if entry.is_null() {
-        entry = uc.texture_file_map_view().insert(hash, &key);
+        // SAFETY: as for the `find` above — same map, same key.
+        entry = unsafe { uc.texture_file_map_view().insert(hash, &key) };
         ufbxi_check!(uc, !entry.is_null(), "entry");
 
         let file: *mut TextureFile = uc.tmp_view().push_zero(1);

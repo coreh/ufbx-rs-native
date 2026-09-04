@@ -1249,10 +1249,9 @@ pub(crate) fn subdivide_layer(
 
     // C: `ufbxi_real_sum_fns[]` has a NULL slot at index 0; the callers assert
     // `value_reals >= 2` before indexing, so the taken pointer is never NULL —
-    // calling through a NULL slot is UB in C too.
-    // SAFETY: the comment above vouches slot 0 (the `None` slot) is never
-    // selected here, so `sum_fn` is `Some`, making `unwrap_unchecked` sound.
-    let sum_fn: SubdivideSumFn = unsafe { input.sum_fn().unwrap_unchecked() };
+    // calling through a NULL slot is UB in C too. The port checks the slot: a
+    // `None` here is a caller bug and is reported as a defined panic.
+    let sum_fn: SubdivideSumFn = input.sum_fn().expect("subdivide layer sum_fn");
     let sum_user: *mut c_void = input.sum_user();
 
     // Mark unused indices as `UFBX_NO_INDEX` so we can patch non-manifold

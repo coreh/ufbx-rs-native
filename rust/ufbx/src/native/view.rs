@@ -608,9 +608,10 @@ impl<'a, T, M: Mode> Iterator for SliceViewIter<'a, T, M> {
             return None;
         }
         // SAFETY: `idx < count`, so `base + idx` is in-bounds of the run vouched
-        // at `from_raw_parts`; that slot is an allocated, write-capable, stable
-        // `T` slot for 'a — possibly uninitialized, which the `Mut` view's
-        // `MaybeUninit` storage tolerates.
+        // at construction (`from_raw_parts`, or the `Run` this iterator was
+        // derived from); that slot is allocated and stable for 'a, with
+        // provenance adequate for `M` — write-capable for `Mut`, whose
+        // `MaybeUninit` storage also tolerates a still-uninitialized slot.
         let elem = unsafe { self.base.add(self.idx) };
         self.idx += 1;
         Some(unsafe { View::<T, M>::mint(elem) })

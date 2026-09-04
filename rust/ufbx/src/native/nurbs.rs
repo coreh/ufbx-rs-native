@@ -847,17 +847,23 @@ pub(crate) fn tessellate_nurbs_surface_imp(
         tc.result_view().push::<Vec3>(num_indices + 1),
         tc.result_view().push::<Vec3>(num_indices + 1),
     );
+    // C checks `positions && normals` only after writing their zero elements
+    // (ufbx.c:27995-27996 vs 28141), so an allocation failure dereferences
+    // null there. The port folds both into this check: on success the order
+    // is unobservable, on failure the load reports the error instead.
     ufbxi_check_err!(
         tc.error_view(),
-        !position_ix.is_null() && !uvs.is_null() && !tangents.is_null() && !bitangents.is_null(),
+        !position_ix.is_null()
+            && !uvs.is_null()
+            && !tangents.is_null()
+            && !bitangents.is_null()
+            && !positions.is_null()
+            && !normals.is_null(),
         "position_ix && uvs && tangents && bitangents"
     );
 
-    // SAFETY: this retains C's implicit allocation obligation: `positions`
-    // and `normals` must be non-null here, although the first condition does
-    // not encode that and allocation failure is not sticky. This inherited
-    // boundary stays isolated pending a separate failure-order decision. The
-    // other four pointers are checked above.
+    // SAFETY: all six pointers are the checked non-null fresh arena pushes
+    // above, each `num_indices + 1` elements long.
     let (position_ix_write, uvs_all, tangents_all, bitangents_all) = unsafe {
         *positions = ZERO_VEC3;
         positions = positions.add(1);

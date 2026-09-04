@@ -90,7 +90,7 @@ impl View<XmlTag> {
     /// # Safety
     ///
     /// If `attribs` is non-null, it must retain write-capable provenance for
-    /// `self.num_attribs()` contiguous, initialized `XmlAttrib` values. That
+    /// `num_attribs` contiguous, initialized `XmlAttrib` values. That
     /// run must stay live and unmoved for every later traversal through this
     /// tag, until the owning XML result buffer is freed. A null pointer with a
     /// non-zero count is permitted only as an allocation-failure sentinel: no
@@ -98,16 +98,13 @@ impl View<XmlTag> {
     /// the pointer immediately after testing it. With a zero count the pointer
     /// is never offset or dereferenced.
     #[inline(always)]
-    pub(crate) unsafe fn set_attribs(&self, attribs: *mut XmlAttrib) {
-        view_write!(self, attribs, attribs)
+    pub(crate) unsafe fn set_attribs(&self, attribs: *mut XmlAttrib, num_attribs: usize) {
+        view_write!(self, attribs, attribs);
+        view_write!(self, num_attribs, num_attribs)
     }
     #[inline(always)]
     pub(crate) fn num_attribs(&self) -> usize {
         view_read!(self, num_attribs)
-    }
-    #[inline(always)]
-    pub(crate) fn set_num_attribs(&self, num_attribs: usize) {
-        view_write!(self, num_attribs, num_attribs)
     }
     #[inline(always)]
     pub(crate) fn children(&self) -> *mut XmlTag {
@@ -118,7 +115,7 @@ impl View<XmlTag> {
     /// # Safety
     ///
     /// If `children` is non-null, it must retain write-capable provenance for
-    /// `self.num_children()` contiguous, initialized `XmlTag` values. That run
+    /// `num_children` contiguous, initialized `XmlTag` values. That run
     /// must stay live and unmoved for every later traversal through this tag,
     /// until the owning XML result buffer is freed. A null pointer with a
     /// non-zero count is permitted only as an allocation-failure sentinel: no
@@ -126,16 +123,13 @@ impl View<XmlTag> {
     /// the pointer immediately after testing it. With a zero count the pointer
     /// is never offset or dereferenced.
     #[inline(always)]
-    pub(crate) unsafe fn set_children(&self, children: *mut XmlTag) {
-        view_write!(self, children, children)
+    pub(crate) unsafe fn set_children(&self, children: *mut XmlTag, num_children: usize) {
+        view_write!(self, children, children);
+        view_write!(self, num_children, num_children)
     }
     #[inline(always)]
     pub(crate) fn num_children(&self) -> usize {
         view_read!(self, num_children)
-    }
-    #[inline(always)]
-    pub(crate) fn set_num_children(&self, num_children: usize) {
-        view_write!(self, num_children, num_children)
     }
 }
 
@@ -938,14 +932,14 @@ unsafe fn xml_parse_tag_rec(
 
     // `push_pop` moves exactly the `num_attribs` attribs this loop stacked on
     // xc's tmp stack into xc's result buf.
-    tag.set_num_attribs(num_attribs);
-    // SAFETY: a non-null `push_pop` result is the initialized contiguous run
-    // described by the published count and remains stable in xc's result buf;
-    // a null failure sentinel is checked immediately below, before traversal.
-    unsafe {
-        tag.set_attribs(xc.result_view().push_pop(xc.tmp_stack_view(), num_attribs));
-    }
-    ufbxi_check_err!(xc.error_view(), !tag.attribs().is_null(), "tag->attribs");
+    // C publishes the count, then the pointer, then null-checks it; the port
+    // checks first and publishes the pair together (a failed load never
+    // exposes the tag).
+    let attribs: *mut XmlAttrib = xc.result_view().push_pop(xc.tmp_stack_view(), num_attribs);
+    ufbxi_check_err!(xc.error_view(), !attribs.is_null(), "tag->attribs");
+    // SAFETY: the non-null `push_pop` result is the initialized contiguous run
+    // of exactly `num_attribs` attribs, stable in xc's result buf.
+    unsafe { tag.set_attribs(attribs, num_attribs) };
 
     if has_children {
         let children_begin: usize = xc.tmp_stack_view().num_items();
@@ -962,18 +956,12 @@ unsafe fn xml_parse_tag_rec(
 
         // `push_pop` moves exactly the `num_children` tags the loop stacked on
         // xc's tmp stack into xc's result buf.
-        tag.set_num_children(xc.tmp_stack_view().num_items() - children_begin);
-        // SAFETY: a non-null `push_pop` result is the initialized contiguous
-        // run described by the published count and remains stable in xc's
-        // result buf; a null failure sentinel is checked immediately below,
-        // before traversal.
-        unsafe {
-            tag.set_children(
-                xc.result_view()
-                    .push_pop(xc.tmp_stack_view(), tag.num_children()),
-            );
-        }
-        ufbxi_check_err!(xc.error_view(), !tag.children().is_null(), "tag->children");
+        let num_children: usize = xc.tmp_stack_view().num_items() - children_begin;
+        let children: *mut XmlTag = xc.result_view().push_pop(xc.tmp_stack_view(), num_children);
+        ufbxi_check_err!(xc.error_view(), !children.is_null(), "tag->children");
+        // SAFETY: the non-null `push_pop` result is the initialized contiguous
+        // run of exactly `num_children` tags, stable in xc's result buf.
+        unsafe { tag.set_children(children, num_children) };
     }
 
     Ok(())
@@ -1003,17 +991,12 @@ pub(crate) fn xml_parse_root(xc: &XmlContext) -> Result<(), Fail> {
 
     // `push_pop` moves exactly the `num_items` tags this parse stacked on xc's
     // tmp stack into xc's result buf.
-    tag.set_num_children(xc.tmp_stack_view().num_items());
-    // SAFETY: a non-null `push_pop` result is the initialized contiguous run
-    // described by the published count and remains stable in xc's result buf;
-    // a null failure sentinel is checked immediately below, before traversal.
-    unsafe {
-        tag.set_children(
-            xc.result_view()
-                .push_pop(xc.tmp_stack_view(), tag.num_children()),
-        );
-    }
-    ufbxi_check_err!(xc.error_view(), !tag.children().is_null(), "tag->children");
+    let num_children: usize = xc.tmp_stack_view().num_items();
+    let children: *mut XmlTag = xc.result_view().push_pop(xc.tmp_stack_view(), num_children);
+    ufbxi_check_err!(xc.error_view(), !children.is_null(), "tag->children");
+    // SAFETY: the non-null `push_pop` result is the initialized contiguous run
+    // of exactly `num_children` tags, stable in xc's result buf.
+    unsafe { tag.set_children(children, num_children) };
 
     xc.set_doc(xc.result_view().push(1));
     ufbxi_check_err!(xc.error_view(), !xc.doc().is_null(), "xc->doc");

@@ -1010,8 +1010,21 @@ pub(crate) struct ObjGroupEntry {
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub(crate) struct ObjFastIndices {
-    pub indices: *mut u64,
-    pub num_left: usize,
+    indices: *mut u64,
+    num_left: usize,
+}
+
+impl ObjFastIndices {
+    /// Vouch for a fast-index write cursor.
+    ///
+    /// # Safety
+    /// When `num_left > 0`, `indices` must address `num_left` contiguous,
+    /// write-capable `u64` slots of the attribute's `tmp_indices` arena that
+    /// stay live until the cursor is replaced or the tail is popped.
+    #[inline(always)]
+    pub(crate) const unsafe fn from_raw_parts(indices: *mut u64, num_left: usize) -> Self {
+        Self { indices, num_left }
+    }
 }
 
 // ufbx.c:6401-6406 `ufbxi_tmp_anim_stack`
@@ -1442,16 +1455,13 @@ impl ObjFastIndicesView {
         view_read!(self, indices)
     }
     #[inline(always)]
-    pub(crate) fn set_indices(&self, indices: *mut u64) {
-        view_write!(self, indices, indices)
-    }
-    #[inline(always)]
     pub(crate) fn num_left(&self) -> usize {
         view_read!(self, num_left)
     }
+    /// Publish a complete cursor (pointer and remaining count together).
     #[inline(always)]
-    pub(crate) fn set_num_left(&self, num_left: usize) {
-        view_write!(self, num_left, num_left)
+    pub(crate) fn set(&self, value: ObjFastIndices) {
+        self.write_value(value)
     }
 }
 
@@ -5941,9 +5951,12 @@ fn retain_dom_node_rec(
             dom_node: core::ptr::null_mut(),
         };
         let hash = hash_uptr(mapping.node_ptr);
-        let mut result: *mut DomMapping = uc.dom_node_map_view().find(hash, &mapping);
+        // SAFETY: `dom_node_map` stores `DomMapping` items compared by the
+        // `node_ptr` value only; `mapping` is a complete local key.
+        let mut result: *mut DomMapping = unsafe { uc.dom_node_map_view().find(hash, &mapping) };
         if result.is_null() {
-            result = uc.dom_node_map_view().insert(hash, &mapping);
+            // SAFETY: as for the `find` above — same map, same key.
+            result = unsafe { uc.dom_node_map_view().insert(hash, &mapping) };
             ufbxi_check!(uc, !result.is_null(), "result");
         }
         // SAFETY: `result` is a non-null entry owned by `uc`'s `dom_node_map`.
@@ -7292,7 +7305,9 @@ pub(crate) fn get_prop_type(uc: &Context, name: *const u8) -> PropType {
     // C takes the address of the parameter itself (`&name`) as the map key.
     let name: *const u8 = name;
     let hash = crate::native::hash::hash_ptr!(name);
-    let entry: *mut PropTypeName = uc.prop_type_map_view().find(hash, &name);
+    // SAFETY: `prop_type_map` stores `PropTypeName` items keyed by interned
+    // name pointer, compared as a pointer value only.
+    let entry: *mut PropTypeName = unsafe { uc.prop_type_map_view().find(hash, &name) };
     if !entry.is_null() {
         // SAFETY: `entry` is a non-null entry owned by `uc`'s `prop_type_map`;
         // read its `type_` field.
@@ -7679,8 +7694,11 @@ pub(crate) static NODE_PROP_NAMES: NodePropNameTable = NodePropNameTable([
 pub(crate) fn init_node_prop_names(uc: &Context) -> Result<(), Fail> {
     ufbxi_check!(
         uc,
-        uc.node_prop_set_view()
-            .grow::<*const u8>(NODE_PROP_NAMES.0.len()),
+        // SAFETY: `node_prop_set` stores interned `*const u8` items.
+        unsafe {
+            uc.node_prop_set_view()
+                .grow::<*const u8>(NODE_PROP_NAMES.0.len())
+        },
         "ufbxi_map_grow_size((&uc->node_prop_set), sizeof(const char*), ((sizeof(ufbxi_node_prop_names) / sizeof(*(ufbxi_node_prop_names)))))"
     );
     // C: `for (size_t i = 0; i < ufbxi_arraycount(ufbxi_node_prop_names); i++)`
@@ -7704,9 +7722,12 @@ pub(crate) fn init_node_prop_names(uc: &Context) -> Result<(), Fail> {
         };
         ufbxi_check!(uc, !pooled.is_null(), "pooled");
         let hash: u32 = crate::native::hash::hash_ptr!(pooled);
-        let entry: *mut *const u8 = uc
-            .node_prop_set_view()
-            .insert::<*const u8, _>(hash, &pooled);
+        // SAFETY: `node_prop_set` stores interned `*const u8` items compared
+        // by pointer identity; `pooled` is such a pointer.
+        let entry: *mut *const u8 = unsafe {
+            uc.node_prop_set_view()
+                .insert::<*const u8, _>(hash, &pooled)
+        };
         ufbxi_check!(uc, !entry.is_null(), "entry");
         // SAFETY: a non-null insert result is a fresh writable entry owned by
         // the map.
@@ -7730,7 +7751,10 @@ pub(crate) fn is_node_property_name(uc: &Context, name: *const u8) -> bool {
     // C takes the address of the parameter itself (`&name`) as the map key.
     let name: *const u8 = name;
     let hash = crate::native::hash::hash_ptr!(name);
-    let entry: *mut *const u8 = uc.node_prop_set_view().find::<*const u8, _>(hash, &name);
+    // SAFETY: `node_prop_set` stores interned `*const u8` items compared by
+    // pointer identity; `name` is compared as a pointer value only.
+    let entry: *mut *const u8 =
+        unsafe { uc.node_prop_set_view().find::<*const u8, _>(hash, &name) };
     !entry.is_null()
 }
 
@@ -7739,8 +7763,11 @@ pub(crate) fn is_node_property_name(uc: &Context, name: *const u8) -> bool {
 pub(crate) fn load_maps(uc: &Context) -> Result<(), Fail> {
     ufbxi_check!(
         uc,
-        uc.prop_type_map_view()
-            .grow::<PropTypeName>(PROP_TYPE_NAMES.0.len()),
+        // SAFETY: `prop_type_map` stores `PropTypeName` items.
+        unsafe {
+            uc.prop_type_map_view()
+                .grow::<PropTypeName>(PROP_TYPE_NAMES.0.len())
+        },
         "ufbxi_map_grow_size((&uc->prop_type_map), sizeof(ufbxi_prop_type_name), ((sizeof(ufbxi_prop_type_names) / sizeof(*(ufbxi_prop_type_names)))))"
     );
     // C: `ufbxi_for(const ufbxi_prop_type_name, name, ufbxi_prop_type_names, ...)`
@@ -7762,9 +7789,12 @@ pub(crate) fn load_maps(uc: &Context) -> Result<(), Fail> {
         };
         ufbxi_check!(uc, !pooled.is_null(), "pooled");
         let hash: u32 = crate::native::hash::hash_ptr!(pooled);
-        let entry: *mut PropTypeName = uc
-            .prop_type_map_view()
-            .insert::<PropTypeName, _>(hash, &pooled);
+        // SAFETY: `prop_type_map` stores `PropTypeName` items keyed by interned
+        // name pointer; `pooled` is such a pointer.
+        let entry: *mut PropTypeName = unsafe {
+            uc.prop_type_map_view()
+                .insert::<PropTypeName, _>(hash, &pooled)
+        };
         ufbxi_check!(uc, !entry.is_null(), "entry");
         // SAFETY: a non-null insert result is a fresh writable entry owned by
         // the map.
