@@ -62,7 +62,7 @@ use crate::native::string_pool::{
     push_sanitized_string, push_string, push_string_place_str, SanitizedStringView,
 };
 use crate::native::thread::{thread_pool_create_task, thread_pool_run_task, Task};
-use crate::native::view::{view_read, view_write, Mut, View};
+use crate::native::view::{view_read, view_write, Const, Mut, Run, View};
 use crate::native::warnings::ufbxi_warnf;
 use crate::prelude::{slice_from_ptr, Real, String, StringView};
 
@@ -796,63 +796,58 @@ pub(crate) fn ascii_next_token(uc: &Context, token: &AsciiTokenView) -> Result<(
             // '&cr;' -> '\r'
             // '&lf;' -> '\n'
             if c == b'&' {
-                let entity: *const u8;
+                // C: `const char *entity` — the NUL-terminated literal carried
+                // as its own `(pointer, count)` run, so every byte below is a
+                // bounds-checked safe index instead of a raw walk.
+                let entity: &[u8];
                 let replacement: u8;
 
                 c = ascii_next(uc);
                 match c {
                     b'q' => {
-                        entity = b"&quot;\0".as_ptr();
+                        entity = b"&quot;\0";
                         replacement = b'"';
                     }
                     b'c' => {
-                        entity = b"&cr;\0".as_ptr();
+                        entity = b"&cr;\0";
                         replacement = b'\r';
                     }
                     b'l' => {
-                        entity = b"&lf;\0".as_ptr();
+                        entity = b"&lf;\0";
                         replacement = b'\n';
                     }
                     _ => {
                         // As '&' is not escaped in any way just map '&' -> '&'
-                        entity = b"&\0".as_ptr();
+                        entity = b"&\0";
                         replacement = b'&';
                     }
                 }
 
                 let mut step: usize = 1;
 
-                // SAFETY: `entity` addresses a static NUL-terminated entity
-                // literal (assigned in every match arm), so its first byte is
-                // readable.
-                ufbxi_dev_assert!(!entity.is_null() && unsafe { *entity } != 0);
+                ufbxi_dev_assert!(!entity.is_empty() && entity[0] != 0);
                 // `entity` is a NULL terminated string longer than a single character
                 // cppcheck-suppress arrayIndexOutOfBounds
-                // SAFETY: `entity` addresses a static NUL-terminated entity
-                // literal; `step` never passes its terminating NUL (the loop stops
-                // at the first `0`), so `entity + step` is a readable byte.
-                while unsafe { *entity.add(step) } != 0 {
-                    // SAFETY: as above — `step` still indexes a byte before the NUL.
-                    if c != unsafe { *entity.add(step) } {
+                // `step` never passes the entity's terminating NUL (the loop
+                // stops at the first `0`, which every literal ends with), so it
+                // stays inside the run on every iteration.
+                while entity[step] != 0 {
+                    if c != entity[step] {
                         break;
                     }
                     c = ascii_next(uc);
                     step += 1;
                 }
 
-                // SAFETY: `entity` addresses a static NUL-terminated entity
-                // literal; the loop left `step` at or before its terminating NUL,
-                // so `entity + step` is readable.
-                if unsafe { *entity.add(step) } == b'\0' {
+                // The loop left `step` at or before the terminating NUL.
+                if entity[step] == b'\0' {
                     // Full match: Push the replacement character
                     ascii_push_token_char(uc, token, replacement)?;
                 } else {
                     // Partial match: Push the prefix we have skipped already
                     let mut i: usize = 0;
                     while i < step {
-                        // SAFETY: `i < step` indexes a matched prefix byte of
-                        // the entity literal, before its terminating NUL.
-                        ascii_push_token_char(uc, token, unsafe { *entity.add(i) })?;
+                        ascii_push_token_char(uc, token, entity[i])?;
                         i += 1;
                     }
                 }
@@ -932,29 +927,39 @@ pub(crate) fn ascii_read_int_array(
 
     // SAFETY: `ua` is `uc`'s own live `ascii` sub-context; reads its `src` cursor
     // and `src_yield` window end.
-    let mut src: *const u8 = unsafe { (*ua).src };
+    let base: *const u8 = unsafe { (*ua).src };
     let end: *const u8 = unsafe { (*ua).src_yield };
-    let mut src_scan: *const u8 = src;
+    // C's `src`/`src_scan` cursors, carried as offsets from `base` so the scan
+    // below is bounds-checked against the window run.
+    let window_len: usize = to_size(end as isize - base as isize);
+    // SAFETY: `[src, src_yield)` is the ascii reader's readable source window
+    // (`src <= src_yield <= src_end`), so `base` addresses `window_len`
+    // initialized bytes. The window stays live, unmoved and unwritten for the
+    // scan: the loop only pushes values onto `uc`'s temp stack and never
+    // refills or retokenizes the source.
+    let window = unsafe { Run::<u8, Const>::from_const_raw_parts(base, window_len) };
+    let mut src: usize = 0;
+    let mut src_scan: usize = 0;
 
     loop {
         // Skip '\s*,\s*' between array elements. If we don't find a comma after an element
         // don't push it as we can't be 100% certain whether it's a part of the array.
-        // SAFETY: the `src_scan != end` guard short-circuits before the deref, so
-        // `src_scan` addresses a byte inside `[src, src_yield)`; the advance then
-        // lands at or before `end`.
-        while src_scan != end && unsafe { is_space(*src_scan) } {
-            src_scan = unsafe { src_scan.add(1) };
+        // The `src_scan != window_len` guard short-circuits before the read, so
+        // the index stays inside the window run; the advance then lands at or
+        // before its end.
+        while src_scan != window_len && is_space(window.copy_at(src_scan)) {
+            src_scan += 1;
         }
-        // SAFETY: as above — `src_scan != end` guards the deref.
-        if src_scan == end || unsafe { *src_scan } != b',' {
+        // As above — `src_scan != window_len` guards the read.
+        if src_scan == window_len || window.copy_at(src_scan) != b',' {
             break;
         }
-        // SAFETY: reached only when `src_scan != end`, so `+1` lands at or before
-        // `end` within the source window.
-        src_scan = unsafe { src_scan.add(1) };
-        // SAFETY: as the first scan — guarded deref, advance stays within window.
-        while src_scan != end && unsafe { is_space(*src_scan) } {
-            src_scan = unsafe { src_scan.add(1) };
+        // Reached only when `src_scan != window_len`, so `+1` lands at or before
+        // the end of the source window.
+        src_scan += 1;
+        // As the first scan — guarded read, advance stays within window.
+        while src_scan != window_len && is_space(window.copy_at(src_scan)) {
+            src_scan += 1;
         }
 
         // Found comma, commit to the position and push the previous value to the array
@@ -976,27 +981,32 @@ pub(crate) fn ascii_read_int_array(
         }
 
         // Try to parse the next value, we don't commit this until we find a comma after it above.
-        let left: usize = to_size(end as isize - src_scan as isize);
+        let left: usize = window_len - src_scan;
         if left < 32 {
             break;
         }
 
-        // SAFETY: `left >= 32` bytes are readable at `src_scan` inside the source
-        // window.
-        let input = unsafe { core::slice::from_raw_parts(src_scan, left) };
-        val = parse_int64(input, &mut src_scan);
-        if src_scan.is_null() {
+        // SAFETY: `src_scan + left == window_len`, so `base + src_scan` is inside
+        // the window and `left >= 32` bytes are readable there.
+        let input = unsafe { core::slice::from_raw_parts(base.add(src_scan), left) };
+        let mut num_end: *const u8 = core::ptr::null();
+        val = parse_int64(input, &mut num_end);
+        if num_end.is_null() {
             break;
         }
+        // `parse_int64` leaves `num_end` inside the run it was handed, so the
+        // difference is an offset within the window.
+        src_scan = to_size(num_end as isize - base as isize);
     }
 
     // Resume conventional parsing if we moved `src`.
-    // SAFETY: `ua` is `uc`'s own live `ascii` sub-context; reads its `src` cursor.
-    if src != unsafe { (*ua).src } {
-        // SAFETY: `ua` is `uc`'s own live `ascii` sub-context; `src` was derived
-        // from its window and stays inside it, a valid cursor to store back.
+    // C: `if (src != ua->src)` — `src` starts at `ua->src` and only ever moves
+    // forward within the window, so a nonzero offset is exactly that test.
+    if src != 0 {
+        // SAFETY: `ua` is `uc`'s own live `ascii` sub-context; `src` is an offset
+        // inside its window, so `base + src` is a valid cursor to store back.
         unsafe {
-            (*ua).src = src;
+            (*ua).src = base.add(src);
         }
         // `uc`'s own `ascii.token` is retokenized in place.
         ascii_next_token(uc, uc.ascii_view().token_view())?;
@@ -1291,24 +1301,31 @@ pub(crate) unsafe fn ascii_array_task_imp(t: &View<AsciiArrayTask, Mut>) -> bool
 
     let mut state: AsciiScanState = AsciiScanState::Whitespace;
     // C: `ufbxi_for(const ufbxi_ascii_span, span, t->spans, t->num_spans)`
-    // `spans`/`num_spans` describe the task's span array (fn contract), so the
-    // base and the one-past-the-end pointer are in bounds of that array.
-    let mut span: *const AsciiSpan = t.spans();
-    let span_end: *const AsciiSpan = add_ptr(t.spans() as *mut AsciiSpan, t.num_spans());
-    while span != span_end {
-        // SAFETY: `span` walks `[spans, span_end)`, so it addresses a live
-        // `AsciiSpan`; `source`/`length` describe its readable byte run, so
-        // `source + length` is that run's one-past-the-end.
-        let mut src: *const u8 = unsafe { (*span).source };
-        let end: *const u8 = unsafe { src.add((*span).length) };
+    // SAFETY: `t`'s `spans`/`num_spans` are the task's span array (this fn's own
+    // contract): `num_spans` contiguous, initialized `AsciiSpan` values that stay
+    // alive, unmoved and unwritten for this call — nothing here pushes to the
+    // span buffer. That single vouch carries the whole `ufbxi_for` walk below.
+    let spans = unsafe { Run::<AsciiSpan, Const>::from_const_raw_parts(t.spans(), t.num_spans()) };
+    let mut span_ix: usize = 0;
+    while span_ix != spans.len() {
+        // `span_ix < num_spans` (loop guard), so this reads a live span.
+        let span: AsciiSpan = spans.copy_at(span_ix);
+        span_ix += 1;
+        // The scan below walks this span's bytes by offset: `src` is C's `src`
+        // cursor as an index into the run and `end` its `source + length`.
+        // SAFETY: `source`/`length` describe the span's readable byte run (the
+        // task's span contract), alive and unwritten for this call.
+        let src_run: &[u8] = unsafe { slice_from_ptr(span.source, span.length) };
+        let end: usize = src_run.len();
+        let mut src: usize = 0;
 
         while src != end {
             // State machine for skipping whitespace and comments, potentially
             // between multiple spans.
             while src != end {
-                // SAFETY: the enclosing `src != end` guard means `src` addresses a
-                // byte inside the span's `[source, source+length)` run.
-                let c: u8 = unsafe { *src };
+                // The enclosing `src != end` guard keeps this read inside the
+                // span's `[source, source+length)` run.
+                let c: u8 = src_run[src];
                 if state == AsciiScanState::Value {
                     if buffer_len >= core::mem::size_of_val(&buffer) - 1 {
                         return false;
@@ -1323,23 +1340,23 @@ pub(crate) unsafe fn ascii_array_task_imp(t: &View<AsciiArrayTask, Mut>) -> bool
                         state = AsciiScanState::Comma;
                         buffer[buffer_len] = b',';
                         buffer_len += 1;
-                        // SAFETY: reached with `src != end`, so `+1` lands at or
-                        // before the span run end.
-                        src = unsafe { src.add(1) };
+                        // Reached with `src != end`, so `+1` lands at or before
+                        // the span run end.
+                        src += 1;
                         break;
                     } else {
                         buffer_value = true;
                         buffer[buffer_len] = c;
                         buffer_len += 1;
-                        // SAFETY: reached with `src != end`, so `+1` stays in run.
-                        src = unsafe { src.add(1) };
+                        // Reached with `src != end`, so `+1` stays in run.
+                        src += 1;
                     }
                 } else if state == AsciiScanState::Whitespace {
                     if c == b';' {
                         state = AsciiScanState::Comment;
                     } else if is_space(c) {
-                        // SAFETY: reached with `src != end`, so `+1` stays in run.
-                        src = unsafe { src.add(1) };
+                        // Reached with `src != end`, so `+1` stays in run.
+                        src += 1;
                     } else {
                         state = AsciiScanState::Value;
                     }
@@ -1347,8 +1364,8 @@ pub(crate) unsafe fn ascii_array_task_imp(t: &View<AsciiArrayTask, Mut>) -> bool
                     if c == b'\n' {
                         state = AsciiScanState::Whitespace;
                     } else {
-                        // SAFETY: reached with `src != end`, so `+1` stays in run.
-                        src = unsafe { src.add(1) };
+                        // Reached with `src != end`, so `+1` stays in run.
+                        src += 1;
                     }
                 } else if state == AsciiScanState::Comma {
                     state = AsciiScanState::Whitespace;
@@ -1373,37 +1390,27 @@ pub(crate) unsafe fn ascii_array_task_imp(t: &View<AsciiArrayTask, Mut>) -> bool
                 // If not at end, we are past the last comma, so try to find a
                 // safe range to parse.
                 if src != end {
-                    let mut parse_end: *const u8 = end;
+                    let mut parse_end: usize = end;
                     while parse_end > src {
-                        // SAFETY: `parse_end > src >= source`, so `parse_end - 1`
-                        // addresses a byte inside the span run.
-                        if unsafe { *parse_end.sub(1) } == b',' {
+                        // `parse_end > src >= 0`, so `parse_end - 1` indexes a
+                        // byte inside the span run.
+                        if src_run[parse_end - 1] == b',' {
                             break;
                         }
-                        // SAFETY: as above — `parse_end - 1` stays at or after
-                        // `src` within the run.
-                        parse_end = unsafe { parse_end.sub(1) };
+                        // As above — `parse_end - 1` stays at or after `src`
+                        // within the run.
+                        parse_end -= 1;
                     }
                     if src < parse_end {
                         // SAFETY: `t` carries the destination-run vouch the
                         // parse helper documents, forwarded from this
-                        // function's own contract; `[src, parse_end)` is a
-                        // sub-run of the span's readable bytes, minted once as
-                        // the helper's slice.
-                        let src_begin: Option<usize> = unsafe {
-                            ascii_array_task_parse(
-                                t,
-                                core::slice::from_raw_parts(
-                                    src,
-                                    to_size(parse_end as isize - src as isize),
-                                ),
-                            )
-                        };
+                        // function's own contract.
+                        let src_begin: Option<usize> =
+                            unsafe { ascii_array_task_parse(t, &src_run[src..parse_end]) };
                         match src_begin {
-                            // SAFETY: `src_begin` is an offset at or before
-                            // `parse_end - src`, so it lands inside the span's
-                            // run, derived from `src` to keep its provenance.
-                            Some(offset) => src = unsafe { src.add(offset) },
+                            // `src_begin` is an offset at or before
+                            // `parse_end - src`, so it lands inside the run.
+                            Some(offset) => src += offset,
                             None => return false,
                         }
                     }
@@ -1413,10 +1420,6 @@ pub(crate) unsafe fn ascii_array_task_imp(t: &View<AsciiArrayTask, Mut>) -> bool
                 buffer_value = false;
             }
         }
-
-        // SAFETY: `span` is in `[spans, span_end)`, so `+1` lands at or before
-        // the one-past-the-end `span_end`.
-        span = unsafe { span.add(1) };
     }
 
     if t.offset() != t.arr_size() {
@@ -1481,32 +1484,42 @@ pub(crate) fn ascii_read_float_array(
 
     // SAFETY: `ua` is `uc`'s own live `ascii` sub-context; reads its `src` cursor
     // and `src_yield` window end.
-    let mut src: *const u8 = unsafe { (*ua).src };
+    let base: *const u8 = unsafe { (*ua).src };
     let end: *const u8 = unsafe { (*ua).src_yield };
+    // C's `src`/`src_scan` cursors, carried as offsets from `base` so the scan
+    // below is bounds-checked against the window run.
+    let window_len: usize = to_size(end as isize - base as isize);
+    // SAFETY: `[src, src_yield)` is the ascii reader's readable source window
+    // (`src <= src_yield <= src_end`), so `base` addresses `window_len`
+    // initialized bytes. The window stays live, unmoved and unwritten for the
+    // scan: the loop only pushes values onto `uc`'s temp stack and never
+    // refills or retokenizes the source.
+    let window = unsafe { Run::<u8, Const>::from_const_raw_parts(base, window_len) };
 
     let parse_flags: u32 = uc.double_parse_flags();
 
     let initial_items: usize = uc.tmp_stack_view().num_items();
-    let mut src_scan: *const u8 = src;
+    let mut src: usize = 0;
+    let mut src_scan: usize = 0;
     loop {
         // Skip '\s*,\s*' between array elements. If we don't find a comma after an element
         // don't push it as we can't be 100% certain whether it's a part of the array.
-        // SAFETY: the `src_scan != end` guard short-circuits before the deref, so
-        // `src_scan` addresses a byte inside `[src, src_yield)`; the advance then
-        // lands at or before `end`.
-        while src_scan != end && unsafe { is_space(*src_scan) } {
-            src_scan = unsafe { src_scan.add(1) };
+        // The `src_scan != window_len` guard short-circuits before the read, so
+        // the index stays inside the window run; the advance then lands at or
+        // before its end.
+        while src_scan != window_len && is_space(window.copy_at(src_scan)) {
+            src_scan += 1;
         }
-        // SAFETY: as above — `src_scan != end` guards the deref.
-        if src_scan == end || unsafe { *src_scan } != b',' {
+        // As above — `src_scan != window_len` guards the read.
+        if src_scan == window_len || window.copy_at(src_scan) != b',' {
             break;
         }
-        // SAFETY: reached only when `src_scan != end`, so `+1` lands at or before
-        // `end` within the source window.
-        src_scan = unsafe { src_scan.add(1) };
-        // SAFETY: as the first scan — guarded deref, advance stays within window.
-        while src_scan != end && unsafe { is_space(*src_scan) } {
-            src_scan = unsafe { src_scan.add(1) };
+        // Reached only when `src_scan != window_len`, so `+1` lands at or before
+        // the end of the source window.
+        src_scan += 1;
+        // As the first scan — guarded read, advance stays within window.
+        while src_scan != window_len && is_space(window.copy_at(src_scan)) {
+            src_scan += 1;
         }
 
         // Found comma, commit to the position and push the previous value to the array
@@ -1529,27 +1542,30 @@ pub(crate) fn ascii_read_float_array(
 
         // Try to parse the next value, we don't commit this until we find a comma after it above.
         let mut num_end: *const u8 = core::ptr::null();
-        let left: usize = to_size(end as isize - src_scan as isize);
-        // SAFETY: `src_scan` is a non-null cursor in the source buffer and
-        // `left` is its readable tail length. `from_raw_parts` preserves the
-        // cursor as the base of the zero-length one-past span, which the C-style
-        // end pointer below must retain.
-        let input = unsafe { core::slice::from_raw_parts(src_scan, left) };
+        let left: usize = window_len - src_scan;
+        // SAFETY: `src_scan + left == window_len`, so `base + src_scan` is a
+        // cursor at or inside the window and `left` is its readable tail length.
+        // `from_raw_parts` preserves that cursor as the base of the zero-length
+        // one-past span, which the C-style end pointer below must retain.
+        let input = unsafe { core::slice::from_raw_parts(base.add(src_scan), left) };
         val = parse_double(input, &mut num_end, parse_flags);
-        if num_end.is_null() || num_end == src_scan || num_end >= end {
+        if num_end.is_null() || num_end == input.as_ptr() || num_end >= end {
             break;
         }
 
-        src_scan = num_end;
+        // `num_end` is past `base + src_scan` and strictly before `end` (both
+        // checked above), so the difference is an offset within the window.
+        src_scan = to_size(num_end as isize - base as isize);
     }
 
     // Resume conventional parsing if we moved `src`.
-    // SAFETY: `ua` is `uc`'s own live `ascii` sub-context; reads its `src` cursor.
-    if src != unsafe { (*ua).src } {
-        // SAFETY: `ua` is `uc`'s own live `ascii` sub-context; `src` stays inside
-        // its window, a valid cursor to store back.
+    // C: `if (src != ua->src)` — `src` starts at `ua->src` and only ever moves
+    // forward within the window, so a nonzero offset is exactly that test.
+    if src != 0 {
+        // SAFETY: `ua` is `uc`'s own live `ascii` sub-context; `src` is an offset
+        // inside its window, so `base + src` is a valid cursor to store back.
         unsafe {
-            (*ua).src = src;
+            (*ua).src = base.add(src);
         }
         // `uc`'s own `ascii.token` is retokenized in place.
         ascii_next_token(uc, uc.ascii_view().token_view())?;
@@ -1863,7 +1879,14 @@ fn ascii_parse_node_rec(
     // only the `[0, num_values)` prefix written in the loop below is ever read
     // (by the `ufbxi_push_copy` at the end).
     let mut vals = core::mem::MaybeUninit::<[Value; MAX_NON_ARRAY_VALUES]>::uninit();
-    let vals: *mut Value = vals.as_mut_ptr() as *mut Value;
+    // SAFETY: `vals.as_mut_ptr()` is this frame's own array storage — exactly
+    // `MAX_NON_ARRAY_VALUES` contiguous, write-capable `Value` slots that stay
+    // alive and unmoved for the rest of the body, with nothing else naming them
+    // (the local is shadowed here). The slots may still be uninitialized, which
+    // the run's `MaybeUninit` element storage tolerates.
+    let vals = unsafe {
+        Run::<Value, Mut>::from_raw_parts(vals.as_mut_ptr() as *mut Value, MAX_NON_ARRAY_VALUES)
+    };
 
     let mut deferred_size: u32 = 0;
 
@@ -1940,9 +1963,9 @@ fn ascii_parse_node_rec(
                 }
             } else if (num_values as usize) < MAX_NON_ARRAY_VALUES {
                 type_mask |= (ValueType::String as u32) << (num_values * 2);
-                // SAFETY: `num_values < MAX_NON_ARRAY_VALUES` (branch guard), so
-                // `vals + num_values` is a live slot of the local `vals` array.
-                let v: *mut Value = unsafe { vals.add(num_values as usize) };
+                // `num_values < MAX_NON_ARRAY_VALUES` (branch guard), so this
+                // indexes a live slot of the local `vals` run.
+                let v: *mut Value = vals.at(num_values as usize).get();
 
                 // SAFETY: `tok` addresses `ua`'s live `prev_token`; reads its
                 // `str_data`/`str_len`.
@@ -2018,9 +2041,9 @@ fn ascii_parse_node_rec(
 
                     if (num_values as usize) < MAX_NON_ARRAY_VALUES {
                         type_mask |= (ValueType::Number as u32) << (num_values * 2);
-                        // SAFETY: `num_values < MAX_NON_ARRAY_VALUES`, so
-                        // `vals + num_values` is a live slot of the local array.
-                        let v: *mut Value = unsafe { vals.add(num_values as usize) };
+                        // `num_values < MAX_NON_ARRAY_VALUES`, so this indexes
+                        // a live slot of the local `vals` run.
+                        let v: *mut Value = vals.at(num_values as usize).get();
                         // False positive: `v->f` and `v->i` do not overlap in the union.
                         // cppcheck-suppress overlappingWriteUnion
                         // C: `v->f = (double)(v->i = val) * (double)fsign;`
@@ -2095,9 +2118,9 @@ fn ascii_parse_node_rec(
                 0 => {
                     if (num_values as usize) < MAX_NON_ARRAY_VALUES {
                         type_mask |= (ValueType::Number as u32) << (num_values * 2);
-                        // SAFETY: `num_values < MAX_NON_ARRAY_VALUES`, so
-                        // `vals + num_values` is a live slot of the local array.
-                        let v: *mut Value = unsafe { vals.add(num_values as usize) };
+                        // `num_values < MAX_NON_ARRAY_VALUES`, so this indexes
+                        // a live slot of the local `vals` run.
+                        let v: *mut Value = vals.at(num_values as usize).get();
                         // False positive: `v->f` and `v->i` do not overlap in the union.
                         // cppcheck-suppress overlappingWriteUnion
                         // C: `v->i = ufbxi_f64_to_i64(v->f = val);`
@@ -2211,9 +2234,9 @@ fn ascii_parse_node_rec(
                 0 => {
                     if (num_values as usize) < MAX_NON_ARRAY_VALUES {
                         type_mask |= (ValueType::Number as u32) << (num_values * 2);
-                        // SAFETY: `num_values < MAX_NON_ARRAY_VALUES`, so
-                        // `vals + num_values` is a live slot of the local array.
-                        let v: *mut Value = unsafe { vals.add(num_values as usize) };
+                        // `num_values < MAX_NON_ARRAY_VALUES`, so this indexes
+                        // a live slot of the local `vals` run.
+                        let v: *mut Value = vals.at(num_values as usize).get();
                         // False positive: `v->f` and `v->i` do not overlap in the union.
                         // cppcheck-suppress overlappingWriteUnion
                         // SAFETY: `v` is a live `vals` slot; writes its `num` union.
@@ -2503,7 +2526,8 @@ fn ascii_parse_node_rec(
         // buf) as its `content.vals`.
         unsafe {
             (*node).value_type_mask = type_mask as u16;
-            (*node).content.vals = tmp_buf.push_copy_raw::<Value>(num_values as usize, vals);
+            (*node).content.vals =
+                tmp_buf.push_copy_raw::<Value>(num_values as usize, vals.as_mut_ptr());
         }
         // SAFETY: `node` is the live pushed slot; reads back its `content.vals`.
         ufbxi_check!(uc, !unsafe { (*node).content.vals }.is_null(), "node->vals");
