@@ -81,6 +81,14 @@ impl<M: Mode> View<SubdivideInput, M> {
     }
 }
 
+#[cfg(feature = "subdivision")]
+impl View<SubdivideInput> {
+    #[inline(always)]
+    pub(crate) fn set_weight(&self, weight: Real) {
+        view_write!(self, weight, weight)
+    }
+}
+
 // ufbx.c:28830 `typedef int ufbxi_subdivide_sum_fn(void *user, void *output,
 // const ufbxi_subdivide_input *inputs, size_t num_inputs);`
 // C passes function designators (`&ufbxi_subdivide_sum_vec3`) — fn pointers,
@@ -1753,6 +1761,19 @@ pub(crate) fn subdivide_layer(
                 start = NO_INDEX;
             }
 
+            // The vertex walk is over: no `grow_array` runs between here and
+            // this vertex's summer call, so one carrier covers the whole
+            // weighting phase below.
+            // SAFETY: `inputs` names `sc`'s input array as of the last refresh
+            // and the walk above populated its first `num_inputs` records — the
+            // same per-slot liveness the raw `inputs.add(i)` weight writes
+            // asserted individually. The array is not grown or freed again
+            // before the summer call, so the run stays live and unmoved. The one
+            // upstream path that keeps a pre-grow local (the `cur == end_edge`
+            // grow above) is mirrored verbatim and carries its exposure here
+            // too.
+            let inputs_run = unsafe { Run::<SubdivideInput>::from_raw_parts(inputs, num_inputs) };
+
             // Weights for various subdivision masks
             let fe_weight: Real = 1.0 / (valence.wrapping_mul(valence) as Real);
             let v_weight: Real = (valence.wrapping_sub(2) as Real) / (valence as Real);
@@ -1765,11 +1786,13 @@ pub(crate) fn subdivide_layer(
                 || non_manifold
             {
                 // Corner: Copy as-is
-                // SAFETY: `inputs` holds at least one live slot.
-                unsafe {
-                    (*inputs.add(0)).data = v0 as *const c_void;
-                    (*inputs.add(0)).weight = 1.0;
-                }
+                inputs_run.write_at(
+                    0,
+                    SubdivideInput {
+                        data: v0 as *const c_void,
+                        weight: 1.0,
+                    },
+                );
                 num_inputs = 1;
             } else if num_crease == 2 {
                 // Boundary: Interpolate edge
@@ -1784,33 +1807,29 @@ pub(crate) fn subdivide_layer(
                     total_crease = 1.0;
                 }
 
-                // SAFETY: `inputs` holds at least one live slot.
-                unsafe {
-                    (*inputs.add(0)).weight = v_weight * (1.0 - total_crease) + 0.75 * total_crease;
-                }
+                inputs_run
+                    .at(0)
+                    .set_weight(v_weight * (1.0 - total_crease) + 0.75 * total_crease);
                 let few: Real = fe_weight * (1.0 - total_crease);
                 let mut i: usize = 1;
                 while i < num_inputs {
-                    // SAFETY: `i < num_inputs`, an in-range live `inputs` slot.
-                    unsafe { (*inputs.add(i)).weight = few };
+                    inputs_run.at(i).set_weight(few);
                     i += 1;
                 }
 
                 // Add weight to the creased edges
-                // SAFETY: `crease_input_indices[0]`/`[1]` were recorded as input
-                // slot indices below `num_inputs`, so both are live `inputs` slots.
-                unsafe {
-                    (*inputs.add(crease_input_indices[0])).weight += 0.125 * total_crease;
-                    (*inputs.add(crease_input_indices[1])).weight += 0.125 * total_crease;
-                }
+                // `crease_input_indices[0]`/`[1]` were recorded as input slot
+                // indices below `num_inputs`, so both are inside the run.
+                let crease_input_0 = inputs_run.at(crease_input_indices[0]);
+                crease_input_0.set_weight(crease_input_0.weight() + 0.125 * total_crease);
+                let crease_input_1 = inputs_run.at(crease_input_indices[1]);
+                crease_input_1.set_weight(crease_input_1.weight() + 0.125 * total_crease);
             } else {
                 // Regular: Weighted sum with the accumulated edge/face points
-                // SAFETY: `inputs` holds at least one live slot.
-                unsafe { (*inputs.add(0)).weight = v_weight };
+                inputs_run.at(0).set_weight(v_weight);
                 let mut i: usize = 1;
                 while i < num_inputs {
-                    // SAFETY: `i < num_inputs`, an in-range live `inputs` slot.
-                    unsafe { (*inputs.add(i)).weight = fe_weight };
+                    inputs_run.at(i).set_weight(fe_weight);
                     i += 1;
                 }
             }
@@ -1824,14 +1843,12 @@ pub(crate) fn subdivide_layer(
                     }
 
                     let iv: Real = 1.0 - v;
-                    // SAFETY: `inputs` holds at least one live slot.
-                    unsafe {
-                        (*inputs.add(0)).weight = 1.0 * v + ((*inputs.add(0)).weight) * iv;
-                    }
+                    let input_0 = inputs_run.at(0);
+                    input_0.set_weight(1.0 * v + (input_0.weight()) * iv);
                     let mut i: usize = 1;
                     while i < num_inputs {
-                        // SAFETY: `i < num_inputs`, an in-range live `inputs` slot.
-                        unsafe { (*inputs.add(i)).weight *= iv };
+                        let input_i = inputs_run.at(i);
+                        input_i.set_weight(input_i.weight() * iv);
                         i += 1;
                     }
                 }
@@ -1843,8 +1860,7 @@ pub(crate) fn subdivide_layer(
                 let mut total_weight: Real = 0.0;
                 let mut i: usize = 0;
                 while i < num_inputs {
-                    // SAFETY: `i < num_inputs`, an in-range live `inputs` slot.
-                    total_weight += unsafe { (*inputs.add(i)).weight };
+                    total_weight += inputs_run.at(i).weight();
                     i += 1;
                 }
                 // C subtracts in `ufbx_real`, then `ufbx_fabs` (double-only)
