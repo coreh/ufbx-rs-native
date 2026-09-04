@@ -22,7 +22,7 @@ use crate::native::allocator::{
 #[cfg(feature = "regression")]
 use crate::native::error::ufbxi_check_return_err_msg;
 use crate::native::platform::{ufbx_assert, ufbxi_regression_assert};
-use crate::native::view::{view_read, view_write, View};
+use crate::native::view::{view_read, view_write, Run, View};
 use core::marker::PhantomData;
 
 // ufbx.c:57 `#define UFBXI_HUGE_MAX_SCAN 16` (no UFBX_REGRESSION override)
@@ -763,21 +763,33 @@ pub(crate) fn push_size(view: &BufView, size: usize, n: usize) -> *mut c_void {
         if total < usize::MAX - 16 && total + 16 <= unsafe { (*b).size }.wrapping_sub(pos) {
             // SAFETY: `b` is the live `Buf`; `chunks[0]` is its live active
             // chunk (`pos != b.pos` means `b.pos` is unaligned hence nonzero,
-            // so a prior push installed `chunks[0]`), so
-            // `chunk_data(chunk).add(pos)` lands inside its `data` array — `pos`
-            // is 16-aligned and `pos + 16 + total <= b.size` by the check above.
-            // `padding` addresses that in-bounds region, written as a
-            // `BufPadding` record, then `+16` skips past it to the returned
-            // block.
+            // so a prior push installed `chunks[0]`).
             let chunk = unsafe { (*b).chunks[0] };
-            let padding = unsafe { chunk_data(chunk).add(pos) } as *mut BufPadding;
+            // C reserves `16 + total` bytes at `pos`: the `ufbxi_buf_padding`
+            // record first, then the block it returns. Carrying that span as
+            // one run makes both the record placement and C's `+ 16` skip
+            // bounds-checked projections of it.
+            // SAFETY: `chunk_data(chunk).add(pos)` lands inside the active
+            // chunk's `data` array — `pos` is 16-aligned and `pos + 16 + total
+            // <= b.size == chunk->size` by the check above (which also rules
+            // out the `16 + total` overflow) — so the run covers `16 + total`
+            // allocated, write-capable bytes of that array. Nothing here
+            // allocates from or frees the buffer, so the chunk stays live and
+            // unmoved for the run's whole use.
+            let region =
+                unsafe { Run::<u8>::from_raw_parts(chunk_data(chunk).add(pos), 16 + total) };
+            let padding = region.subrun(0, 16).as_mut_ptr() as *mut BufPadding;
+            // SAFETY: `padding` is the run's first 16 bytes, `BufPadding`-sized
+            // (const-asserted above) and 8-aligned (`chunk_data` is 8-aligned
+            // and `pos` is 16-aligned); `b`/`chunk` are the live `Buf` and its
+            // active chunk.
             unsafe {
                 (*padding).original_pos = (*b).pos;
                 (*padding).prev_padding = (*chunk).padding_pos;
                 (*chunk).padding_pos = pos + 16 + 1;
                 (*b).pos = pos + 16 + total;
             }
-            (unsafe { (padding as *mut u8).add(16) }) as *mut c_void
+            region.subrun(16, total).as_mut_ptr() as *mut c_void
         } else {
             push_size_new_block(view, total)
         }
@@ -1080,25 +1092,32 @@ pub(crate) unsafe fn pop_size(view: &BufView, size: usize, n: usize, dst: *mut c
         unsafe { (*b).num_items = (*b).num_items.wrapping_sub(n) };
     }
 
-    let mut ptr = dst as *mut u8;
+    let ptr = dst as *mut u8;
     let mut bytes_left = size.wrapping_mul(n);
 
     // We've already pushed this, it better not overflow
     ufbx_assert!(!does_overflow(bytes_left, size, n));
 
     if !ptr.is_null() {
-        // SAFETY: `dst` is the caller's destination for `size * n == bytes_left`
-        // bytes (the pop contract); advancing to its one-past-the-end so the
-        // chunk walk can fill it back-to-front.
-        ptr = unsafe { ptr.add(bytes_left) };
+        // C walks a retreating `ptr` from the destination's one-past-the-end,
+        // filling it back-to-front. Carrying the destination as one run turns
+        // that cursor into a bounds-checked offset: C keeps `ptr - dst ==
+        // bytes_left` on every iteration, so a copy of `k` bytes fills exactly
+        // `[bytes_left - k, bytes_left)` of the run.
+        // SAFETY: `ptr` is non-null (checked) and, by this fn's `dst`
+        // obligation, a writable run of exactly `size * n == bytes_left`
+        // bytes. It is the caller's own destination — nothing in this fn
+        // allocates from or frees it — so it stays live and unmoved for the
+        // whole walk below.
+        let out = unsafe { Run::<u8>::from_raw_parts(ptr, bytes_left) };
         // SAFETY (every access in this copying pop loop): `b` is the live `Buf`;
         // `chunk` starts at its active `chunks[0]` and walks the `->prev` chain,
         // each a live `BufChunk` whose `data` array holds `pushed_pos`/`pos`
         // valid bytes; `chunk_data(chunk).add(pos)` reads inside that array, and
-        // `ptr` retreats within the caller's `bytes_left`-byte destination as
-        // bytes are consumed, so each `copy_nonoverlapping` stays in bounds of
-        // two distinct objects. Over-pop dereferencing a null `chunk->prev`
-        // matches C, guarded only by the `num_items` assert above.
+        // the destination of each `copy_nonoverlapping` is a checked sub-run of
+        // `out`, so every copy stays in bounds of two distinct objects. Over-pop
+        // dereferencing a null `chunk->prev` matches C, guarded only by the
+        // `num_items` assert above.
         let mut pos = unsafe { (*b).pos };
         let mut chunk = unsafe { (*b).chunks[0] };
         loop {
@@ -1108,18 +1127,26 @@ pub(crate) unsafe fn pop_size(view: &BufView, size: usize, n: usize, dst: *mut c
                 if !peek {
                     unsafe { (*b).pos = pos };
                 }
-                ptr = unsafe { ptr.sub(bytes_left) };
+                // C: `ptr -= bytes_left` — the remaining bytes are the run's
+                // leading `bytes_left`.
                 if bytes_left > 0 {
+                    let dst_ptr = out.subrun(0, bytes_left).as_mut_ptr();
                     unsafe {
-                        core::ptr::copy_nonoverlapping(chunk_data(chunk).add(pos), ptr, bytes_left);
+                        core::ptr::copy_nonoverlapping(
+                            chunk_data(chunk).add(pos),
+                            dst_ptr,
+                            bytes_left,
+                        );
                     }
                 }
                 break;
             } else {
                 // Pop the whole chunk
-                ptr = unsafe { ptr.sub(pos) };
+                // C: `ptr -= chunk_pos; bytes_left -= chunk_pos;` — this
+                // chunk's bytes land at the new `bytes_left` offset.
                 bytes_left -= pos;
-                unsafe { core::ptr::copy_nonoverlapping(chunk_data(chunk), ptr, pos) };
+                let dst_ptr = out.subrun(bytes_left, pos).as_mut_ptr();
+                unsafe { core::ptr::copy_nonoverlapping(chunk_data(chunk), dst_ptr, pos) };
                 // C-parity: on over-pop `chunk->prev` may be NULL and C
                 // dereferences it (crash), guarded only by the num_items
                 // assert above — do not add a null check here.
