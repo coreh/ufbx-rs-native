@@ -38,8 +38,8 @@ use crate::native::io::{
 use crate::native::parse::{
     array_type_size, get_read_offset, is_array_node, is_raw_string, normalize_array_type,
     update_parse_state, ArrayInfo, Context, InnerContext, Node, ParseState, Value, ValueArray,
-    ValueType, ARRAY_FLAG_PAD_BEGIN, ARRAY_FLAG_RESULT, ARRAY_FLAG_TMP_BUF, MAX_NODE_DEPTH,
-    MAX_NON_ARRAY_VALUES,
+    ValueNum, ValueType, ARRAY_FLAG_PAD_BEGIN, ARRAY_FLAG_RESULT, ARRAY_FLAG_TMP_BUF,
+    MAX_NODE_DEPTH, MAX_NON_ARRAY_VALUES,
 };
 use crate::native::platform::{
     f64_to_i32, f64_to_i64, min32, read_f32, read_f64, read_i16, read_i32, read_i64, read_u32,
@@ -49,6 +49,7 @@ use crate::native::string_pool::{
     push_sanitized_string, push_string, push_string_place_str, SanitizedStringView,
 };
 use crate::native::thread::{thread_pool_create_task, thread_pool_run_task, Task};
+use crate::native::view::Run;
 use crate::prelude::{slice_from_ptr, String, StringView};
 
 // -- Binary parsing
@@ -305,19 +306,32 @@ pub(crate) unsafe fn binary_convert_array(
         );
     }
 
+    // The one source run every arm below walks: `size` elements of `src_type`,
+    // C's `val` / `val_end` pair.
+    // SAFETY: `src` addresses `size` `src_type` elements — the caller's
+    // contract for the untouched pointer, and for the byte-swapped paths above
+    // the `swap_endian` copy in `uc`'s own `swap_arr`, which that call sized to
+    // the same `size * array_type_size(src_type)` bytes. The span is read-only
+    // and the buffer stays alive and unwritten for the conversion, which
+    // neither allocates nor reads further input.
+    let src_bytes: &[u8] =
+        unsafe { slice_from_ptr(src as *const u8, size * array_type_size(src_type)) };
+
     // C: the two `#define`s below live inside the `switch`; in Rust they must
     // be declared before use. Defined here (inside the fn) so that hygiene lets
-    // their bodies see the locals `src`, `dst` and `size`, exactly as the C
-    // macros see the enclosing scope. `m_expr` reads the loop cursor, so the
-    // cursor's identifier is threaded through as `$val`.
+    // their bodies see the local `src_bytes`, exactly as the C macros see the
+    // enclosing scope. `m_expr` reads the loop cursor, so the cursor's
+    // identifier is threaded through as `$val`; the destination is the
+    // `$m_run` carrier minted once per `dst_type` group below, which replaces
+    // C's `*d++` walk with a bounds-checked store.
     macro_rules! ufbxi_convert_loop_fast {
-        ($m_dst:ty, $m_cast:ident, $m_size:expr, $val:ident, $m_expr:expr) => {{
-            let mut $val: &[u8] = slice_from_ptr(src as *const u8, size * $m_size);
-            let mut d: *mut $m_dst = dst as *mut $m_dst;
-            while !$val.is_empty() {
-                *d = $m_cast!($m_expr);
-                d = d.add(1);
-                $val = &$val[$m_size..];
+        ($m_run:expr, $m_cast:ident, $m_size:expr, $val:ident, $m_expr:expr) => {{
+            // C: `while (val != val_end) { *d++ = m_cast(m_expr); val += m_size; }`
+            // — `src_bytes` spans exactly `size * m_size` bytes, so this walks
+            // the same `size` steps in the same order and the `i`-th step
+            // stores to the `i`-th destination slot, as C's `d++` does.
+            for (i, $val) in src_bytes.chunks_exact($m_size).enumerate() {
+                $m_run.write_at(i, $m_cast!($m_expr));
             }
         }};
     }
@@ -326,179 +340,181 @@ pub(crate) unsafe fn binary_convert_array(
     // the loop — an optimizer pragma with no Rust analogue. Kept as a separate
     // macro for call-site diff parity.
     macro_rules! ufbxi_convert_loop_slow {
-        ($m_dst:ty, $m_cast:ident, $m_size:expr, $val:ident, $m_expr:expr) => {{
-            let mut $val: &[u8] = slice_from_ptr(src as *const u8, size * $m_size);
-            let mut d: *mut $m_dst = dst as *mut $m_dst;
-            while !$val.is_empty() {
-                *d = $m_cast!($m_expr);
-                d = d.add(1);
-                $val = &$val[$m_size..];
+        ($m_run:expr, $m_cast:ident, $m_size:expr, $val:ident, $m_expr:expr) => {{
+            for (i, $val) in src_bytes.chunks_exact($m_size).enumerate() {
+                $m_run.write_at(i, $m_cast!($m_expr));
             }
         }};
     }
 
     match dst_type {
-        b'c' => match src_type {
-            // case 'c': ufbxi_convert_loop_fast(char, (char), 1, *val != 0); break;
-            // SAFETY: the convert loop walks exactly `size` elements, reading
-            // `$m_size` bytes per step from `src` (which the caller guarantees
-            // holds `size` `src_type` elements) and writing one `$m_dst` per step
-            // to `dst` (which holds `size` `dst_type` elements).
-            b'i' => unsafe { ufbxi_convert_loop_slow!(u8, ufbxi_cast_u8, 4, val, read_i32(val)) },
-            // SAFETY: as above.
-            b'l' => unsafe { ufbxi_convert_loop_slow!(u8, ufbxi_cast_u8, 8, val, read_i64(val)) },
-            // SAFETY: as above.
-            b'f' => unsafe { ufbxi_convert_loop_slow!(u8, ufbxi_cast_u8, 4, val, read_f32(val)) },
-            // SAFETY: as above.
-            b'd' => unsafe { ufbxi_convert_loop_slow!(u8, ufbxi_cast_u8, 8, val, read_f64(val)) },
-            _ => {
-                if !maybe_uc.is_null() {
-                    ufbxi_fail_err!(
-                        // SAFETY: `maybe_uc` is non-null here (just checked) and
-                        // points to a live `InnerContext` (caller contract);
-                        // `&raw mut` projects its `error` field for the view.
-                        unsafe {
-                            crate::native::error::ErrorView::from_ptr(&raw mut (*maybe_uc).error)
-                        },
-                        "Bad array source type"
-                    );
+        b'c' => {
+            // SAFETY: `dst` addresses `size` writable slots of the destination
+            // type, correctly aligned for it (caller contract), staying alive and
+            // unmoved for this call — the conversion below neither allocates nor
+            // frees. This single vouch replaces C's `*d++` walk: every store
+            // through the run is bounds-checked against `size`.
+            let d = unsafe { Run::<u8>::from_raw_parts(dst as *mut u8, size) };
+            match src_type {
+                // case 'c': ufbxi_convert_loop_fast(char, (char), 1, *val != 0); break;
+                b'i' => ufbxi_convert_loop_slow!(d, ufbxi_cast_u8, 4, val, read_i32(val)),
+                b'l' => ufbxi_convert_loop_slow!(d, ufbxi_cast_u8, 8, val, read_i64(val)),
+                b'f' => ufbxi_convert_loop_slow!(d, ufbxi_cast_u8, 4, val, read_f32(val)),
+                b'd' => ufbxi_convert_loop_slow!(d, ufbxi_cast_u8, 8, val, read_f64(val)),
+                _ => {
+                    if !maybe_uc.is_null() {
+                        ufbxi_fail_err!(
+                            // SAFETY: `maybe_uc` is non-null here (just checked) and
+                            // points to a live `InnerContext` (caller contract);
+                            // `&raw mut` projects its `error` field for the view.
+                            unsafe {
+                                crate::native::error::ErrorView::from_ptr(
+                                    &raw mut (*maybe_uc).error,
+                                )
+                            },
+                            "Bad array source type"
+                        );
+                    }
+                    return Err(Fail::unrecorded());
                 }
-                return Err(Fail::unrecorded());
             }
-        },
+        }
 
-        b'i' => match src_type {
-            // C-parity: `*val` is `char`, which is SIGNED on this port's targets
-            // (x86-64 SysV and Apple AArch64) — the read sign-extends. This is the
-            // documented exception to the "`char` → `u8` everywhere" storage rule
-            // (PORTING.md "Integer semantics", the `char` (value) row): the first
-            // source byte is interpreted as `i8`, preserving sign extension for
-            // bytes >= 0x80.
-            // SAFETY: the convert loop walks exactly `size` elements, reading
-            // `$m_size` bytes per step from `src` (caller-guaranteed `size`
-            // `src_type` elements) and writing one `$m_dst` per step to `dst`
-            // (`size` `dst_type` elements). `val[0]` is the in-bounds source byte.
-            b'c' => unsafe { ufbxi_convert_loop_slow!(i32, ufbxi_cast_i32, 1, val, val[0] as i8) },
-            // case 'i': ufbxi_convert_loop_slow(int32_t, (int32_t), 4, ufbxi_read_i32(val)); break;
-            // SAFETY: as above.
-            b'l' => unsafe { ufbxi_convert_loop_slow!(i32, ufbxi_cast_i32, 8, val, read_i64(val)) },
-            // SAFETY: as above.
-            b'f' => unsafe {
-                ufbxi_convert_loop_slow!(i32, ufbxi_cast_f64_to_i32, 4, val, read_f32(val))
-            },
-            // SAFETY: as above.
-            b'd' => unsafe {
-                ufbxi_convert_loop_slow!(i32, ufbxi_cast_f64_to_i32, 8, val, read_f64(val))
-            },
-            _ => {
-                if !maybe_uc.is_null() {
-                    ufbxi_fail_err!(
-                        // SAFETY: `maybe_uc` is non-null here (just checked) and
-                        // points to a live `InnerContext` (caller contract);
-                        // `&raw mut` projects its `error` field for the view.
-                        unsafe {
-                            crate::native::error::ErrorView::from_ptr(&raw mut (*maybe_uc).error)
-                        },
-                        "Bad array source type"
-                    );
+        b'i' => {
+            // SAFETY: `dst` addresses `size` writable slots of the destination
+            // type, correctly aligned for it (caller contract), staying alive and
+            // unmoved for this call — the conversion below neither allocates nor
+            // frees. This single vouch replaces C's `*d++` walk: every store
+            // through the run is bounds-checked against `size`.
+            let d = unsafe { Run::<i32>::from_raw_parts(dst as *mut i32, size) };
+            match src_type {
+                // C-parity: `*val` is `char`, which is SIGNED on this port's targets
+                // (x86-64 SysV and Apple AArch64) — the read sign-extends. This is the
+                // documented exception to the "`char` → `u8` everywhere" storage rule
+                // (PORTING.md "Integer semantics", the `char` (value) row): the first
+                // source byte is interpreted as `i8`, preserving sign extension for
+                // bytes >= 0x80.
+                b'c' => ufbxi_convert_loop_slow!(d, ufbxi_cast_i32, 1, val, val[0] as i8),
+                // case 'i': ufbxi_convert_loop_slow(int32_t, (int32_t), 4, ufbxi_read_i32(val)); break;
+                b'l' => ufbxi_convert_loop_slow!(d, ufbxi_cast_i32, 8, val, read_i64(val)),
+                b'f' => ufbxi_convert_loop_slow!(d, ufbxi_cast_f64_to_i32, 4, val, read_f32(val)),
+                b'd' => ufbxi_convert_loop_slow!(d, ufbxi_cast_f64_to_i32, 8, val, read_f64(val)),
+                _ => {
+                    if !maybe_uc.is_null() {
+                        ufbxi_fail_err!(
+                            // SAFETY: `maybe_uc` is non-null here (just checked) and
+                            // points to a live `InnerContext` (caller contract);
+                            // `&raw mut` projects its `error` field for the view.
+                            unsafe {
+                                crate::native::error::ErrorView::from_ptr(
+                                    &raw mut (*maybe_uc).error,
+                                )
+                            },
+                            "Bad array source type"
+                        );
+                    }
+                    return Err(Fail::unrecorded());
                 }
-                return Err(Fail::unrecorded());
             }
-        },
+        }
 
-        b'l' => match src_type {
-            // C-parity: signed `char` deref, see the `dst_type == 'i'` arm above.
-            // SAFETY: the convert loop walks exactly `size` elements, reading
-            // `$m_size` bytes per step from `src` (caller-guaranteed `size`
-            // `src_type` elements) and writing one `$m_dst` per step to `dst`
-            // (`size` `dst_type` elements). `val[0]` is the in-bounds source byte.
-            b'c' => unsafe { ufbxi_convert_loop_slow!(i64, ufbxi_cast_i64, 1, val, val[0] as i8) },
-            // SAFETY: as above.
-            b'i' => unsafe { ufbxi_convert_loop_slow!(i64, ufbxi_cast_i64, 4, val, read_i32(val)) },
-            // case 'l': ufbxi_convert_loop_slow(int64_t, (int64_t), 8, ufbxi_read_i64(val)); break;
-            // SAFETY: as above.
-            b'f' => unsafe {
-                ufbxi_convert_loop_slow!(i64, ufbxi_cast_f64_to_i64, 4, val, read_f32(val))
-            },
-            // SAFETY: as above.
-            b'd' => unsafe {
-                ufbxi_convert_loop_slow!(i64, ufbxi_cast_f64_to_i64, 8, val, read_f64(val))
-            },
-            _ => {
-                if !maybe_uc.is_null() {
-                    ufbxi_fail_err!(
-                        // SAFETY: `maybe_uc` is non-null here (just checked) and
-                        // points to a live `InnerContext` (caller contract);
-                        // `&raw mut` projects its `error` field for the view.
-                        unsafe {
-                            crate::native::error::ErrorView::from_ptr(&raw mut (*maybe_uc).error)
-                        },
-                        "Bad array source type"
-                    );
+        b'l' => {
+            // SAFETY: `dst` addresses `size` writable slots of the destination
+            // type, correctly aligned for it (caller contract), staying alive and
+            // unmoved for this call — the conversion below neither allocates nor
+            // frees. This single vouch replaces C's `*d++` walk: every store
+            // through the run is bounds-checked against `size`.
+            let d = unsafe { Run::<i64>::from_raw_parts(dst as *mut i64, size) };
+            match src_type {
+                // C-parity: signed `char` deref, see the `dst_type == 'i'` arm above.
+                b'c' => ufbxi_convert_loop_slow!(d, ufbxi_cast_i64, 1, val, val[0] as i8),
+                b'i' => ufbxi_convert_loop_slow!(d, ufbxi_cast_i64, 4, val, read_i32(val)),
+                // case 'l': ufbxi_convert_loop_slow(int64_t, (int64_t), 8, ufbxi_read_i64(val)); break;
+                b'f' => ufbxi_convert_loop_slow!(d, ufbxi_cast_f64_to_i64, 4, val, read_f32(val)),
+                b'd' => ufbxi_convert_loop_slow!(d, ufbxi_cast_f64_to_i64, 8, val, read_f64(val)),
+                _ => {
+                    if !maybe_uc.is_null() {
+                        ufbxi_fail_err!(
+                            // SAFETY: `maybe_uc` is non-null here (just checked) and
+                            // points to a live `InnerContext` (caller contract);
+                            // `&raw mut` projects its `error` field for the view.
+                            unsafe {
+                                crate::native::error::ErrorView::from_ptr(
+                                    &raw mut (*maybe_uc).error,
+                                )
+                            },
+                            "Bad array source type"
+                        );
+                    }
+                    return Err(Fail::unrecorded());
                 }
-                return Err(Fail::unrecorded());
             }
-        },
+        }
 
-        b'f' => match src_type {
-            // C-parity: signed `char` deref, see the `dst_type == 'i'` arm above.
-            // SAFETY: the convert loop walks exactly `size` elements, reading
-            // `$m_size` bytes per step from `src` (caller-guaranteed `size`
-            // `src_type` elements) and writing one `$m_dst` per step to `dst`
-            // (`size` `dst_type` elements). `val[0]` is the in-bounds source byte.
-            b'c' => unsafe { ufbxi_convert_loop_slow!(f32, ufbxi_cast_f32, 1, val, val[0] as i8) },
-            // SAFETY: as above.
-            b'i' => unsafe { ufbxi_convert_loop_slow!(f32, ufbxi_cast_f32, 4, val, read_i32(val)) },
-            // SAFETY: as above.
-            b'l' => unsafe { ufbxi_convert_loop_slow!(f32, ufbxi_cast_f32, 8, val, read_i64(val)) },
-            // case 'f': ufbxi_convert_loop_slow(float, (float), 4, ufbxi_read_f32(val)); break;
-            // SAFETY: as above.
-            b'd' => unsafe { ufbxi_convert_loop_fast!(f32, ufbxi_cast_f32, 8, val, read_f64(val)) },
-            _ => {
-                if !maybe_uc.is_null() {
-                    ufbxi_fail_err!(
-                        // SAFETY: `maybe_uc` is non-null here (just checked) and
-                        // points to a live `InnerContext` (caller contract);
-                        // `&raw mut` projects its `error` field for the view.
-                        unsafe {
-                            crate::native::error::ErrorView::from_ptr(&raw mut (*maybe_uc).error)
-                        },
-                        "Bad array source type"
-                    );
+        b'f' => {
+            // SAFETY: `dst` addresses `size` writable slots of the destination
+            // type, correctly aligned for it (caller contract), staying alive and
+            // unmoved for this call — the conversion below neither allocates nor
+            // frees. This single vouch replaces C's `*d++` walk: every store
+            // through the run is bounds-checked against `size`.
+            let d = unsafe { Run::<f32>::from_raw_parts(dst as *mut f32, size) };
+            match src_type {
+                // C-parity: signed `char` deref, see the `dst_type == 'i'` arm above.
+                b'c' => ufbxi_convert_loop_slow!(d, ufbxi_cast_f32, 1, val, val[0] as i8),
+                b'i' => ufbxi_convert_loop_slow!(d, ufbxi_cast_f32, 4, val, read_i32(val)),
+                b'l' => ufbxi_convert_loop_slow!(d, ufbxi_cast_f32, 8, val, read_i64(val)),
+                // case 'f': ufbxi_convert_loop_slow(float, (float), 4, ufbxi_read_f32(val)); break;
+                b'd' => ufbxi_convert_loop_fast!(d, ufbxi_cast_f32, 8, val, read_f64(val)),
+                _ => {
+                    if !maybe_uc.is_null() {
+                        ufbxi_fail_err!(
+                            // SAFETY: `maybe_uc` is non-null here (just checked) and
+                            // points to a live `InnerContext` (caller contract);
+                            // `&raw mut` projects its `error` field for the view.
+                            unsafe {
+                                crate::native::error::ErrorView::from_ptr(
+                                    &raw mut (*maybe_uc).error,
+                                )
+                            },
+                            "Bad array source type"
+                        );
+                    }
+                    return Err(Fail::unrecorded());
                 }
-                return Err(Fail::unrecorded());
             }
-        },
+        }
 
-        b'd' => match src_type {
-            // C-parity: signed `char` deref, see the `dst_type == 'i'` arm above.
-            // SAFETY: the convert loop walks exactly `size` elements, reading
-            // `$m_size` bytes per step from `src` (caller-guaranteed `size`
-            // `src_type` elements) and writing one `$m_dst` per step to `dst`
-            // (`size` `dst_type` elements). `val[0]` is the in-bounds source byte.
-            b'c' => unsafe { ufbxi_convert_loop_slow!(f64, ufbxi_cast_f64, 1, val, val[0] as i8) },
-            // SAFETY: as above.
-            b'i' => unsafe { ufbxi_convert_loop_slow!(f64, ufbxi_cast_f64, 4, val, read_i32(val)) },
-            // SAFETY: as above.
-            b'l' => unsafe { ufbxi_convert_loop_slow!(f64, ufbxi_cast_f64, 8, val, read_i64(val)) },
-            // SAFETY: as above.
-            b'f' => unsafe { ufbxi_convert_loop_fast!(f64, ufbxi_cast_f64, 4, val, read_f32(val)) },
-            // case 'd': ufbxi_convert_loop_slow(double, (double), 8, ufbxi_read_f64(val)); break;
-            _ => {
-                if !maybe_uc.is_null() {
-                    ufbxi_fail_err!(
-                        // SAFETY: `maybe_uc` is non-null here (just checked) and
-                        // points to a live `InnerContext` (caller contract);
-                        // `&raw mut` projects its `error` field for the view.
-                        unsafe {
-                            crate::native::error::ErrorView::from_ptr(&raw mut (*maybe_uc).error)
-                        },
-                        "Bad array source type"
-                    );
+        b'd' => {
+            // SAFETY: `dst` addresses `size` writable slots of the destination
+            // type, correctly aligned for it (caller contract), staying alive and
+            // unmoved for this call — the conversion below neither allocates nor
+            // frees. This single vouch replaces C's `*d++` walk: every store
+            // through the run is bounds-checked against `size`.
+            let d = unsafe { Run::<f64>::from_raw_parts(dst as *mut f64, size) };
+            match src_type {
+                // C-parity: signed `char` deref, see the `dst_type == 'i'` arm above.
+                b'c' => ufbxi_convert_loop_slow!(d, ufbxi_cast_f64, 1, val, val[0] as i8),
+                b'i' => ufbxi_convert_loop_slow!(d, ufbxi_cast_f64, 4, val, read_i32(val)),
+                b'l' => ufbxi_convert_loop_slow!(d, ufbxi_cast_f64, 8, val, read_i64(val)),
+                b'f' => ufbxi_convert_loop_fast!(d, ufbxi_cast_f64, 4, val, read_f32(val)),
+                _ => {
+                    if !maybe_uc.is_null() {
+                        ufbxi_fail_err!(
+                            // SAFETY: `maybe_uc` is non-null here (just checked) and
+                            // points to a live `InnerContext` (caller contract);
+                            // `&raw mut` projects its `error` field for the view.
+                            unsafe {
+                                crate::native::error::ErrorView::from_ptr(
+                                    &raw mut (*maybe_uc).error,
+                                )
+                            },
+                            "Bad array source type"
+                        );
+                    }
+                    return Err(Fail::unrecorded());
                 }
-                return Err(Fail::unrecorded());
             }
-        },
+        }
 
         _ => return Err(Fail::unrecorded()),
     }
@@ -527,8 +543,14 @@ pub(crate) unsafe fn binary_parse_multivalue_array(
     // String array special case
     if dst_type == b's' || dst_type == b'S' || dst_type == b'C' {
         let raw: bool = dst_type == b's';
-        let mut d: *mut String = dst as *mut String;
-        for _i in 0..size {
+        // The one destination run this branch fills: `size` `ufbx_string`
+        // slots, C's `d` / `d++` walk.
+        // SAFETY: `dst` addresses `size` writable, `String`-aligned slots
+        // (caller contract) in arena memory that stays alive and unmoved for
+        // the loop — the pushes below only append fresh chunks and never move
+        // an existing run. Every store through the run is bounds-checked.
+        let dst_run = unsafe { Run::<String>::from_raw_parts(dst as *mut String, size) };
+        for i in 0..size {
             val = peek_bytes(uc, 13);
             ufbxi_check!(uc, !val.is_null(), "val");
             // SAFETY: the non-null `peek_bytes` result is the requested
@@ -550,36 +572,30 @@ pub(crate) unsafe fn binary_parse_multivalue_array(
             let value_bytes = unsafe { slice_from_ptr(val, 12) };
             let len: usize = read_u32(value_bytes) as usize;
             consume_bytes(uc, 5);
-            // SAFETY: `d` walks `size` live `String` slots of the `dst` array
-            // (caller contract); these write its `data`/`length` fields.
-            unsafe {
-                (*d).data = read_bytes(uc, len);
-                (*d).length = len;
-            }
-            // SAFETY: `d` is a live `String` slot as above; read its `data` field.
-            ufbxi_check!(uc, !unsafe { (*d).data }.is_null(), "d->data");
+            // C: `d->data = ufbxi_read_bytes(uc, len); d->length = len;` — the
+            // coupled pair is published in one write into the bounds-checked
+            // slot `i` of the destination run.
+            let d: &StringView = dst_run.at(i);
+            d.set(String::new_c(read_bytes(uc, len), len));
+            ufbxi_check!(uc, !d.data().is_null(), "d->data");
             if dst_type == b'C' {
                 let buf: &BufView = if size == 1 || uc.opts_view().retain_dom() {
                     uc.result_view()
                 } else {
                     tmp_buf
                 };
-                // SAFETY: `d` is a live `String` slot; `(*d).data` is the
-                // just-read `len`-byte run, which `push_copy` copies into `buf`.
-                unsafe {
-                    (*d).data = buf.push_copy_raw::<u8>(len, (*d).data);
-                }
-                // SAFETY: `d` is a live `String` slot as above.
-                ufbxi_check!(uc, !unsafe { (*d).data }.is_null(), "d->data");
+                // SAFETY: `d.data()` is the non-null `len`-byte run just read
+                // from the input (checked above); it lives in the read buffer
+                // or the memory-mapped source, never in `buf`'s own chunks, so
+                // the copy-in does not overlap its destination.
+                let copy = unsafe { buf.push_copy_raw::<u8>(len, d.data()) };
+                // C: `d->data = ufbxi_push_copy(...)` — `length` is unchanged,
+                // so the descriptor is republished with the same `len`.
+                d.set(String::new_c(copy, len));
+                ufbxi_check!(uc, !d.data().is_null(), "d->data");
             } else {
-                // SAFETY: `d` is a live `String` slot of the `dst` array, as
-                // above, holding the `data`/`length` run just written.
-                let d = unsafe { StringView::from_ptr(d) };
                 push_string_place_str(uc.string_pool_view(), d, raw)?;
             }
-            // SAFETY: within the `size`-iteration loop `d` stays inside the `dst`
-            // `String` array, so stepping one slot is in bounds.
-            d = unsafe { d.add(1) };
         }
         return Ok(());
     }
@@ -1399,6 +1415,13 @@ fn binary_parse_node_rec(
         num_values = min32(num_values, MAX_NON_ARRAY_VALUES as u32);
         let vals: *mut Value = tmp_buf.push::<Value>(num_values as usize);
         ufbxi_check!(uc, !vals.is_null(), "vals");
+        // The one destination run this branch fills: C's `vals[i]`, indexed by
+        // the same `i` the loop below walks.
+        // SAFETY: `vals` is the non-null run of `num_values` `Value` slots just
+        // pushed into `tmp_buf` (checked above); the buf only ever appends
+        // fresh chunks, so the run stays alive and unmoved for the loop — the
+        // same stability C relies on when it holds `vals` across its pushes.
+        let vals_run = unsafe { Run::<Value>::from_raw_parts(vals, num_values as usize) };
         // SAFETY: `node` is the live pushed `Node`; store the values pointer (the
         // `content` union's `vals` variant).
         unsafe { (*node).content.vals = vals };
@@ -1429,41 +1452,43 @@ fn binary_parse_node_rec(
                     // C: `vals[i].f = (double)(vals[i].i = (int64_t)(uint8_t)value[0]);`
                     // — the inner assignment happens first, then its value is
                     // converted; decomposed per PORTING.md "Evaluation order".
-                    // SAFETY: `i < num_values`, so `vals.add(i)` is a live `Value`.
-                    unsafe {
-                        (*vals.add(i)).num.i = value_bytes[0] as i64;
-                        (*vals.add(i)).num.f = (*vals.add(i)).num.i as f64;
-                    }
+                    let n: i64 = value_bytes[0] as i64;
+                    vals_run.at(i).write_value(Value {
+                        num: ValueNum { f: n as f64, i: n },
+                    });
                     consume_bytes(uc, 2);
                 }
 
                 b'Y' => {
                     type_mask |= (ValueType::Number as u32) << (i * 2);
-                    // SAFETY: `i < num_values`, so `vals.add(i)` is a live `Value`.
-                    unsafe {
-                        (*vals.add(i)).num.i = read_i16(value_bytes) as i64;
-                        (*vals.add(i)).num.f = (*vals.add(i)).num.i as f64;
-                    }
+                    // C: `vals[i].f = (double)(vals[i].i = ...);` — the `.i`
+                    // assignment happens first and its value feeds `.f`.
+                    let n: i64 = read_i16(value_bytes) as i64;
+                    vals_run.at(i).write_value(Value {
+                        num: ValueNum { f: n as f64, i: n },
+                    });
                     consume_bytes(uc, 3);
                 }
 
                 b'I' => {
                     type_mask |= (ValueType::Number as u32) << (i * 2);
-                    // SAFETY: `i < num_values`, so `vals.add(i)` is a live `Value`.
-                    unsafe {
-                        (*vals.add(i)).num.i = read_i32(value_bytes) as i64;
-                        (*vals.add(i)).num.f = (*vals.add(i)).num.i as f64;
-                    }
+                    // C: `vals[i].f = (double)(vals[i].i = ...);` — the `.i`
+                    // assignment happens first and its value feeds `.f`.
+                    let n: i64 = read_i32(value_bytes) as i64;
+                    vals_run.at(i).write_value(Value {
+                        num: ValueNum { f: n as f64, i: n },
+                    });
                     consume_bytes(uc, 5);
                 }
 
                 b'L' => {
                     type_mask |= (ValueType::Number as u32) << (i * 2);
-                    // SAFETY: `i < num_values`, so `vals.add(i)` is a live `Value`.
-                    unsafe {
-                        (*vals.add(i)).num.i = read_i64(value_bytes);
-                        (*vals.add(i)).num.f = (*vals.add(i)).num.i as f64;
-                    }
+                    // C: `vals[i].f = (double)(vals[i].i = ...);` — the `.i`
+                    // assignment happens first and its value feeds `.f`.
+                    let n: i64 = read_i64(value_bytes);
+                    vals_run.at(i).write_value(Value {
+                        num: ValueNum { f: n as f64, i: n },
+                    });
                     consume_bytes(uc, 9);
                 }
 
@@ -1472,21 +1497,28 @@ fn binary_parse_node_rec(
                     // C: `vals[i].i = ufbxi_f64_to_i64(vals[i].f = ufbxi_read_f32(value));`
                     // — the `float` is promoted to `double` by the assignment to
                     // the `double` member, and that value feeds `ufbxi_f64_to_i64`.
-                    // SAFETY: `i < num_values`, so `vals.add(i)` is a live `Value`.
-                    unsafe {
-                        (*vals.add(i)).num.f = read_f32(value_bytes) as f64;
-                        (*vals.add(i)).num.i = f64_to_i64((*vals.add(i)).num.f);
-                    }
+                    let n: f64 = read_f32(value_bytes) as f64;
+                    vals_run.at(i).write_value(Value {
+                        num: ValueNum {
+                            f: n,
+                            i: f64_to_i64(n),
+                        },
+                    });
                     consume_bytes(uc, 5);
                 }
 
                 b'D' => {
                     type_mask |= (ValueType::Number as u32) << (i * 2);
-                    // SAFETY: `i < num_values`, so `vals.add(i)` is a live `Value`.
-                    unsafe {
-                        (*vals.add(i)).num.f = read_f64(value_bytes);
-                        (*vals.add(i)).num.i = f64_to_i64((*vals.add(i)).num.f);
-                    }
+                    // C: `vals[i].i = ufbxi_f64_to_i64(vals[i].f = ufbxi_read_f64(value));`
+                    // — the `.f` assignment happens first and its value feeds
+                    // `ufbxi_f64_to_i64`.
+                    let n: f64 = read_f64(value_bytes);
+                    vals_run.at(i).write_value(Value {
+                        num: ValueNum {
+                            f: n,
+                            i: f64_to_i64(n),
+                        },
+                    });
                     consume_bytes(uc, 9);
                 }
 
@@ -1496,14 +1528,20 @@ fn binary_parse_node_rec(
                     let str_: *const u8 = read_bytes(uc, length as usize);
                     ufbxi_check!(uc, !str_.is_null(), "str");
 
+                    // C: `&vals[i].s` — the string variant of the value union,
+                    // written by every path below.
+                    // SAFETY: `vals_run.at(i)` bounds-checks the slot against
+                    // `num_values` and yields its write-capable arena address;
+                    // `&raw mut` projects the union's `s` member, a live
+                    // `SanitizedString` place in the `tmp_buf` run that
+                    // outlives this call.
+                    let s: &SanitizedStringView = unsafe {
+                        SanitizedStringView::from_ptr(&raw mut (*vals_run.at(i).get()).s)
+                    };
                     if length == 0 {
-                        // SAFETY: `i < num_values`, so `vals.add(i)` is a live
-                        // `Value`; store the empty-string sentinel in its `s`.
-                        unsafe {
-                            (*vals.add(i)).s.raw_data = EMPTY_CHAR.as_ptr();
-                            (*vals.add(i)).s.raw_length = 0;
-                            (*vals.add(i)).s.utf8_length = 0;
-                        }
+                        s.set_raw_data(EMPTY_CHAR.as_ptr());
+                        s.set_raw_length(0);
+                        s.set_utf8_length(0);
                     } else {
                         let mut non_ascii: bool = false;
                         // SAFETY: `str_` is the non-null `length`-byte run read
@@ -1515,23 +1553,11 @@ fn binary_parse_node_rec(
                         // classifies value `i` under `parent_state`.
                         let raw: bool =
                             !non_ascii || unsafe { is_raw_string(uc, parent_state, name, i) };
-                        push_sanitized_string(
-                            uc.string_pool_view(),
-                            // SAFETY: `i < num_values`, so the raw address of
-                            // `(*vals.add(i)).s` identifies a live
-                            // `SanitizedString` slot — write-capable arena memory
-                            // outliving the call.
-                            unsafe { SanitizedStringView::from_ptr(&raw mut (*vals.add(i)).s) },
-                            str_bytes,
-                            hash,
-                            raw,
-                        )?;
+                        push_sanitized_string(uc.string_pool_view(), s, str_bytes, hash, raw)?;
 
                         // Mark the data as invalid UTF-8
                         if non_ascii && raw {
-                            // SAFETY: `vals.add(i)` is the live `Value` interned
-                            // just above; flag its string as invalid UTF-8.
-                            unsafe { (*vals.add(i)).s.utf8_length = u32::MAX };
+                            s.set_utf8_length(u32::MAX);
                         }
                     }
 
