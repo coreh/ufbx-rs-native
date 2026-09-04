@@ -1819,40 +1819,37 @@ pub(crate) fn setup_scale_helper(
         )
     };
     ufbxi_check!(uc, !scale_node.is_null(), "scale_node");
+    // SAFETY: `scale_node` is the fresh non-null element just pushed into uc's
+    // own element arena — reached through `*mut` (write-capable provenance for
+    // `Mut`), live and unmoved for the rest of the load; the fields read below
+    // are the ones the push and this function initialize.
+    let scale_node: &View<UfbxNode> = unsafe { View::<UfbxNode>::from_ptr(scale_node) };
     ufbxi_check!(
         uc,
-        // SAFETY: `scale_node` is the fresh non-null element checked above, so
-        // the borrow addresses its own `element.element_id`.
-        !unsafe {
-            uc.tmp_node_ids_view()
-                .push_copy_ref(&(*scale_node).element.element_id)
-        }
-        .is_null(),
+        // C copies the four `element_id` bytes out of the element; reading the
+        // leaf and pushing a copy of that value stores the same bytes.
+        !uc.tmp_node_ids_view()
+            .push_copy_ref(&scale_node.element().element_id())
+            .is_null(),
         "((uint32_t*)ufbxi_push_size_copy((&uc->tmp_node_ids), sizeof(uint32_t), (1), (&scale_node->element.element_id)))"
     );
     // C: `scale_node->element.dom_node = node->element.dom_node;` — pointer
     // copy; `Option<Ref<T>>` is niche-packed to a bare pointer.
-    // SAFETY: the projection addresses `scale_node`'s own live `dom_node`
-    // field — `scale_node` is the fresh element above; the field has no drop
-    // glue, so the bitwise copy stores safely.
-    unsafe {
-        (*scale_node).element.dom_node = node.element().dom_node();
-    }
+    scale_node.element().set_dom_node(node.element().dom_node());
 
-    // SAFETY: `scale_node` is the fresh non-null element checked above, which
-    // outlives this scene's nodes.
-    node.set_scale_helper(Some(unsafe { Ref::from_ptr(scale_node) }));
-    // SAFETY: `scale_node` is the fresh non-null element above.
-    unsafe { (*scale_node).is_scale_helper = true };
+    // SAFETY: `scale_node` views the fresh non-null element checked above,
+    // which lives in the element arena and outlives this scene's nodes — the
+    // storage-lifetime half of `to_ref`'s contract.
+    node.set_scale_helper(Some(unsafe { scale_node.to_ref() }));
+    scale_node.set_is_scale_helper(true);
 
     connect_oo(uc, scale_fbx_id, node_fbx_id)?;
     uc.set_has_scale_helper_nodes(true);
 
     let extra: *mut NodeExtra = push_element_extra(uc, node.element().element_id());
     ufbxi_check!(uc, !extra.is_null(), "extra");
-    // SAFETY: `extra` is the fresh non-null extra-data slot checked above and
-    // `scale_node` the fresh element above.
-    unsafe { (*extra).scale_helper_id = (*scale_node).element.element_id };
+    // SAFETY: `extra` is the fresh non-null extra-data slot checked above.
+    unsafe { (*extra).scale_helper_id = scale_node.element().element_id() };
 
     let max_props: usize = SCALE_HELPER_PROPS.len();
     let helper_props: *mut Prop = uc.result_view().push::<Prop>(max_props);
@@ -1901,12 +1898,11 @@ pub(crate) fn setup_scale_helper(
     #[allow(clippy::forget_non_drop)]
     core::mem::forget(props_copy);
 
-    // SAFETY: `scale_node` is the fresh non-null element above; `helper_props`
-    // is the result-buffer run whose first `num_props` entries were filled in.
-    unsafe {
-        (*scale_node).element.props.props.data = helper_props;
-        (*scale_node).element.props.props.count = num_props;
-    }
+    // `helper_props` is the result-buffer run whose first `num_props` entries
+    // were filled in above; the C's field-write order is kept.
+    let scale_props = scale_node.element().props().props_view();
+    scale_props.set_data(helper_props);
+    scale_props.set_count(num_props);
 
     Ok(())
 }
@@ -2452,10 +2448,18 @@ pub(crate) unsafe fn read_vertex_element(
             // Indexed by vertex: Follow through the position index mapping to get the final indices.
             let new_index_data: *mut u32 = uc.result_view().push::<u32>(mesh.num_indices());
             ufbxi_check!(uc, !new_index_data.is_null(), "new_index_data");
+            // SAFETY: the non-null `mesh.num_indices()`-element allocation just
+            // pushed on uc's own result buf — one contiguous, write-capable run
+            // that stays alive and unmoved for the loop below (`fix_index`
+            // pushes only warnings, and an arena push never moves a live run).
+            // Its slots are still uninitialized, which the run tolerates.
+            let new_index_run: Run<'_, u32, Mut> =
+                unsafe { Run::<u32, Mut>::from_raw_parts(new_index_data, mesh.num_indices()) };
 
             // `vertex_indices` is the mesh's own initialized list; the loop
             // reads it through the bounded list accessor and writes only the
-            // disjoint fresh `new_index_data` run.
+            // disjoint fresh `new_index_data` run, whose length is exactly the
+            // `mesh.num_indices()` the loop counts to.
             // SAFETY: `index_data` is the array descriptor's own contiguous
             // payload of `num_indices` `u32`s, live for the parse tree and
             // likewise unwritten by the loop.
@@ -2463,16 +2467,9 @@ pub(crate) unsafe fn read_vertex_element(
             for i in 0..mesh.num_indices() {
                 let ix: u32 = mesh.vertex_indices_view().copy_at(i);
                 if (ix as usize) < num_indices {
-                    // SAFETY: `i < mesh.num_indices` bounds the write inside
-                    // the fresh `new_index_data` run.
-                    unsafe { *new_index_data.add(i) = index_run[ix as usize] };
+                    new_index_run.write_at(i, index_run[ix as usize]);
                 } else {
-                    // SAFETY: `i < mesh.num_indices`, so `new_index_data.add(i)`
-                    // is a live, write-capable slot of the fresh run — an
-                    // adequate mint for the `Mut` index-slot view (the slot is
-                    // still uninitialized, which `Mut` storage tolerates).
-                    let p_dst: &View<u32> =
-                        unsafe { View::<u32, Mut>::from_ptr(new_index_data.add(i)) };
+                    let p_dst: &View<u32> = new_index_run.at(i);
                     fix_index(uc, p_dst, ix, num_elems)?;
                 }
             }
@@ -2714,10 +2711,12 @@ pub(crate) unsafe fn read_truncated_array<T>(
         return Ok(());
     }
 
-    // SAFETY (this group): `arr` is non-null (the null case returned above) and points at
-    // the node's own array descriptor, live for as long as the parse tree.
-    let mut data: *mut c_void = unsafe { (*arr).data };
-    if unsafe { (*arr).size } < size {
+    // SAFETY: `arr` is non-null (the null case returned above) and points at
+    // the node's own array descriptor, live for as long as the parse tree and
+    // reached through `*mut` (write-capable provenance for `Mut`).
+    let arr: &View<ValueArray> = unsafe { View::<ValueArray>::from_ptr(arr) };
+    let mut data: *mut c_void = arr.data();
+    if arr.size() < size {
         ufbxi_check!(
             uc,
             ufbxi_warnf!(uc, WarningType::TruncatedArray, "Truncated array: %s", name).is_ok(),
@@ -2734,18 +2733,16 @@ pub(crate) unsafe fn read_truncated_array<T>(
             core::ptr::copy_nonoverlapping(
                 data as *const u8,
                 new_data as *mut u8,
-                (*arr).size * elem_size,
+                arr.size() * elem_size,
             );
         }
         // Extend the array with the last element if possible
-        // SAFETY: `arr` is the live array descriptor.
-        if unsafe { (*arr).size } > 0 {
+        if arr.size() > 0 {
             // SAFETY: `arr.size > 0`, so the last element starts at
             // `(arr.size - 1) * elem_size` inside `arr.data`'s payload.
             let first_elem: *mut u8 =
-                unsafe { (data as *mut u8).add(((*arr).size - 1) * elem_size) };
-            // SAFETY: `arr` is the live array descriptor.
-            for i in unsafe { (*arr).size }..size {
+                unsafe { (data as *mut u8).add((arr.size() - 1) * elem_size) };
+            for i in arr.size()..size {
                 // SAFETY: `first_elem` spans one `elem_size` element of the
                 // source array, and `i < size` bounds the destination slot
                 // inside the `size * elem_size`-byte run at `new_data`.
@@ -2954,6 +2951,12 @@ pub(crate) fn read_shape(
     let shape: *mut BlendShape =
         unsafe { push_element::<BlendShape>(uc, info, ElementType::BlendShape) };
     ufbxi_check!(uc, !shape.is_null(), "shape");
+    // SAFETY: `shape` is the fresh non-null element just pushed into uc's
+    // `tmp_elements` arena (elements live there until finalize copies them into
+    // the result arena) — reached through `*mut` (write-capable provenance for
+    // `Mut`) and live for the borrow; the fields read below are the ones this
+    // function fills in first.
+    let shape: &View<BlendShape> = unsafe { View::<BlendShape>::from_ptr(shape) };
 
     if uc.opts_view().ignore_geometry() {
         return Ok(());
@@ -2968,59 +2971,63 @@ pub(crate) fn read_shape(
         "vertices && indices"
     );
     // SAFETY: `vertices` is non-null (checked above) and `get_array` returns the
-    // node's own array descriptor, live for as long as the parse tree.
+    // node's own array descriptor, live for as long as the parse tree and
+    // reached through `*mut` (write-capable provenance for `Mut`).
+    let vertices: &View<ValueArray> = unsafe { View::<ValueArray>::from_ptr(vertices) };
+    // SAFETY: as above, for the `'i'` descriptor, likewise non-null.
+    let indices: &View<ValueArray> = unsafe { View::<ValueArray>::from_ptr(indices) };
+    ufbxi_check!(uc, vertices.size() % 3 == 0, "vertices->size % 3 == 0");
     ufbxi_check!(
         uc,
-        unsafe { (*vertices).size } % 3 == 0,
-        "vertices->size % 3 == 0"
-    );
-    // SAFETY: as above, and `indices` is likewise non-null and live.
-    ufbxi_check!(
-        uc,
-        unsafe { (*indices).size == (*vertices).size / 3 },
+        indices.size() == vertices.size() / 3,
         "indices->size == vertices->size / 3"
     );
 
-    // SAFETY: `indices` is a live array descriptor (checked non-null above),
-    // whose `'i'` payload is a run of `size` `u32`s.
+    // The `'i'` array's payload is a run of `size` `u32`s.
     let (num_offsets, vertex_indices): (usize, *mut u32) =
-        unsafe { ((*indices).size, (*indices).data as *mut u32) };
+        (indices.size(), indices.data() as *mut u32);
 
-    // SAFETY: `shape` is the fresh non-null element pushed above; `vertices` is
-    // the live array descriptor checked above, whose `'r'` payload is
-    // `size == num_offsets * 3` reals, i.e. `num_offsets` `ufbx_vec3` values.
-    unsafe {
-        (*shape).num_offsets = num_offsets;
-        (*shape).position_offsets.data = (*vertices).data as *const Vec3;
-        (*shape).offset_vertices.data = vertex_indices;
-        (*shape).position_offsets.count = num_offsets;
-        (*shape).offset_vertices.count = num_offsets;
-    }
+    // `vertices`'s `'r'` payload is `size == num_offsets * 3` reals, i.e.
+    // `num_offsets` `ufbx_vec3` values, and `vertex_indices` the parallel index
+    // run; the C's field-write order is kept.
+    shape.set_num_offsets(num_offsets);
+    shape
+        .position_offsets_view()
+        .set_data(vertices.data() as *const Vec3);
+    shape.offset_vertices_view().set_data(vertex_indices);
+    shape.position_offsets_view().set_count(num_offsets);
+    shape.offset_vertices_view().set_count(num_offsets);
 
     if let Some(node_normals) = node_normals {
         let normals: *mut ValueArray = get_array(node_normals, b'r');
-        // SAFETY: `normals` is dereferenced only after the non-null test
-        // short-circuits, and `vertices` is the live descriptor checked above.
+        // SAFETY: the view is minted only in the non-null arm, where `normals`
+        // is likewise a live parse-tree array descriptor reached through `*mut`.
+        let normals: Option<&View<ValueArray>> = if normals.is_null() {
+            None
+        } else {
+            Some(unsafe { View::<ValueArray>::from_ptr(normals) })
+        };
         ufbxi_check!(
             uc,
-            !normals.is_null() && unsafe { (*normals).size } == unsafe { (*vertices).size },
+            normals.is_some_and(|normals| normals.size() == vertices.size()),
             "normals && normals->size == vertices->size"
         );
-        // SAFETY: `shape` is the fresh non-null element; `normals` is non-null
-        // (checked) with a `'r'` payload of `size` reals, matching `vertices`,
-        // i.e. `num_offsets` `ufbx_vec3` values.
-        unsafe {
-            (*shape).normal_offsets.data = (*normals).data as *const Vec3;
-            (*shape).normal_offsets.count = num_offsets;
-        }
+        // The check above returned unless `normals` is a live descriptor whose
+        // `'r'` payload matches `vertices`, i.e. `num_offsets` `ufbx_vec3`s.
+        let normals: &View<ValueArray> = normals.unwrap();
+        shape
+            .normal_offsets_view()
+            .set_data(normals.data() as *const Vec3);
+        shape.normal_offsets_view().set_count(num_offsets);
     }
 
     // Sort the blend shape vertices only if absolutely necessary
     let mut sorted: bool = true;
     for i in 1..num_offsets {
-        // SAFETY: `vertex_indices` is the `'i'` array's payload of `num_offsets`
-        // `u32`s and `1 <= i < num_offsets`, so both reads are in bounds.
-        if unsafe { *vertex_indices.add(i - 1) } > unsafe { *vertex_indices.add(i) } {
+        // `offset_vertices` is the `num_offsets`-long index run published
+        // above, so both bounded reads are in bounds.
+        let offset_vertices = shape.offset_vertices_view();
+        if offset_vertices.copy_at(i - 1) > offset_vertices.copy_at(i) {
             sorted = false;
             break;
         }
@@ -3029,46 +3036,59 @@ pub(crate) fn read_shape(
     if !sorted {
         let offsets: *mut BlendOffset = uc.tmp_stack_view().push::<BlendOffset>(num_offsets);
         ufbxi_check!(uc, !offsets.is_null(), "offsets");
+        // SAFETY: `offsets` is the non-null `num_offsets`-element allocation
+        // just pushed on uc's own `tmp_stack` — one contiguous, write-capable
+        // run that stays alive and unmoved until the pop below (nothing pushes
+        // or pops that buf in between; `sort_blend_offsets` only grows
+        // `uc->tmp_arr`). Its slots are still uninitialized, which the run
+        // tolerates.
+        let offset_run: Run<'_, BlendOffset, Mut> =
+            unsafe { Run::<BlendOffset, Mut>::from_raw_parts(offsets, num_offsets) };
 
         for i in 0..num_offsets {
-            // SAFETY: `offsets` is the non-null `num_offsets`-element run just
-            // pushed on `tmp_stack`, and the `shape` arrays were set above to
-            // the parse-tree payloads of `num_offsets` entries each, so every
-            // `.add(i)` with `i < num_offsets` stays in bounds.
+            // The `shape` lists were published above over the parse-tree
+            // payloads of `num_offsets` entries each, so the bounded reads are
+            // in bounds; `at(i)` bounds the destination slot in the fresh run.
+            // C: the three fields are assigned in this order, and
+            // `normal_offset` is left untouched without a `Normals` node.
+            // SAFETY: `at(i)` names a live, write-capable slot of the vouched
+            // run; the slot need not be initialized, and these writes are what
+            // initialize the fields the sort and the write-back read.
             unsafe {
-                (*offsets.add(i)).vertex = *(*shape).offset_vertices.data.add(i);
-                (*offsets.add(i)).position_offset = *(*shape).position_offsets.data.add(i);
-            }
-            if node_normals.is_some() {
-                // SAFETY: as above; `node_normals` being present is exactly the
-                // branch that set `normal_offsets` to a `num_offsets` run.
-                unsafe {
-                    (*offsets.add(i)).normal_offset = *(*shape).normal_offsets.data.add(i);
+                let dst: *mut BlendOffset = offset_run.at(i).get();
+                (*dst).vertex = shape.offset_vertices_view().copy_at(i);
+                (*dst).position_offset = shape.position_offsets_view().copy_at(i);
+                if node_normals.is_some() {
+                    (*dst).normal_offset = shape.normal_offsets_view().copy_at(i);
                 }
             }
         }
 
-        // SAFETY: `offsets` spans the `num_offsets` live `BlendOffset` values
-        // filled by the loop above.
-        let offset_run = unsafe { Run::from_raw_parts(offsets, num_offsets) };
         sort_blend_offsets(uc, offset_run)?;
 
         for i in 0..num_offsets {
-            // SAFETY: as the fill loop — `i < num_offsets` bounds both the
-            // `offsets` run and the `shape` arrays. The `shape` arrays point
-            // into the parse tree's own mutable array payloads, so the
-            // const-to-mut casts write back through their original provenance.
+            // The `shape` lists carry the same `num_offsets` count as the run,
+            // and they point into the parse tree's own mutable array payloads,
+            // so `at(i)` writes back through their original provenance.
+            // SAFETY: `at(i)` names a live slot of the vouched run, whose
+            // `vertex`/`position_offset` (and, with a `Normals` node,
+            // `normal_offset`) were initialized by the fill loop above; only
+            // those fields are read, and the sort permuted whole elements.
             unsafe {
-                *((*shape).offset_vertices.data as *mut u32).add(i) = (*offsets.add(i)).vertex;
-                *((*shape).position_offsets.data as *mut Vec3).add(i) =
-                    (*offsets.add(i)).position_offset;
-            }
-            if node_normals.is_some() {
-                // SAFETY: as above; `node_normals` being present is exactly the
-                // branch that set `normal_offsets` to a `num_offsets` run.
-                unsafe {
-                    *((*shape).normal_offsets.data as *mut Vec3).add(i) =
-                        (*offsets.add(i)).normal_offset;
+                let src: *const BlendOffset = offset_run.at(i).get();
+                shape
+                    .offset_vertices_view()
+                    .at(i)
+                    .write_value((*src).vertex);
+                shape
+                    .position_offsets_view()
+                    .at(i)
+                    .write_value((*src).position_offset);
+                if node_normals.is_some() {
+                    shape
+                        .normal_offsets_view()
+                        .at(i)
+                        .write_value((*src).normal_offset);
                 }
             }
         }
@@ -4060,6 +4080,17 @@ pub(crate) fn read_mesh(uc: &Context, node: &NodeView, info: &ElementInfoView) -
     let tangents: *mut TangentLayer = uc.tmp_stack_view().push_zero::<TangentLayer>(num_tangents);
     ufbxi_check!(uc, !bitangents.is_null(), "bitangents");
     ufbxi_check!(uc, !tangents.is_null(), "tangents");
+    // SAFETY (both): the non-null zeroed allocation just pushed on uc's own
+    // `tmp_stack` — one contiguous, write-capable run of `num_bitangents` /
+    // `num_tangents` initialized `ufbxi_tangent_layer` slots that stays alive
+    // and unmoved for the rest of this function: nothing below pushes or pops
+    // that buf (the layer readers below allocate from `result`, the string
+    // pool, `tmp_mesh_textures` and `tmp_arr` only).
+    let bitangents_run: Run<'_, TangentLayer, Mut> =
+        unsafe { Run::<TangentLayer, Mut>::from_raw_parts(bitangents, num_bitangents) };
+    // SAFETY: as above, for the `LayerElementTangent` run.
+    let tangents_run: Run<'_, TangentLayer, Mut> =
+        unsafe { Run::<TangentLayer, Mut>::from_raw_parts(tangents, num_tangents) };
 
     mesh.uv_sets_view()
         .set_data(uc.result_view().push_zero::<UvSet>(num_uv));
@@ -4111,13 +4142,11 @@ pub(crate) fn read_mesh(uc: &Context, node: &NodeView, info: &ElementInfoView) -
                 )
             }?;
         } else if n.name() == sp::LayerElementBinormal.as_ptr() {
-            // SAFETY: the counting pass above found exactly `num_bitangents`
+            // The counting pass above found exactly `num_bitangents`
             // `LayerElementBinormal` children, and this branch consumes one slot
-            // per such child, so `num_bitangents_read < num_bitangents` bounds
-            // the offset derived from the `bitangents` run base; the run is
-            // tmp-stack memory reached through `*mut` (write-capable for `Mut`).
-            let layer: &View<TangentLayer> =
-                unsafe { View::<TangentLayer>::from_ptr(bitangents.add(num_bitangents_read)) };
+            // per such child, so `num_bitangents_read < num_bitangents` — the
+            // bound `at` checks against the run's own length.
+            let layer: &View<TangentLayer> = bitangents_run.at(num_bitangents_read);
             num_bitangents_read += 1;
 
             if let Some(got) = get_val1::<i32>(n) {
@@ -4149,13 +4178,11 @@ pub(crate) fn read_mesh(uc: &Context, node: &NodeView, info: &ElementInfoView) -
                 num_bitangents_read -= 1;
             }
         } else if n.name() == sp::LayerElementTangent.as_ptr() {
-            // SAFETY: the counting pass above found exactly `num_tangents`
+            // The counting pass above found exactly `num_tangents`
             // `LayerElementTangent` children, and this branch consumes one slot
-            // per such child, so `num_tangents_read < num_tangents` bounds the
-            // offset derived from the `tangents` run base; the run is tmp-stack
-            // memory reached through `*mut` (write-capable for `Mut`).
-            let layer: &View<TangentLayer> =
-                unsafe { View::<TangentLayer>::from_ptr(tangents.add(num_tangents_read)) };
+            // per such child, so `num_tangents_read < num_tangents` — the bound
+            // `at` checks against the run's own length.
+            let layer: &View<TangentLayer> = tangents_run.at(num_tangents_read);
             num_tangents_read += 1;
 
             if let Some(got) = get_val1::<i32>(n) {
@@ -4674,12 +4701,10 @@ pub(crate) fn read_mesh(uc: &Context, node: &NodeView, info: &ElementInfoView) -
                 }
             } else if type_ == sp::LayerElementBinormal.as_ptr() {
                 // C: `ufbxi_for(ufbxi_tangent_layer, layer, bitangents, num_bitangents_read)`
-                // SAFETY: `bitangents` is the contiguous tmp-stack run pushed
-                // above, whose first `num_bitangents_read <= num_bitangents`
-                // entries were filled by the layer loop.
-                for layer in
-                    unsafe { SliceViewIter::from_raw_parts(bitangents, num_bitangents_read) }
-                {
+                // The layer loop filled the run's first
+                // `num_bitangents_read <= num_bitangents` entries, which is the
+                // bound `subrun` checks against the run's own length.
+                for layer in bitangents_run.subrun(0, num_bitangents_read).iter() {
                     if layer.index() == index {
                         bitangent_layer = Some(layer);
                         break;
@@ -4687,10 +4712,10 @@ pub(crate) fn read_mesh(uc: &Context, node: &NodeView, info: &ElementInfoView) -
                 }
             } else if type_ == sp::LayerElementTangent.as_ptr() {
                 // C: `ufbxi_for(ufbxi_tangent_layer, layer, tangents, num_tangents_read)`
-                // SAFETY: `tangents` is the contiguous tmp-stack run pushed
-                // above, whose first `num_tangents_read <= num_tangents`
-                // entries were filled by the layer loop.
-                for layer in unsafe { SliceViewIter::from_raw_parts(tangents, num_tangents_read) } {
+                // The layer loop filled the run's first
+                // `num_tangents_read <= num_tangents` entries, which is the
+                // bound `subrun` checks against the run's own length.
+                for layer in tangents_run.subrun(0, num_tangents_read).iter() {
                     if layer.index() == index {
                         tangent_layer = Some(layer);
                         break;
@@ -4884,17 +4909,19 @@ pub(crate) fn read_nurbs_surface(
     let nurbs: *mut NurbsSurface =
         unsafe { push_element::<NurbsSurface>(uc, info, ElementType::NurbsSurface) };
     ufbxi_check!(uc, !nurbs.is_null(), "nurbs");
+    // SAFETY: `nurbs` is the fresh non-null element just pushed into uc's own
+    // element arena — reached through `*mut` (write-capable provenance for
+    // `Mut`), live and unmoved for the rest of the load; the fields below are
+    // the ones this function fills in.
+    let nurbs: &View<NurbsSurface> = unsafe { View::<NurbsSurface>::from_ptr(nurbs) };
 
     let (order_u, order_v) = ufbxi_check_some!(
         uc,
         find_val2::<i32, i32>(node, sp::NurbsSurfaceOrder.as_ptr()),
         "ufbxi_find_val2(node, ufbxi_NurbsSurfaceOrder, \"II\", &nurbs->basis_u.order, &nurbs->basis_v.order)"
     );
-    // SAFETY: `nurbs` is the fresh non-null element pushed above.
-    unsafe {
-        (*nurbs).basis_u.order = order_u as u32;
-        (*nurbs).basis_v.order = order_v as u32;
-    }
+    nurbs.basis_u().set_order(order_u as u32);
+    nurbs.basis_v().set_order(order_v as u32);
     let (dimension_u, dimension_v) = ufbxi_check_some!(
         uc,
         find_val2::<usize, usize>(node, sp::Dimensions.as_ptr()),
@@ -4911,8 +4938,7 @@ pub(crate) fn read_nurbs_surface(
         "ufbxi_find_val2(node, ufbxi_Form, \"CC\", (char**)&form_u, (char**)&form_v)"
     );
     if let Some(flip_normals) = find_val1::<bool>(node, sp::FlipNormals.as_ptr()) {
-        // SAFETY: `nurbs` is the fresh non-null element pushed above.
-        unsafe { (*nurbs).flip_normals = flip_normals };
+        nurbs.set_flip_normals(flip_normals);
     }
     // SAFETY: the `"CC"` fetch above succeeded (checked), so `form_u`/`form_v`
     // point at NUL-terminated parse-tree strings, whose terminators bound
@@ -4921,18 +4947,12 @@ pub(crate) fn read_nurbs_surface(
     let form_u: &[u8] = unsafe { slice_from_ptr(form_u, strlen(form_u)) };
     // SAFETY: as `form_u` — the same checked `"CC"` fetch.
     let form_v: &[u8] = unsafe { slice_from_ptr(form_v, strlen(form_v)) };
-    // SAFETY: `nurbs` is the fresh non-null element pushed above.
-    unsafe {
-        (*nurbs).basis_u.topology = read_nurbs_topology(form_u);
-        (*nurbs).basis_v.topology = read_nurbs_topology(form_v);
-    }
-    // SAFETY: `nurbs` is the fresh non-null element pushed above.
-    unsafe {
-        (*nurbs).num_control_points_u = dimension_u;
-        (*nurbs).num_control_points_v = dimension_v;
-        (*nurbs).span_subdivision_u = if step_u > 0 { step_u as u32 } else { 4u32 };
-        (*nurbs).span_subdivision_v = if step_v > 0 { step_v as u32 } else { 4u32 };
-    }
+    nurbs.basis_u().set_topology(read_nurbs_topology(form_u));
+    nurbs.basis_v().set_topology(read_nurbs_topology(form_v));
+    nurbs.set_num_control_points_u(dimension_u);
+    nurbs.set_num_control_points_v(dimension_v);
+    nurbs.set_span_subdivision_u(if step_u > 0 { step_u as u32 } else { 4u32 });
+    nurbs.set_span_subdivision_v(if step_v > 0 { step_v as u32 } else { 4u32 });
 
     if !uc.opts_view().ignore_geometry() {
         let points: *mut ValueArray = find_array(node, sp::Points.as_ptr(), b'r');
@@ -4942,28 +4962,37 @@ pub(crate) fn read_nurbs_surface(
         ufbxi_check!(uc, !knot_u.is_null(), "knot_u");
         ufbxi_check!(uc, !knot_v.is_null(), "knot_v");
         // SAFETY: `points` is non-null (checked above) and `find_array` returns
-        // the node's own array descriptor, live for as long as the parse tree.
-        unsafe {
-            ufbxi_check!(uc, (*points).size % 4 == 0, "points->size % 4 == 0");
-            ufbxi_check!(
-                uc,
-                (*points).size / 4 == dimension_u.wrapping_mul(dimension_v),
-                "points->size / 4 == (size_t)dimension_u * (size_t)dimension_v"
-            );
-        }
+        // the node's own array descriptor, live for as long as the parse tree
+        // and reached through `*mut` (write-capable provenance for `Mut`).
+        let points: &View<ValueArray> = unsafe { View::<ValueArray>::from_ptr(points) };
+        // SAFETY: as `points` — likewise a live, non-null descriptor.
+        let knot_u: &View<ValueArray> = unsafe { View::<ValueArray>::from_ptr(knot_u) };
+        // SAFETY: as `points` — likewise a live, non-null descriptor.
+        let knot_v: &View<ValueArray> = unsafe { View::<ValueArray>::from_ptr(knot_v) };
+        ufbxi_check!(uc, points.size() % 4 == 0, "points->size % 4 == 0");
+        ufbxi_check!(
+            uc,
+            points.size() / 4 == dimension_u.wrapping_mul(dimension_v),
+            "points->size / 4 == (size_t)dimension_u * (size_t)dimension_v"
+        );
 
-        // SAFETY: `nurbs` is the fresh non-null element; `points`/`knot_u`/
-        // `knot_v` are the live array descriptors checked non-null above, whose
-        // `'r'` payloads are `size` reals — `points.size` being a multiple of 4
-        // (checked) makes it `size / 4` `ufbx_vec4` control points.
-        unsafe {
-            (*nurbs).control_points.count = (*points).size / 4;
-            (*nurbs).control_points.data = (*points).data as *const Vec4;
-            (*nurbs).basis_u.knot_vector.data = (*knot_u).data as *const Real;
-            (*nurbs).basis_u.knot_vector.count = (*knot_u).size;
-            (*nurbs).basis_v.knot_vector.data = (*knot_v).data as *const Real;
-            (*nurbs).basis_v.knot_vector.count = (*knot_v).size;
-        }
+        // The `'r'` payloads are `size` reals — `points.size` being a multiple
+        // of 4 (checked) makes it `size / 4` `ufbx_vec4` control points; the
+        // C's field-write order is kept.
+        nurbs.control_points_view().set_count(points.size() / 4);
+        nurbs
+            .control_points_view()
+            .set_data(points.data() as *const Vec4);
+        nurbs
+            .basis_u()
+            .knot_vector_view()
+            .set_data(knot_u.data() as *const Real);
+        nurbs.basis_u().knot_vector_view().set_count(knot_u.size());
+        nurbs
+            .basis_v()
+            .knot_vector_view()
+            .set_data(knot_v.data() as *const Real);
+        nurbs.basis_v().knot_vector_view().set_count(knot_v.size());
     }
 
     Ok(())
@@ -10587,16 +10616,22 @@ pub(crate) fn resolve_relative_filename<M: Mode>(
     p_src: &View<Strblob, M>,
     raw: bool,
 ) -> Result<(), Fail> {
-    let (mut src, mut src_length): (*const u8, usize) =
-        (strblob_data(p_src, raw), strblob_length(p_src, raw));
+    // C: `const char *src` / `size_t src_length` — the walking `src` cursor is
+    // carried as `src_ix`, an offset into the source path run, so that
+    // `src_ix + src_length == src_run.len()` holds at every step below.
+    // SAFETY: `strblob_data`/`strblob_length` name the source path run
+    // described by `p_src`: `src_length` initialized bytes, live and unmoved
+    // for the borrow — nothing here writes the source bytes (the only writes
+    // are into the fresh scratch run and `p_dst`'s own header).
+    let src_run: Run<'_, u8, Const> = unsafe {
+        Run::<u8, Const>::from_const_raw_parts(strblob_data(p_src, raw), strblob_length(p_src, raw))
+    };
+    let mut src_ix: usize = 0;
+    let mut src_length: usize = src_run.len();
 
     // Skip leading directory separators and early return if the relative path is empty
-    // SAFETY: `src` .. `src + src_length` is the source path run described by
-    // `p_src`, and `src_length > 0` bounds the index-0 reads.
-    while unsafe { src_length > 0 && (*src.add(0) == b'/' || *src.add(0) == b'\\') } {
-        // SAFETY: `src_length > 0`, so advancing one byte lands at most one past
-        // the end of the source run.
-        src = unsafe { src.add(1) };
+    while src_length > 0 && (src_run.copy_at(src_ix) == b'/' || src_run.copy_at(src_ix) == b'\\') {
+        src_ix += 1;
         src_length -= 1;
     }
     if src_length == 0 {
@@ -10630,44 +10665,44 @@ pub(crate) fn resolve_relative_filename<M: Mode>(
             .length();
     }
 
+    // SAFETY: `prefix_data`/`prefix_length` name the scene metadata's own
+    // relative-root run: `prefix_length` initialized bytes, live and unmoved
+    // for the borrow — the run is scene-owned and nothing here writes it. The
+    // local `prefix_length` only ever shrinks below the vouched length, so
+    // every index taken from it below stays inside the run.
+    let prefix_run: Run<'_, u8, Const> =
+        unsafe { Run::<u8, Const>::from_const_raw_parts(prefix_data, prefix_length) };
+
     // Retain absolute paths. The temporary shared slice ends with this test;
     // later code may publish through `p_dst`, which can alias an input header.
-    // SAFETY: `src` addresses the remaining `src_length` source-path bytes.
-    if is_absolute_path(unsafe { slice_from_ptr(src, src_length) }) {
+    // SAFETY: the checked sub-run addresses exactly the remaining `src_length`
+    // source-path bytes.
+    if is_absolute_path(unsafe {
+        slice_from_ptr(src_run.subrun(src_ix, src_length).as_ptr(), src_length)
+    }) {
         prefix_length = 0;
     }
 
     // Undo directories from `prefix` for every `..`
     while prefix_length > 0
         && src_length >= 3
-        // SAFETY: `src` .. `src + src_length` is the source path run and
-        // `src_length >= 3` bounds the index-0, index-1 and index-2 reads.
-        && unsafe { *src.add(0) } == b'.'
-        && unsafe { *src.add(1) } == b'.'
-        && (unsafe { *src.add(2) } == b'/' || unsafe { *src.add(2) } == b'\\')
+        && src_run.copy_at(src_ix) == b'.'
+        && src_run.copy_at(src_ix + 1) == b'.'
+        && (src_run.copy_at(src_ix + 2) == b'/' || src_run.copy_at(src_ix + 2) == b'\\')
     {
         let mut part_start: usize = prefix_length;
-        // SAFETY: `prefix_data` .. `prefix_data + prefix_length` is the scene
-        // metadata relative-root run (`prefix_length` only ever shrinks below its
-        // initial length), and `0 < part_start <= prefix_length` bounds the
-        // `part_start - 1` read.
-        while unsafe {
-            part_start > 0
-                && !(*prefix_data.add(part_start - 1) == b'/'
-                    || *prefix_data.add(part_start - 1) == b'\\')
-        } {
+        while part_start > 0
+            && !(prefix_run.copy_at(part_start - 1) == b'/'
+                || prefix_run.copy_at(part_start - 1) == b'\\')
+        {
             part_start -= 1;
         }
         let part_len: usize = prefix_length - part_start;
 
-        // SAFETY: as above — `part_start + part_len == prefix_length`, so with
-        // `part_len == 2` both `part_start` and `part_start + 1` are inside the
-        // relative-root run.
-        if unsafe {
-            part_len == 2
-                && *prefix_data.add(part_start) == b'.'
-                && *prefix_data.add(part_start + 1) == b'.'
-        } {
+        if part_len == 2
+            && prefix_run.copy_at(part_start) == b'.'
+            && prefix_run.copy_at(part_start + 1) == b'.'
+        {
             // Prefix itself ends in `..`, cannot cancel out a leading `../`
             break;
         }
@@ -10675,64 +10710,54 @@ pub(crate) fn resolve_relative_filename<M: Mode>(
         // Eat the leading '/' before the part segment
         prefix_length = if part_start > 0 { part_start - 1 } else { 0 };
 
-        // SAFETY: `part_start + part_len` is the pre-update `prefix_length`, so
-        // with `part_len == 1` the index `part_start` is inside the
-        // relative-root run.
-        if part_len == 1 && unsafe { *prefix_data.add(part_start) } == b'.' {
+        if part_len == 1 && prefix_run.copy_at(part_start) == b'.' {
             // Single '.' -> remove and continue without cancelling out a leading `../`
             continue;
         }
 
-        // SAFETY: `src_length >= 3` (loop condition), so advancing three bytes
-        // lands at most one past the end of the source run.
-        src = unsafe { src.add(3) };
+        src_ix += 3;
         src_length -= 3;
     }
 
     let result_cap: usize = prefix_length + src_length + 1;
     let result: *mut u8 = uc.tmp_stack_view().push::<u8>(result_cap);
     ufbxi_check!(uc, !result.is_null(), "result");
-    let mut ptr: *mut u8 = result;
+    // C: `char *ptr = result;` — the walking write cursor is carried as
+    // `out_ix`, an offset into the scratch run, so `ptr == result + out_ix`.
+    // SAFETY: `result` is the non-null `result_cap`-byte allocation just pushed
+    // on uc's own tmp stack — one contiguous, write-capable run that stays
+    // alive and unmoved until the pop below (nothing pushes or pops that buf in
+    // between). Its bytes are still uninitialized, which the run tolerates.
+    let out: Run<'_, u8, Mut> = unsafe { Run::<u8, Mut>::from_raw_parts(result, result_cap) };
+    let mut out_ix: usize = 0;
 
     // Copy prefix and suffix converting separators in the process
     if prefix_length > 0 {
-        // SAFETY: `prefix_data` has `prefix_length` readable bytes and `ptr` is
-        // the head of the freshly pushed `result_cap`-byte scratch run, with
-        // `result_cap == prefix_length + src_length + 1`; the scratch run is a
+        // SAFETY: `prefix_run` vouches for at least `prefix_length` readable
+        // bytes and `out` for `result_cap == prefix_length + src_length + 1`
+        // writable ones starting at `out_ix == 0`; the scratch run is a
         // distinct allocation from the metadata relative root.
         unsafe {
-            core::ptr::copy_nonoverlapping(prefix_data, ptr, prefix_length);
+            core::ptr::copy_nonoverlapping(prefix_run.as_ptr(), out.as_mut_ptr(), prefix_length);
         }
-        // SAFETY: `prefix_length < result_cap`, so the separator slot is inside
-        // the scratch run.
-        unsafe {
-            *ptr.add(prefix_length) = uc.opts_view().path_separator();
-        }
-        // SAFETY: `prefix_length + 1 <= result_cap`, so the advance lands at
-        // most one past the end of the scratch run.
-        ptr = unsafe { ptr.add(prefix_length + 1) };
+        out.write_at(prefix_length, uc.opts_view().path_separator());
+        out_ix = prefix_length + 1;
     }
     let mut i: usize = 0;
     while i < src_length {
-        // SAFETY: `i < src_length` bounds the read in the source path run.
-        let mut c: u8 = unsafe { *src.add(i) };
+        let mut c: u8 = src_run.copy_at(src_ix + i);
         if c == b'/' || c == b'\\' {
             c = uc.opts_view().path_separator();
         }
-        // SAFETY: `ptr` has consumed the prefix (`prefix_length + 1` bytes, or
-        // none) plus `i` bytes of the `prefix_length + src_length + 1`-byte
-        // scratch run, and `i < src_length`, so one more byte fits.
-        unsafe {
-            *ptr = c;
-            ptr = ptr.add(1);
-        }
+        out.write_at(out_ix, c);
+        out_ix += 1;
         i += 1;
     }
 
     // Intern the string and pop the temporary buffer
-    // SAFETY: `ptr` and `result` are derived from the same scratch run, with
-    // `ptr` at or after `result`.
-    let mut dst: String = String::new_c(result, to_size(unsafe { ptr.offset_from(result) }));
+    // C: `ufbxi_to_size(ptr - result)` — `out_ix` is that same distance, the
+    // count of bytes written into the scratch run above.
+    let mut dst: String = String::new_c(result, out_ix);
     ufbx_assert!(dst.length <= result_cap);
     // `dst` is a live local naming the bytes written into the scratch run above.
     push_string_place_str(uc.string_pool_view(), StringView::from_mut(&mut dst), raw)?;
