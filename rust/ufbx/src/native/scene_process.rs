@@ -6845,7 +6845,7 @@ pub(crate) unsafe fn flip_attrib_winding(
 
 // ufbx.c:21109-21163 `ufbxi_flip_winding`
 #[inline(never)]
-pub(crate) unsafe fn flip_winding(uc: &Context, mesh: &View<Mesh>) -> Result<(), Fail> {
+pub(crate) fn flip_winding(uc: &Context, mesh: &View<Mesh>) -> Result<(), Fail> {
     uc.set_tmp_mesh_consecutive_indices(ptr::null_mut());
     // SAFETY: each `indices_view()` views one of the mesh's own attribute index
     // lists, so its `count` spans the face index ranges `flip_attrib_winding`

@@ -503,7 +503,7 @@ pub(crate) struct AsciiSpan {
 
 // ufbx.c:9666-9708 `ufbxi_ascii_store_array`
 #[inline(never)]
-pub(crate) unsafe fn ascii_store_array(uc: &Context, tmp_buf: &BufView) -> Result<(), Fail> {
+pub(crate) fn ascii_store_array(uc: &Context, tmp_buf: &BufView) -> Result<(), Fail> {
     let ua: *mut Ascii = uc.ascii_mut_ptr();
 
     // The `retain_buf` field is a raw back-pointer the ascii reader stores for
@@ -2314,11 +2314,7 @@ fn ascii_parse_node_rec(
                     // Don't bother with small arrays due to fixed overhead
                     if count >= MIN_THREADED_ASCII_VALUES as i64 && count <= u32::MAX as i64 {
                         deferred_size = (count as u32).wrapping_sub(1);
-                        // SAFETY: `tmp_buf` is the caller's live scratch buf where
-                        // the array's source spans are parked.
-                        unsafe {
-                            ascii_store_array(uc, tmp_buf)?;
-                        }
+                        ascii_store_array(uc, tmp_buf)?;
                     }
                 }
             }
