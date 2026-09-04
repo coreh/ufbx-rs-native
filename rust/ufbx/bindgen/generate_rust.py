@@ -1532,6 +1532,258 @@ pub fn as_anim_curve<'a>(element: &'a Element) -> Option<&'a AnimCurve> {
 }
 """
 
+override_functions["ufbx_as_unknown"] = """
+#[allow(clippy::needless_lifetimes)]
+pub fn as_unknown<'a>(element: &'a Element) -> Option<&'a Unknown> {
+    let result = crate::native::api::downcast_element::<Unknown>(element, ElementType::Unknown);
+    if result.is_null() {
+        None
+    } else {
+        unsafe { Some(&*result) }
+    }
+}
+"""
+
+override_functions["ufbx_as_light"] = """
+#[allow(clippy::needless_lifetimes)]
+pub fn as_light<'a>(element: &'a Element) -> Option<&'a Light> {
+    let result = crate::native::api::downcast_element::<Light>(element, ElementType::Light);
+    if result.is_null() {
+        None
+    } else {
+        unsafe { Some(&*result) }
+    }
+}
+"""
+
+override_functions["ufbx_as_camera"] = """
+#[allow(clippy::needless_lifetimes)]
+pub fn as_camera<'a>(element: &'a Element) -> Option<&'a Camera> {
+    let result = crate::native::api::downcast_element::<Camera>(element, ElementType::Camera);
+    if result.is_null() {
+        None
+    } else {
+        unsafe { Some(&*result) }
+    }
+}
+"""
+
+override_functions["ufbx_as_bone"] = """
+#[allow(clippy::needless_lifetimes)]
+pub fn as_bone<'a>(element: &'a Element) -> Option<&'a Bone> {
+    let result = crate::native::api::downcast_element::<Bone>(element, ElementType::Bone);
+    if result.is_null() {
+        None
+    } else {
+        unsafe { Some(&*result) }
+    }
+}
+"""
+
+override_functions["ufbx_as_empty"] = """
+#[allow(clippy::needless_lifetimes)]
+pub fn as_empty<'a>(element: &'a Element) -> Option<&'a Empty> {
+    let result = crate::native::api::downcast_element::<Empty>(element, ElementType::Empty);
+    if result.is_null() {
+        None
+    } else {
+        unsafe { Some(&*result) }
+    }
+}
+"""
+
+override_functions["ufbx_as_line_curve"] = """
+#[allow(clippy::needless_lifetimes)]
+pub fn as_line_curve<'a>(element: &'a Element) -> Option<&'a LineCurve> {
+    let result = crate::native::api::downcast_element::<LineCurve>(element, ElementType::LineCurve);
+    if result.is_null() {
+        None
+    } else {
+        unsafe { Some(&*result) }
+    }
+}
+"""
+
+override_functions["ufbx_as_nurbs_trim_surface"] = """
+#[allow(clippy::needless_lifetimes)]
+pub fn as_nurbs_trim_surface<'a>(element: &'a Element) -> Option<&'a NurbsTrimSurface> {
+    let result = crate::native::api::downcast_element::<NurbsTrimSurface>(element, ElementType::NurbsTrimSurface);
+    if result.is_null() {
+        None
+    } else {
+        unsafe { Some(&*result) }
+    }
+}
+"""
+
+override_functions["ufbx_as_nurbs_trim_boundary"] = """
+#[allow(clippy::needless_lifetimes)]
+pub fn as_nurbs_trim_boundary<'a>(element: &'a Element) -> Option<&'a NurbsTrimBoundary> {
+    let result = crate::native::api::downcast_element::<NurbsTrimBoundary>(element, ElementType::NurbsTrimBoundary);
+    if result.is_null() {
+        None
+    } else {
+        unsafe { Some(&*result) }
+    }
+}
+"""
+
+override_functions["ufbx_as_procedural_geometry"] = """
+#[allow(clippy::needless_lifetimes)]
+pub fn as_procedural_geometry<'a>(element: &'a Element) -> Option<&'a ProceduralGeometry> {
+    let result = crate::native::api::downcast_element::<ProceduralGeometry>(element, ElementType::ProceduralGeometry);
+    if result.is_null() {
+        None
+    } else {
+        unsafe { Some(&*result) }
+    }
+}
+"""
+
+override_functions["ufbx_as_stereo_camera"] = """
+#[allow(clippy::needless_lifetimes)]
+pub fn as_stereo_camera<'a>(element: &'a Element) -> Option<&'a StereoCamera> {
+    let result = crate::native::api::downcast_element::<StereoCamera>(element, ElementType::StereoCamera);
+    if result.is_null() {
+        None
+    } else {
+        unsafe { Some(&*result) }
+    }
+}
+"""
+
+override_functions["ufbx_as_camera_switcher"] = """
+#[allow(clippy::needless_lifetimes)]
+pub fn as_camera_switcher<'a>(element: &'a Element) -> Option<&'a CameraSwitcher> {
+    let result = crate::native::api::downcast_element::<CameraSwitcher>(element, ElementType::CameraSwitcher);
+    if result.is_null() {
+        None
+    } else {
+        unsafe { Some(&*result) }
+    }
+}
+"""
+
+override_functions["ufbx_as_marker"] = """
+#[allow(clippy::needless_lifetimes)]
+pub fn as_marker<'a>(element: &'a Element) -> Option<&'a Marker> {
+    let result = crate::native::api::downcast_element::<Marker>(element, ElementType::Marker);
+    if result.is_null() {
+        None
+    } else {
+        unsafe { Some(&*result) }
+    }
+}
+"""
+
+override_functions["ufbx_as_shader"] = """
+#[allow(clippy::needless_lifetimes)]
+pub fn as_shader<'a>(element: &'a Element) -> Option<&'a Shader> {
+    let result = crate::native::api::downcast_element::<Shader>(element, ElementType::Shader);
+    if result.is_null() {
+        None
+    } else {
+        unsafe { Some(&*result) }
+    }
+}
+"""
+
+override_functions["ufbx_as_shader_binding"] = """
+#[allow(clippy::needless_lifetimes)]
+pub fn as_shader_binding<'a>(element: &'a Element) -> Option<&'a ShaderBinding> {
+    let result = crate::native::api::downcast_element::<ShaderBinding>(element, ElementType::ShaderBinding);
+    if result.is_null() {
+        None
+    } else {
+        unsafe { Some(&*result) }
+    }
+}
+"""
+
+override_functions["ufbx_as_display_layer"] = """
+#[allow(clippy::needless_lifetimes)]
+pub fn as_display_layer<'a>(element: &'a Element) -> Option<&'a DisplayLayer> {
+    let result = crate::native::api::downcast_element::<DisplayLayer>(element, ElementType::DisplayLayer);
+    if result.is_null() {
+        None
+    } else {
+        unsafe { Some(&*result) }
+    }
+}
+"""
+
+override_functions["ufbx_as_character"] = """
+#[allow(clippy::needless_lifetimes)]
+pub fn as_character<'a>(element: &'a Element) -> Option<&'a Character> {
+    let result = crate::native::api::downcast_element::<Character>(element, ElementType::Character);
+    if result.is_null() {
+        None
+    } else {
+        unsafe { Some(&*result) }
+    }
+}
+"""
+
+override_functions["ufbx_as_constraint"] = """
+#[allow(clippy::needless_lifetimes)]
+pub fn as_constraint<'a>(element: &'a Element) -> Option<&'a Constraint> {
+    let result = crate::native::api::downcast_element::<Constraint>(element, ElementType::Constraint);
+    if result.is_null() {
+        None
+    } else {
+        unsafe { Some(&*result) }
+    }
+}
+"""
+
+override_functions["ufbx_as_audio_layer"] = """
+#[allow(clippy::needless_lifetimes)]
+pub fn as_audio_layer<'a>(element: &'a Element) -> Option<&'a AudioLayer> {
+    let result = crate::native::api::downcast_element::<AudioLayer>(element, ElementType::AudioLayer);
+    if result.is_null() {
+        None
+    } else {
+        unsafe { Some(&*result) }
+    }
+}
+"""
+
+override_functions["ufbx_as_audio_clip"] = """
+#[allow(clippy::needless_lifetimes)]
+pub fn as_audio_clip<'a>(element: &'a Element) -> Option<&'a AudioClip> {
+    let result = crate::native::api::downcast_element::<AudioClip>(element, ElementType::AudioClip);
+    if result.is_null() {
+        None
+    } else {
+        unsafe { Some(&*result) }
+    }
+}
+"""
+
+override_functions["ufbx_as_pose"] = """
+#[allow(clippy::needless_lifetimes)]
+pub fn as_pose<'a>(element: &'a Element) -> Option<&'a Pose> {
+    let result = crate::native::api::downcast_element::<Pose>(element, ElementType::Pose);
+    if result.is_null() {
+        None
+    } else {
+        unsafe { Some(&*result) }
+    }
+}
+"""
+
+override_functions["ufbx_as_metadata_object"] = """
+#[allow(clippy::needless_lifetimes)]
+pub fn as_metadata_object<'a>(element: &'a Element) -> Option<&'a MetadataObject> {
+    let result = crate::native::api::downcast_element::<MetadataObject>(element, ElementType::MetadataObject);
+    if result.is_null() {
+        None
+    } else {
+        unsafe { Some(&*result) }
+    }
+}
+"""
+
 override_functions["ufbx_evaluate_props"] = """
 pub fn evaluate_props<'a, 'b>(anim: &'a Anim, element: &'a Element, time: f64, buffer: &'b mut [ExternalRef<'b, Prop>]) -> ExternalRef<'b, Props>
     where 'a: 'b

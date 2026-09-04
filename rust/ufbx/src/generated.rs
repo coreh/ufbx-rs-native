@@ -5963,7 +5963,7 @@ pub fn get_vertex_w_vec3(v: &VertexVec3, index: usize) -> Real {
 
 #[allow(clippy::needless_lifetimes)]
 pub fn as_unknown<'a>(element: &'a Element) -> Option<&'a Unknown> {
-    let result = unsafe { crate::native::api::as_unknown(element as *const Element) };
+    let result = crate::native::api::downcast_element::<Unknown>(element, ElementType::Unknown);
     if result.is_null() {
         None
     } else {
@@ -5993,7 +5993,7 @@ pub fn as_mesh<'a>(element: &'a Element) -> Option<&'a Mesh> {
 
 #[allow(clippy::needless_lifetimes)]
 pub fn as_light<'a>(element: &'a Element) -> Option<&'a Light> {
-    let result = unsafe { crate::native::api::as_light(element as *const Element) };
+    let result = crate::native::api::downcast_element::<Light>(element, ElementType::Light);
     if result.is_null() {
         None
     } else {
@@ -6003,7 +6003,7 @@ pub fn as_light<'a>(element: &'a Element) -> Option<&'a Light> {
 
 #[allow(clippy::needless_lifetimes)]
 pub fn as_camera<'a>(element: &'a Element) -> Option<&'a Camera> {
-    let result = unsafe { crate::native::api::as_camera(element as *const Element) };
+    let result = crate::native::api::downcast_element::<Camera>(element, ElementType::Camera);
     if result.is_null() {
         None
     } else {
@@ -6013,7 +6013,7 @@ pub fn as_camera<'a>(element: &'a Element) -> Option<&'a Camera> {
 
 #[allow(clippy::needless_lifetimes)]
 pub fn as_bone<'a>(element: &'a Element) -> Option<&'a Bone> {
-    let result = unsafe { crate::native::api::as_bone(element as *const Element) };
+    let result = crate::native::api::downcast_element::<Bone>(element, ElementType::Bone);
     if result.is_null() {
         None
     } else {
@@ -6023,7 +6023,7 @@ pub fn as_bone<'a>(element: &'a Element) -> Option<&'a Bone> {
 
 #[allow(clippy::needless_lifetimes)]
 pub fn as_empty<'a>(element: &'a Element) -> Option<&'a Empty> {
-    let result = unsafe { crate::native::api::as_empty(element as *const Element) };
+    let result = crate::native::api::downcast_element::<Empty>(element, ElementType::Empty);
     if result.is_null() {
         None
     } else {
@@ -6033,7 +6033,7 @@ pub fn as_empty<'a>(element: &'a Element) -> Option<&'a Empty> {
 
 #[allow(clippy::needless_lifetimes)]
 pub fn as_line_curve<'a>(element: &'a Element) -> Option<&'a LineCurve> {
-    let result = unsafe { crate::native::api::as_line_curve(element as *const Element) };
+    let result = crate::native::api::downcast_element::<LineCurve>(element, ElementType::LineCurve);
     if result.is_null() {
         None
     } else {
@@ -6065,7 +6065,10 @@ pub fn as_nurbs_surface<'a>(element: &'a Element) -> Option<&'a NurbsSurface> {
 
 #[allow(clippy::needless_lifetimes)]
 pub fn as_nurbs_trim_surface<'a>(element: &'a Element) -> Option<&'a NurbsTrimSurface> {
-    let result = unsafe { crate::native::api::as_nurbs_trim_surface(element as *const Element) };
+    let result = crate::native::api::downcast_element::<NurbsTrimSurface>(
+        element,
+        ElementType::NurbsTrimSurface,
+    );
     if result.is_null() {
         None
     } else {
@@ -6075,7 +6078,10 @@ pub fn as_nurbs_trim_surface<'a>(element: &'a Element) -> Option<&'a NurbsTrimSu
 
 #[allow(clippy::needless_lifetimes)]
 pub fn as_nurbs_trim_boundary<'a>(element: &'a Element) -> Option<&'a NurbsTrimBoundary> {
-    let result = unsafe { crate::native::api::as_nurbs_trim_boundary(element as *const Element) };
+    let result = crate::native::api::downcast_element::<NurbsTrimBoundary>(
+        element,
+        ElementType::NurbsTrimBoundary,
+    );
     if result.is_null() {
         None
     } else {
@@ -6085,7 +6091,10 @@ pub fn as_nurbs_trim_boundary<'a>(element: &'a Element) -> Option<&'a NurbsTrimB
 
 #[allow(clippy::needless_lifetimes)]
 pub fn as_procedural_geometry<'a>(element: &'a Element) -> Option<&'a ProceduralGeometry> {
-    let result = unsafe { crate::native::api::as_procedural_geometry(element as *const Element) };
+    let result = crate::native::api::downcast_element::<ProceduralGeometry>(
+        element,
+        ElementType::ProceduralGeometry,
+    );
     if result.is_null() {
         None
     } else {
@@ -6095,7 +6104,8 @@ pub fn as_procedural_geometry<'a>(element: &'a Element) -> Option<&'a Procedural
 
 #[allow(clippy::needless_lifetimes)]
 pub fn as_stereo_camera<'a>(element: &'a Element) -> Option<&'a StereoCamera> {
-    let result = unsafe { crate::native::api::as_stereo_camera(element as *const Element) };
+    let result =
+        crate::native::api::downcast_element::<StereoCamera>(element, ElementType::StereoCamera);
     if result.is_null() {
         None
     } else {
@@ -6105,7 +6115,10 @@ pub fn as_stereo_camera<'a>(element: &'a Element) -> Option<&'a StereoCamera> {
 
 #[allow(clippy::needless_lifetimes)]
 pub fn as_camera_switcher<'a>(element: &'a Element) -> Option<&'a CameraSwitcher> {
-    let result = unsafe { crate::native::api::as_camera_switcher(element as *const Element) };
+    let result = crate::native::api::downcast_element::<CameraSwitcher>(
+        element,
+        ElementType::CameraSwitcher,
+    );
     if result.is_null() {
         None
     } else {
@@ -6115,7 +6128,7 @@ pub fn as_camera_switcher<'a>(element: &'a Element) -> Option<&'a CameraSwitcher
 
 #[allow(clippy::needless_lifetimes)]
 pub fn as_marker<'a>(element: &'a Element) -> Option<&'a Marker> {
-    let result = unsafe { crate::native::api::as_marker(element as *const Element) };
+    let result = crate::native::api::downcast_element::<Marker>(element, ElementType::Marker);
     if result.is_null() {
         None
     } else {
@@ -6241,7 +6254,7 @@ pub fn as_video<'a>(element: &'a Element) -> Option<&'a Video> {
 
 #[allow(clippy::needless_lifetimes)]
 pub fn as_shader<'a>(element: &'a Element) -> Option<&'a Shader> {
-    let result = unsafe { crate::native::api::as_shader(element as *const Element) };
+    let result = crate::native::api::downcast_element::<Shader>(element, ElementType::Shader);
     if result.is_null() {
         None
     } else {
@@ -6251,7 +6264,8 @@ pub fn as_shader<'a>(element: &'a Element) -> Option<&'a Shader> {
 
 #[allow(clippy::needless_lifetimes)]
 pub fn as_shader_binding<'a>(element: &'a Element) -> Option<&'a ShaderBinding> {
-    let result = unsafe { crate::native::api::as_shader_binding(element as *const Element) };
+    let result =
+        crate::native::api::downcast_element::<ShaderBinding>(element, ElementType::ShaderBinding);
     if result.is_null() {
         None
     } else {
@@ -6301,7 +6315,8 @@ pub fn as_anim_curve<'a>(element: &'a Element) -> Option<&'a AnimCurve> {
 
 #[allow(clippy::needless_lifetimes)]
 pub fn as_display_layer<'a>(element: &'a Element) -> Option<&'a DisplayLayer> {
-    let result = unsafe { crate::native::api::as_display_layer(element as *const Element) };
+    let result =
+        crate::native::api::downcast_element::<DisplayLayer>(element, ElementType::DisplayLayer);
     if result.is_null() {
         None
     } else {
@@ -6333,7 +6348,7 @@ pub fn as_selection_node<'a>(element: &'a Element) -> Option<&'a SelectionNode> 
 
 #[allow(clippy::needless_lifetimes)]
 pub fn as_character<'a>(element: &'a Element) -> Option<&'a Character> {
-    let result = unsafe { crate::native::api::as_character(element as *const Element) };
+    let result = crate::native::api::downcast_element::<Character>(element, ElementType::Character);
     if result.is_null() {
         None
     } else {
@@ -6343,7 +6358,8 @@ pub fn as_character<'a>(element: &'a Element) -> Option<&'a Character> {
 
 #[allow(clippy::needless_lifetimes)]
 pub fn as_constraint<'a>(element: &'a Element) -> Option<&'a Constraint> {
-    let result = unsafe { crate::native::api::as_constraint(element as *const Element) };
+    let result =
+        crate::native::api::downcast_element::<Constraint>(element, ElementType::Constraint);
     if result.is_null() {
         None
     } else {
@@ -6353,7 +6369,8 @@ pub fn as_constraint<'a>(element: &'a Element) -> Option<&'a Constraint> {
 
 #[allow(clippy::needless_lifetimes)]
 pub fn as_audio_layer<'a>(element: &'a Element) -> Option<&'a AudioLayer> {
-    let result = unsafe { crate::native::api::as_audio_layer(element as *const Element) };
+    let result =
+        crate::native::api::downcast_element::<AudioLayer>(element, ElementType::AudioLayer);
     if result.is_null() {
         None
     } else {
@@ -6363,7 +6380,7 @@ pub fn as_audio_layer<'a>(element: &'a Element) -> Option<&'a AudioLayer> {
 
 #[allow(clippy::needless_lifetimes)]
 pub fn as_audio_clip<'a>(element: &'a Element) -> Option<&'a AudioClip> {
-    let result = unsafe { crate::native::api::as_audio_clip(element as *const Element) };
+    let result = crate::native::api::downcast_element::<AudioClip>(element, ElementType::AudioClip);
     if result.is_null() {
         None
     } else {
@@ -6373,7 +6390,7 @@ pub fn as_audio_clip<'a>(element: &'a Element) -> Option<&'a AudioClip> {
 
 #[allow(clippy::needless_lifetimes)]
 pub fn as_pose<'a>(element: &'a Element) -> Option<&'a Pose> {
-    let result = unsafe { crate::native::api::as_pose(element as *const Element) };
+    let result = crate::native::api::downcast_element::<Pose>(element, ElementType::Pose);
     if result.is_null() {
         None
     } else {
@@ -6383,7 +6400,10 @@ pub fn as_pose<'a>(element: &'a Element) -> Option<&'a Pose> {
 
 #[allow(clippy::needless_lifetimes)]
 pub fn as_metadata_object<'a>(element: &'a Element) -> Option<&'a MetadataObject> {
-    let result = unsafe { crate::native::api::as_metadata_object(element as *const Element) };
+    let result = crate::native::api::downcast_element::<MetadataObject>(
+        element,
+        ElementType::MetadataObject,
+    );
     if result.is_null() {
         None
     } else {

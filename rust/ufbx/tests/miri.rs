@@ -108,6 +108,73 @@ fn load_and_walk(name: &str) -> f64 {
 // OBJ/MTL reader) and the pre-7000 versions take the legacy `Takes` path, so
 // each combination is its own load.
 
+/// Every element downcasts through exactly one `as_*` wrapper — the one named
+/// by its `type_` discriminant — and that wrapper returns the element's own
+/// allocation. Indexed by `ElementType` value.
+fn assert_downcast_partition(scene: &ufbx::Scene) {
+    for elem in &scene.elements {
+        let e: &ufbx::Element = elem;
+        let headers: [Option<*const ufbx::Element>; 42] = [
+            ufbx::as_unknown(e).map(|x| core::ptr::from_ref(&x.element)),
+            ufbx::as_node(e).map(|x| core::ptr::from_ref(&x.element)),
+            ufbx::as_mesh(e).map(|x| core::ptr::from_ref(&x.element)),
+            ufbx::as_light(e).map(|x| core::ptr::from_ref(&x.element)),
+            ufbx::as_camera(e).map(|x| core::ptr::from_ref(&x.element)),
+            ufbx::as_bone(e).map(|x| core::ptr::from_ref(&x.element)),
+            ufbx::as_empty(e).map(|x| core::ptr::from_ref(&x.element)),
+            ufbx::as_line_curve(e).map(|x| core::ptr::from_ref(&x.element)),
+            ufbx::as_nurbs_curve(e).map(|x| core::ptr::from_ref(&x.element)),
+            ufbx::as_nurbs_surface(e).map(|x| core::ptr::from_ref(&x.element)),
+            ufbx::as_nurbs_trim_surface(e).map(|x| core::ptr::from_ref(&x.element)),
+            ufbx::as_nurbs_trim_boundary(e).map(|x| core::ptr::from_ref(&x.element)),
+            ufbx::as_procedural_geometry(e).map(|x| core::ptr::from_ref(&x.element)),
+            ufbx::as_stereo_camera(e).map(|x| core::ptr::from_ref(&x.element)),
+            ufbx::as_camera_switcher(e).map(|x| core::ptr::from_ref(&x.element)),
+            ufbx::as_marker(e).map(|x| core::ptr::from_ref(&x.element)),
+            ufbx::as_lod_group(e).map(|x| core::ptr::from_ref(&x.element)),
+            ufbx::as_skin_deformer(e).map(|x| core::ptr::from_ref(&x.element)),
+            ufbx::as_skin_cluster(e).map(|x| core::ptr::from_ref(&x.element)),
+            ufbx::as_blend_deformer(e).map(|x| core::ptr::from_ref(&x.element)),
+            ufbx::as_blend_channel(e).map(|x| core::ptr::from_ref(&x.element)),
+            ufbx::as_blend_shape(e).map(|x| core::ptr::from_ref(&x.element)),
+            ufbx::as_cache_deformer(e).map(|x| core::ptr::from_ref(&x.element)),
+            ufbx::as_cache_file(e).map(|x| core::ptr::from_ref(&x.element)),
+            ufbx::as_material(e).map(|x| core::ptr::from_ref(&x.element)),
+            ufbx::as_texture(e).map(|x| core::ptr::from_ref(&x.element)),
+            ufbx::as_video(e).map(|x| core::ptr::from_ref(&x.element)),
+            ufbx::as_shader(e).map(|x| core::ptr::from_ref(&x.element)),
+            ufbx::as_shader_binding(e).map(|x| core::ptr::from_ref(&x.element)),
+            ufbx::as_anim_stack(e).map(|x| core::ptr::from_ref(&x.element)),
+            ufbx::as_anim_layer(e).map(|x| core::ptr::from_ref(&x.element)),
+            ufbx::as_anim_value(e).map(|x| core::ptr::from_ref(&x.element)),
+            ufbx::as_anim_curve(e).map(|x| core::ptr::from_ref(&x.element)),
+            ufbx::as_display_layer(e).map(|x| core::ptr::from_ref(&x.element)),
+            ufbx::as_selection_set(e).map(|x| core::ptr::from_ref(&x.element)),
+            ufbx::as_selection_node(e).map(|x| core::ptr::from_ref(&x.element)),
+            ufbx::as_character(e).map(|x| core::ptr::from_ref(&x.element)),
+            ufbx::as_constraint(e).map(|x| core::ptr::from_ref(&x.element)),
+            ufbx::as_audio_layer(e).map(|x| core::ptr::from_ref(&x.element)),
+            ufbx::as_audio_clip(e).map(|x| core::ptr::from_ref(&x.element)),
+            ufbx::as_pose(e).map(|x| core::ptr::from_ref(&x.element)),
+            ufbx::as_metadata_object(e).map(|x| core::ptr::from_ref(&x.element)),
+        ];
+        let matched: Vec<usize> = headers
+            .iter()
+            .enumerate()
+            .filter_map(|(i, p)| p.map(|_| i))
+            .collect();
+        assert_eq!(
+            matched.len(),
+            1,
+            "element {} type {:?}",
+            e.element_id,
+            e.type_
+        );
+        assert_eq!(matched[0], e.type_ as usize);
+        assert!(core::ptr::eq(headers[matched[0]].expect("matched"), e));
+    }
+}
+
 #[test]
 fn load_cube_binary() {
     let original = load("maya_cube_7500_binary.fbx");
@@ -497,6 +564,7 @@ fn load_nonzero_all_same_material_legacy() {
 #[test]
 fn load_attribute_zoo_6100_binary() {
     let scene = load("maya_node_attribute_zoo_6100_binary.fbx");
+    assert_downcast_partition(&scene);
     assert!(walk(&scene).is_finite());
     let stereo = scene
         .stereo_cameras
@@ -585,6 +653,7 @@ fn load_uv_and_color_sets_6100_binary() {
 #[test]
 fn load_constraint_connections_6100_binary() {
     let scene = load("maya_constraint_zoo_6100_binary.fbx");
+    assert_downcast_partition(&scene);
     assert!(walk(&scene).is_finite());
 
     assert!(scene.constraints.iter().any(|constraint| {
@@ -728,6 +797,7 @@ fn load_shader_texture_prefixes() {
     }
 
     let legacy = load("max_texture_mapping_6100_binary.fbx");
+    assert_downcast_partition(&legacy);
     let shader = legacy
         .shaders
         .iter()
@@ -901,6 +971,7 @@ fn load_lod_groups() {
     }
 
     let scene = load("maya_lod_group_7500_binary.fbx");
+    assert_downcast_partition(&scene);
     assert_eq!(scene.lod_groups.len(), 2);
     assert!(ufbx::as_lod_group(&scene.root_node.element).is_none());
 
@@ -945,6 +1016,7 @@ fn load_lod_groups() {
 #[test]
 fn load_selection_sets() {
     let scene = load("max_selection_sets_6100_binary.fbx");
+    assert_downcast_partition(&scene);
     assert_eq!(scene.selection_sets.len(), 9);
     assert_eq!(scene.selection_nodes.len(), 9);
 
@@ -1006,6 +1078,7 @@ fn load_selection_sets() {
 #[test]
 fn load_skinned() {
     let scene = load("blender_293_half_skinned_7400_binary.fbx");
+    assert_downcast_partition(&scene);
     assert!(!scene.skin_deformers.is_empty());
     assert!(!scene.skin_clusters.is_empty());
     let mut acc = 0.0f64;
@@ -1950,6 +2023,7 @@ fn subdivide() {
 #[test]
 fn subdivide_with_weights() {
     let scene = load("blender_293_half_skinned_7400_binary.fbx");
+    assert_downcast_partition(&scene);
     let mesh = scene
         .meshes
         .iter()
@@ -3059,6 +3133,7 @@ fn public_deform_helpers_from_shared_refs() {
     }
 
     let pose_root = load("maya_poses_7700_ascii.fbx");
+    assert_downcast_partition(&pose_root);
     let pose_scene: &Scene = &pose_root;
     let pose = pose_scene.poses.first().expect("missing pose");
     let bone_pose = pose.bone_poses.first().expect("missing bone pose");
