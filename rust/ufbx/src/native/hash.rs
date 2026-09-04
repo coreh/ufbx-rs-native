@@ -15,7 +15,7 @@ use crate::native::error::{ufbxi_check_return_err, ufbxi_check_return_err_msg};
 use crate::native::platform::{
     ufbx_assert, ufbxi_maybe_null, ufbxi_regression_assert, MAP_MAX_SCAN,
 };
-use crate::native::view::{view_project, view_read, view_write};
+use crate::native::view::{view_project, view_read, view_write, Run};
 use crate::prelude::Ref;
 
 // ufbx.c:4688-4691 `ufbxi_ptr_id` — key type of the hash-map unit; kept up
@@ -772,23 +772,18 @@ pub(crate) unsafe fn aa_tree_find(
 // stride.
 #[inline(never)]
 pub(crate) unsafe fn map_grow_size_imp(map: &MapView, item_size: usize, min_size: usize) -> bool {
-    // The view is minted only over a live, writable `Map` (write provenance);
-    // `get()` is the raw pointer the C body operates on.
-    let map: *mut Map = map.get();
-
     ufbx_assert!(min_size > 0);
     let load_factor = 0.7f64;
 
     // Find the lowest power of two size that fits `min_size` within `load_factor`
-    // C: `map->mask + 1` — uint32 arithmetic, then widened to size_t.
-    // SAFETY: the view's mint invariant — `map` addresses a live `Map`.
-    let mut num_entries = unsafe { (*map).mask }.wrapping_add(1) as usize;
+    // C: `map->mask + 1` — uint32 arithmetic, then widened to size_t. The
+    // bookkeeping leaves are read through the view's own getters, each
+    // discharged by the mint invariant (`map` views a live `Map`).
+    let mut num_entries = map.mask().wrapping_add(1) as usize;
     let mut new_size = (num_entries as f64 * load_factor) as usize;
     let mut min_size = min_size;
-    // SAFETY: the view's mint invariant — `map` addresses a live `Map`.
-    if min_size < unsafe { (*map).capacity }.wrapping_add(1) as usize {
-        // SAFETY: the view's mint invariant — `map` addresses a live `Map`.
-        min_size = unsafe { (*map).capacity }.wrapping_add(1) as usize;
+    if min_size < map.capacity().wrapping_add(1) as usize {
+        min_size = map.capacity().wrapping_add(1) as usize;
     }
     while new_size < min_size {
         num_entries = num_entries.wrapping_mul(2);
@@ -797,7 +792,7 @@ pub(crate) unsafe fn map_grow_size_imp(map: &MapView, item_size: usize, min_size
 
     // Check for overflow
     ufbxi_check_return_err!(
-        unsafe { crate::native::error::ErrorView::from_ptr((*(*map).ator).error) },
+        unsafe { crate::native::error::ErrorView::from_ptr((*map.ator()).error) },
         usize::MAX / num_entries > size_of::<u64>(),
         false,
         "SIZE_MAX / num_entries > sizeof(uint64_t)"
@@ -806,7 +801,7 @@ pub(crate) unsafe fn map_grow_size_imp(map: &MapView, item_size: usize, min_size
 
     // Allocate a combined entry/item memory block
     ufbxi_check_return_err!(
-        unsafe { crate::native::error::ErrorView::from_ptr((*(*map).ator).error) },
+        unsafe { crate::native::error::ErrorView::from_ptr((*map.ator()).error) },
         (usize::MAX - alloc_size) / new_size > item_size,
         false,
         "(SIZE_MAX - alloc_size) / new_size > item_size"
@@ -816,40 +811,37 @@ pub(crate) unsafe fn map_grow_size_imp(map: &MapView, item_size: usize, min_size
     // SAFETY: `map.ator` is the map's own allocator — live and unmoved for the
     // map's lifetime (live `map` per the view's mint invariant) — as
     // `View::from_ptr` requires.
-    let data = alloc::<u8>(unsafe { AllocatorView::from_ptr((*map).ator) }, data_size);
+    let data = alloc::<u8>(unsafe { AllocatorView::from_ptr(map.ator()) }, data_size);
     ufbxi_check_return_err!(
-        unsafe { crate::native::error::ErrorView::from_ptr((*(*map).ator).error) },
+        unsafe { crate::native::error::ErrorView::from_ptr((*map.ator()).error) },
         !data.is_null(),
         false,
         "data"
     );
 
     // Copy the previous user items over
-    // SAFETY: the view's mint invariant — `map` addresses a live `Map`.
-    let old_entries = unsafe { (*map).entries };
+    let old_entries = map.entries();
     let new_entries = data as *mut u64;
     // SAFETY: `alloc_size` bytes at the front of the just-allocated `data_size`
     // block hold the entries; `data + alloc_size` is the in-bounds start of the
     // item region.
     let new_items = unsafe { data.add(alloc_size) } as *mut c_void;
-    // SAFETY: the view's mint invariant — `map` addresses a live `Map`.
-    if unsafe { (*map).size } > 0 {
+    if map.size() > 0 {
         // SAFETY: the old `items` region holds `size` live elements of
         // `item_size` bytes each; the new item region was just allocated with
         // room for `new_size >= size` such elements, and the two blocks are
         // distinct allocations.
         unsafe {
             core::ptr::copy_nonoverlapping(
-                (*map).items as *const u8,
+                map.items() as *const u8,
                 new_items as *mut u8,
-                item_size * (*map).size as usize,
+                item_size * map.size() as usize,
             );
         }
     }
 
     // Re-hash the entries
-    // SAFETY: the view's mint invariant — `map` addresses a live `Map`.
-    let old_mask = unsafe { (*map).mask };
+    let old_mask = map.mask();
     let new_mask = (num_entries as u32).wrapping_sub(1);
     // SAFETY: `new_entries` is the `alloc_size`-byte entry region, room for
     // `num_entries` `u64`s, so zeroing that many is in bounds.
@@ -906,26 +898,32 @@ pub(crate) unsafe fn map_grow_size_imp(map: &MapView, item_size: usize, min_size
         new[slot as usize] = new_entry.wrapping_add(scan as u64);
     }
 
-    // And finally free the previous allocation
+    // And finally free the previous allocation.
+    //
+    // The view is minted only over a live, writable `Map` (write provenance);
+    // `get()` is the raw pointer the `data_size` read and the coupled field
+    // publications below work through — neither has a leaf accessor.
+    let map_raw: *mut Map = map.get();
     // SAFETY: `old_entries` is the map's previous combined block of
-    // `(*map).data_size` bytes, allocated from `map`'s own live allocator — the
-    // pairing `free` requires (0/null for a never-grown map, whose null `ator`
-    // slot mints `None`, which `free` tolerates).
+    // `(*map_raw).data_size` bytes, allocated from `map`'s own live allocator —
+    // the pairing `free` requires (0/null for a never-grown map, whose null
+    // `ator` slot mints `None`, which `free` tolerates); `map_raw` addresses
+    // the live `Map` per the view's mint invariant.
     unsafe {
         free::<u8>(
-            AllocatorView::from_ptr_opt((*map).ator),
+            AllocatorView::from_ptr_opt(map.ator()),
             old_entries as *mut u8,
-            (*map).data_size,
+            (*map_raw).data_size,
         )
     };
-    // SAFETY: the view's mint invariant — `map` addresses a live, writable
+    // SAFETY: the view's mint invariant — `map_raw` addresses a live, writable
     // `Map`; these installs publish the freshly built table.
     unsafe {
-        (*map).items = new_items;
-        (*map).data_size = data_size;
-        (*map).entries = new_entries;
-        (*map).mask = new_mask;
-        (*map).capacity = new_size as u32;
+        (*map_raw).items = new_items;
+        (*map_raw).data_size = data_size;
+        (*map_raw).entries = new_entries;
+        (*map_raw).mask = new_mask;
+        (*map_raw).capacity = new_size as u32;
     }
 
     true
@@ -1062,8 +1060,26 @@ pub(crate) unsafe fn map_insert_size(
     let index = map.size();
     map.set_size(map.size().wrapping_add(1));
 
-    let entries = map.entries();
     let mask = map.mask();
+    // The entry table as one exclusively held slice — the ONE vouch for every
+    // slot access below: `map_grow_size` above ensured a non-null table of
+    // `mask + 1` initialized `u64` slots (zeroed on growth, then written), the
+    // map's own block, exclusively ours here. Nothing between this borrow and
+    // its last use reaches that block — `aa_tree_insert` touches only the
+    // AA-node buffer and the item region, and no growth happens below. Every
+    // index below is then bounds-checked safe code.
+    // SAFETY: as just stated.
+    let entries: &mut [u64] =
+        unsafe { core::slice::from_raw_parts_mut(map.entries(), mask as usize + 1) };
+    // The item region as one vouched byte run: `map.items()` addresses
+    // `capacity * size` bytes of the combined block `map_grow_size_imp`
+    // allocated (`capacity` elements of stride `size`, the fn contract's
+    // stride), live and unmoved for the rest of this call. The two regions are
+    // disjoint halves of that block.
+    // SAFETY: as just stated.
+    let items = unsafe {
+        Run::<u8>::from_raw_parts(map.items() as *mut u8, map.capacity() as usize * size)
+    };
 
     // Scan forward until we find an empty slot, potentially swapping
     // `new_element` if it has a shorter scan distance (Robin Hood).
@@ -1072,17 +1088,15 @@ pub(crate) unsafe fn map_insert_size(
     let mut new_entry = (index as u64) << 32u32 | (hash & !mask) as u64;
     let mut scan: u32 = 1;
     loop {
-        // SAFETY: `map_grow_size` above ensured a non-null entry table of
-        // `mask + 1` `u64` slots; `slot` is masked with `mask`, so it is in
-        // bounds.
-        entry = unsafe { *entries.add(slot as usize) };
+        // `slot` is masked with `mask`, so it indexes one of the `mask + 1`
+        // slots of the table borrowed above.
+        entry = entries[slot as usize];
         if entry == 0 {
             break;
         }
         let entry_scan = (entry & mask as u64) as u32;
         if entry_scan < scan {
-            // SAFETY: `slot & mask` is in bounds of the entry table, as above.
-            unsafe { *entries.add(slot as usize) = new_entry.wrapping_add(scan as u64) };
+            entries[slot as usize] = new_entry.wrapping_add(scan as u64);
             new_entry = entry & !(mask as u64);
             scan = entry_scan;
         }
@@ -1094,29 +1108,26 @@ pub(crate) unsafe fn map_insert_size(
             let new_value = if new_index == index {
                 value
             } else {
-                // SAFETY: `new_index` is a live element index (< `map.size`), so
-                // `items + size * new_index` addresses that element inside the
-                // items region.
-                unsafe {
-                    (map.items() as *const u8).add(size * new_index as usize) as *const c_void
-                }
+                // `new_index` is a live element index (< `map.size`, itself
+                // <= `capacity`), so the element's `size` bytes lie inside the
+                // item run — a bounds-checked sub-run of it.
+                items.subrun(size * new_index as usize, size).as_ptr() as *const c_void
             };
             // SAFETY: `aa_tree_insert` re-roots the overflow tree with
             // `new_value`/`size` of the map's own key/element discipline.
             map.set_aa_root(unsafe {
                 aa_tree_insert(map, map.aa_root_ref(), new_value, new_index, size)
             });
-            // SAFETY: `index` is this insertion's freshly claimed element slot
-            // (< `map.size`), inside the items region.
-            return unsafe { (map.items() as *mut u8).add(size * index as usize) as *mut c_void };
+            // `index` is this insertion's freshly claimed element slot
+            // (< `map.size` <= `capacity`), inside the item run.
+            return items.subrun(size * index as usize, size).as_mut_ptr() as *mut c_void;
         }
     }
-    // SAFETY: `slot & mask` is in bounds of the entry table.
-    unsafe { *entries.add(slot as usize) = new_entry.wrapping_add(scan as u64) };
+    entries[slot as usize] = new_entry.wrapping_add(scan as u64);
 
-    // SAFETY: `index` is this insertion's freshly claimed element slot
-    // (< `map.size`), inside the items region.
-    unsafe { (map.items() as *mut u8).add(size * index as usize) as *mut c_void }
+    // `index` is this insertion's freshly claimed element slot
+    // (< `map.size` <= `capacity`), inside the item run.
+    items.subrun(size * index as usize, size).as_mut_ptr() as *mut c_void
 }
 
 // -- Typed wrappers (ufbx.c:4657-4659)
