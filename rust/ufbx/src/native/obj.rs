@@ -773,33 +773,38 @@ pub(crate) fn obj_parse_vertex(uc: &Context, attrib: ObjAttrib, offset: usize) -
     let parse_flags: u32 = uc.double_parse_flags();
     let vals: *mut Real = dst.push_fast::<Real>(num_values);
     ufbxi_check!(uc, !vals.is_null(), "vals");
+    // SAFETY: `vals` is the checked non-null `num_values`-slot push above;
+    // nothing pushes to `dst` again before this run's last use, so it stays
+    // live and unmoved in the attribute's own vertex arena.
+    let vals: Run<'_, Real> = unsafe { Run::from_raw_parts(vals, num_values) };
+    // SAFETY: `tokens` / `num_tokens` are the obj context's own paired growth
+    // state, so `tokens` heads `num_tokens` initialized `ufbx_string` slots
+    // with write-capable provenance (null only when the count is zero); only
+    // the tokenizer rewrites them, and this function never retokenizes.
+    let tokens: Run<'_, String> =
+        unsafe { Run::from_raw_parts(uc.obj().tokens(), uc.obj().num_tokens()) };
     for i in 0..read_values {
-        // SAFETY: `offset + read_values <= num_tokens` (checked above), so
-        // token `offset + i` is in the stored token run and `str_.data ..
-        // + length` is that token's own span; `end` is an unaliased local
-        // out-param; `i < read_values <= num_values` indexes the fresh push.
-        unsafe {
-            let str_: String = *uc.obj().tokens().add(offset + i);
-            // C: `char *end; // ufbxi_uninit`
-            let mut end: *const u8 = core::ptr::null(); // ufbxi_uninit
-            let input = str_.as_bytes();
-            let val: f64 = parse_double(input, &mut end, parse_flags);
-            ufbxi_check!(
-                uc,
-                end == input.as_ptr().wrapping_add(input.len()),
-                "end == str.data + str.length"
-            );
-            *vals.add(i) = val as Real;
-        }
+        // `offset + read_values <= num_tokens` (checked above), so token
+        // `offset + i` is in the token run and its span is that token's own
+        // bytes; `i < read_values <= num_values` indexes the fresh push.
+        let input: &[u8] = tokens.at(offset + i).bytes();
+        // C: `char *end; // ufbxi_uninit`
+        let mut end: *const u8 = core::ptr::null(); // ufbxi_uninit
+        let val: f64 = parse_double(input, &mut end, parse_flags);
+        ufbxi_check!(
+            uc,
+            end == input.as_ptr().wrapping_add(input.len()),
+            "end == str.data + str.length"
+        );
+        vals.write_at(i, val as Real);
     }
 
     if read_values < num_values {
         ufbx_assert!(read_values + 1 == num_values);
         ufbx_assert!(attrib == ObjAttrib::Color);
-        // C: `vals[read_values] = 1.0f;`
-        // SAFETY: `read_values + 1 == num_values` here (asserted above), so the
-        // slot is the last of the fresh push.
-        unsafe { *vals.add(read_values) = 1.0f32 as Real };
+        // C: `vals[read_values] = 1.0f;` — `read_values + 1 == num_values`
+        // here (asserted above), so the slot is the last of the fresh push.
+        vals.write_at(read_values, 1.0f32 as Real);
     }
 
     Ok(())
@@ -1150,11 +1155,17 @@ pub(crate) fn parse_hex(digits: &[u8]) -> u32 {
 #[cfg(feature = "obj")]
 #[inline(never)]
 pub(crate) fn obj_parse_comment(uc: &Context) -> Result<(), Fail> {
-    // SAFETY: the length guard runs first, so token 1 is in the tokenizer's
-    // stored token run; the literal is NUL-terminated for `str_c`.
-    if uc.obj().num_tokens() >= 3
-        && unsafe { str_equal((*uc.obj().tokens().add(1)).as_bytes(), b"MRGB") }
-    {
+    // C: `uc->obj.tokens[..]` — one carrier for every token read below.
+    // SAFETY: `tokens` / `num_tokens` are the obj context's own paired
+    // growth state, so `tokens` heads `num_tokens` initialized `ufbx_string`
+    // slots with write-capable provenance (null only when the count is zero).
+    // The tokenizer rewrites them on the next `obj_tokenize_line` only, which
+    // this function never reaches, so the run stays live and unmoved here.
+    let tokens: Run<'_, String> =
+        unsafe { Run::from_raw_parts(uc.obj().tokens(), uc.obj().num_tokens()) };
+
+    // The length guard runs first, so token 1 is in the token run.
+    if uc.obj().num_tokens() >= 3 && str_equal(tokens.at(1).bytes(), b"MRGB") {
         let num_color: usize = uc.obj().vertex_count_at(ObjAttrib::Color as usize).get();
 
         // Pop standard vertex colors and replace them with MRGB colors
@@ -1180,14 +1191,12 @@ pub(crate) fn obj_parse_comment(uc: &Context) -> Result<(), Fail> {
                 .set(uc.obj().vertex_count_at(ObjAttrib::Color as usize).get() - num_pop);
         }
 
-        // SAFETY: `num_tokens >= 3`, so token 2 is in the stored token run.
-        let mrgb: String = unsafe { *uc.obj().tokens().add(2) };
-        // SAFETY: the token is an interned OBJ input string, readable and
-        // unwritten for its stored length throughout this parse.
-        let mrgb_bytes = unsafe { mrgb.as_bytes() };
+        // C: `ufbx_string mrgb = uc->obj.tokens[2];` — `num_tokens >= 3` past
+        // the guard above, so token 2 is in the token run.
+        let mrgb_bytes: &[u8] = tokens.at(2).bytes();
         // C: `for (size_t i = 0; i + 8 <= mrgb.length; i += 8)`
         let mut i: usize = 0;
-        while i + 8 <= mrgb.length {
+        while i + 8 <= mrgb_bytes.len() {
             let p_rgba: *mut Real = uc
                 .obj()
                 .tmp_vertices_at(ObjAttrib::Color as usize)
@@ -1900,12 +1909,19 @@ pub(crate) fn obj_parse_file(uc: &Context) -> Result<(), Fail> {
             continue;
         }
 
-        // SAFETY: `num_tokens > 0` past the guard above, so token 0 is in the
-        // tokenizer's stored token run and `cmd.data .. + length` is its span.
-        let (cmd, key): (String, u32) = unsafe {
-            let cmd: String = *uc.obj().tokens().add(0);
-            (cmd, get_name_key(cmd.as_bytes()))
-        };
+        // C: `uc->obj.tokens[..]` — one carrier for every token read in this
+        // line's dispatch.
+        // SAFETY: `tokens` / `num_tokens` are the obj context's own paired
+        // growth state, so `tokens` heads `num_tokens` initialized
+        // `ufbx_string` slots with write-capable provenance. Only
+        // `obj_tokenize_line` rewrites them, and the next one runs on the
+        // following iteration — past this run's last use — so the run stays
+        // live and unmoved for every read below.
+        let tokens: Run<'_, String> = unsafe { Run::from_raw_parts(uc.obj().tokens(), num_tokens) };
+        // C: `ufbx_string cmd = uc->obj.tokens[0];` — `num_tokens > 0` past
+        // the guard above, so token 0 is in the token run.
+        let cmd: &View<String> = tokens.at(0);
+        let key: u32 = get_name_key(cmd.bytes());
         if key == obj_cmd1(b'v') {
             obj_parse_vertex(uc, ObjAttrib::Position, 1)?;
             if num_tokens >= 7 {
@@ -1938,11 +1954,9 @@ pub(crate) fn obj_parse_file(uc: &Context) -> Result<(), Fail> {
         } else if key == obj_cmd1(b's') {
             if num_tokens >= 2 {
                 uc.obj().set_has_face_smoothing(true);
-                // SAFETY: `num_tokens >= 2` here, so token 1 is in the stored
-                // token run; the literal is NUL-terminated for `str_c`.
-                uc.obj().set_face_smoothing(unsafe {
-                    !str_equal((*uc.obj().tokens().add(1)).as_bytes(), b"off")
-                });
+                // `num_tokens >= 2` here, so token 1 is in the token run.
+                uc.obj()
+                    .set_face_smoothing(!str_equal(tokens.at(1).bytes(), b"off"));
 
                 // Fill in previously missed face smoothing data
                 if uc.obj().tmp_face_smoothing_view().num_items() == 0
@@ -1978,9 +1992,8 @@ pub(crate) fn obj_parse_file(uc: &Context) -> Result<(), Fail> {
             }
         } else if key == obj_cmd1(b'#') {
             obj_parse_comment(uc)?;
-        // SAFETY: `cmd` is token 0's span and the literals are NUL-terminated
-        // for `str_c`.
-        } else if unsafe { str_equal(cmd.as_bytes(), b"mtllib") } {
+        // `cmd` is token 0's own span, read through the token run.
+        } else if str_equal(cmd.bytes(), b"mtllib") {
             ufbxi_check!(uc, uc.obj().num_tokens() >= 2, "uc->obj.num_tokens >= 2");
             let lib: String = obj_span_token(uc, 1, usize::MAX);
             // SAFETY: copies the span (plus its terminator, still inside the
@@ -1993,8 +2006,8 @@ pub(crate) fn obj_parse_file(uc: &Context) -> Result<(), Fail> {
                 Blob::new_c(data, lib.length)
             };
             uc.obj().mtllib_relative_path_view().set(lib);
-        // SAFETY: as for the `mtllib` comparison above.
-        } else if unsafe { str_equal(cmd.as_bytes(), b"usemtl") } {
+        // As for the `mtllib` comparison above.
+        } else if str_equal(cmd.bytes(), b"usemtl") {
             obj_parse_material(uc)?;
         } else if !uc.opts_view().disable_quirks() && key == 0 {
             // ZBrush exporter seems to end the files with '\0', sometimes..
@@ -2087,19 +2100,26 @@ pub(crate) unsafe fn obj_parse_prop(
     // four contiguous `Real`s.
     let value_real_arr: *mut Real = prop.value_vec4_raw() as *mut Real;
 
+    // C: `uc->obj.tokens[..]` — one carrier for both token walks below.
+    // SAFETY: `tokens` / `num_tokens` are the obj context's own paired growth
+    // state, so `tokens` heads `num_tokens` initialized `ufbx_string` slots
+    // with write-capable provenance; only the tokenizer rewrites them and
+    // nothing reached from here retokenizes, so the run stays live and
+    // unmoved for the whole call.
+    let tokens: Run<'_, String> =
+        unsafe { Run::from_raw_parts(uc.obj().tokens(), uc.obj().num_tokens()) };
+
     let mut num_reals: usize = 0;
     while num_reals < 4 {
         if start + num_reals >= uc.obj().num_tokens() {
             break;
         }
-        // SAFETY: `start + num_reals < num_tokens` (guard above), so it indexes
-        // the tokenizer's stored token run.
-        let tok: String = unsafe { *uc.obj().tokens().add(start + num_reals) };
+        // `start + num_reals < num_tokens` (guard above), so it indexes the
+        // token run and yields that token's own readable span.
+        let input: &[u8] = tokens.at(start + num_reals).bytes();
 
         // C: `char *end; // ufbxi_uninit`
         let mut end: *const u8 = core::ptr::null();
-        // SAFETY: `tok.data .. + length` is that token's own readable span.
-        let input = unsafe { tok.as_bytes() };
         let val: f64 = parse_double(input, &mut end, uc.double_parse_flags());
         if end != input.as_ptr().wrapping_add(input.len()) {
             break;
@@ -2119,13 +2139,13 @@ pub(crate) unsafe fn obj_parse_prop(
     let mut num_args: usize = 0;
     if !include_rest {
         while start + num_args < uc.obj().num_tokens() - 1 {
-            // SAFETY: `start + num_args < num_tokens - 1` (loop condition), so
-            // it indexes the stored token run, whose entries span their own
-            // readable bytes — `String::as_bytes`' contract; the pattern
-            // literal is NUL-terminated, `r#match`'s contract.
+            // `start + num_args < num_tokens - 1` (loop condition), so it
+            // indexes the token run and yields that token's own bytes.
+            // SAFETY: the pattern literal is NUL-terminated — `r#match`'s
+            // contract.
             if unsafe {
                 r#match(
-                    (*uc.obj().tokens().add(start + num_args)).as_bytes(),
+                    tokens.at(start + num_args).bytes(),
                     b"-[A-Za-z][\\-A-Za-z0-9_]*\0".as_ptr(),
                 )
             } {
@@ -2202,6 +2222,15 @@ pub(crate) fn obj_parse_mtl_map(uc: &Context, prefix_len: usize) -> Result<(), F
         return Ok(());
     }
 
+    // C: `uc->obj.tokens[..]` — one carrier for every token read below.
+    // SAFETY: `tokens` / `num_tokens` are the obj context's own paired growth
+    // state, so `tokens` heads `num_tokens` initialized `ufbx_string` slots
+    // with write-capable provenance; only the tokenizer rewrites them and
+    // nothing reached from here retokenizes, so the run stays live and
+    // unmoved for the whole call.
+    let tokens: Run<'_, String> =
+        unsafe { Run::from_raw_parts(uc.obj().tokens(), uc.obj().num_tokens()) };
+
     let mut num_props: usize = 1;
     // SAFETY: the property name points into a static C literal, so its span
     // remains readable while the parser interns it.
@@ -2210,18 +2239,17 @@ pub(crate) fn obj_parse_mtl_map(uc: &Context, prefix_len: usize) -> Result<(), F
     let mut start: usize = 1;
     // C: `for (; start + 1 < uc->obj.num_tokens; )`
     while start + 1 < uc.obj().num_tokens() {
-        // SAFETY: `start + 1 < num_tokens` (loop condition), so token `start`
-        // is in the stored token run; the match guarantees the token is at
-        // least two bytes, so dropping the leading '-' keeps `tok` inside its
-        // own span.
-        let mut tok: String = unsafe { *uc.obj().tokens().add(start) };
-        // SAFETY: `tok` is that token's own readable span — `String::as_bytes`'
-        // contract; the pattern literal is NUL-terminated, `r#match`'s.
-        if unsafe { r#match(tok.as_bytes(), b"-[A-Za-z][\\-A-Za-z0-9_]*\0".as_ptr()) } {
-            // SAFETY: the match guarantees at least two bytes, so the
-            // advanced `data` stays inside the token's own span.
-            tok.data = unsafe { tok.data.add(1) };
-            tok.length -= 1;
+        // `start + 1 < num_tokens` (loop condition), so token `start` is in
+        // the token run and yields that token's own bytes.
+        let tok: &[u8] = tokens.at(start).bytes();
+        // SAFETY: the pattern literal is NUL-terminated — `r#match`'s
+        // contract.
+        if unsafe { r#match(tok, b"-[A-Za-z][\\-A-Za-z0-9_]*\0".as_ptr()) } {
+            // C: `tok.data++; tok.length--;` — the match guarantees at least
+            // two bytes, so dropping the leading '-' keeps the span inside the
+            // token's own bytes.
+            let rest: &[u8] = &tok[1..];
+            let tok: String = String::new_c(rest.as_ptr(), rest.len());
             // SAFETY: `tok` is still that token's own readable span after
             // dropping the leading '-'.
             unsafe { obj_parse_prop(uc, tok, start + 1, false, Some(&mut start))? };
@@ -2284,14 +2312,15 @@ pub(crate) fn obj_parse_mtl_map(uc: &Context, prefix_len: usize) -> Result<(), F
         )?;
     }
 
-    // SAFETY: `num_tokens >= 2` past the guard above, so token 0 is in the
-    // stored token run; `prop.length >= prefix_len` (asserted) keeps the
-    // trimmed span inside that token, and `prop` is an unaliased local.
-    let prop: String = unsafe {
-        let mut prop: String = *uc.obj().tokens().add(0);
-        ufbx_assert!(prop.length >= prefix_len);
-        prop.data = prop.data.add(prefix_len);
-        prop.length -= prefix_len;
+    // C: `ufbx_string prop = uc->obj.tokens[0];` — `num_tokens >= 2` past the
+    // guard above, so token 0 is in the token run, and
+    // `prop.length >= prefix_len` (asserted, and guaranteed by the callers'
+    // own prefix tests) keeps the trimmed span inside that token. `prop` is an
+    // unaliased local.
+    let prop: String = {
+        let cmd: &[u8] = tokens.at(0).bytes();
+        ufbx_assert!(cmd.len() >= prefix_len);
+        let mut prop: String = String::new_c(cmd[prefix_len..].as_ptr(), cmd.len() - prefix_len);
         push_string_place_str(
             uc.string_pool_view(),
             StringView::from_mut(&mut prop),
