@@ -335,9 +335,12 @@ pub(crate) unsafe fn generate_indices(
                 Run::<u32>::from_raw_parts(indices, num_indices),
             )
         };
-        // SAFETY: the bounded scratch run is write-capable and covers exactly
-        // the selected local buffer or checked allocation.
-        unsafe { core::ptr::write_bytes(packed_vertex_write.as_mut_ptr(), 0, packed_size) };
+        // C: `memset(packed_vertex, 0, packed_size);` — the bounded scratch run
+        // spans exactly those `packed_size` bytes, so zeroing every slot it
+        // carries is the same store set, in the same ascending order.
+        for slot in packed_vertex_write.iter() {
+            slot.write_value(0u8);
+        }
 
         let mut i: usize = 0;
         while i < num_indices {
