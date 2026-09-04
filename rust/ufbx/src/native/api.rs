@@ -6379,17 +6379,26 @@ pub(crate) fn catch_get_vertex_w_vec3<M: Mode>(
     unsafe { *v.values_w_data().offset(ix as i32 as isize) }
 }
 
-/// Downcast a safe element header to a raw pointer for its matching full type.
+/// Downcast a safe element header to a reference to its matching full type.
 ///
 /// Loaded element objects store their `Element` header first in the enclosing
 /// allocation. The discriminant selects the concrete layout; exposed
-/// provenance restores that allocation-wide address without dereferencing it.
-pub(crate) fn downcast_element<T>(element: &Element, expected: ElementType) -> *const T {
+/// provenance restores that allocation-wide address, and the returned
+/// reference borrows for exactly as long as the header does.
+pub(crate) fn downcast_element<T>(element: &Element, expected: ElementType) -> Option<&T> {
     if element.type_ != expected {
-        return core::ptr::null();
+        return None;
     }
 
-    core::ptr::with_exposed_provenance::<T>(core::ptr::from_ref(element).expose_provenance())
+    let full: *const T =
+        core::ptr::with_exposed_provenance::<T>(core::ptr::from_ref(element).expose_provenance());
+    // SAFETY: a header whose discriminant is `expected` is the first field of a
+    // live, initialized `T` in the scene arena (the reader publishes every
+    // element that way, and `Element` is only ever handed out from loaded
+    // scenes). The arena allocation's provenance was exposed when the element
+    // was allocated, so `full` covers the whole `T`; it stays live and unwritten
+    // for `'a` because the header borrow keeps the owning scene alive and shared.
+    Some(unsafe { &*full })
 }
 
 // ufbx.c:33034-33075 `ufbx_as_*` — each returns `element` reinterpreted iff its

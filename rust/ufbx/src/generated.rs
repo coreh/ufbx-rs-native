@@ -5963,452 +5963,218 @@ pub fn get_vertex_w_vec3(v: &VertexVec3, index: usize) -> Real {
 
 #[allow(clippy::needless_lifetimes)]
 pub fn as_unknown<'a>(element: &'a Element) -> Option<&'a Unknown> {
-    let result = crate::native::api::downcast_element::<Unknown>(element, ElementType::Unknown);
-    if result.is_null() {
-        None
-    } else {
-        unsafe { Some(&*result) }
-    }
+    crate::native::api::downcast_element::<Unknown>(element, ElementType::Unknown)
 }
 
 #[allow(clippy::needless_lifetimes)]
 pub fn as_node<'a>(element: &'a Element) -> Option<&'a Node> {
-    let result = crate::native::api::downcast_element::<Node>(element, ElementType::Node);
-    if result.is_null() {
-        None
-    } else {
-        unsafe { Some(&*result) }
-    }
+    crate::native::api::downcast_element::<Node>(element, ElementType::Node)
 }
 
 #[allow(clippy::needless_lifetimes)]
 pub fn as_mesh<'a>(element: &'a Element) -> Option<&'a Mesh> {
-    let result = crate::native::api::downcast_element::<Mesh>(element, ElementType::Mesh);
-    if result.is_null() {
-        None
-    } else {
-        unsafe { Some(&*result) }
-    }
+    crate::native::api::downcast_element::<Mesh>(element, ElementType::Mesh)
 }
 
 #[allow(clippy::needless_lifetimes)]
 pub fn as_light<'a>(element: &'a Element) -> Option<&'a Light> {
-    let result = crate::native::api::downcast_element::<Light>(element, ElementType::Light);
-    if result.is_null() {
-        None
-    } else {
-        unsafe { Some(&*result) }
-    }
+    crate::native::api::downcast_element::<Light>(element, ElementType::Light)
 }
 
 #[allow(clippy::needless_lifetimes)]
 pub fn as_camera<'a>(element: &'a Element) -> Option<&'a Camera> {
-    let result = crate::native::api::downcast_element::<Camera>(element, ElementType::Camera);
-    if result.is_null() {
-        None
-    } else {
-        unsafe { Some(&*result) }
-    }
+    crate::native::api::downcast_element::<Camera>(element, ElementType::Camera)
 }
 
 #[allow(clippy::needless_lifetimes)]
 pub fn as_bone<'a>(element: &'a Element) -> Option<&'a Bone> {
-    let result = crate::native::api::downcast_element::<Bone>(element, ElementType::Bone);
-    if result.is_null() {
-        None
-    } else {
-        unsafe { Some(&*result) }
-    }
+    crate::native::api::downcast_element::<Bone>(element, ElementType::Bone)
 }
 
 #[allow(clippy::needless_lifetimes)]
 pub fn as_empty<'a>(element: &'a Element) -> Option<&'a Empty> {
-    let result = crate::native::api::downcast_element::<Empty>(element, ElementType::Empty);
-    if result.is_null() {
-        None
-    } else {
-        unsafe { Some(&*result) }
-    }
+    crate::native::api::downcast_element::<Empty>(element, ElementType::Empty)
 }
 
 #[allow(clippy::needless_lifetimes)]
 pub fn as_line_curve<'a>(element: &'a Element) -> Option<&'a LineCurve> {
-    let result = crate::native::api::downcast_element::<LineCurve>(element, ElementType::LineCurve);
-    if result.is_null() {
-        None
-    } else {
-        unsafe { Some(&*result) }
-    }
+    crate::native::api::downcast_element::<LineCurve>(element, ElementType::LineCurve)
 }
 
 #[allow(clippy::needless_lifetimes)]
 pub fn as_nurbs_curve<'a>(element: &'a Element) -> Option<&'a NurbsCurve> {
-    let result =
-        crate::native::api::downcast_element::<NurbsCurve>(element, ElementType::NurbsCurve);
-    if result.is_null() {
-        None
-    } else {
-        unsafe { Some(&*result) }
-    }
+    crate::native::api::downcast_element::<NurbsCurve>(element, ElementType::NurbsCurve)
 }
 
 #[allow(clippy::needless_lifetimes)]
 pub fn as_nurbs_surface<'a>(element: &'a Element) -> Option<&'a NurbsSurface> {
-    let result =
-        crate::native::api::downcast_element::<NurbsSurface>(element, ElementType::NurbsSurface);
-    if result.is_null() {
-        None
-    } else {
-        unsafe { Some(&*result) }
-    }
+    crate::native::api::downcast_element::<NurbsSurface>(element, ElementType::NurbsSurface)
 }
 
 #[allow(clippy::needless_lifetimes)]
 pub fn as_nurbs_trim_surface<'a>(element: &'a Element) -> Option<&'a NurbsTrimSurface> {
-    let result = crate::native::api::downcast_element::<NurbsTrimSurface>(
-        element,
-        ElementType::NurbsTrimSurface,
-    );
-    if result.is_null() {
-        None
-    } else {
-        unsafe { Some(&*result) }
-    }
+    crate::native::api::downcast_element::<NurbsTrimSurface>(element, ElementType::NurbsTrimSurface)
 }
 
 #[allow(clippy::needless_lifetimes)]
 pub fn as_nurbs_trim_boundary<'a>(element: &'a Element) -> Option<&'a NurbsTrimBoundary> {
-    let result = crate::native::api::downcast_element::<NurbsTrimBoundary>(
+    crate::native::api::downcast_element::<NurbsTrimBoundary>(
         element,
         ElementType::NurbsTrimBoundary,
-    );
-    if result.is_null() {
-        None
-    } else {
-        unsafe { Some(&*result) }
-    }
+    )
 }
 
 #[allow(clippy::needless_lifetimes)]
 pub fn as_procedural_geometry<'a>(element: &'a Element) -> Option<&'a ProceduralGeometry> {
-    let result = crate::native::api::downcast_element::<ProceduralGeometry>(
+    crate::native::api::downcast_element::<ProceduralGeometry>(
         element,
         ElementType::ProceduralGeometry,
-    );
-    if result.is_null() {
-        None
-    } else {
-        unsafe { Some(&*result) }
-    }
+    )
 }
 
 #[allow(clippy::needless_lifetimes)]
 pub fn as_stereo_camera<'a>(element: &'a Element) -> Option<&'a StereoCamera> {
-    let result =
-        crate::native::api::downcast_element::<StereoCamera>(element, ElementType::StereoCamera);
-    if result.is_null() {
-        None
-    } else {
-        unsafe { Some(&*result) }
-    }
+    crate::native::api::downcast_element::<StereoCamera>(element, ElementType::StereoCamera)
 }
 
 #[allow(clippy::needless_lifetimes)]
 pub fn as_camera_switcher<'a>(element: &'a Element) -> Option<&'a CameraSwitcher> {
-    let result = crate::native::api::downcast_element::<CameraSwitcher>(
-        element,
-        ElementType::CameraSwitcher,
-    );
-    if result.is_null() {
-        None
-    } else {
-        unsafe { Some(&*result) }
-    }
+    crate::native::api::downcast_element::<CameraSwitcher>(element, ElementType::CameraSwitcher)
 }
 
 #[allow(clippy::needless_lifetimes)]
 pub fn as_marker<'a>(element: &'a Element) -> Option<&'a Marker> {
-    let result = crate::native::api::downcast_element::<Marker>(element, ElementType::Marker);
-    if result.is_null() {
-        None
-    } else {
-        unsafe { Some(&*result) }
-    }
+    crate::native::api::downcast_element::<Marker>(element, ElementType::Marker)
 }
 
 #[allow(clippy::needless_lifetimes)]
 pub fn as_lod_group<'a>(element: &'a Element) -> Option<&'a LodGroup> {
-    let result = crate::native::api::downcast_element::<LodGroup>(element, ElementType::LodGroup);
-    if result.is_null() {
-        None
-    } else {
-        unsafe { Some(&*result) }
-    }
+    crate::native::api::downcast_element::<LodGroup>(element, ElementType::LodGroup)
 }
 
 #[allow(clippy::needless_lifetimes)]
 pub fn as_skin_deformer<'a>(element: &'a Element) -> Option<&'a SkinDeformer> {
-    let result =
-        crate::native::api::downcast_element::<SkinDeformer>(element, ElementType::SkinDeformer);
-    if result.is_null() {
-        None
-    } else {
-        unsafe { Some(&*result) }
-    }
+    crate::native::api::downcast_element::<SkinDeformer>(element, ElementType::SkinDeformer)
 }
 
 #[allow(clippy::needless_lifetimes)]
 pub fn as_skin_cluster<'a>(element: &'a Element) -> Option<&'a SkinCluster> {
-    let result =
-        crate::native::api::downcast_element::<SkinCluster>(element, ElementType::SkinCluster);
-    if result.is_null() {
-        None
-    } else {
-        unsafe { Some(&*result) }
-    }
+    crate::native::api::downcast_element::<SkinCluster>(element, ElementType::SkinCluster)
 }
 
 #[allow(clippy::needless_lifetimes)]
 pub fn as_blend_deformer<'a>(element: &'a Element) -> Option<&'a BlendDeformer> {
-    let result =
-        crate::native::api::downcast_element::<BlendDeformer>(element, ElementType::BlendDeformer);
-    if result.is_null() {
-        None
-    } else {
-        unsafe { Some(&*result) }
-    }
+    crate::native::api::downcast_element::<BlendDeformer>(element, ElementType::BlendDeformer)
 }
 
 #[allow(clippy::needless_lifetimes)]
 pub fn as_blend_channel<'a>(element: &'a Element) -> Option<&'a BlendChannel> {
-    let result =
-        crate::native::api::downcast_element::<BlendChannel>(element, ElementType::BlendChannel);
-    if result.is_null() {
-        None
-    } else {
-        unsafe { Some(&*result) }
-    }
+    crate::native::api::downcast_element::<BlendChannel>(element, ElementType::BlendChannel)
 }
 
 #[allow(clippy::needless_lifetimes)]
 pub fn as_blend_shape<'a>(element: &'a Element) -> Option<&'a BlendShape> {
-    let result =
-        crate::native::api::downcast_element::<BlendShape>(element, ElementType::BlendShape);
-    if result.is_null() {
-        None
-    } else {
-        unsafe { Some(&*result) }
-    }
+    crate::native::api::downcast_element::<BlendShape>(element, ElementType::BlendShape)
 }
 
 #[allow(clippy::needless_lifetimes)]
 pub fn as_cache_deformer<'a>(element: &'a Element) -> Option<&'a CacheDeformer> {
-    let result =
-        crate::native::api::downcast_element::<CacheDeformer>(element, ElementType::CacheDeformer);
-    if result.is_null() {
-        None
-    } else {
-        unsafe { Some(&*result) }
-    }
+    crate::native::api::downcast_element::<CacheDeformer>(element, ElementType::CacheDeformer)
 }
 
 #[allow(clippy::needless_lifetimes)]
 pub fn as_cache_file<'a>(element: &'a Element) -> Option<&'a CacheFile> {
-    let result = crate::native::api::downcast_element::<CacheFile>(element, ElementType::CacheFile);
-    if result.is_null() {
-        None
-    } else {
-        unsafe { Some(&*result) }
-    }
+    crate::native::api::downcast_element::<CacheFile>(element, ElementType::CacheFile)
 }
 
 #[allow(clippy::needless_lifetimes)]
 pub fn as_material<'a>(element: &'a Element) -> Option<&'a Material> {
-    let result = crate::native::api::downcast_element::<Material>(element, ElementType::Material);
-    if result.is_null() {
-        None
-    } else {
-        unsafe { Some(&*result) }
-    }
+    crate::native::api::downcast_element::<Material>(element, ElementType::Material)
 }
 
 #[allow(clippy::needless_lifetimes)]
 pub fn as_texture<'a>(element: &'a Element) -> Option<&'a Texture> {
-    let result = crate::native::api::downcast_element::<Texture>(element, ElementType::Texture);
-    if result.is_null() {
-        None
-    } else {
-        unsafe { Some(&*result) }
-    }
+    crate::native::api::downcast_element::<Texture>(element, ElementType::Texture)
 }
 
 #[allow(clippy::needless_lifetimes)]
 pub fn as_video<'a>(element: &'a Element) -> Option<&'a Video> {
-    let result = crate::native::api::downcast_element::<Video>(element, ElementType::Video);
-    if result.is_null() {
-        None
-    } else {
-        unsafe { Some(&*result) }
-    }
+    crate::native::api::downcast_element::<Video>(element, ElementType::Video)
 }
 
 #[allow(clippy::needless_lifetimes)]
 pub fn as_shader<'a>(element: &'a Element) -> Option<&'a Shader> {
-    let result = crate::native::api::downcast_element::<Shader>(element, ElementType::Shader);
-    if result.is_null() {
-        None
-    } else {
-        unsafe { Some(&*result) }
-    }
+    crate::native::api::downcast_element::<Shader>(element, ElementType::Shader)
 }
 
 #[allow(clippy::needless_lifetimes)]
 pub fn as_shader_binding<'a>(element: &'a Element) -> Option<&'a ShaderBinding> {
-    let result =
-        crate::native::api::downcast_element::<ShaderBinding>(element, ElementType::ShaderBinding);
-    if result.is_null() {
-        None
-    } else {
-        unsafe { Some(&*result) }
-    }
+    crate::native::api::downcast_element::<ShaderBinding>(element, ElementType::ShaderBinding)
 }
 
 #[allow(clippy::needless_lifetimes)]
 pub fn as_anim_stack<'a>(element: &'a Element) -> Option<&'a AnimStack> {
-    let result = crate::native::api::downcast_element::<AnimStack>(element, ElementType::AnimStack);
-    if result.is_null() {
-        None
-    } else {
-        unsafe { Some(&*result) }
-    }
+    crate::native::api::downcast_element::<AnimStack>(element, ElementType::AnimStack)
 }
 
 #[allow(clippy::needless_lifetimes)]
 pub fn as_anim_layer<'a>(element: &'a Element) -> Option<&'a AnimLayer> {
-    let result = crate::native::api::downcast_element::<AnimLayer>(element, ElementType::AnimLayer);
-    if result.is_null() {
-        None
-    } else {
-        unsafe { Some(&*result) }
-    }
+    crate::native::api::downcast_element::<AnimLayer>(element, ElementType::AnimLayer)
 }
 
 #[allow(clippy::needless_lifetimes)]
 pub fn as_anim_value<'a>(element: &'a Element) -> Option<&'a AnimValue> {
-    let result = crate::native::api::downcast_element::<AnimValue>(element, ElementType::AnimValue);
-    if result.is_null() {
-        None
-    } else {
-        unsafe { Some(&*result) }
-    }
+    crate::native::api::downcast_element::<AnimValue>(element, ElementType::AnimValue)
 }
 
 #[allow(clippy::needless_lifetimes)]
 pub fn as_anim_curve<'a>(element: &'a Element) -> Option<&'a AnimCurve> {
-    let result = crate::native::api::downcast_element::<AnimCurve>(element, ElementType::AnimCurve);
-    if result.is_null() {
-        None
-    } else {
-        unsafe { Some(&*result) }
-    }
+    crate::native::api::downcast_element::<AnimCurve>(element, ElementType::AnimCurve)
 }
 
 #[allow(clippy::needless_lifetimes)]
 pub fn as_display_layer<'a>(element: &'a Element) -> Option<&'a DisplayLayer> {
-    let result =
-        crate::native::api::downcast_element::<DisplayLayer>(element, ElementType::DisplayLayer);
-    if result.is_null() {
-        None
-    } else {
-        unsafe { Some(&*result) }
-    }
+    crate::native::api::downcast_element::<DisplayLayer>(element, ElementType::DisplayLayer)
 }
 
 #[allow(clippy::needless_lifetimes)]
 pub fn as_selection_set<'a>(element: &'a Element) -> Option<&'a SelectionSet> {
-    let result =
-        crate::native::api::downcast_element::<SelectionSet>(element, ElementType::SelectionSet);
-    if result.is_null() {
-        None
-    } else {
-        unsafe { Some(&*result) }
-    }
+    crate::native::api::downcast_element::<SelectionSet>(element, ElementType::SelectionSet)
 }
 
 #[allow(clippy::needless_lifetimes)]
 pub fn as_selection_node<'a>(element: &'a Element) -> Option<&'a SelectionNode> {
-    let result =
-        crate::native::api::downcast_element::<SelectionNode>(element, ElementType::SelectionNode);
-    if result.is_null() {
-        None
-    } else {
-        unsafe { Some(&*result) }
-    }
+    crate::native::api::downcast_element::<SelectionNode>(element, ElementType::SelectionNode)
 }
 
 #[allow(clippy::needless_lifetimes)]
 pub fn as_character<'a>(element: &'a Element) -> Option<&'a Character> {
-    let result = crate::native::api::downcast_element::<Character>(element, ElementType::Character);
-    if result.is_null() {
-        None
-    } else {
-        unsafe { Some(&*result) }
-    }
+    crate::native::api::downcast_element::<Character>(element, ElementType::Character)
 }
 
 #[allow(clippy::needless_lifetimes)]
 pub fn as_constraint<'a>(element: &'a Element) -> Option<&'a Constraint> {
-    let result =
-        crate::native::api::downcast_element::<Constraint>(element, ElementType::Constraint);
-    if result.is_null() {
-        None
-    } else {
-        unsafe { Some(&*result) }
-    }
+    crate::native::api::downcast_element::<Constraint>(element, ElementType::Constraint)
 }
 
 #[allow(clippy::needless_lifetimes)]
 pub fn as_audio_layer<'a>(element: &'a Element) -> Option<&'a AudioLayer> {
-    let result =
-        crate::native::api::downcast_element::<AudioLayer>(element, ElementType::AudioLayer);
-    if result.is_null() {
-        None
-    } else {
-        unsafe { Some(&*result) }
-    }
+    crate::native::api::downcast_element::<AudioLayer>(element, ElementType::AudioLayer)
 }
 
 #[allow(clippy::needless_lifetimes)]
 pub fn as_audio_clip<'a>(element: &'a Element) -> Option<&'a AudioClip> {
-    let result = crate::native::api::downcast_element::<AudioClip>(element, ElementType::AudioClip);
-    if result.is_null() {
-        None
-    } else {
-        unsafe { Some(&*result) }
-    }
+    crate::native::api::downcast_element::<AudioClip>(element, ElementType::AudioClip)
 }
 
 #[allow(clippy::needless_lifetimes)]
 pub fn as_pose<'a>(element: &'a Element) -> Option<&'a Pose> {
-    let result = crate::native::api::downcast_element::<Pose>(element, ElementType::Pose);
-    if result.is_null() {
-        None
-    } else {
-        unsafe { Some(&*result) }
-    }
+    crate::native::api::downcast_element::<Pose>(element, ElementType::Pose)
 }
 
 #[allow(clippy::needless_lifetimes)]
 pub fn as_metadata_object<'a>(element: &'a Element) -> Option<&'a MetadataObject> {
-    let result = crate::native::api::downcast_element::<MetadataObject>(
-        element,
-        ElementType::MetadataObject,
-    );
-    if result.is_null() {
-        None
-    } else {
-        unsafe { Some(&*result) }
-    }
+    crate::native::api::downcast_element::<MetadataObject>(element, ElementType::MetadataObject)
 }
 
 pub fn dom_is_array(node: &DomNode) -> bool {
