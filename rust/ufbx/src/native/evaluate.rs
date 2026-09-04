@@ -132,6 +132,8 @@ use crate::native::view::{Const, Mode, Mut, View};
 use crate::native::warnings::{pop_warnings, ufbxi_warnf};
 use crate::prelude::as_f64;
 #[cfg(feature = "baking")]
+use crate::prelude::slice_from_ptr;
+#[cfg(feature = "baking")]
 use crate::prelude::ListView;
 #[cfg(any(feature = "scene-eval", feature = "baking"))]
 use crate::prelude::ScalarView;
@@ -262,17 +264,25 @@ pub(crate) fn evaluate_skinning(
         }
 
         let num_vertices: usize = mesh.num_vertices();
-        let mut result_pos: *mut Vec3 = buf_result.push::<Vec3>(num_vertices.wrapping_add(1));
+        let result_pos: *mut Vec3 = buf_result.push::<Vec3>(num_vertices.wrapping_add(1));
         ufbxi_check_err!(error, !result_pos.is_null(), "result_pos");
 
-        // C: `result_pos[0] = ufbx_zero_vec3; result_pos++;`
+        // C: `result_pos[0] = ufbx_zero_vec3; result_pos++;` — one vouch for the
+        // pushed run, then the sentinel write and the sub-run the C's
+        // post-increment leaves (the same shape as the `normal_data` pushes
+        // below).
         // SAFETY: valid mesh counts satisfy the C allocation invariant
-        // `num_vertices < SIZE_MAX`; the checked non-null result therefore has
-        // a writable sentinel slot followed by `num_vertices` result slots.
-        unsafe { *result_pos = ZERO_VEC3 };
-        // SAFETY: under that same invariant the one-element advance remains in
-        // the allocation (or reaches its one-past pointer for an empty mesh).
-        result_pos = unsafe { result_pos.add(1) };
+        // `num_vertices < SIZE_MAX`; the checked non-null result is therefore a
+        // contiguous, still-uninitialized `num_vertices + 1`-slot run of
+        // write-capable result-buffer memory — which `from_raw_parts` admits —
+        // live and unmoved for this mesh's evaluation.
+        let result_storage =
+            unsafe { Run::<Vec3>::from_raw_parts(result_pos, num_vertices.wrapping_add(1)) };
+        result_storage.write_at(0, ZERO_VEC3);
+        // The `num_vertices` result slots past the sentinel; the capability
+        // forms no exclusive slice over arena memory.
+        let result_vertices: Run<'_, Vec3> = result_storage.subrun(1, num_vertices);
+        let result_pos: *mut Vec3 = result_vertices.as_mut_ptr();
 
         let mut cached_position: bool = false;
         let mut cached_normals: bool = false;
@@ -363,11 +373,8 @@ pub(crate) fn evaluate_skinning(
                 ptr::copy_nonoverlapping(mesh.vertices_view().data(), result_pos, num_vertices)
             };
 
-            // SAFETY: the freshly pushed `result_pos` run was initialized by
-            // the copy above and stays allocated and writable for evaluation.
-            // The capability forms no exclusive slice over arena memory.
-            let result_vertices = unsafe { Run::<Vec3>::from_raw_parts(result_pos, num_vertices) };
-
+            // `result_vertices` is that same run, whose slots the copy above
+            // just initialized.
             // C: `ufbxi_for_ptr_list(ufbx_blend_deformer, p_blend, mesh->blend_deformers)`
             let blend_deformers = mesh.blend_deformers_view();
             for i_blend in 0..blend_deformers.count() {
@@ -2495,12 +2502,19 @@ pub(crate) unsafe fn evaluate_selected_props(
     max_props: usize,
     flags: u32,
 ) -> crate::generated::Props {
-    // SAFETY: `prop_names` is the caller's `max_props`-element name table; both
-    // call sites (`ufbx_evaluate_transform_flags` and
-    // `ufbx_evaluate_blend_weight_flags` in `native::api`) pass a fixed non-empty
-    // table of interned NUL-terminated names, so index 0 is in bounds and is what
-    // `get_name_key_c` reads.
-    let mut name: *const u8 = unsafe { *prop_names.add(0) };
+    // C: `const char *name = prop_names[0];` — one vouch for the whole name
+    // table, then bounds-checked reads out of it.
+    // SAFETY: `prop_names` is the caller's `max_props`-element name table — the
+    // raw-pointer contract of this `unsafe fn`; both call sites
+    // (`ufbx_evaluate_transform_flags` and `ufbx_evaluate_blend_weight_flags` in
+    // `native::api`) pass a fixed non-empty `'static` table of interned
+    // NUL-terminated names, live and frozen for this call.
+    let names: Run<'_, *const u8, Const> =
+        unsafe { Run::from_const_raw_parts(prop_names, max_props) };
+    // Index 0 is in bounds of that non-empty table and is what `get_name_key_c`
+    // reads.
+    let mut name: *const u8 = names.copy_at(0);
+    // SAFETY: `name` is one of the table's interned NUL-terminated names.
     let mut key: u32 = unsafe { get_name_key_c(name) };
     let mut num_props: usize = 0;
 
@@ -2508,9 +2522,9 @@ pub(crate) unsafe fn evaluate_selected_props(
     #[cfg(feature = "regression")]
     {
         for i in 1..max_props {
-            // SAFETY: `i < max_props` bounds both reads inside the caller's name
-            // table, and its entries are NUL-terminated interned names.
-            ufbx_assert!(unsafe { strcmp(*prop_names.add(i - 1), *prop_names.add(i)) } < 0);
+            // The two table reads are bounds-checked by the run itself.
+            // SAFETY: the table's entries are NUL-terminated interned names.
+            ufbx_assert!(unsafe { strcmp(names.copy_at(i - 1), names.copy_at(i)) } < 0);
         }
     }
 
@@ -2596,10 +2610,11 @@ pub(crate) unsafe fn evaluate_selected_props(
             } else if unsafe { strcmp(name, prop.name().data) } < 0 {
                 name_ix += 1;
                 if name_ix < max_props {
-                    // SAFETY: `name_ix < max_props` bounds the read inside the
-                    // caller's name table, whose entries are NUL-terminated
+                    // `name_ix < max_props` bounds the read inside the caller's
+                    // name table, which the run re-checks.
+                    name = names.copy_at(name_ix);
+                    // SAFETY: `name` is one of that table's NUL-terminated
                     // interned names.
-                    name = unsafe { *prop_names.add(name_ix) };
                     key = unsafe { get_name_key_c(name) };
                 }
             } else {
@@ -3202,13 +3217,12 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
         "ec->scene.elements.data"
     );
 
-    // C: `ec->src_element = (char*)ec->src_scene.elements.data[0];`
-    // SAFETY: per the source-scene premise the source element list is a live
-    // array and holds at least the root node, so slot 0 is in bounds and yields
-    // the base element of the source element buffer.
-    ec.set_src_element(unsafe {
-        *(ec.src_scene_view().elements_view().data() as *mut *mut u8).add(0)
-    });
+    // C: `ec->src_element = (char*)ec->src_scene.elements.data[0];` — read
+    // through the source ref list's own bounds-checked slot accessor: per the
+    // source-scene premise the source element list is a live array and holds at
+    // least the root node, so index 0 is in bounds and yields the base element
+    // of the source element buffer.
+    ec.set_src_element(ec.src_scene_view().elements_view().at(0).get() as *mut u8);
     ec.set_dst_element(element_data);
 
     // C indexes `ec->scene.elements_by_type[i]`, the `ufbx_element_list` array
@@ -3265,24 +3279,15 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
         // count, so the indexing is in bounds of each.
         let src: &View<Connection> = ec.scene_view().connections_src_view().at(i);
         let dst: &View<Connection> = ec.scene_view().connections_dst_view().at(i);
-        // C: `*src = ec->src_scene.connections_src.data[i];` (struct assignment)
-        // SAFETY: per the source-scene premise the source `connections_src` run
-        // holds `num_connections` live `ufbx_connection`s, so slot `i` is
-        // readable; `src` views the matching slot of the freshly pushed
-        // destination run, a separate allocation; the same holds for the
-        // `connections_dst` runs.
-        unsafe {
-            ptr::copy_nonoverlapping(
-                ec.src_scene_view().connections_src_view().data().add(i),
-                src.get(),
-                1,
-            );
-            ptr::copy_nonoverlapping(
-                ec.src_scene_view().connections_dst_view().data().add(i),
-                dst.get(),
-                1,
-            );
-        }
+        // C: `*src = ec->src_scene.connections_src.data[i];` (struct
+        // assignment) and its `connections_dst` sibling — each source slot read
+        // through that list's own bounds-checked accessor: per the source-scene
+        // premise both source runs hold `num_connections` live
+        // `ufbx_connection`s, so slot `i` is in bounds of each, and the
+        // destination views the matching slot of the freshly pushed run, a
+        // separate allocation.
+        src.write_value(ec.src_scene_view().connections_src_view().copy_at(i));
+        dst.write_value(ec.src_scene_view().connections_dst_view().copy_at(i));
         // SAFETY (these four stores): `src` and `dst` view live connection
         // slots holding the copies made just above, whose `src`/`dst` are
         // non-null `Ref`s to source-scene elements — `translate_element`'s
@@ -3341,6 +3346,10 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
     }?;
 
     for i in 0..num_elements {
+        // The source element stays a RAW stored pointer: the whole-element
+        // `memcpy` below reads the full per-type struct, which a `View<Element>`
+        // mint would narrow to the `ufbx_element` header (the same reason the
+        // destination view is minted only after its copy).
         // SAFETY: per the source-scene premise the source element list holds
         // `num_elements` live element pointers and `i < num_elements`, so slot
         // `i` is in bounds and holds a source-scene element.
@@ -3426,17 +3435,12 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
         // source-scene premise the list carries that count, so the indexing is
         // in bounds.
         let named: &View<NameElement> = ec.scene_view().elements_by_name_view().at(i);
-        // SAFETY: per the source-scene premise the source `elements_by_name` run
-        // holds `num_elements` live entries, so slot `i` is readable; `named`
+        // The source entry is read through that list's own bounds-checked
+        // accessor: per the source-scene premise `elements_by_name` holds
+        // `num_elements` live entries, so slot `i` is in bounds, and `named`
         // views the matching slot of the freshly pushed destination array, a
         // separate allocation.
-        unsafe {
-            ptr::copy_nonoverlapping(
-                ec.src_scene_view().elements_by_name_view().data().add(i),
-                named.get(),
-                1,
-            );
-        }
+        named.write_value(ec.src_scene_view().elements_by_name_view().copy_at(i));
         // SAFETY: `named` views the live entry copied just above, whose
         // `element` is a non-null `Ref` to a source-scene element —
         // `translate_element`'s contract — read by value and written back in
@@ -4194,9 +4198,19 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
     // takes a bitwise copy the loop below only reads and re-points, leaving the
     // pushed original as the sole owner of everything it names.
     let mut anim: Anim = unsafe { ptr::read(ec.anim()) };
-    let mut over: *const PropOverride = anim.prop_overrides.data;
-    let over_end: *const PropOverride =
-        add_ptr(over as *mut PropOverride, anim.prop_overrides.count);
+    // C: `const ufbx_prop_override *over = anim.prop_overrides.data, *over_end
+    // = over + anim.prop_overrides.count;` — one vouch for the whole override
+    // run, then a bounds-checked walk over it by index, because the loop below
+    // re-points `anim.prop_overrides` itself at sub-runs of that same run.
+    // SAFETY: the header read just above names the override run of the anim
+    // `translate_anim` retargeted — `anim.prop_overrides.count` initialized
+    // `ufbx_prop_override`s living in `ec`'s result buffer, live and unmoved for
+    // the rest of this function and written by nothing here, which is the frozen
+    // `Const` contract.
+    let overrides: Run<'_, PropOverride, Const> =
+        unsafe { Run::from_const_raw_parts(anim.prop_overrides.data, anim.prop_overrides.count) };
+    let over_end: usize = overrides.len();
+    let mut over: usize = 0;
 
     // Evaluate the properties
     // C: `ufbxi_for_ptr_list(ufbx_element, p_elem, ec->scene.elements)`
@@ -4207,14 +4221,12 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
         let mut num_animated: usize = elem.props().num_animated();
         let mut num_override: usize = 0;
 
-        // Setup the overrides for this element if found
-        // SAFETY (this condition): `over` is only read when it has not reached
-        // `over_end`, so it addresses a live entry of the anim's override run.
-        while over != over_end && unsafe { (*over).element_id } == elem.element_id() {
+        // Setup the overrides for this element if found. `over` is only read
+        // once it is known to be below `over_end`, its run's own length, so the
+        // indexed entry is inside the run vouched above.
+        while over != over_end && overrides.at(over).element_id() == elem.element_id() {
             num_override += 1;
-            // SAFETY: `over` is inside the override run, so `over + 1` is at most
-            // one past its end.
-            over = unsafe { over.add(1) };
+            over += 1;
         }
 
         num_animated += num_override;
@@ -4222,11 +4234,11 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
             continue;
         }
 
-        // C: `anim.prop_overrides.data = ufbxi_sub_ptr(over, num_override);`
-        // SAFETY: the loop above advanced `over` by exactly `num_override` steps
-        // from a position inside the override run, so stepping back that far
-        // stays in bounds of the same run.
-        anim.prop_overrides.data = unsafe { over.sub(num_override) };
+        // C: `anim.prop_overrides.data = ufbxi_sub_ptr(over, num_override);` —
+        // the loop above advanced `over` by exactly `num_override` steps from a
+        // position inside the override run, so the sub-run starting that far
+        // back is bounded by the same run.
+        anim.prop_overrides.data = overrides.subrun(over - num_override, num_override).as_ptr();
         anim.prop_overrides.count = num_override;
 
         let props: *mut Prop = ec.result_view().push::<Prop>(num_animated);
@@ -6887,19 +6899,45 @@ pub(crate) unsafe fn bake_node_imp(
 ) -> Result<(), Fail> {
     ufbx_assert!(!bc.baked_nodes().is_null() && !bc.nodes_to_bake().is_null());
 
-    // C: `ufbx_node *node = (ufbx_node*)bc->scene->elements.data[element_id];`
+    // C: `ufbx_node *node = (ufbx_node*)bc->scene->elements.data[element_id];`,
+    // plus `bc->scene->nodes.count` — the length `ufbxi_bake_anim` sized both
+    // per-node arrays with, needed for the two runs minted below.
     // SAFETY: `bc.scene()` is the source `ufbx_scene` `bake_anim_imp` stored into
     // `bc`, live for the bake; this `unsafe fn` requires `element_id` to be one
     // of that scene's element ids, so the slot is in bounds of `elements` and
     // holds a live element pointer, which C downcasts to the `ufbx_node` that
-    // element header opens. The scene is not written during the bake, so the
-    // read-only tag holds for the whole body.
-    let node: &View<UfbxNode, Const> = unsafe {
-        View::<UfbxNode, Const>::from_ptr(
-            *((*bc.scene()).elements.data as *const *const UfbxNode).add(element_id as usize),
+    // element header opens, and the same live scene supplies its own `nodes`
+    // count. The scene is not written during the bake, so the read-only tag
+    // holds for the whole body.
+    let (node, num_nodes): (&View<UfbxNode, Const>, usize) = unsafe {
+        (
+            View::<UfbxNode, Const>::from_ptr(
+                *((*bc.scene()).elements.data as *const *const UfbxNode).add(element_id as usize),
+            ),
+            (*bc.scene()).nodes.count,
         )
     };
     ufbxi_dev_assert!(node.element().type_() as u32 == ElementType::Node as u32);
+
+    // C: `bc->baked_nodes[typed_id]` / `bc->nodes_to_bake[typed_id]` — one vouch
+    // each for the whole array, then bounds-checked per-node slots. A live scene
+    // node's `typed_id` is below the scene's node count, so every index below is
+    // inside its run.
+    // SAFETY: `ufbxi_bake_anim` pushes both arrays onto `bc`'s own result buf
+    // with exactly `bc->scene->nodes.count` zero-initialized slots — non-null,
+    // asserted above — and that buffer keeps them live and unmoved for the whole
+    // bake; the pointers come from those arena pushes via `*mut`, so their
+    // provenance is write-capable, and `ScalarView` is `repr(transparent)` over
+    // the slot type it views.
+    let baked_nodes: &[ScalarView<*mut BakedNode>] = unsafe {
+        slice_from_ptr(
+            bc.baked_nodes() as *const ScalarView<*mut BakedNode>,
+            num_nodes,
+        )
+    };
+    // SAFETY: as for `baked_nodes` — the sibling `bool` array of the same length.
+    let nodes_to_bake: &[ScalarView<bool>] =
+        unsafe { slice_from_ptr(bc.nodes_to_bake() as *const ScalarView<bool>, num_nodes) };
 
     let mut complex_translation: bool = false;
     let mut complex_rotation: bool = false;
@@ -6972,19 +7010,16 @@ pub(crate) unsafe fn bake_node_imp(
         None
     };
     if let Some(parent_scale_helper) = parent_scale_helper {
-        // SAFETY: `parent_scale_helper` is a live scene node, so its `typed_id`
-        // indexes `bc.baked_nodes()`, which `bake_anim` sizes with one slot per
-        // node of the scene; a non-null slot holds the `ufbx_baked_node` already
-        // baked for that helper, pushed onto `bc.tmp_nodes`.
-        scale_helper_t = unsafe {
-            let baked: *mut BakedNode = *bc
-                .baked_nodes()
-                .add(parent_scale_helper.element().typed_id() as usize);
-            if baked.is_null() {
-                None
-            } else {
-                Some(View::<BakedNode>::from_ptr(baked))
-            }
+        // `parent_scale_helper` is a live scene node, so its `typed_id` is
+        // inside the `baked_nodes` run vouched above.
+        let baked: *mut BakedNode =
+            baked_nodes[parent_scale_helper.element().typed_id() as usize].get();
+        scale_helper_t = if baked.is_null() {
+            None
+        } else {
+            // SAFETY: a non-null slot holds the `ufbx_baked_node` already baked
+            // for that helper, pushed onto `bc.tmp_nodes` and stable there.
+            Some(unsafe { View::<BakedNode>::from_ptr(baked) })
         };
         if let Some(scale_helper_t) = scale_helper_t {
             if !scale_helper_t.constant_scale() {
@@ -7105,19 +7140,15 @@ pub(crate) unsafe fn bake_node_imp(
         None
     };
     if let Some(inherit_helper) = inherit_helper {
-        // SAFETY: `inherit_helper` is a live scene node, so its `typed_id`
-        // indexes `bc.baked_nodes()`, which `bake_anim` sizes with one slot per
-        // node of the scene; a non-null slot holds the `ufbx_baked_node` already
-        // baked for that helper, pushed onto `bc.tmp_nodes`.
-        scale_helper_s = unsafe {
-            let baked: *mut BakedNode = *bc
-                .baked_nodes()
-                .add(inherit_helper.element().typed_id() as usize);
-            if baked.is_null() {
-                None
-            } else {
-                Some(View::<BakedNode>::from_ptr(baked))
-            }
+        // `inherit_helper` is a live scene node, so its `typed_id` is inside
+        // the `baked_nodes` run vouched above.
+        let baked: *mut BakedNode = baked_nodes[inherit_helper.element().typed_id() as usize].get();
+        scale_helper_s = if baked.is_null() {
+            None
+        } else {
+            // SAFETY: a non-null slot holds the `ufbx_baked_node` already baked
+            // for that helper, pushed onto `bc.tmp_nodes` and stable there.
+            Some(unsafe { View::<BakedNode>::from_ptr(baked) })
         };
         if let Some(scale_helper_s) = scale_helper_s {
             if !scale_helper_s.constant_scale() {
@@ -7376,9 +7407,9 @@ pub(crate) unsafe fn bake_node_imp(
         )
     }?;
 
-    // SAFETY: `node` views a live scene node, so its `typed_id` indexes
-    // `bc.baked_nodes()`, which `bake_anim` sizes with one slot per scene node.
-    unsafe { *bc.baked_nodes().add(node.element().typed_id() as usize) = baked_node };
+    // C: `bc->baked_nodes[node->typed_id] = baked_node;` — `node` views a live
+    // scene node, so its `typed_id` is inside the `baked_nodes` run.
+    baked_nodes[node.element().typed_id() as usize].set(baked_node);
 
     buf_clear(bc.tmp_prop_view());
 
@@ -7396,12 +7427,10 @@ pub(crate) unsafe fn bake_node_imp(
                 if child.as_ptr() == node.as_ptr() {
                     continue;
                 }
-                // SAFETY (this condition): `child` is a live scene node, so its
-                // `typed_id` indexes `bc.nodes_to_bake()`, which `bake_anim`
-                // sizes with one slot per scene node.
-                if !unsafe { *bc.nodes_to_bake().add(child.element().typed_id() as usize) } {
-                    // SAFETY: as above.
-                    unsafe { *bc.nodes_to_bake().add(child.element().typed_id() as usize) = true };
+                // `child` is a live scene node, so its `typed_id` is inside the
+                // `nodes_to_bake` run vouched above.
+                if !nodes_to_bake[child.element().typed_id() as usize].get() {
+                    nodes_to_bake[child.element().typed_id() as usize].set(true);
                     ufbxi_check_err!(
                         bc.error_view(),
                         !bc.tmp_bake_stack_view()
@@ -7425,31 +7454,18 @@ pub(crate) unsafe fn bake_node_imp(
                 if let (Some(child_inherit_scale_helper), Some(child_scale_helper)) =
                     (child_inherit_scale_helper, child_scale_helper)
                 {
-                    // SAFETY: `child_inherit_scale_helper` is a live scene node,
-                    // so its `typed_id` indexes `bc.nodes_to_bake()`.
-                    if unsafe {
-                        *bc.nodes_to_bake()
-                            .add(child_inherit_scale_helper.element().typed_id() as usize)
-                    } {
-                        // SAFETY: as above; the same `typed_id` indexes the
-                        // equally sized `bc.baked_nodes()`.
-                        ufbx_assert!(!unsafe {
-                            *bc.baked_nodes()
-                                .add(child_inherit_scale_helper.element().typed_id() as usize)
-                        }
-                        .is_null());
-                        // SAFETY (this condition): `child_scale_helper` is a live
-                        // scene node, so its `typed_id` indexes
-                        // `bc.nodes_to_bake()`.
-                        if !unsafe {
-                            *bc.nodes_to_bake()
-                                .add(child_scale_helper.element().typed_id() as usize)
-                        } {
-                            // SAFETY: as above.
-                            unsafe {
-                                *bc.nodes_to_bake()
-                                    .add(child_scale_helper.element().typed_id() as usize) = true
-                            };
+                    // `child_inherit_scale_helper` and `child_scale_helper` are
+                    // live scene nodes, so their `typed_id`s are inside both
+                    // equally sized runs vouched above.
+                    if nodes_to_bake[child_inherit_scale_helper.element().typed_id() as usize].get()
+                    {
+                        ufbx_assert!(!baked_nodes
+                            [child_inherit_scale_helper.element().typed_id() as usize]
+                            .get()
+                            .is_null());
+                        if !nodes_to_bake[child_scale_helper.element().typed_id() as usize].get() {
+                            nodes_to_bake[child_scale_helper.element().typed_id() as usize]
+                                .set(true);
                             ufbxi_check_err!(
                                 bc.error_view(),
                                 !bc.tmp_bake_stack_view()
