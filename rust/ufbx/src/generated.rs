@@ -5208,7 +5208,7 @@ pub fn bake_anim(scene: &Scene, anim: &Anim, opts: BakeOpts) -> Result<BakedAnim
     unsafe { bake_anim_raw(scene, anim, &opts_raw) }
 }
 
-pub fn find_baked_node_by_typed_id(bake: &mut BakedAnim, typed_id: u32) -> Option<&BakedNode> {
+pub fn find_baked_node_by_typed_id(bake: &BakedAnim, typed_id: u32) -> Option<&BakedNode> {
     let result = crate::native::api::find_baked_node_by_typed_id(
         crate::native::view::View::<BakedAnim, crate::native::view::Const>::from_ref(bake),
         typed_id,
@@ -5216,7 +5216,7 @@ pub fn find_baked_node_by_typed_id(bake: &mut BakedAnim, typed_id: u32) -> Optio
     result.map(|node| unsafe { &*node.as_ptr() })
 }
 
-pub fn find_baked_node<'a>(bake: &'a mut BakedAnim, node: &mut Node) -> Option<&'a BakedNode> {
+pub fn find_baked_node<'a>(bake: &'a BakedAnim, node: &Node) -> Option<&'a BakedNode> {
     let result = crate::native::api::find_baked_node(
         Some(crate::native::view::View::<
             BakedAnim,
@@ -5228,7 +5228,7 @@ pub fn find_baked_node<'a>(bake: &'a mut BakedAnim, node: &mut Node) -> Option<&
 }
 
 pub fn find_baked_element_by_element_id(
-    bake: &mut BakedAnim,
+    bake: &BakedAnim,
     element_id: u32,
 ) -> Option<&BakedElement> {
     let result = crate::native::api::find_baked_element_by_element_id(
@@ -5238,10 +5238,7 @@ pub fn find_baked_element_by_element_id(
     result.map(|elem| unsafe { &*elem.as_ptr() })
 }
 
-pub fn find_baked_element<'a>(
-    bake: &'a mut BakedAnim,
-    element: &mut Element,
-) -> Option<&'a BakedElement> {
+pub fn find_baked_element<'a>(bake: &'a BakedAnim, element: &Element) -> Option<&'a BakedElement> {
     let result = crate::native::api::find_baked_element(
         Some(crate::native::view::View::<
             BakedAnim,

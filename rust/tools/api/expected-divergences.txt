@@ -75,10 +75,10 @@
 +pub fn ufbx::evaluate_props_flags<'a, 'b>(&'a ufbx::Anim, &'a ufbx::Element, f64, &'b mut [ufbx::ExternalRef<'b, ufbx::Prop>], u32) -> ufbx::ExternalRef<'b, ufbx::Props> where 'a: 'b
 +pub fn ufbx::find_anim_prop<'a>(&'a ufbx::AnimLayer, &ufbx::Element, &str) -> core::option::Option<&'a ufbx::AnimProp>
 +pub fn ufbx::find_anim_props<'a>(&'a ufbx::AnimLayer, &ufbx::Element) -> &'a [ufbx::AnimProp]
-+pub fn ufbx::find_baked_element<'a>(&'a mut ufbx::BakedAnim, &mut ufbx::Element) -> core::option::Option<&'a ufbx::BakedElement>
-+pub fn ufbx::find_baked_element_by_element_id(&mut ufbx::BakedAnim, u32) -> core::option::Option<&ufbx::BakedElement>
-+pub fn ufbx::find_baked_node<'a>(&'a mut ufbx::BakedAnim, &mut ufbx::Node) -> core::option::Option<&'a ufbx::BakedNode>
-+pub fn ufbx::find_baked_node_by_typed_id(&mut ufbx::BakedAnim, u32) -> core::option::Option<&ufbx::BakedNode>
++pub fn ufbx::find_baked_element<'a>(&'a ufbx::BakedAnim, &ufbx::Element) -> core::option::Option<&'a ufbx::BakedElement>
++pub fn ufbx::find_baked_element_by_element_id(&ufbx::BakedAnim, u32) -> core::option::Option<&ufbx::BakedElement>
++pub fn ufbx::find_baked_node<'a>(&'a ufbx::BakedAnim, &ufbx::Node) -> core::option::Option<&'a ufbx::BakedNode>
++pub fn ufbx::find_baked_node_by_typed_id(&ufbx::BakedAnim, u32) -> core::option::Option<&ufbx::BakedNode>
 +pub fn ufbx::find_shader_prop<'a>(&'a ufbx::Shader, &str) -> &'a str
 +pub fn ufbx::find_shader_texture_input<'a>(&'a ufbx::ShaderTexture, &str) -> core::option::Option<&'a ufbx::ShaderTextureInput>
 +pub fn ufbx::get_bone_pose<'a>(&'a ufbx::Pose, &ufbx::Node) -> core::option::Option<&'a ufbx::BonePose>

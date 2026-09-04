@@ -1522,7 +1522,11 @@ fn evaluate_and_bake_animation() {
 
 /// Generated baked lookup wrappers return entries owned by the baked header,
 /// while the node/element arguments are lookup keys with independent borrows.
+/// The calls deliberately pass `&mut` where the wrappers take `&`: that is the
+/// ufbx-rust 0.11.2 call shape (COMPAT.md §2), kept here so the reborrow
+/// coercion that keeps drop-in callers compiling is checked by the build.
 #[test]
+#[allow(clippy::unnecessary_mut_passed)]
 fn public_baked_finders_from_owned_header() {
     let scene = load("maya_cube_7500_binary.fbx");
     let source_node: &ufbx::Node = scene
@@ -1579,6 +1583,58 @@ fn public_baked_finders_from_owned_header() {
         ufbx::find_baked_element(&mut bake, &mut key).expect("baked element by element")
     };
     assert!(std::ptr::eq(found, &baked_element));
+}
+
+/// The baked finders take shared references (COMPAT.md §2): a `BakedAnimRoot`
+/// deref is a valid argument, results may be held simultaneously, and the
+/// 0.11.2 `&mut` call shape still compiles through reborrow coercion
+/// (`public_baked_finders_from_owned_header` above passes `&mut bake`).
+#[test]
+fn baked_finders_shared_borrow() {
+    let scene = load("maya_scale_no_inherit_step_7700_ascii.fbx");
+    let baked = ufbx::bake_anim(&scene, &scene.anim, Default::default()).expect("bake_anim failed");
+    let bake: &ufbx::BakedAnim = &baked;
+
+    let first = baked.nodes.first().expect("bake has no nodes");
+    let last = baked.nodes.last().expect("bake has no nodes");
+    let node: &ufbx::Node = scene
+        .nodes
+        .iter()
+        .find(|n| n.element.typed_id == first.typed_id)
+        .expect("baked node has no source node")
+        .as_ref();
+
+    let by_first_id =
+        ufbx::find_baked_node_by_typed_id(bake, first.typed_id).expect("first baked node");
+    let by_last_id =
+        ufbx::find_baked_node_by_typed_id(bake, last.typed_id).expect("last baked node");
+    let by_node = ufbx::find_baked_node(bake, node).expect("baked node by node");
+    let by_missing_id = ufbx::find_baked_node_by_typed_id(bake, u32::MAX);
+    let by_missing_element = ufbx::find_baked_element_by_element_id(bake, u32::MAX);
+    let by_element = baked.elements.first().map(|elem| {
+        let source: &ufbx::Element = scene
+            .elements
+            .iter()
+            .find(|e| e.element_id == elem.element_id)
+            .expect("baked element has no source element")
+            .as_ref();
+        let by_id = ufbx::find_baked_element_by_element_id(bake, elem.element_id)
+            .expect("baked element by id");
+        let by_elem = ufbx::find_baked_element(bake, source).expect("baked element by element");
+        assert!(std::ptr::eq(by_id, elem));
+        assert!(std::ptr::eq(by_elem, elem));
+        by_elem
+    });
+
+    // Every result is still live here while `bake` is shared.
+    assert!(std::ptr::eq(by_first_id, first));
+    assert!(std::ptr::eq(by_last_id, last));
+    assert!(std::ptr::eq(by_node, first));
+    assert!(by_missing_id.is_none());
+    assert!(by_missing_element.is_none());
+    if let Some(elem) = by_element {
+        assert_eq!(elem.element_id, baked.elements[0].element_id);
+    }
 }
 
 /// Animated layer weights are evaluated through the layer's own anim-value
@@ -2330,10 +2386,10 @@ fn public_downcasts_from_narrowed_element_refs() {
 // empirically, not by inspection). Values are folded into an accumulator so
 // nothing is optimized away.
 //
-// Not coverable from safe code (upstream signature quirks, noted here so the
-// gap is deliberate): `find_baked_node`/`find_baked_element`(+`_by_*_id`)
-// take `&mut BakedAnim` (no `DerefMut` on `BakedAnimRoot`). A non-owning mesh
-// header snapshot below supplies the `&mut Mesh` required by `find_face_index`.
+// The baked finders are covered from a real `BakedAnimRoot` in
+// `baked_finders_shared_borrow` (they take `&BakedAnim`, COMPAT.md §2). A
+// non-owning mesh header snapshot below supplies the `&mut Mesh` required by
+// `find_face_index`.
 
 /// DOM retention: `dom_find` navigation and the typed `dom_as_*` array reads,
 /// all through `&DomNode`s reached from the scene's retained DOM root.

@@ -984,19 +984,16 @@ pub fn dom_as_blob_list(node: &DomNode) -> &[Blob] {
 """
 
 
-# NOTE(ufbx-rs-native): ufbx-rust 0.11.2 binds the result lifetime to the
-# `&mut Node`/`&mut Element` key (or to nothing for the `_by_*_id` variants);
-# the results live in `bake->nodes`/`bake->elements` (ufbx.c:31320), so the
-# port binds them to the `&mut BakedAnim`. COMPAT.md §2.
+# NOTE(ufbx-rs-native): ufbx-rust 0.11.2 takes `&mut BakedAnim` and a
+# `&mut Node`/`&mut Element` key (bindgen artifacts of C's non-const pointers;
+# the C bodies only search `bake->nodes`/`bake->elements`, ufbx.c:31320) and
+# binds the result lifetime to the key, or to nothing for the `_by_*_id`
+# variants. The port takes shared references and binds the result to the bake:
+# `&mut` callers coerce, and several results can be held at once. COMPAT.md §2.
 # The baked-anim finders: native fns are safe over mode-generic views with
-# `Option` params for C's null checks. The upstream `&mut` signatures are
-# parity-locked (C non-const artifacts); wrappers keep them verbatim and mint
-# read-only `Const` views.
+# `Option` params for C's null checks; wrappers mint read-only `Const` views.
 override_functions["ufbx_find_baked_node_by_typed_id"] = """
-pub fn find_baked_node_by_typed_id(
-    bake: &mut BakedAnim,
-    typed_id: u32,
-) -> Option<&BakedNode> {
+pub fn find_baked_node_by_typed_id(bake: &BakedAnim, typed_id: u32) -> Option<&BakedNode> {
     let result = crate::native::api::find_baked_node_by_typed_id(
         crate::native::view::View::<BakedAnim, crate::native::view::Const>::from_ref(bake),
         typed_id,
@@ -1006,7 +1003,7 @@ pub fn find_baked_node_by_typed_id(
 """
 
 override_functions["ufbx_find_baked_node"] = """
-pub fn find_baked_node<'a>(bake: &'a mut BakedAnim, node: &mut Node) -> Option<&'a BakedNode> {
+pub fn find_baked_node<'a>(bake: &'a BakedAnim, node: &Node) -> Option<&'a BakedNode> {
     let result = crate::native::api::find_baked_node(
         Some(crate::native::view::View::<BakedAnim, crate::native::view::Const>::from_ref(bake)),
         Some(crate::native::view::View::<Node, crate::native::view::Const>::from_ref(node)),
@@ -1016,10 +1013,7 @@ pub fn find_baked_node<'a>(bake: &'a mut BakedAnim, node: &mut Node) -> Option<&
 """
 
 override_functions["ufbx_find_baked_element_by_element_id"] = """
-pub fn find_baked_element_by_element_id(
-    bake: &mut BakedAnim,
-    element_id: u32,
-) -> Option<&BakedElement> {
+pub fn find_baked_element_by_element_id(bake: &BakedAnim, element_id: u32) -> Option<&BakedElement> {
     let result = crate::native::api::find_baked_element_by_element_id(
         crate::native::view::View::<BakedAnim, crate::native::view::Const>::from_ref(bake),
         element_id,
@@ -1029,10 +1023,7 @@ pub fn find_baked_element_by_element_id(
 """
 
 override_functions["ufbx_find_baked_element"] = """
-pub fn find_baked_element<'a>(
-    bake: &'a mut BakedAnim,
-    element: &mut Element,
-) -> Option<&'a BakedElement> {
+pub fn find_baked_element<'a>(bake: &'a BakedAnim, element: &Element) -> Option<&'a BakedElement> {
     let result = crate::native::api::find_baked_element(
         Some(crate::native::view::View::<BakedAnim, crate::native::view::Const>::from_ref(bake)),
         Some(crate::native::view::View::<Element, crate::native::view::Const>::from_ref(element)),
