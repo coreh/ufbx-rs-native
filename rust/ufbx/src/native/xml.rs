@@ -686,14 +686,15 @@ pub(crate) fn xml_read_until(
                     bytes[2] = (0x80 | ((code >> 6) & 0x3f)) as u8;
                     bytes[3] = (0x80 | (code & 0x3f)) as u8;
                 }
-                // C: `for (char *b = bytes; *b; b++)`
-                let mut b: *mut u8 = bytes.as_mut_ptr();
-                // SAFETY (walk and reads): `bytes` is a 5-byte local whose last
-                // element stays zero — the encoder above fills at most four —
-                // so the NUL walk stops inside the array.
-                while unsafe { *b } != 0 {
-                    xml_push_token_char(xc, unsafe { *b })?;
-                    b = unsafe { b.add(1) };
+                // C: `for (char *b = bytes; *b; b++)` — the pointer walk is one
+                // run over the 5-byte local, so it is iterated directly. The
+                // encoder above fills at most four bytes, so the trailing zero
+                // stops the walk inside the array exactly as the C NUL does.
+                for b in bytes {
+                    if b == 0 {
+                        break;
+                    }
+                    xml_push_token_char(xc, b)?;
                 }
             } else {
                 let mut ch: u8 = b'\0';
@@ -844,16 +845,16 @@ unsafe fn xml_parse_tag_rec(
         return Ok(());
     } else if xml_accept(xc, b'!') {
         if xml_accept(xc, b'[') {
-            // C: `for (const char *ch = "CDATA["; *ch; ch++)`
-            let mut ch: *const u8 = b"CDATA[\0".as_ptr();
-            // SAFETY (walk and reads): `ch` walks a NUL-terminated `'static`
-            // literal and the loop stops at its terminator, so every read and
-            // the bump stay inside it.
-            while unsafe { *ch } != 0 {
-                if !xml_accept(xc, unsafe { *ch }) {
+            // C: `for (const char *ch = "CDATA["; *ch; ch++)` — the pointer
+            // walk is one run over a NUL-terminated `'static` literal, so it is
+            // iterated directly and stops at the same terminator.
+            for ch in *b"CDATA[\0" {
+                if ch == 0 {
+                    break;
+                }
+                if !xml_accept(xc, ch) {
                     return Err(Fail::unrecorded());
                 }
-                ch = unsafe { ch.add(1) };
             }
 
             let tag: *mut XmlTag = xc.tmp_stack_view().push_zero(1);
