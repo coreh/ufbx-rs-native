@@ -555,23 +555,25 @@ pub(crate) unsafe fn open_memory_ctx(
         }
         opts = local_opts.as_ptr();
     }
-    // SAFETY: `opts` is now non-null — either the caller's live opts or the
-    // zero-filled `local_opts` above — so its sentinel fields are readable.
-    ufbx_assert!(unsafe { (*opts)._begin_zero == 0 && (*opts)._end_zero == 0 });
+    // SAFETY: `opts` is now non-null — either the caller's live, initialized
+    // `RawOpenMemoryOpts` (this `unsafe fn`'s contract) or the `local_opts`
+    // storage the branch above zero-filled over its whole byte extent, which is a
+    // valid all-zero value living for the rest of this frame. The C treats it as
+    // `const` throughout, so this single shared borrow covers every `opts->...`
+    // read below and the reads themselves are then safe.
+    let opts_ref: &RawOpenMemoryOpts = unsafe { &*opts };
+    ufbx_assert!(opts_ref._begin_zero == 0 && opts_ref._end_zero == 0);
 
     // C: `ufbxi_file_context fc; // ufbxi_uninit`
     let fc = FileContext(core::cell::UnsafeCell::new(core::mem::MaybeUninit::uninit()));
-    // SAFETY: `fc` is the fresh file context; `ctx` is the caller's handle and
-    // The raw field address preserves C's address-of semantics without creating
-    // a Rust reference or an aliasing claim for the caller-owned options.
-    unsafe { begin_file_context(&fc, ctx, &raw const (*opts).allocator) };
+    // SAFETY: `fc` is the fresh file context and `ctx` is the caller's handle,
+    // both per this `unsafe fn`'s contract. The allocator argument is C's
+    // `&opts->allocator`: a raw field address taken through the shared `opts_ref`
+    // borrow, which `begin_file_context` only reads from (it forms a
+    // `View<RawAllocatorOpts, Const>` over it and never retains it).
+    unsafe { begin_file_context(&fc, ctx, &raw const opts_ref.allocator) };
 
-    // SAFETY: live `opts` per above; reading its own `no_copy` flag.
-    let copy_size: usize = if unsafe { (*opts).no_copy } {
-        0
-    } else {
-        data_size
-    };
+    let copy_size: usize = if opts_ref.no_copy { 0 } else { data_size };
 
     // Align the allocation size to 8 bytes to make sure the header is aligned.
     let self_size: usize = align_to_mask(size_of::<MemoryStream>().wrapping_add(copy_size), 7);
@@ -588,18 +590,15 @@ pub(crate) unsafe fn open_memory_ctx(
     // bytes; the write zero-fills exactly the `MemoryStream` header extent.
     unsafe { core::ptr::write_bytes(mem as *mut u8, 0, size_of::<MemoryStream>()) };
 
-    // SAFETY: `mem` is the live allocated `MemoryStream`; writing its own fields.
+    // SAFETY: `mem` is the live allocated `MemoryStream`; writing its own fields,
+    // in C's order, from the options read through the shared `opts_ref` borrow.
     unsafe {
         (*mem).size = data_size;
         (*mem).self_size = self_size;
-    }
-    // SAFETY: `mem` is the live `MemoryStream` and `opts` is live per above.
-    unsafe {
-        (*mem).close_cb = (*opts).close_cb;
+        (*mem).close_cb = opts_ref.close_cb;
     }
 
-    // SAFETY: live `opts` per above; reading its own `no_copy` flag.
-    if unsafe { (*opts).no_copy } {
+    if opts_ref.no_copy {
         // SAFETY: live `mem`; writing its own `data` field.
         unsafe {
             (*mem).data = data;
@@ -5625,6 +5624,13 @@ pub(crate) unsafe fn read_geometry_cache_real(
             return 0;
         }
 
+        // SAFETY: `frame` is non-null here (checked above) and points at one
+        // live, initialized `CacheFrame` per this fn's contract. The C only ever
+        // reads through `frame` (a `const ufbx_cache_frame *`) for the whole
+        // call, so this shared borrow is the single vouch covering every
+        // `frame->...` read below; the reads themselves are then safe.
+        let frame_ref: &CacheFrame = unsafe { &*frame };
+
         // C: `ufbx_geometry_cache_data_opts opts;` copied from `user_opts`, else
         // `memset(&opts, 0, sizeof(opts))`.
         let mut opts: RawGeometryCacheDataOpts = if !user_opts.is_null() {
@@ -5647,32 +5653,23 @@ pub(crate) unsafe fn read_geometry_cache_real(
         // enum cannot hold an out-of-range value). `frame->data_count * 3` is
         // `uint32_t` arithmetic (wraps at 2^32) before widening to `size_t`.
         let mut src_count: usize;
-        // SAFETY: `frame` is non-null here (checked above) and points at a live
-        // `CacheFrame` per this fn's contract; reading its own `data_format`.
-        match unsafe { (*frame).data_format } {
+        match frame_ref.data_format {
             CacheDataFormat::Unknown => src_count = 0,
-            // SAFETY: same live `CacheFrame`; reading its own `data_count`.
-            CacheDataFormat::RealFloat => src_count = unsafe { (*frame).data_count } as usize,
-            // SAFETY: same live `CacheFrame`; reading its own `data_count`.
-            CacheDataFormat::Vec3Float => {
-                src_count = unsafe { (*frame).data_count }.wrapping_mul(3) as usize
-            }
+            CacheDataFormat::RealFloat => src_count = frame_ref.data_count as usize,
+            CacheDataFormat::Vec3Float => src_count = frame_ref.data_count.wrapping_mul(3) as usize,
             CacheDataFormat::RealDouble => {
-                // SAFETY: same live `CacheFrame`; reading its own `data_count`.
-                src_count = unsafe { (*frame).data_count } as usize;
+                src_count = frame_ref.data_count as usize;
                 use_double = true;
             }
             CacheDataFormat::Vec3Double => {
-                // SAFETY: same live `CacheFrame`; reading its own `data_count`.
-                src_count = unsafe { (*frame).data_count }.wrapping_mul(3) as usize;
+                src_count = frame_ref.data_count.wrapping_mul(3) as usize;
                 use_double = true;
             }
         }
 
         // C: `bool src_big_endian = false;` then the switch assigns / returns.
         let src_big_endian: bool;
-        // SAFETY: same live `CacheFrame`; reading its own `data_encoding`.
-        match unsafe { (*frame).data_encoding } {
+        match frame_ref.data_encoding {
             CacheDataEncoding::Unknown => return 0,
             CacheDataEncoding::LittleEndian => src_big_endian = false,
             CacheDataEncoding::BigEndian => src_big_endian = true,
@@ -5692,15 +5689,15 @@ pub(crate) unsafe fn read_geometry_cache_real(
 
         // C: `ufbx_stream stream = { 0 };`
         let mut stream: RawStream = RawStream::default();
-        // SAFETY: `frame` is a live `CacheFrame`; `filename.data`/`.length` are
-        // its own blob fields; `open_file` receives borrows of local `opts`/
-        // `stream` plus that filename under its documented contract.
+        // SAFETY: `open_file` receives borrows of local `opts`/`stream` plus the
+        // frame's own `filename.data`/`.length` blob pair, read through the
+        // shared `frame_ref` borrow, under its documented contract.
         if !unsafe {
             crate::native::read::open_file::<Mut>(
                 &raw const opts.open_file_cb,
                 &raw mut stream,
-                (*frame).filename.data,
-                (*frame).filename.length,
+                frame_ref.filename.data,
+                frame_ref.filename.length,
                 None,
                 None,
                 OpenFileType::GeometryCache,
@@ -5710,8 +5707,7 @@ pub(crate) unsafe fn read_geometry_cache_real(
         }
 
         // Skip to the correct point in the file
-        // SAFETY: same live `CacheFrame`; reading its own `data_offset`.
-        let mut offset: u64 = unsafe { (*frame).data_offset };
+        let mut offset: u64 = frame_ref.data_offset;
         if stream.skip_fn.is_some() {
             while offset > 0 {
                 let to_skip = min64(offset, MAX_SKIP_SIZE as u64) as usize;
@@ -5752,8 +5748,7 @@ pub(crate) unsafe fn read_geometry_cache_real(
         }
 
         let mut dst: *mut Real = data;
-        // SAFETY: `frame` is a live `CacheFrame`; reading its own `mirror_axis`.
-        let mut mirror_ix: usize = (unsafe { (*frame).mirror_axis } as usize).wrapping_sub(1);
+        let mut mirror_ix: usize = (frame_ref.mirror_axis as usize).wrapping_sub(1);
         // C: `ufbxi_geometry_cache_buffer buffer; // ufbxi_uninit` — zero-filled
         // here (Rust forbids `assume_init` on the float array); each element is
         // overwritten before it is read within `0..num_read`, so this is
@@ -5779,33 +5774,40 @@ pub(crate) unsafe fn read_geometry_cache_real(
                     bytes_read = 0;
                 }
                 num_read = bytes_read / size_of::<f64>();
+                // SAFETY: `f64_` is the union arm `read_fn` just filled: one live
+                // `[f64; GEOMETRY_CACHE_BUFFER_SIZE]` inside the `buffer` local, which
+                // is neither moved nor otherwise borrowed while this run is held and
+                // whose bytes are all initialized (the whole buffer was zero-filled
+                // before the loop). `u8` needs no extra alignment, so the arm's exact
+                // byte extent — a compile-time constant, hence always in bounds — is
+                // one contiguous run. This is the single vouch for the endian swap
+                // and the read-back below; both go through the bounds-checked
+                // sub-slice of the doubles `read_fn` reported writing.
+                let arm_bytes: &mut [u8] = unsafe {
+                    core::slice::from_raw_parts_mut(
+                        buffer.src.f64_.as_mut_ptr() as *mut u8,
+                        GEOMETRY_CACHE_BUFFER_SIZE * size_of::<f64>(),
+                    )
+                };
+                // C indexes `buffer.src.f64[i]` for `i < num_read` in the same arm.
+                let src_bytes: &mut [u8] = &mut arm_bytes[..num_read * size_of::<f64>()];
                 if src_big_endian != dst_big_endian {
-                    // SAFETY: `f64_` is the union arm just written; viewing its
-                    // bytes for the in-place endian swap.
-                    let p = unsafe { buffer.src.f64_.as_mut_ptr() } as *mut u8;
-                    for i in 0..num_read {
-                        // SAFETY: `i < num_read`, so the 8 bytes at `p.add(i*8)`
-                        // lie within the written portion of the 512-double array.
-                        unsafe {
-                            let v = p.add(i * 8);
-                            let t = *v.add(0);
-                            *v.add(0) = *v.add(7);
-                            *v.add(7) = t;
-                            let t = *v.add(1);
-                            *v.add(1) = *v.add(6);
-                            *v.add(6) = t;
-                            let t = *v.add(2);
-                            *v.add(2) = *v.add(5);
-                            *v.add(5) = t;
-                            let t = *v.add(3);
-                            *v.add(3) = *v.add(4);
-                            *v.add(4) = t;
-                        }
+                    // C: swaps `v[0]<->v[7]`, `v[1]<->v[6]`, `v[2]<->v[5]`,
+                    // `v[3]<->v[4]` for each of the `num_read` doubles.
+                    for v in src_bytes.chunks_exact_mut(size_of::<f64>()) {
+                        v.swap(0, 7);
+                        v.swap(1, 6);
+                        v.swap(2, 5);
+                        v.swap(3, 4);
                     }
                 }
-                for i in 0..num_read {
-                    // SAFETY: `f64_` is the union arm written above; `i < num_read`.
-                    buffer.dst[i] = unsafe { buffer.src.f64_[i] } as Real;
+                // C: `buffer.dst[i] = (ufbx_real)buffer.src.f64[i];` — the same
+                // native-endian bytes of the union arm, read back in order.
+                for (d, v) in buffer.dst[..num_read]
+                    .iter_mut()
+                    .zip(src_bytes.chunks_exact(size_of::<f64>()))
+                {
+                    *d = f64::from_ne_bytes(v.try_into().unwrap()) as Real;
                 }
             } else {
                 // SAFETY: the stream's `read_fn` fills the `f32_` union arm (a
@@ -5821,41 +5823,49 @@ pub(crate) unsafe fn read_geometry_cache_real(
                     bytes_read = 0;
                 }
                 num_read = bytes_read / size_of::<f32>();
+                // SAFETY: `f32_` is the union arm `read_fn` just filled: one live
+                // `[f32; GEOMETRY_CACHE_BUFFER_SIZE]` inside the `buffer` local, which
+                // is neither moved nor otherwise borrowed while this run is held and
+                // whose bytes are all initialized (the whole buffer was zero-filled
+                // before the loop). `u8` needs no extra alignment, so the arm's exact
+                // byte extent — a compile-time constant, hence always in bounds — is
+                // one contiguous run. This is the single vouch for the endian swap
+                // and the read-back below; both go through the bounds-checked
+                // sub-slice of the floats `read_fn` reported writing.
+                let arm_bytes: &mut [u8] = unsafe {
+                    core::slice::from_raw_parts_mut(
+                        buffer.src.f32_.as_mut_ptr() as *mut u8,
+                        GEOMETRY_CACHE_BUFFER_SIZE * size_of::<f32>(),
+                    )
+                };
+                // C indexes `buffer.src.f32[i]` for `i < num_read` in the same arm.
+                let src_bytes: &mut [u8] = &mut arm_bytes[..num_read * size_of::<f32>()];
                 if src_big_endian != dst_big_endian {
-                    // SAFETY: `f32_` is the union arm just written; viewing its
-                    // bytes for the in-place endian swap.
-                    let p = unsafe { buffer.src.f32_.as_mut_ptr() } as *mut u8;
-                    for i in 0..num_read {
-                        // SAFETY: `i < num_read`, so the 4 bytes at `p.add(i*4)`
-                        // lie within the written portion of the 512-float array.
-                        unsafe {
-                            let v = p.add(i * 4);
-                            let t = *v.add(0);
-                            *v.add(0) = *v.add(3);
-                            *v.add(3) = t;
-                            let t = *v.add(1);
-                            *v.add(1) = *v.add(2);
-                            *v.add(2) = t;
-                        }
+                    // C: swaps `v[0]<->v[3]`, `v[1]<->v[2]` for each of the
+                    // `num_read` floats.
+                    for v in src_bytes.chunks_exact_mut(size_of::<f32>()) {
+                        v.swap(0, 3);
+                        v.swap(1, 2);
                     }
                 }
-                for i in 0..num_read {
-                    // SAFETY: `f32_` is the union arm written above; `i < num_read`.
-                    buffer.dst[i] = unsafe { buffer.src.f32_[i] } as Real;
+                // C: `buffer.dst[i] = (ufbx_real)buffer.src.f32[i];` — the same
+                // native-endian bytes of the union arm, read back in order.
+                for (d, v) in buffer.dst[..num_read]
+                    .iter_mut()
+                    .zip(src_bytes.chunks_exact(size_of::<f32>()))
+                {
+                    *d = f32::from_ne_bytes(v.try_into().unwrap()) as Real;
                 }
             }
 
             if !opts.ignore_transform {
-                // SAFETY: `frame` is a live `CacheFrame`; reading its own
-                // `scale_factor`.
-                let scale: Real = unsafe { (*frame).scale_factor };
+                let scale: Real = frame_ref.scale_factor;
                 if scale != 1.0 {
                     for i in 0..num_read {
                         buffer.dst[i] *= scale;
                     }
                 }
-                // SAFETY: same live `CacheFrame`; reading its own `mirror_axis`.
-                if unsafe { (*frame).mirror_axis } as u32 != 0 {
+                if frame_ref.mirror_axis as u32 != 0 {
                     while mirror_ix < num_read {
                         buffer.dst[mirror_ix] = -buffer.dst[mirror_ix];
                         mirror_ix = mirror_ix.wrapping_add(3);
@@ -5866,16 +5876,22 @@ pub(crate) unsafe fn read_geometry_cache_real(
 
             if !dst.is_null() {
                 let weight: Real = if opts.use_weight { opts.weight } else { 1.0 };
+                // SAFETY: `dst` is non-null (checked above) and points into the
+                // caller's `count`-element storage, advanced by everything written
+                // so far. `src_count` was clamped to `count` up front and each batch
+                // consumes `to_read` of it while advancing `dst` by its own
+                // `num_read <= to_read`, so this batch's `num_read` `Real` slots are
+                // inside that storage; they are live, unmoved and exclusively ours
+                // for the writes below (the same premise the C's `dst[i]` writes rest
+                // on). One vouch for the whole batch run.
+                let out: &mut [Real] = unsafe { core::slice::from_raw_parts_mut(dst, num_read) };
                 if opts.additive {
-                    for i in 0..num_read {
-                        // SAFETY: `dst` addresses caller storage with room for the
-                        // total written count; `i < num_read` of this batch.
-                        unsafe { *dst.add(i) += buffer.dst[i] * weight };
+                    for (o, b) in out.iter_mut().zip(&buffer.dst[..num_read]) {
+                        *o += *b * weight;
                     }
                 } else {
-                    for i in 0..num_read {
-                        // SAFETY: as above.
-                        unsafe { *dst.add(i) = buffer.dst[i] * weight };
+                    for (o, b) in out.iter_mut().zip(&buffer.dst[..num_read]) {
+                        *o = *b * weight;
                     }
                 }
                 // SAFETY: advancing `dst` by the batch's written count stays
@@ -5926,8 +5942,16 @@ pub(crate) unsafe fn sample_geometry_cache_real(
             return 0;
         }
         // SAFETY: `channel` is non-null here (checked above) and points at a live
-        // `CacheChannel` per this fn's contract; reading its own `frames.count`.
-        if unsafe { (*channel).frames.count } == 0 {
+        // `CacheChannel` per this fn's contract, so its own `frames` list field is
+        // readable: `frames.data` addresses `frames.count` contiguous, initialized
+        // `CacheFrame`s that stay alive and unmoved (result-arena storage) and are
+        // only read during this call. This is the single vouch for the whole
+        // `channel->frames` run; every index into it below is bounds-checked.
+        // C: `if (channel->frames.count == 0) return 0;`
+        let frames: &[CacheFrame] = unsafe {
+            crate::prelude::slice_from_ptr((*channel).frames.data, (*channel).frames.count)
+        };
+        if frames.is_empty() {
             return 0;
         }
 
@@ -5940,15 +5964,12 @@ pub(crate) unsafe fn sample_geometry_cache_real(
         };
 
         let mut begin: usize = 0;
-        // SAFETY: same live `CacheChannel`; reading its own `frames.count`.
-        let mut end: usize = unsafe { (*channel).frames.count };
-        // SAFETY: same live `CacheChannel`; reading its own `frames.data`.
-        let frames: *const CacheFrame = unsafe { (*channel).frames.data };
+        // C: `size_t end = channel->frames.count;`
+        let mut end: usize = frames.len();
         while end - begin >= 8 {
             let mid = (begin + end) >> 1;
-            // SAFETY: `mid < end <= frames.count`, so `frames.add(mid)` addresses
-            // a live `CacheFrame`; reading its own `time` field.
-            if unsafe { (*frames.add(mid)).time } < time {
+            // `mid < end <= frames.len()`, so this index is inside the run.
+            if frames[mid].time < time {
                 begin = mid + 1;
             } else {
                 end = mid;
@@ -5957,44 +5978,37 @@ pub(crate) unsafe fn sample_geometry_cache_real(
 
         let eps: f64 = 0.00000001;
 
-        // SAFETY: same live `CacheChannel`; reading its own `frames.count`.
-        end = unsafe { (*channel).frames.count };
+        end = frames.len();
         while begin < end {
-            // SAFETY: `begin < end <= frames.count`, so `frames.add(begin)`
-            // addresses a live `CacheFrame`.
-            let next: *const CacheFrame = unsafe { frames.add(begin) };
-            // SAFETY: `next` is a live `CacheFrame`; reading its own `time`.
-            if unsafe { (*next).time } < time {
+            // `begin < end == frames.len()`, so this index is inside the run.
+            let next: &CacheFrame = &frames[begin];
+            if next.time < time {
                 begin += 1;
                 continue;
             }
 
             // First keyframe
             if begin == 0 {
-                // SAFETY: `next` is a live `CacheFrame`; `data` is caller storage.
+                // SAFETY: `next` borrows one live `CacheFrame` of the vouched run
+                // and `data` is the caller's storage, both per this fn's contract.
                 return unsafe { read_geometry_cache_real(next, data, count, &opts) };
             }
 
-            // SAFETY: `begin >= 1`, so `next.sub(1)` addresses the prior live
-            // `CacheFrame` in the channel's array.
-            let prev: *const CacheFrame = unsafe { next.sub(1) };
+            // C: `frame - 1` — `begin >= 1` here, so the prior frame is in the run.
+            let prev: &CacheFrame = &frames[begin - 1];
 
             // Snap to exact frames if near
-            // SAFETY: `next` is a live `CacheFrame`; reading its own `time`.
-            if math::fabs(unsafe { (*next).time } - time) < eps {
-                // SAFETY: `next` is a live `CacheFrame`; `data` is caller storage.
+            if math::fabs(next.time - time) < eps {
+                // SAFETY: as above, for `next`.
                 return unsafe { read_geometry_cache_real(next, data, count, &opts) };
             }
-            // SAFETY: `prev` is a live `CacheFrame`; reading its own `time`.
-            if math::fabs(unsafe { (*prev).time } - time) < eps {
-                // SAFETY: `prev` is a live `CacheFrame`; `data` is caller storage.
+            if math::fabs(prev.time - time) < eps {
+                // SAFETY: as above, for `prev`.
                 return unsafe { read_geometry_cache_real(prev, data, count, &opts) };
             }
 
-            // SAFETY: `next`/`prev` are live `CacheFrame`s; reading own `time`.
-            let rcp_delta: f64 = 1.0 / (unsafe { (*next).time } - unsafe { (*prev).time });
-            // SAFETY: `prev` is a live `CacheFrame`; reading its own `time`.
-            let t: f64 = (time - unsafe { (*prev).time }) * rcp_delta;
+            let rcp_delta: f64 = 1.0 / (next.time - prev.time);
+            let t: f64 = (time - prev.time) * rcp_delta;
 
             let original_weight: Real = if opts.use_weight { opts.weight } else { 1.0 };
 
@@ -6010,10 +6024,10 @@ pub(crate) unsafe fn sample_geometry_cache_real(
         }
 
         // Last frame
-        // SAFETY: `end == frames.count >= 1` here, so `frames.add(end - 1)`
-        // addresses the last live `CacheFrame`.
-        let last: *const CacheFrame = unsafe { frames.add(end - 1) };
-        // SAFETY: `last` is a live `CacheFrame`; `data` is caller storage.
+        // `end == frames.len() >= 1` here, so this index is inside the run.
+        let last: &CacheFrame = &frames[end - 1];
+        // SAFETY: `last` borrows one live `CacheFrame` of the vouched run and
+        // `data` is the caller's storage, both per this fn's contract.
         unsafe { read_geometry_cache_real(last, data, count, &opts) }
     }
     #[cfg(not(feature = "geometry-cache"))]
