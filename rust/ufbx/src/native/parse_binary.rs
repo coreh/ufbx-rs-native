@@ -245,11 +245,9 @@ pub(crate) unsafe fn binary_convert_array(
     if src_type == dst_type {
         // C: `ufbx_assert(maybe_uc && maybe_uc->file_big_endian != maybe_uc->local_big_endian);`
         ufbx_assert!(maybe_uc.is_some_and(|uc| uc.file_big_endian() != uc.local_big_endian()));
-        // SAFETY: this arm is reachable only via `binary_parse_node` (the
-        // deflate task calls in only with `src_type != dst_type`), which always
-        // passes a live `InnerContext` — the same reachability the assert above
-        // states; C dereferences `maybe_uc` here unconditionally.
-        let uc: &Context = unsafe { maybe_uc.unwrap_unchecked() };
+        // The always-on assert above established `Some`; C dereferences
+        // `maybe_uc` here unconditionally.
+        let uc: &Context = maybe_uc.expect("asserted above");
         // SAFETY: the caller's `src` holds `size` `src_type` elements. The
         // bounded span is consumed immediately by the endian copy into `uc`'s
         // owned `swap_arr`.
