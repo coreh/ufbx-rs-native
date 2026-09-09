@@ -106,6 +106,21 @@ impl View<XmlTag> {
     pub(crate) fn num_attribs(&self) -> usize {
         view_read!(self, num_attribs)
     }
+    /// C `ufbxi_for(ufbxi_xml_attrib, attrib, tag->attribs, tag->num_attribs)`.
+    #[inline(always)]
+    pub(crate) fn attribs_iter(&self) -> SliceViewIter<'_, XmlAttrib> {
+        // Preserve C field-read order: `attribs` before `num_attribs`.
+        let attribs = self.attribs();
+        let num_attribs = self.num_attribs();
+        // The allocation-failure sentinel (`set_attribs` contract) is never
+        // traversed; assert it rather than offset a null base.
+        assert!(!attribs.is_null() || num_attribs == 0);
+        // SAFETY: `set_attribs` is the pair's only publisher and vouches for
+        // `num_attribs` contiguous, initialized `XmlAttrib` values behind a
+        // non-null `attribs`, live and unmoved for every traversal through
+        // this tag (which this view's own borrow is inside of).
+        unsafe { SliceViewIter::from_raw_parts(attribs, num_attribs) }
+    }
     #[inline(always)]
     pub(crate) fn children(&self) -> *mut XmlTag {
         view_read!(self, children)
@@ -130,6 +145,21 @@ impl View<XmlTag> {
     #[inline(always)]
     pub(crate) fn num_children(&self) -> usize {
         view_read!(self, num_children)
+    }
+    /// C `ufbxi_for(ufbxi_xml_tag, child, tag->children, tag->num_children)`.
+    #[inline(always)]
+    pub(crate) fn children_iter(&self) -> SliceViewIter<'_, XmlTag> {
+        // Preserve C field-read order: `children` before `num_children`.
+        let children = self.children();
+        let num_children = self.num_children();
+        // The allocation-failure sentinel (`set_children` contract) is never
+        // traversed; assert it rather than offset a null base.
+        assert!(!children.is_null() || num_children == 0);
+        // SAFETY: `set_children` is the pair's only publisher and vouches for
+        // `num_children` contiguous, initialized `XmlTag` values behind a
+        // non-null `children`, live and unmoved for every traversal through
+        // this tag (which this view's own borrow is inside of).
+        unsafe { SliceViewIter::from_raw_parts(children, num_children) }
     }
 }
 
@@ -1123,11 +1153,7 @@ pub(crate) unsafe fn free_xml(doc: *mut XmlDocument) {
 #[inline(never)]
 pub(crate) fn xml_find_child<'a>(tag: &'a XmlTagView, name: &CStr) -> Option<&'a XmlTagView> {
     // C: `ufbxi_for(ufbxi_xml_tag, child, tag->children, tag->num_children)`
-    // SAFETY: `children`/`num_children` describe a contiguous arena run (built by
-    // `xml_parse_tag` via `push_pop`), valid and stable for `tag`'s lifetime `'a`.
-    let children: SliceViewIter<'a, XmlTag> =
-        unsafe { SliceViewIter::from_raw_parts(tag.children(), tag.num_children()) };
-    for child in children {
+    for child in tag.children_iter() {
         if c_strcmp(child.name_view().bytes(), name.to_bytes_with_nul()) == 0 {
             return Some(child);
         }
@@ -1142,11 +1168,7 @@ pub(crate) fn xml_find_child<'a>(tag: &'a XmlTagView, name: &CStr) -> Option<&'a
 #[inline(never)]
 pub(crate) fn xml_find_attrib<'a>(tag: &'a XmlTagView, name: &CStr) -> Option<&'a XmlAttribView> {
     // C: `ufbxi_for(ufbxi_xml_attrib, attrib, tag->attribs, tag->num_attribs)`
-    // SAFETY: `attribs`/`num_attribs` describe a contiguous arena run (built by
-    // `xml_parse_tag` via `push_pop`), valid and stable for `tag`'s lifetime `'a`.
-    let attribs: SliceViewIter<'a, XmlAttrib> =
-        unsafe { SliceViewIter::from_raw_parts(tag.attribs(), tag.num_attribs()) };
-    for attrib in attribs {
+    for attrib in tag.attribs_iter() {
         if c_strcmp(attrib.name_view().bytes(), name.to_bytes_with_nul()) == 0 {
             return Some(attrib);
         }
