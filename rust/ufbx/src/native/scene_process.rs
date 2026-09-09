@@ -5700,7 +5700,6 @@ pub(crate) fn finalize_shader_texture<'a>(
     uc: &'a Context,
     texture_view: &'a TextureView,
 ) -> Result<(), Fail> {
-    let texture: *mut Texture = texture_view.get();
     let (classid_a, classid_b): (u32, u32) = (
         api_find_int_len(texture_view.props_view(), b"3dsMax|ClassIDa", 0) as u64 as u32,
         api_find_int_len(texture_view.props_view(), b"3dsMax|ClassIDb", 0) as u64 as u32,
@@ -5720,23 +5719,22 @@ pub(crate) fn finalize_shader_texture<'a>(
     let mut type_: u32 = SHADER_TEXTURE_TYPE_COUNT;
 
     // SAFETY: `max_texture` is an interned (NUL-terminated) string compared
-    // against literals, and `texture` is the texture view's own storage.
-    unsafe {
-        if strcmp(max_texture.data, b"MULTIOUTPUT_TO_OSLMap\0".as_ptr()) == 0
-            || classid == 0x896ef2fc44bd743f
-        {
-            type_ = ShaderTextureType::SelectOutput as u32;
-        } else if strcmp(max_texture.data, b"OSLMap\0".as_ptr()) == 0
-            || classid == 0x7f9a7b9d6fcdf00d
-        {
-            type_ = ShaderTextureType::Osl as u32;
-        } else if (*texture).type_ == TextureType::File
-            && (*texture).relative_filename.length == 0
-            && (*texture).absolute_filename.length == 0
-            && texture_view.video().is_none()
-        {
-            type_ = ShaderTextureType::Unknown as u32;
-        }
+    // against NUL-terminated literals.
+    if unsafe { strcmp(max_texture.data, b"MULTIOUTPUT_TO_OSLMap\0".as_ptr()) } == 0
+        || classid == 0x896ef2fc44bd743f
+    {
+        type_ = ShaderTextureType::SelectOutput as u32;
+    // SAFETY: as above.
+    } else if unsafe { strcmp(max_texture.data, b"OSLMap\0".as_ptr()) } == 0
+        || classid == 0x7f9a7b9d6fcdf00d
+    {
+        type_ = ShaderTextureType::Osl as u32;
+    } else if texture_view.type_() == TextureType::File
+        && texture_view.relative_filename_view().length() == 0
+        && texture_view.absolute_filename_view().length() == 0
+        && texture_view.video().is_none()
+    {
+        type_ = ShaderTextureType::Unknown as u32;
     }
 
     if type_ == SHADER_TEXTURE_TYPE_COUNT {
@@ -5827,11 +5825,12 @@ pub(crate) fn finalize_shader_texture<'a>(
     // `base` is null-checked before its deref. Each stored `prop.to_ref()` refers
     // to an entry of that scene-arena property table, which outlives the inputs
     // (`to_ref` contract).
+    let texture_props: List<Prop> = texture_view.props_view().props();
     unsafe {
         // C: `ufbxi_for_list(ufbx_prop, prop, texture->props.props)`
         let props = SliceViewIter::<Prop>::from_raw_parts(
-            (*texture).element.props.props.data as *mut Prop,
-            (*texture).element.props.props.count,
+            texture_props.data as *mut Prop,
+            texture_props.count,
         );
         for prop in props {
             let mut name: String = prop.name();
@@ -5910,16 +5909,19 @@ pub(crate) fn finalize_shader_texture<'a>(
             !(*shader.get()).inputs.data.is_null(),
             "shader->inputs.data"
         );
-
-        (*texture).shader = opt_ref(shader.get());
-        (*texture).type_ = TextureType::Shader;
-        uc.scene_view()
-            .metadata_view()
-            .set_num_shader_textures(uc.scene_view().metadata_view().num_shader_textures() + 1);
     }
 
+    // SAFETY: `shader` views the arena-owned `ufbx_shader_texture` pushed above,
+    // which stays alive and unmoved for as long as the scene it is stored into
+    // (the `opt_ref` retention contract).
+    texture_view.set_shader(unsafe { opt_ref(shader.get()) });
+    texture_view.set_type(TextureType::Shader);
+    uc.scene_view()
+        .metadata_view()
+        .set_num_shader_textures(uc.scene_view().metadata_view().num_shader_textures() + 1);
+
     if !uc.opts_view().disable_quirks() {
-        // SAFETY: `shader`/`texture` as above; `fs` indexes the static `FILE_SHADERS`
+        // SAFETY: `shader` as above; `fs` indexes the static `FILE_SHADERS`
         // table whose name fields are NUL-terminated literals, `input` is
         // null-checked before its deref, and its `prop` link is set by the input
         // loop above, so the unchecked unwrap of that field holds.
@@ -5941,9 +5943,9 @@ pub(crate) fn finalize_shader_texture<'a>(
                         let prop: &PropView = ptr::read(&raw const (*input).prop)
                             .unwrap_unchecked()
                             .view();
-                        (*texture).absolute_filename = prop.value_str();
-                        (*texture).raw_absolute_filename = prop.value_blob();
-                        (*texture).type_ = TextureType::File;
+                        texture_view.set_absolute_filename(prop.value_str());
+                        texture_view.set_raw_absolute_filename(prop.value_blob());
+                        texture_view.set_type(TextureType::File);
                         break;
                     }
                 }
@@ -5951,16 +5953,7 @@ pub(crate) fn finalize_shader_texture<'a>(
         }
     }
 
-    // SAFETY: `texture` lives in the uc arena, so the reinterpret satisfies the
-    // element-view construction invariant; `shader` is the fresh push above,
-    // reinterpreted in place by its view.
-    unsafe {
-        // Anchor the texture to `'a` (= uc): `texture` lives in the uc arena, so the
-        // explicit `&'a` annotation forces the reinterpret lifetime to unify with the
-        // `uc` borrow rather than infer free.
-        let texture_view: &'a TextureView = TextureView::from_ptr(texture);
-        update_shader_texture(texture_view, shader);
-    }
+    update_shader_texture(texture_view, shader);
 
     Ok(())
 }
@@ -6084,11 +6077,18 @@ pub(crate) fn propagate_main_textures(scene_view: &SceneView) {
     }
 }
 
+// Rust-port infrastructure (not a ufbx.c section): the texture-file records
+// `ufbxi_insert_texture_file` patches live in uc's `tmp` arena, reached through
+// a view over the fresh push.
+pub(crate) type TextureFileView = crate::native::view::View<TextureFile>;
+
 // ufbx.c:20754-20755 `#define ufbxi_patch_empty(m_dst, m_len, m_src)`
+// The `m_dst` place becomes a view plus its accessor pair (the whole-descriptor
+// read and the whole-descriptor publication).
 macro_rules! patch_empty {
-    ($dst:expr, $len:ident, $src:expr) => {{
-        if $dst.$len == 0 {
-            $dst = $src;
+    ($dst:expr, $get:ident, $set:ident, $len:ident, $src:expr) => {{
+        if $dst.$get().$len == 0 {
+            $dst.$set($src);
         }
     }};
 }
@@ -6126,9 +6126,12 @@ pub(crate) fn insert_texture_file(uc: &Context, texture: &TextureView) -> Result
         let file: *mut TextureFile = uc.tmp_view().push_zero(1);
         ufbxi_check!(uc, !file.is_null(), "file");
 
-        // SAFETY: `file` is the fresh non-null one-element push above; the insert
-        // grew the map, so its size is at least one.
-        unsafe { (*file).index = uc.texture_file_map_view().size() - 1 };
+        // SAFETY: `file` is the fresh non-null one-element push above — a live,
+        // arena-owned `ufbx_texture_file` in uc's `tmp` buffer, which only
+        // appends, so the slot stays alive, unmoved and write-capable.
+        let file_view: &TextureFileView = unsafe { TextureFileView::from_ptr(file) };
+        // The insert grew the map, so its size is at least one.
+        file_view.set_index(uc.texture_file_map_view().size() - 1);
 
         // SAFETY: `entry` is the fresh non-null map slot above, and `file` the
         // fresh push, which lives in `uc`'s `tmp` arena for the rest of the read.
@@ -6139,38 +6142,49 @@ pub(crate) fn insert_texture_file(uc: &Context, texture: &TextureView) -> Result
     }
 
     // SAFETY: `entry` is non-null — either the hit from `map_find` or the freshly
-    // filled insert above — and points to a live `TextureFileEntry`.
-    let file: *mut TextureFile = unsafe { (*entry).file };
-    // SAFETY: `file` is that entry's `TextureFile`, pushed on `uc`'s `tmp` arena.
-    texture.set_file_index(unsafe { (*file).index });
+    // filled insert above — and points to a live `TextureFileEntry` whose `file`
+    // link is a `ufbx_texture_file` pushed on uc's `tmp` arena, live and unmoved
+    // for the rest of the read.
+    let file: &TextureFileView = unsafe { TextureFileView::from_ptr((*entry).file) };
+    texture.set_file_index(file.index());
     texture.set_has_file(true);
-    // SAFETY: `file` is live (see above), so the macro's `(*file)` field
-    // projections address its own members.
-    unsafe {
-        patch_empty!((*file).filename, length, texture.filename());
-        patch_empty!(
-            (*file).relative_filename,
-            length,
-            texture.relative_filename()
-        );
-        patch_empty!(
-            (*file).absolute_filename,
-            length,
-            texture.absolute_filename()
-        );
-        patch_empty!((*file).raw_filename, size, texture.raw_filename());
-        patch_empty!(
-            (*file).raw_relative_filename,
-            size,
-            texture.raw_relative_filename()
-        );
-        patch_empty!(
-            (*file).raw_absolute_filename,
-            size,
-            texture.raw_absolute_filename()
-        );
-        patch_empty!((*file).content, size, texture.content());
-    }
+    patch_empty!(file, filename, set_filename, length, texture.filename());
+    patch_empty!(
+        file,
+        relative_filename,
+        set_relative_filename,
+        length,
+        texture.relative_filename()
+    );
+    patch_empty!(
+        file,
+        absolute_filename,
+        set_absolute_filename,
+        length,
+        texture.absolute_filename()
+    );
+    patch_empty!(
+        file,
+        raw_filename,
+        set_raw_filename,
+        size,
+        texture.raw_filename()
+    );
+    patch_empty!(
+        file,
+        raw_relative_filename,
+        set_raw_relative_filename,
+        size,
+        texture.raw_relative_filename()
+    );
+    patch_empty!(
+        file,
+        raw_absolute_filename,
+        set_raw_absolute_filename,
+        size,
+        texture.raw_absolute_filename()
+    );
+    patch_empty!(file, content, set_content, size, texture.content());
 
     Ok(())
 }
@@ -6385,17 +6399,23 @@ pub(crate) fn fetch_file_textures(uc: &Context) -> Result<(), Fail> {
         // SAFETY: pops one texture pointer from uc's own tmp stack (the loop
         // counter guarantees an entry is there) into an unaliased local.
         unsafe { pop::<*mut Texture>(uc.tmp_stack_view(), 1, &raw mut texture) };
+        // SAFETY: the pop wrote one of the scene's own stored `ufbx_texture`
+        // pointers into the local, so the slot is a live, unmoved, write-capable
+        // texture of the uc arena for this iteration.
+        let texture_view: &TextureView = unsafe { TextureView::from_ptr(texture) };
+        // Every raw write below travels through the view's own storage pointer,
+        // so it stays a sibling of the reads routed through `texture_view`.
+        let texture: *mut Texture = texture_view.get();
 
         // SAFETY: `states` is the fresh zeroed run pushed above, one byte per
         // scene texture, indexed here by the texture's own `typed_id`.
-        let state: u32 = unsafe { *states.add((*texture).element.typed_id as usize) } as u32;
+        let state: u32 = unsafe { *states.add(texture_view.element().typed_id() as usize) } as u32;
         if state == FILE_TEXTURE_FETCH_FINISHED {
             continue;
         }
-        // SAFETY: reads the texture's own optional shader reference; the result
-        // is null-checked before every use.
-        let shader: *mut ShaderTexture =
-            unsafe { ptr::read(&raw const (*texture).shader) }.map_or(ptr::null_mut(), |r| r.ptr());
+        // C: `ufbx_shader_texture *shader = texture->shader;` — the result is
+        // null-checked before every use.
+        let shader: *mut ShaderTexture = texture_view.shader().map_or(ptr::null_mut(), |r| r.ptr());
 
         // SAFETY: `texture`/`shader` as above; `states` is indexed by the texture's own
         // `typed_id`; each `dst` is the fresh non-null result of a push onto uc's own
@@ -6404,7 +6424,7 @@ pub(crate) fn fetch_file_textures(uc: &Context) -> Result<(), Fail> {
         // `files` runs) is traversed with its own count.
         if state == FILE_TEXTURE_FETCH_STARTED {
             unsafe {
-                *states.add((*texture).element.typed_id as usize) =
+                *states.add(texture_view.element().typed_id() as usize) =
                     FILE_TEXTURE_FETCH_FINISHED as u8;
 
                 // HACK: Reuse `tmp_parse` for storing intermediate information as we can clear it.
@@ -6413,7 +6433,7 @@ pub(crate) fn fetch_file_textures(uc: &Context) -> Result<(), Fail> {
                 // Now all non-cyclical dependents should be processed.
                 let mut num_deps: usize = 0;
 
-                if (*texture).type_ == TextureType::File {
+                if texture_view.type_() == TextureType::File {
                     let dst: *mut OrderedTexture = uc.tmp_stack_view().push(1);
                     ufbxi_check!(uc, !dst.is_null(), "dst");
                     (*dst).texture = texture;
@@ -6422,8 +6442,9 @@ pub(crate) fn fetch_file_textures(uc: &Context) -> Result<(), Fail> {
                 }
 
                 // C: `ufbxi_for_list(ufbx_texture_layer, layer, texture->layers)`
-                let mut layer: *mut TextureLayer = (*texture).layers.data as *mut TextureLayer;
-                let layer_end: *mut TextureLayer = add_ptr(layer, (*texture).layers.count);
+                let layers: List<TextureLayer> = texture_view.layers();
+                let mut layer: *mut TextureLayer = layers.data as *mut TextureLayer;
+                let layer_end: *mut TextureLayer = add_ptr(layer, layers.count);
                 while layer != layer_end {
                     let dep_tex: Ref<Texture> = ptr::read(&raw const (*layer).texture);
                     if dep_tex.view::<Mut>().file_textures().count > 0 {
@@ -6536,7 +6557,7 @@ pub(crate) fn fetch_file_textures(uc: &Context) -> Result<(), Fail> {
             // the write into it, and every dependency pushed onto uc's own tmp stack is
             // a `&raw` place inside a live element of the same arena.
             unsafe {
-                if (*texture).type_ == TextureType::File {
+                if texture_view.type_() == TextureType::File {
                     // Simple case: Just point to self
                     (*texture).file_textures.count = 1;
                     (*texture).file_textures.data =
@@ -6550,15 +6571,15 @@ pub(crate) fn fetch_file_textures(uc: &Context) -> Result<(), Fail> {
 
                     // In simple cases we can quit here, for more complex file textures queue
                     // the texture in case there are other file textures as inputs.
-                    if ptr::read(&raw const (*texture).shader).is_none() {
-                        *states.add((*texture).element.typed_id as usize) =
+                    if texture_view.shader().is_none() {
+                        *states.add(texture_view.element().typed_id() as usize) =
                             FILE_TEXTURE_FETCH_FINISHED as u8;
                         continue;
                     }
                 }
 
                 // Complex: Process all dependencies first
-                *states.add((*texture).element.typed_id as usize) =
+                *states.add(texture_view.element().typed_id() as usize) =
                     FILE_TEXTURE_FETCH_STARTED as u8;
 
                 // Push self first so we can return after processing dependencies
@@ -6570,8 +6591,9 @@ pub(crate) fn fetch_file_textures(uc: &Context) -> Result<(), Fail> {
                 num_stack_textures += 1;
 
                 // C: `ufbxi_for_list(ufbx_texture_layer, layer, texture->layers)`
-                let mut layer: *mut TextureLayer = (*texture).layers.data as *mut TextureLayer;
-                let layer_end: *mut TextureLayer = add_ptr(layer, (*texture).layers.count);
+                let layers: List<TextureLayer> = texture_view.layers();
+                let mut layer: *mut TextureLayer = layers.data as *mut TextureLayer;
+                let layer_end: *mut TextureLayer = add_ptr(layer, layers.count);
                 while layer != layer_end {
                     ufbxi_check!(
                         uc,
@@ -11361,37 +11383,22 @@ pub(crate) fn update_pose(pose_view: &PoseView) {
 // ufbx.c:23289-23297 `ufbxi_update_skin_cluster`
 #[inline(never)]
 pub(crate) fn update_skin_cluster(cluster_view: &SkinClusterView) {
-    let cluster: *mut SkinCluster = cluster_view.get();
     // C: `if (cluster->bone_node)` — pointer truthiness.
     if let Some(bone_node) = cluster_view.bone_node_view() {
-        // SAFETY: both pointers project live initialized matrices and remain
-        // frozen until the value computation completes.
-        unsafe {
-            let geometry_to_world = matrix_mul(
-                View::<Matrix, Const>::from_ptr(bone_node.node_to_world_ptr()),
-                View::<Matrix, Const>::from_ptr(&raw const (*cluster).geometry_to_bone),
-            );
-            (*cluster).geometry_to_world = geometry_to_world;
-        }
+        let geometry_to_world = matrix_mul(
+            bone_node.node_to_world_view(),
+            cluster_view.geometry_to_bone_view(),
+        );
+        cluster_view.set_geometry_to_world(geometry_to_world);
     } else {
-        // SAFETY: both pointers project the cluster's live initialized matrix
-        // fields and remain frozen until the value computation completes.
-        unsafe {
-            let geometry_to_world = matrix_mul(
-                View::<Matrix, Const>::from_ptr(&raw const (*cluster).bind_to_world),
-                View::<Matrix, Const>::from_ptr(&raw const (*cluster).geometry_to_bone),
-            );
-            (*cluster).geometry_to_world = geometry_to_world;
-        }
+        let geometry_to_world = matrix_mul(
+            cluster_view.bind_to_world_view(),
+            cluster_view.geometry_to_bone_view(),
+        );
+        cluster_view.set_geometry_to_world(geometry_to_world);
     }
-    // SAFETY: `geometry_to_world` was assigned on both arms above and remains
-    // frozen until this value computation completes.
-    unsafe {
-        let geometry_to_world_transform = matrix_to_transform(View::<Matrix, Const>::from_ptr(
-            &raw const (*cluster).geometry_to_world,
-        ));
-        (*cluster).geometry_to_world_transform = geometry_to_world_transform;
-    }
+    let geometry_to_world_transform = matrix_to_transform(cluster_view.geometry_to_world_view());
+    cluster_view.set_geometry_to_world_transform(geometry_to_world_transform);
 }
 
 // ufbx.c:23299-23342 `ufbxi_update_blend_channel`
@@ -11655,24 +11662,19 @@ pub(crate) fn find_bool3(
 // ufbx.c:23416-23488 `ufbxi_update_constraint`
 #[inline(never)]
 pub(crate) fn update_constraint(constraint_view: &ConstraintView) {
-    let constraint: *mut Constraint = constraint_view.get();
     // C: `ufbx_props *props = &constraint->props;` — kept live across writes
-    // through `constraint`, so this must be a `&raw mut` and never a `&mut`
-    // (which would retag and be invalidated by those writes). Correlated to the
-    // element view (<= uc) via `props_view`.
+    // through the constraint view, so this must be a projection and never a
+    // `&mut` (which would retag and be invalidated by those writes). Correlated
+    // to the element view (<= uc) via `props_view`.
     let props: &PropsView = constraint_view.props_view();
-    // SAFETY: `constraint` is the constraint view's own storage.
-    let constraint_type: ConstraintType = unsafe { (*constraint).type_ };
+    let constraint_type: ConstraintType = constraint_view.type_();
 
-    // SAFETY: `constraint` and `props` are the constraint view's own storage; the
-    // lookup name is a NUL-terminated static.
-    unsafe {
-        (*constraint).transform_offset = get_constraint_transform(props);
+    constraint_view.set_transform_offset(get_constraint_transform(props));
 
-        // C: `ufbxi_find_real` — the internal 4-byte-key lookup, NOT `ufbx_find_real`.
-        (*constraint).weight = find_real(props, &sp::Weight, 100.0 as Real) / (100.0 as Real);
-    }
+    // C: `ufbxi_find_real` — the internal 4-byte-key lookup, NOT `ufbx_find_real`.
+    constraint_view.set_weight(find_real(props, &sp::Weight, 100.0 as Real) / (100.0 as Real));
 
+    let targets: List<ConstraintTarget> = constraint_view.targets();
     // SAFETY: walks the constraint's own `targets` run (`count` entries); `node`
     // is an always-resolved reference from the same arena, `parts` is a local
     // two-element array fully written before each lookup, and every `prop` is
@@ -11680,8 +11682,8 @@ pub(crate) fn update_constraint(constraint_view: &ConstraintView) {
     // `ufbx_prop` value union's `ufbx_vec3` view).
     unsafe {
         // C: `ufbxi_for_list(ufbx_constraint_target, target, constraint->targets)`
-        let mut target: *mut ConstraintTarget = (*constraint).targets.data as *mut ConstraintTarget;
-        let target_end: *mut ConstraintTarget = add_ptr(target, (*constraint).targets.count);
+        let mut target: *mut ConstraintTarget = targets.data as *mut ConstraintTarget;
+        let target_end: *mut ConstraintTarget = add_ptr(target, targets.count);
         while target != target_end {
             let node: &NodeView = ptr::read(&raw const (*target).node).view();
 
@@ -11719,104 +11721,94 @@ pub(crate) fn update_constraint(constraint_view: &ConstraintView) {
         }
     }
 
-    // SAFETY: `constraint` and `props` are the constraint view's own storage,
-    // and the transmute is guarded by the explicit `[0, LAST)` range check
-    // above it.
-    unsafe {
-        (*constraint).active = api_find_int_len(props, b"Active", 1) != 0;
-        if constraint_type == ConstraintType::Aim {
-            find_bool3(
-                constraint_view.constrain_rotation_view(),
-                props,
-                b"Affect",
-                true,
-            );
+    constraint_view.set_active(api_find_int_len(props, b"Active", 1) != 0);
+    if constraint_type == ConstraintType::Aim {
+        find_bool3(
+            constraint_view.constrain_rotation_view(),
+            props,
+            b"Affect",
+            true,
+        );
 
-            let default_aim: Vec3 = Vec3 {
-                x: 1.0,
-                y: 0.0,
-                z: 0.0,
-            };
-            let default_up: Vec3 = Vec3 {
-                x: 0.0,
-                y: 1.0,
-                z: 0.0,
-            };
+        let default_aim: Vec3 = Vec3 {
+            x: 1.0,
+            y: 0.0,
+            z: 0.0,
+        };
+        let default_up: Vec3 = Vec3 {
+            x: 0.0,
+            y: 1.0,
+            z: 0.0,
+        };
 
-            let up_type: i64 = api_find_int_len(props, b"WorldUpType", 0);
-            if up_type >= 0 && up_type < ConstraintAimUpType::None as i64 {
-                // C: `(ufbx_constraint_aim_up_type)up_type` — the range check above
-                // admits only valid enum values.
-                (*constraint).aim_up_type =
-                    core::mem::transmute::<u32, ConstraintAimUpType>(up_type as u32);
-            }
-            (*constraint).aim_vector = api_find_vec3_len(props, b"AimVector", default_aim);
-            (*constraint).aim_up_vector = api_find_vec3_len(props, b"UpVector", default_up);
-        } else if constraint_type == ConstraintType::Parent {
-            find_bool3(
-                constraint_view.constrain_translation_view(),
-                props,
-                b"AffectTranslation",
-                true,
-            );
-            find_bool3(
-                constraint_view.constrain_rotation_view(),
-                props,
-                b"AffectRotation",
-                true,
-            );
-            find_bool3(
-                constraint_view.constrain_scale_view(),
-                props,
-                b"AffectScale",
-                false,
-            );
-        } else if constraint_type == ConstraintType::Position {
-            find_bool3(
-                constraint_view.constrain_translation_view(),
-                props,
-                b"Affect",
-                true,
-            );
-        } else if constraint_type == ConstraintType::Rotation {
-            find_bool3(
-                constraint_view.constrain_rotation_view(),
-                props,
-                b"Affect",
-                true,
-            );
-        } else if constraint_type == ConstraintType::Scale {
-            find_bool3(
-                constraint_view.constrain_scale_view(),
-                props,
-                b"Affect",
-                true,
-            );
-        } else if constraint_type == ConstraintType::SingleChainIk {
-            (*constraint).constrain_rotation[0] = true;
-            (*constraint).constrain_rotation[1] = true;
-            (*constraint).constrain_rotation[2] = true;
-            (*constraint).ik_pole_vector = api_find_vec3_len(props, b"PoleVectorType", ZERO_VEC3);
+        let up_type: i64 = api_find_int_len(props, b"WorldUpType", 0);
+        if up_type >= 0 && up_type < ConstraintAimUpType::None as i64 {
+            // C: `(ufbx_constraint_aim_up_type)up_type` — the range check above
+            // admits only valid enum values.
+            // SAFETY: the range check above admits only valid
+            // `ufbx_constraint_aim_up_type` discriminants.
+            constraint_view.set_aim_up_type(unsafe {
+                core::mem::transmute::<u32, ConstraintAimUpType>(up_type as u32)
+            });
         }
+        constraint_view.set_aim_vector(api_find_vec3_len(props, b"AimVector", default_aim));
+        constraint_view.set_aim_up_vector(api_find_vec3_len(props, b"UpVector", default_up));
+    } else if constraint_type == ConstraintType::Parent {
+        find_bool3(
+            constraint_view.constrain_translation_view(),
+            props,
+            b"AffectTranslation",
+            true,
+        );
+        find_bool3(
+            constraint_view.constrain_rotation_view(),
+            props,
+            b"AffectRotation",
+            true,
+        );
+        find_bool3(
+            constraint_view.constrain_scale_view(),
+            props,
+            b"AffectScale",
+            false,
+        );
+    } else if constraint_type == ConstraintType::Position {
+        find_bool3(
+            constraint_view.constrain_translation_view(),
+            props,
+            b"Affect",
+            true,
+        );
+    } else if constraint_type == ConstraintType::Rotation {
+        find_bool3(
+            constraint_view.constrain_rotation_view(),
+            props,
+            b"Affect",
+            true,
+        );
+    } else if constraint_type == ConstraintType::Scale {
+        find_bool3(
+            constraint_view.constrain_scale_view(),
+            props,
+            b"Affect",
+            true,
+        );
+    } else if constraint_type == ConstraintType::SingleChainIk {
+        // C writes the three `constrain_rotation` components one by one;
+        // publishing the whole array stores the same bytes.
+        constraint_view.set_constrain_rotation([true, true, true]);
+        constraint_view.set_ik_pole_vector(api_find_vec3_len(props, b"PoleVectorType", ZERO_VEC3));
     }
 }
 
 // ufbx.c:23490-23495 `ufbxi_update_anim`
 #[inline(never)]
 pub(crate) fn update_anim(scene_view: &SceneView) {
-    let scene: *mut Scene = scene_view.get();
-    // SAFETY: `scene` is the scene view's own live, initialized `ufbx_scene`
-    // storage, so its own anim-stack pointer list is readable.
-    if unsafe { (*scene).anim_stacks.count } > 0 {
+    let anim_stacks = scene_view.anim_stacks_view();
+    if anim_stacks.count() > 0 {
         // C: `scene->anim = scene->anim_stacks.data[0]->anim;`
-        // SAFETY: `count > 0`, so element `0` of the scene's anim-stack pointer
-        // run is live and initialized.
-        let stack: *mut AnimStack =
-            unsafe { *((*scene).anim_stacks.data as *const *mut AnimStack) };
-        // SAFETY: `stack` is a resolved element pointer from the scene's own
-        // list, so it points to a live, initialized `ufbx_anim_stack`; `scene` is
-        // live and writable (see above).
-        unsafe { (*scene).anim = (*stack).anim };
+        let stack: &AnimStackView = anim_stacks.at(0);
+        scene_view.set_anim(stack.anim());
     }
 }
 
@@ -11832,6 +11824,16 @@ impl View<SkinCluster> {
     #[inline(always)]
     pub(crate) fn mesh_node_to_bone_view(&self) -> &View<Matrix> {
         view_project!(self, mesh_node_to_bone)
+    }
+
+    #[inline(always)]
+    pub(crate) fn geometry_to_bone_view(&self) -> &View<Matrix> {
+        view_project!(self, geometry_to_bone)
+    }
+
+    #[inline(always)]
+    pub(crate) fn geometry_to_world_view(&self) -> &View<Matrix> {
+        view_project!(self, geometry_to_world)
     }
 }
 
@@ -11854,6 +11856,11 @@ impl<M: Mode> View<Node, M> {
     #[inline(always)]
     pub(crate) fn geometry_transform_view(&self) -> &View<Transform, M> {
         view_project!(self, geometry_transform)
+    }
+
+    #[inline(always)]
+    pub(crate) fn node_to_world_view(&self) -> &View<Matrix, M> {
+        view_project!(self, node_to_world)
     }
 }
 
@@ -12259,7 +12266,6 @@ pub(crate) fn axis_matrix(mat: &View<Matrix>, src: CoordinateAxes, dst: Coordina
 // ufbx.c:23676-23804 `ufbxi_update_adjust_transforms`
 #[inline(never)]
 pub(crate) fn update_adjust_transforms<'a>(uc: &'a Context, scene: &'a SceneView) {
-    let scene: *mut Scene = scene.get();
     let mut root_transform: Transform = IDENTITY_TRANSFORM;
     let axis_matrix_view: &View<Matrix> = uc.axis_matrix_view();
     if !matrix_all_zero(axis_matrix_view) {
@@ -12329,12 +12335,13 @@ pub(crate) fn update_adjust_transforms<'a>(uc: &'a Context, scene: &'a SceneView
         }
     }
 
+    let lights = scene.lights_view();
     // SAFETY: walks the scene's stored `lights` element-pointer run (uc-owned
     // arena, `count` entries), resetting each light's own direction.
     unsafe {
         // C: `ufbxi_for_ptr_list(ufbx_light, p_light, scene->lights)`
-        let mut p_light: *mut *mut Light = (*scene).lights.data as *mut *mut Light;
-        let p_light_end: *mut *mut Light = add_ptr(p_light, (*scene).lights.count);
+        let mut p_light: *mut *mut Light = lights.data() as *mut *mut Light;
+        let p_light_end: *mut *mut Light = add_ptr(p_light, lights.count());
         while p_light != p_light_end {
             let light: *mut Light = *p_light;
             (*light).local_direction.x = 0.0;
@@ -12344,38 +12351,32 @@ pub(crate) fn update_adjust_transforms<'a>(uc: &'a Context, scene: &'a SceneView
         }
     }
 
-    // SAFETY: `scene` is the scene view's own storage; this run writes only its
-    // metadata fields.
-    unsafe {
-        (*scene).metadata.space_conversion = conversion;
-        (*scene).metadata.geometry_transform_handling =
-            uc.opts_view().geometry_transform_handling();
-        (*scene).metadata.inherit_mode_handling = uc.opts_view().inherit_mode_handling();
-        (*scene).metadata.pivot_handling = uc.opts_view().pivot_handling();
-        (*scene).metadata.handedness_conversion_axis = uc.opts_view().handedness_conversion_axis();
-    }
+    let metadata: &SceneMetadataView = scene.metadata_view();
+    metadata.set_space_conversion(conversion);
+    metadata.set_geometry_transform_handling(uc.opts_view().geometry_transform_handling());
+    metadata.set_inherit_mode_handling(uc.opts_view().inherit_mode_handling());
+    metadata.set_pivot_handling(uc.opts_view().pivot_handling());
+    metadata.set_handedness_conversion_axis(uc.opts_view().handedness_conversion_axis());
 
     let root_scale: Real = min3(root_transform.scale);
-    // SAFETY: `scene` metadata as above.
-    unsafe {
-        if conversion == SpaceConversion::ModifyGeometry {
-            (*scene).metadata.geometry_scale = root_scale;
-            (*scene).metadata.root_scale = 1.0 as Real;
-        } else {
-            (*scene).metadata.geometry_scale = 1.0 as Real;
-            (*scene).metadata.root_scale = root_scale;
-        }
-        (*scene).metadata.root_rotation = root_transform.rotation;
+    if conversion == SpaceConversion::ModifyGeometry {
+        metadata.set_geometry_scale(root_scale);
+        metadata.set_root_scale(1.0 as Real);
+    } else {
+        metadata.set_geometry_scale(1.0 as Real);
+        metadata.set_root_scale(root_scale);
     }
+    metadata.set_root_rotation(root_transform.rotation);
 
+    let nodes = scene.nodes_view();
     // SAFETY: walks the scene's stored `nodes` element-pointer run (uc-owned arena,
     // `count` entries) and writes each node's own adjust fields; optional
     // reference reads are null-checked before every deref, and `parent` is another node
     // of that same arena (hence the `&'a NodeView` anchor).
     unsafe {
         // C: `ufbxi_for_ptr_list(ufbx_node, p_node, scene->nodes)`
-        let mut p_node: *mut *mut Node = (*scene).nodes.data as *mut *mut Node;
-        let p_node_end: *mut *mut Node = add_ptr(p_node, (*scene).nodes.count);
+        let mut p_node: *mut *mut Node = nodes.data() as *mut *mut Node;
+        let p_node_end: *mut *mut Node = add_ptr(p_node, nodes.count());
         while p_node != p_node_end {
             let node: *mut Node = *p_node;
 
@@ -12664,95 +12665,104 @@ pub(crate) fn round_if_near(targets: &[Real], value: Real) -> Real {
 // ufbx.c:23903-23931 `ufbxi_update_scene_settings`
 #[inline(never)]
 pub(crate) fn update_scene_settings(settings_view: &SceneSettingsView) {
-    let settings: *mut SceneSettings = settings_view.get();
-    // SAFETY: `settings` is the settings view's own storage; `round_if_near`
-    // scans the static `POW10_TARGETS` with its own length.
-    unsafe {
-        let unit_scale_factor: Real = find_real(
-            settings_view.props_view(),
-            &sp::UnitScaleFactor,
-            1.0 as Real,
-        );
-        let original_unit_scale_factor: Real = find_real(
-            settings_view.props_view(),
-            &sp::OriginalUnitScaleFactor,
-            unit_scale_factor,
-        );
+    let unit_scale_factor: Real = find_real(
+        settings_view.props_view(),
+        &sp::UnitScaleFactor,
+        1.0 as Real,
+    );
+    let original_unit_scale_factor: Real = find_real(
+        settings_view.props_view(),
+        &sp::OriginalUnitScaleFactor,
+        unit_scale_factor,
+    );
 
-        (*settings).axes.up = find_axis(settings_view.props_view(), &sp::UpAxis, &sp::UpAxisSign);
-        (*settings).axes.front = find_axis(
-            settings_view.props_view(),
-            &sp::FrontAxis,
-            &sp::FrontAxisSign,
-        );
-        (*settings).axes.right = find_axis(
-            settings_view.props_view(),
-            &sp::CoordAxis,
-            &sp::CoordAxisSign,
-        );
-        (*settings).unit_meters = round_if_near(&POW10_TARGETS, unit_scale_factor * (0.01 as Real));
-        (*settings).original_unit_meters =
-            round_if_near(&POW10_TARGETS, original_unit_scale_factor * (0.01 as Real));
-        // C: `settings->frames_per_second` is `double` — the `ufbxi_find_real`
-        // result promotes on assignment.
-        (*settings).frames_per_second = find_real(
-            settings_view.props_view(),
-            &sp::CustomFrameRate,
-            24.0 as Real,
-        ) as f64;
-        (*settings).ambient_color =
-            find_vec3(settings_view.props_view(), &sp::AmbientColor, 0.0, 0.0, 0.0);
-        (*settings).original_axis_up = find_axis(
-            settings_view.props_view(),
-            &sp::OriginalUpAxis,
-            &sp::OriginalUpAxisSign,
-        );
+    // C writes `settings->axes.{up,front,right}` one component at a time, in
+    // this order; publishing the whole `ufbx_coordinate_axes` after the three
+    // lookups stores the same bytes.
+    let mut axes: CoordinateAxes = settings_view.axes();
+    axes.up = find_axis(settings_view.props_view(), &sp::UpAxis, &sp::UpAxisSign);
+    axes.front = find_axis(
+        settings_view.props_view(),
+        &sp::FrontAxis,
+        &sp::FrontAxisSign,
+    );
+    axes.right = find_axis(
+        settings_view.props_view(),
+        &sp::CoordAxis,
+        &sp::CoordAxisSign,
+    );
+    settings_view.set_axes(axes);
+    // `round_if_near` scans the static `POW10_TARGETS` with its own length.
+    settings_view.set_unit_meters(round_if_near(
+        &POW10_TARGETS,
+        unit_scale_factor * (0.01 as Real),
+    ));
+    settings_view.set_original_unit_meters(round_if_near(
+        &POW10_TARGETS,
+        original_unit_scale_factor * (0.01 as Real),
+    ));
+    // C: `settings->frames_per_second` is `double` — the `ufbxi_find_real`
+    // result promotes on assignment.
+    settings_view.set_frames_per_second(find_real(
+        settings_view.props_view(),
+        &sp::CustomFrameRate,
+        24.0 as Real,
+    ) as f64);
+    settings_view.set_ambient_color(find_vec3(
+        settings_view.props_view(),
+        &sp::AmbientColor,
+        0.0,
+        0.0,
+        0.0,
+    ));
+    settings_view.set_original_axis_up(find_axis(
+        settings_view.props_view(),
+        &sp::OriginalUpAxis,
+        &sp::OriginalUpAxisSign,
+    ));
+
+    let default_camera: Option<&PropView> =
+        find_prop(settings_view.props_view(), &sp::DefaultCamera);
+    if let Some(default_camera) = default_camera {
+        settings_view.set_default_camera(default_camera.value_str());
+    } else {
+        settings_view.set_default_camera(EMPTY_STRING.0);
     }
 
-    // SAFETY: the returned prop pointer is null-checked before the deref, and
-    // `settings` is the view's own storage.
+    // C: `(ufbx_time_mode)ufbxi_find_enum(...)` etc — `ufbxi_find_enum` clamps
+    // each result to its enum's `[0, LAST]` range (same device as
+    // `ufbxi_update_camera` above).
+    // SAFETY: `ufbxi_find_enum` clamps each result to the `[0, LAST]` range
+    // passed for its enum, so every transmute below is of an in-range
+    // discriminant.
     unsafe {
-        let default_camera: *mut Prop = find_prop(settings_view.props_view(), &sp::DefaultCamera)
-            .map_or(ptr::null_mut(), PropView::get);
-        if !default_camera.is_null() {
-            (*settings).default_camera = (*default_camera).value_str;
-        } else {
-            (*settings).default_camera = EMPTY_STRING.0;
-        }
-    }
-
-    // SAFETY: `settings` as above; `ufbxi_find_enum` clamps each result to the
-    // `[0, LAST]` range passed for its enum, so every transmute below is of an
-    // in-range discriminant, and `time_mode` indexes `TIME_MODE_FPS` within that
-    // same clamped range.
-    unsafe {
-        // C: `(ufbx_time_mode)ufbxi_find_enum(...)` etc — `ufbxi_find_enum` clamps
-        // each result to its enum's `[0, LAST]` range (same device as
-        // `ufbxi_update_camera` above).
-        (*settings).time_mode = core::mem::transmute::<u32, TimeMode>(find_enum(
+        settings_view.set_time_mode(core::mem::transmute::<u32, TimeMode>(find_enum(
             settings_view.props_view(),
             &sp::TimeMode,
             TimeMode::E24Fps as i64,
             TimeMode::E5994Fps as i64,
-        ) as u32);
-        (*settings).time_protocol = core::mem::transmute::<u32, TimeProtocol>(find_enum(
+        ) as u32));
+        settings_view.set_time_protocol(core::mem::transmute::<u32, TimeProtocol>(find_enum(
             settings_view.props_view(),
             &sp::TimeProtocol,
             TimeProtocol::Default as i64,
             TimeProtocol::Default as i64,
-        ) as u32);
-        (*settings).snap_mode = core::mem::transmute::<u32, SnapMode>(find_enum(
+        )
+            as u32));
+        settings_view.set_snap_mode(core::mem::transmute::<u32, SnapMode>(find_enum(
             settings_view.props_view(),
             &sp::SnapOnFrameMode,
             SnapMode::None as i64,
             SnapMode::SnapAndPlay as i64,
-        ) as u32);
+        ) as u32));
+    }
 
-        if (*settings).time_mode != TimeMode::Custom {
-            // C: real `ufbxi_time_mode_fps[]` entry promotes to the `double` field.
-            (*settings).frames_per_second =
-                as_f64!(TIME_MODE_FPS[(*settings).time_mode as u32 as usize]);
-        }
+    if settings_view.time_mode() != TimeMode::Custom {
+        // C: real `ufbxi_time_mode_fps[]` entry promotes to the `double` field.
+        // `time_mode` indexes `TIME_MODE_FPS` within the clamped range above.
+        settings_view.set_frames_per_second(as_f64!(
+            TIME_MODE_FPS[settings_view.time_mode() as u32 as usize]
+        ));
     }
 }
 

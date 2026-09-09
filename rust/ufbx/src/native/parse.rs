@@ -324,6 +324,53 @@ pub(crate) struct Refcount {
     pub zero_pad_post: [u64; 8],
 }
 
+// Typed interior-mutable VIEW over a `Refcount` header, reinterpreted in place.
+// The header prefixes the `*_imp` allocation it counts, so its storage stays
+// alive and unmoved until the teardown in `native::api::release_ref` frees the
+// enclosing buffer; the atomic counter keeps a raw address projection, since a
+// `&AtomicCounter` handed out of an accessor would outlive the view's own
+// borrow.
+pub(crate) type RefcountView = crate::native::view::View<Refcount>;
+
+impl RefcountView {
+    #[inline(always)]
+    pub(crate) fn parent(&self) -> *mut Refcount {
+        view_read!(self, parent)
+    }
+    #[inline(always)]
+    pub(crate) fn self_magic(&self) -> u32 {
+        view_read!(self, self_magic)
+    }
+    #[inline(always)]
+    pub(crate) fn set_self_magic(&self, self_magic: u32) {
+        view_write!(self, self_magic, self_magic)
+    }
+    #[inline(always)]
+    pub(crate) fn type_magic(&self) -> u32 {
+        view_read!(self, type_magic)
+    }
+    #[inline(always)]
+    pub(crate) fn set_type_magic(&self, type_magic: u32) {
+        view_write!(self, type_magic, type_magic)
+    }
+    #[inline(always)]
+    pub(crate) fn ator(&self) -> Allocator {
+        view_read!(self, ator)
+    }
+    /// Move the refcount's owning `Buf` out by value (`ptr::read`, the C
+    /// struct-assignment semantics): the teardown path copies it to the stack
+    /// because the `ufbxi_refcount` lives in the buffer it is about to free.
+    #[inline(always)]
+    pub(crate) fn take_buf(&self) -> Buf {
+        view_read!(self, buf)
+    }
+    /// Address of the embedded atomic counter (for the `atomic_counter_*` ops).
+    #[inline(always)]
+    pub(crate) fn refcount_raw(&self) -> *mut AtomicCounter {
+        view_raw_mut!(self, refcount)
+    }
+}
+
 // ufbx.c:6229-6230 — forward declarations of `ufbxi_init_ref` and
 // `ufbxi_retain_ref`; the definitions live in the API section (ported as
 // `native::api::init_ref` / `retain_ref` / `release_ref`).
@@ -926,6 +973,12 @@ impl View<Template> {
     #[inline(always)]
     pub(crate) fn props_raw(&self) -> *mut Props {
         view_raw_mut!(self, props)
+    }
+
+    /// Publish the template's interned object-type name.
+    #[inline(always)]
+    pub(crate) fn set_type(&self, type_: *const u8) {
+        view_write!(self, type_, type_)
     }
 }
 
@@ -2188,6 +2241,16 @@ impl<M: crate::native::view::Mode> crate::native::view::View<crate::generated::S
     ) -> &crate::native::view::View<crate::prelude::List<crate::generated::NameElement>, M> {
         view_project!(self, elements_by_name)
     }
+
+    #[inline(always)]
+    pub(crate) fn nodes(&self) -> crate::prelude::RefList<crate::generated::Node> {
+        view_read_shared!(self, nodes)
+    }
+
+    #[inline(always)]
+    pub(crate) fn elements(&self) -> crate::prelude::RefList<crate::generated::Element> {
+        view_read_shared!(self, elements)
+    }
 }
 
 impl SceneView {
@@ -2251,6 +2314,12 @@ impl SceneView {
             &*(&raw mut (*self.get()).anim_values
                 as *mut crate::prelude::RefListView<crate::generated::AnimValue>)
         }
+    }
+
+    /// Publish the scene's default animation (`scene->anim`).
+    #[inline(always)]
+    pub(crate) fn set_anim(&self, anim: crate::prelude::Ref<crate::generated::Anim>) {
+        view_write!(self, anim, anim)
     }
 
     #[inline(always)]
@@ -2623,6 +2692,51 @@ impl SceneMetadataView {
         view_write!(self, file_format, file_format)
     }
     #[inline(always)]
+    pub(crate) fn set_space_conversion(&self, space_conversion: crate::generated::SpaceConversion) {
+        view_write!(self, space_conversion, space_conversion)
+    }
+    #[inline(always)]
+    pub(crate) fn set_geometry_transform_handling(
+        &self,
+        geometry_transform_handling: crate::generated::GeometryTransformHandling,
+    ) {
+        view_write!(
+            self,
+            geometry_transform_handling,
+            geometry_transform_handling
+        )
+    }
+    #[inline(always)]
+    pub(crate) fn set_inherit_mode_handling(
+        &self,
+        inherit_mode_handling: crate::generated::InheritModeHandling,
+    ) {
+        view_write!(self, inherit_mode_handling, inherit_mode_handling)
+    }
+    #[inline(always)]
+    pub(crate) fn set_pivot_handling(&self, pivot_handling: crate::generated::PivotHandling) {
+        view_write!(self, pivot_handling, pivot_handling)
+    }
+    #[inline(always)]
+    pub(crate) fn set_handedness_conversion_axis(
+        &self,
+        handedness_conversion_axis: crate::generated::MirrorAxis,
+    ) {
+        view_write!(self, handedness_conversion_axis, handedness_conversion_axis)
+    }
+    #[inline(always)]
+    pub(crate) fn set_geometry_scale(&self, geometry_scale: crate::prelude::Real) {
+        view_write!(self, geometry_scale, geometry_scale)
+    }
+    #[inline(always)]
+    pub(crate) fn set_root_scale(&self, root_scale: crate::prelude::Real) {
+        view_write!(self, root_scale, root_scale)
+    }
+    #[inline(always)]
+    pub(crate) fn set_root_rotation(&self, root_rotation: crate::generated::Quat) {
+        view_write!(self, root_rotation, root_rotation)
+    }
+    #[inline(always)]
     pub(crate) fn geometry_scale(&self) -> crate::prelude::Real {
         view_read!(self, geometry_scale)
     }
@@ -2845,6 +2959,50 @@ impl SceneSettingsView {
     #[inline(always)]
     pub(crate) fn frames_per_second(&self) -> f64 {
         view_read!(self, frames_per_second)
+    }
+    #[inline(always)]
+    pub(crate) fn set_axes(&self, axes: crate::generated::CoordinateAxes) {
+        view_write!(self, axes, axes)
+    }
+    #[inline(always)]
+    pub(crate) fn set_unit_meters(&self, unit_meters: crate::prelude::Real) {
+        view_write!(self, unit_meters, unit_meters)
+    }
+    #[inline(always)]
+    pub(crate) fn set_original_unit_meters(&self, original_unit_meters: crate::prelude::Real) {
+        view_write!(self, original_unit_meters, original_unit_meters)
+    }
+    #[inline(always)]
+    pub(crate) fn set_frames_per_second(&self, frames_per_second: f64) {
+        view_write!(self, frames_per_second, frames_per_second)
+    }
+    #[inline(always)]
+    pub(crate) fn set_ambient_color(&self, ambient_color: crate::generated::Vec3) {
+        view_write!(self, ambient_color, ambient_color)
+    }
+    #[inline(always)]
+    pub(crate) fn set_original_axis_up(&self, original_axis_up: crate::generated::CoordinateAxis) {
+        view_write!(self, original_axis_up, original_axis_up)
+    }
+    #[inline(always)]
+    pub(crate) fn set_default_camera(&self, default_camera: crate::prelude::String) {
+        view_write!(self, default_camera, default_camera)
+    }
+    #[inline(always)]
+    pub(crate) fn time_mode(&self) -> crate::generated::TimeMode {
+        view_read!(self, time_mode)
+    }
+    #[inline(always)]
+    pub(crate) fn set_time_mode(&self, time_mode: crate::generated::TimeMode) {
+        view_write!(self, time_mode, time_mode)
+    }
+    #[inline(always)]
+    pub(crate) fn set_time_protocol(&self, time_protocol: crate::generated::TimeProtocol) {
+        view_write!(self, time_protocol, time_protocol)
+    }
+    #[inline(always)]
+    pub(crate) fn set_snap_mode(&self, snap_mode: crate::generated::SnapMode) {
+        view_write!(self, snap_mode, snap_mode)
     }
 }
 

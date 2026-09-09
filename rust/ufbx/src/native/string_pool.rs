@@ -813,8 +813,10 @@ pub(crate) fn push_sanitized_string(
         // SAFETY: as for the `find` above — same map, same key run.
         let entry = unsafe { pool.map_view().insert::<String, _>(hash, &ref_) };
         ufbxi_check_err!(pool.error_view(), !entry.is_null(), "entry");
-        // SAFETY: `entry` is the just-inserted non-null map slot.
-        unsafe { (*entry).length = total_length };
+        // SAFETY: `entry` is the just-inserted non-null map slot, addressing a
+        // live `ufbx_string` item of the pool's own map for the rest of this
+        // call.
+        let entry: &StringView = unsafe { StringView::from_ptr(entry) };
         let dst: *mut u8 = pool.buf_view().push::<u8>(total_length + 1);
         ufbxi_check_err!(pool.error_view(), !dst.is_null(), "dst");
         // SAFETY: `dst` is a non-null run of `total_length + 1` bytes just pushed
@@ -827,8 +829,12 @@ pub(crate) fn push_sanitized_string(
             ptr::copy_nonoverlapping(total_data, dst, total_length);
             *dst.add(total_length) = b'\0';
         }
-        // SAFETY: `entry` is the live inserted slot.
-        unsafe { (*entry).data = dst };
+        // C writes `entry->length` before pushing `dst` and `entry->data` after
+        // the copy; the two halves are published here as one descriptor. The
+        // only path between C's two writes returns an error that abandons the
+        // whole pool, and C leaves `data` uninitialized on it, so the
+        // intermediate state is unobservable.
+        entry.set(String::new_c(dst, total_length));
         sanitized.set_raw_data(dst);
     }
 

@@ -21,7 +21,7 @@ use crate::generated::{Error, Warning, WarningType};
 use crate::native::buf::{self, Buf, BufView};
 use crate::native::error::{clean_string_utf8, ufbxi_check_err, vsnprintf, Fail, FailStr};
 use crate::native::printf::PrintArg;
-use crate::native::view::{view_raw_mut, view_write};
+use crate::native::view::{view_raw_mut, view_read, view_write};
 use crate::prelude::List;
 
 // ufbx.h:3592 `UFBX_ENUM_TYPE(ufbx_warning_type, UFBX_WARNING_TYPE,
@@ -85,6 +85,47 @@ impl WarningsView {
         view_write!(self, result, result)
     }
     #[inline(always)]
+    pub(crate) fn error(&self) -> *mut Error {
+        view_read!(self, error)
+    }
+    #[inline(always)]
+    pub(crate) fn result(&self) -> *mut Buf {
+        view_read!(self, result)
+    }
+    #[inline(always)]
+    pub(crate) fn deferred_element_id_plus_one(&self) -> u32 {
+        view_read!(self, deferred_element_id_plus_one)
+    }
+
+    /// Read one `prev_warnings[type][has_element_id]` dedup cursor.
+    #[inline(always)]
+    pub(crate) fn prev_warning(&self, type_ix: usize, has_element_id: usize) -> *mut Warning {
+        // SAFETY: the receiver views live, initialized `Warnings` storage; the
+        // indices are in range (`type_ix` is a `ufbx_warning_type`
+        // discriminant, `has_element_id` a boolean), so the projection stays
+        // inside `prev_warnings` and reads one stored pointer value.
+        unsafe { (*self.get()).prev_warnings[type_ix][has_element_id] }
+    }
+
+    /// Publish one `prev_warnings[type][has_element_id]` dedup cursor.
+    ///
+    /// # Safety
+    /// `warning` must be null or address a live, unmoved `Warning` that stays
+    /// live for as long as this warning state keeps deduplicating against it
+    /// (i.e. until `pop_warnings` drains `tmp_stack`).
+    #[inline(always)]
+    pub(crate) unsafe fn set_prev_warning(
+        &self,
+        type_ix: usize,
+        has_element_id: usize,
+        warning: *mut Warning,
+    ) {
+        // SAFETY: the receiver views live, initialized, write-capable
+        // `Warnings` storage; the indices are in range as in `prev_warning`,
+        // and the stored pointer's liveness is the caller's (fn contract).
+        unsafe { (*self.get()).prev_warnings[type_ix][has_element_id] = warning };
+    }
+    #[inline(always)]
     pub(crate) fn set_deferred_element_id_plus_one(&self, deferred_element_id_plus_one: u32) {
         view_write!(
             self,
@@ -123,29 +164,25 @@ pub(crate) fn vwarnf_imp(
     args: &[PrintArg],
 ) -> Result<(), Fail> {
     // C: `if (!ws) return 1;` — the nullable `ufbxi_warnings *` is `Option`.
-    let Some(ws_view) = ws else {
+    let Some(ws) = ws else {
         return Ok(());
     };
-    let ws: *mut Warnings = ws_view.get();
 
     // HACK(warning-element): Encode potential deferred element ID into `ufbx_warning.element_id`,
     // `ws->element_id_index_plus_one` contains index to `uc->tmp_element_id`.
     // NOTE(ufbx-rs-native): the field is `ws->deferred_element_id_plus_one`.
     // Tag deferred indices with the high bit.
-    //
-    // SAFETY: `ws` comes from a live `WarningsView` (write provenance over
-    // initialized `Warnings` storage for the duration of this call).
-    if element_id == !0u32 && unsafe { (*ws).deferred_element_id_plus_one } > 0 {
-        element_id = (unsafe { (*ws).deferred_element_id_plus_one } - 1) | 0x80000000u32;
+    if element_id == !0u32 && ws.deferred_element_id_plus_one() > 0 {
+        element_id = (ws.deferred_element_id_plus_one() - 1) | 0x80000000u32;
     }
 
     let has_element_id: u32 = (element_id != !0u32) as u32;
     if type_ as u32 >= WARNING_TYPE_FIRST_DEDUPLICATED {
-        // SAFETY: `ws` as above; `prev`, when non-null, is a stored pointer to
-        // a `Warning` this warnings sink previously pushed into `tmp_stack`
-        // (arena-run provenance), still live until `pop_warnings`.
+        let prev: *mut Warning = ws.prev_warning(type_ as usize, has_element_id as usize);
+        // SAFETY: `prev`, when non-null, is a stored pointer to a `Warning`
+        // this warnings sink previously pushed into `tmp_stack` (arena-run
+        // provenance), still live until `pop_warnings`.
         unsafe {
-            let prev: *mut Warning = (*ws).prev_warnings[type_ as usize][has_element_id as usize];
             if !prev.is_null() && (*prev).element_id == element_id {
                 // C: `prev->count++;` (size_t)
                 (*prev).count = (*prev).count.wrapping_add(1);
@@ -172,39 +209,43 @@ pub(crate) fn vwarnf_imp(
     // `desc_len < 256`: `vsnprintf` truncates to the buffer size minus the NUL.
     clean_string_utf8(&mut desc[..desc_len]);
 
-    // SAFETY: `ws` as above; `(*ws).result` and `(*ws).error` are the
-    // context-owned result buf / error the sink was initialized with (live for
-    // the whole load), so `(*ws).result` satisfies the `BufView::from_ptr` mint
-    // invariant; `desc` provides `desc_len + 1 <= 256` readable bytes.
+    // SAFETY: `ws.result()` and `ws.error()` are the context-owned result buf /
+    // error the sink was initialized with — live, unmoved and write-capable for
+    // every later use (the `set_result` / `set_error` contracts), which is the
+    // `BufView`/`ErrorView` mint invariant; `desc` provides
+    // `desc_len + 1 <= 256` readable bytes.
     let desc_copy: *mut u8 = unsafe {
         buf::push_copy::<u8>(
-            buf::BufView::from_ptr((*ws).result),
+            buf::BufView::from_ptr(ws.result()),
             desc_len + 1,
             desc.as_ptr(),
         )
     };
     ufbxi_check_err!(
-        unsafe { crate::native::error::ErrorView::from_ptr((*ws).error) },
+        // SAFETY: `ws.error()` as above.
+        unsafe { crate::native::error::ErrorView::from_ptr(ws.error()) },
         !desc_copy.is_null(),
         "desc_copy"
     );
 
-    let warning: *mut Warning = buf::push::<Warning>(ws_view.tmp_stack_view(), 1);
+    let warning: *mut Warning = buf::push::<Warning>(ws.tmp_stack_view(), 1);
     ufbxi_check_err!(
-        unsafe { crate::native::error::ErrorView::from_ptr((*ws).error) },
+        // SAFETY: `ws.error()` as above.
+        unsafe { crate::native::error::ErrorView::from_ptr(ws.error()) },
         !warning.is_null(),
         "warning"
     );
 
     // SAFETY: `warning` is the fresh non-null push result (writable for one
-    // `Warning`); `ws` as above for the `prev_warnings` store.
+    // `Warning`); it lives in ws's own `tmp_stack`, which stays live until
+    // `pop_warnings` drains it — the `set_prev_warning` contract.
     unsafe {
         (*warning).type_ = type_;
         (*warning).description.data = desc_copy;
         (*warning).description.length = desc_len;
         (*warning).element_id = element_id;
         (*warning).count = 1;
-        (*ws).prev_warnings[type_ as usize][has_element_id as usize] = warning;
+        ws.set_prev_warning(type_ as usize, has_element_id as usize, warning);
     }
 
     Ok(())

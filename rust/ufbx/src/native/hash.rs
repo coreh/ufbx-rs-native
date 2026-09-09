@@ -343,8 +343,39 @@ impl MapView {
         view_read!(self, cmp_user)
     }
     #[inline(always)]
+    pub(crate) fn data_size(&self) -> usize {
+        view_read!(self, data_size)
+    }
+    #[inline(always)]
     pub(crate) fn set_size(&self, size: u32) {
         view_write!(self, size, size)
+    }
+    /// The allocator back-pointer of the map's own AA-tree overflow buffer
+    /// (the private allocator `map_init` installs under regression).
+    #[cfg(feature = "regression")]
+    #[inline(always)]
+    fn aa_buf_ator(&self) -> *mut Allocator {
+        // SAFETY: the receiver views a live `Map` (its mint invariant);
+        // `aa_buf` is the map's own `ufbxi_buf` field and this reads exactly
+        // that buffer's allocator back-pointer.
+        unsafe { (*self.get()).aa_buf.ator }
+    }
+    /// Drop the map's entry/item window (`ufbxi_map_free` teardown).
+    ///
+    /// # Safety
+    /// The entry/item block this map named must already have been freed (or
+    /// otherwise handed off): this drops the map's last reference to it.
+    /// `entries`/`items`/`mask`/`capacity`/`size` are a window safe readers
+    /// (`find`/`insert`) trust jointly, so they are reset together here.
+    #[inline(always)]
+    pub(crate) unsafe fn reset_storage(&self) {
+        view_write!(self, entries, core::ptr::null_mut());
+        view_write!(self, items, core::ptr::null_mut());
+        // C: `map->mask = map->capacity = map->size = 0;` — decomposed, C
+        // assignment order (rightmost first).
+        view_write!(self, size, 0u32);
+        view_write!(self, capacity, 0u32);
+        view_write!(self, mask, 0u32);
     }
     /// Publish the allocator back-pointer used for map entry allocation and
     /// teardown.
@@ -534,42 +565,27 @@ pub(crate) fn map_free(map: &MapView) {
     // arena's chunks; all later field resets retain their C order.
     map.set_aa_root(None);
 
-    // The view is minted only over a live, writable `Map` (write provenance);
-    // `get()` is the raw pointer the C body operates on.
-    let map: *mut Map = map.get();
-
     #[cfg(feature = "regression")]
-    // SAFETY: the view's mint invariant — `map` addresses a live `Map`.
-    let regression_ator: *mut Allocator = unsafe { (*map).aa_buf.ator };
+    let regression_ator: *mut Allocator = map.aa_buf_ator();
 
-    // SAFETY: `map` is live and `aa_buf` is its own AA-tree buffer, freed
-    // through the allocator it was allocated from. `&raw mut` addresses that
-    // field with the enclosing `Map`'s provenance and without manufacturing a
-    // temporary reference, and `BufView::from_ptr` mints the view over the
-    // field in place.
-    buf_free(unsafe { BufView::from_ptr(&raw mut (*map).aa_buf) });
+    // `aa_buf` is the map's own AA-tree buffer, freed through the allocator it
+    // was allocated from.
+    buf_free(map.aa_buf_view());
     // SAFETY: `entries` is the combined entry/item block `map_grow_size_imp`
     // allocated from `map`'s own live allocator with byte length `data_size`
     // (0/null for a never-grown map, whose null `ator` slot mints `None` and
     // which `free` tolerates).
     unsafe {
         free::<u8>(
-            AllocatorView::from_ptr_opt((*map).ator),
-            (*map).entries as *mut u8,
-            (*map).data_size,
+            AllocatorView::from_ptr_opt(map.ator()),
+            map.entries() as *mut u8,
+            map.data_size(),
         )
     };
-    // SAFETY: the view's mint invariant — `map` addresses a live, writable
-    // `Map`; the field resets below match C's `map_free` teardown.
-    unsafe {
-        (*map).entries = core::ptr::null_mut();
-        (*map).items = core::ptr::null_mut();
-        // C: `map->mask = map->capacity = map->size = 0;` — decomposed, C
-        // assignment order (rightmost first).
-        (*map).size = 0;
-        (*map).capacity = 0;
-        (*map).mask = 0;
-    }
+    // SAFETY: the entry/item block was just freed, so dropping the map's last
+    // reference to it is the `reset_storage` contract; the resets match C's
+    // `map_free` teardown.
+    unsafe { map.reset_storage() };
 
     #[cfg(feature = "regression")]
     {

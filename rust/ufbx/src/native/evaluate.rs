@@ -205,17 +205,6 @@ pub(crate) fn find_cubic_bezier_t(p1: f64, p2: f64, x0: f64) -> f64 {
     t
 }
 
-// Hand view accessor for `ufbxi_evaluate_skinning`: `ufbx_cache_channel`
-// carries no generated `View` impl, so the one field this function navigates
-// (C: `channel->interpretation`) gets a single-level leaf accessor here.
-#[cfg(feature = "skinning-eval")]
-impl View<CacheChannel, Mut> {
-    #[inline(always)]
-    pub(crate) fn interpretation(&self) -> CacheInterpretation {
-        view_read!(self, interpretation)
-    }
-}
-
 // ufbx.c:25055-25169 `ufbxi_evaluate_skinning`
 // C forks on `#if UFBXI_FEATURE_SKINNING_EVALUATION` inside the function; the
 // arms are split into cfg-gated fns (the same split `ufbxi_obj_load` uses in
@@ -7753,27 +7742,25 @@ pub(crate) unsafe extern "C" fn baked_element_less(
 #[inline(never)]
 pub(crate) fn bake_anim(bc: &BakeContext) -> Result<(), Fail> {
     let anim: *const Anim = bc.anim();
-    let scene: *const Scene = bc.scene();
+    // SAFETY: `bc.scene()` is the live scene the bake context was built around
+    // (bc construction invariant) — live and unmoved for the whole bake. The
+    // bake only READS the scene (C takes it as `const ufbx_scene *`), so the
+    // frozen `Const` tag its `*const` provenance admits is adequate.
+    let scene: &View<Scene, Const> = unsafe { View::<Scene, Const>::from_ptr(bc.scene()) };
 
     if !bc.opts_view().skip_node_transforms() {
-        // `bc.scene()` is the live scene the bake context was built around (bc
-        // construction invariant); both arrays hold one slot per scene node, so
-        // a node's `typed_id` indexes them.
-        // SAFETY: reading the live scene's node count through that invariant.
+        // Both arrays hold one slot per scene node, so a node's `typed_id`
+        // indexes them.
         bc.set_baked_nodes(
             bc.result_view()
-                .push_zero::<*mut BakedNode>(unsafe { (*scene).nodes.count }),
+                .push_zero::<*mut BakedNode>(scene.nodes().count),
         );
         ufbxi_check_err!(
             bc.error_view(),
             !bc.baked_nodes().is_null(),
             "bc->baked_nodes"
         );
-        // SAFETY: reading the live scene's node count through the same invariant.
-        bc.set_nodes_to_bake(
-            bc.result_view()
-                .push_zero::<bool>(unsafe { (*scene).nodes.count }),
-        );
+        bc.set_nodes_to_bake(bc.result_view().push_zero::<bool>(scene.nodes().count));
         ufbxi_check_err!(
             bc.error_view(),
             !bc.nodes_to_bake().is_null(),
@@ -7865,8 +7852,7 @@ pub(crate) fn bake_anim(bc: &BakeContext) -> Result<(), Fail> {
                     continue;
                 }
                 let element: &View<Element> = View::<Element>::from_ptr(
-                    *((*scene).elements.data as *const *mut Element)
-                        .add(prop.element_id() as usize),
+                    *(scene.elements().data as *const *mut Element).add(prop.element_id() as usize),
                 );
                 if element.type_() as u32 == ElementType::AnimLayer as u32 {
                     bake_times(

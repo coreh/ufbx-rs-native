@@ -685,28 +685,25 @@ pub(crate) fn obj_tokenize(uc: &Context) -> Result<(), Fail> {
         );
 
         // SAFETY: the grow above ensured `tokens` holds at least `index + 1`
-        // slots, so slot `index` is in bounds; `ptr` points into the stored
-        // line window.
-        let tok: *mut String = unsafe {
-            let tok: *mut String = uc.obj().tokens().add(index);
-            (*tok).data = ptr;
-            tok
-        };
+        // slots, so slot `index` addresses a live `ufbx_string` of the obj
+        // context's own token array, write-capable for the rest of this call.
+        let tok: &StringView = unsafe { StringView::from_ptr(uc.obj().tokens().add(index)) };
+        // C: `tok->data = ptr;` — the descriptor's two halves are published
+        // together once its length is known, on each of the paths below.
+        let tok_data: *const u8 = ptr;
 
         // Treat comment start as a single token
         if c == b'#' {
-            // SAFETY: `tok` is the slot ensured above; `ptr` rests on the '#'
-            // of the line window, so one byte past it is still inside.
-            unsafe {
-                ptr = ptr.add(1);
-                (*tok).length = 1;
-            }
+            // SAFETY: `ptr` rests on the '#' of the line window, so one byte
+            // past it is still inside.
+            ptr = unsafe { ptr.add(1) };
+            tok.set(String::new_c(tok_data, 1));
             continue;
         }
 
         // SAFETY: the '\n' sentinel ending the stored line window stops this
         // scan (`is_space('\n')` holds), so every byte read is inside the
-        // window; `tok` is the slot ensured above.
+        // window.
         unsafe {
             loop {
                 // C: `c = *++ptr;`
@@ -727,9 +724,11 @@ pub(crate) fn obj_tokenize(uc: &Context) -> Result<(), Fail> {
                     }
                 }
             }
-
-            (*tok).length = to_size(ptr as isize - (*tok).data as isize);
         }
+        tok.set(String::new_c(
+            tok_data,
+            to_size(ptr as isize - tok_data as isize),
+        ));
     }
 
     Ok(())

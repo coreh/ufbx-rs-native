@@ -129,7 +129,7 @@ use crate::native::nurbs::{
 };
 use crate::native::parse::{
     find_enum, find_real as ufbxi_find_real, get_name_key, Context, ImpHandle, InnerContext,
-    MeshImp, Refcount, SceneImp, ELEMENT_TYPE_COUNT,
+    MeshImp, PropView, Refcount, RefcountView, SceneImp, ELEMENT_TYPE_COUNT,
 };
 use crate::native::platform::{
     atomic_counter_dec, atomic_counter_free, atomic_counter_inc, atomic_counter_init,
@@ -203,28 +203,32 @@ pub(crate) unsafe fn retain_ref(refcount: *mut Refcount) {
 pub(crate) unsafe fn release_ref(mut refcount: *mut Refcount) {
     while !refcount.is_null() {
         // SAFETY: `refcount` is non-null here and points at a live `Refcount` —
-        // the raw-pointer contract of this `unsafe fn`.
-        ufbx_assert!(unsafe { (*refcount).self_magic } == REFCOUNT_IMP_MAGIC);
-        // SAFETY: same live `Refcount`; the temporary shared borrow of its
-        // initialized atomic ends when `dec` returns, before the exclusive
-        // plain-store `free` below.
+        // the raw-pointer contract of this `unsafe fn`. The header prefixes the
+        // `*_imp` allocation, so the slot stays alive, unmoved and
+        // write-capable through the last view use below (the `buf_free`
+        // teardown that releases it comes after).
+        let rc: &RefcountView = unsafe { RefcountView::from_ptr(refcount) };
+
+        ufbx_assert!(rc.self_magic() == REFCOUNT_IMP_MAGIC);
+        // SAFETY: `rc.refcount_raw()` addresses the refcount's own initialized
+        // atomic; the temporary shared borrow of it ends when `dec` returns,
+        // before the exclusive plain-store `free` below.
         unsafe {
-            if atomic_counter_dec(&(*refcount).refcount) > 0 {
+            if atomic_counter_dec(&*rc.refcount_raw()) > 0 {
                 return;
             }
-            atomic_counter_free(&raw mut (*refcount).refcount);
+            atomic_counter_free(rc.refcount_raw());
         }
 
-        // SAFETY: same live `Refcount`; reading its own fields.
-        let (parent, type_magic) = unsafe { ((*refcount).parent, (*refcount).type_magic) };
+        let (parent, type_magic) = (rc.parent(), rc.type_magic());
 
-        // SAFETY: as above; writing its own fields.
-        unsafe {
-            (*refcount).self_magic = 0;
-            (*refcount).type_magic = 0;
-        }
+        rc.set_self_magic(0);
+        rc.set_type_magic(0);
 
-        // Type-specific cleanup
+        // Type-specific cleanup. The `*_imp` casts widen past the `Refcount`
+        // header the view covers, so they go through the caller's
+        // whole-allocation pointer, not the view; the header is re-viewed
+        // afterwards for the reads below.
         match type_magic {
             // SAFETY: the `Refcount` prefixes a `SceneImp` when its type magic is
             // `SCENE_IMP_MAGIC`, so the cast pointer is a live `SceneImp`.
@@ -245,13 +249,14 @@ pub(crate) unsafe fn release_ref(mut refcount: *mut Refcount) {
         // We need to free `data_buf` last and be careful to copy it to
         // the stack since the `ufbxi_refcount` that contains it is allocated
         // from the same result buffer!
-        // SAFETY: same live `Refcount`; `ator` is a `Copy` field read by value.
-        let mut ator: Allocator = unsafe { (*refcount).ator };
+        // SAFETY: the header is still live (its own `buf_free` below is what
+        // releases it); a fresh view because the teardown above wrote through
+        // the parent pointer, ending the earlier view's borrow.
+        let rc: &RefcountView = unsafe { RefcountView::from_ptr(refcount) };
+        let mut ator: Allocator = rc.ator();
         // `Buf` is not `Copy`; this stack copy is the deliberate ownership move
         // the comment above describes (`ptr::read` = C struct assignment).
-        // SAFETY: `&raw const (*refcount).buf` addresses the live `buf` field of
-        // the same `Refcount`; `ptr::read` moves it out by value once.
-        let mut buf: Buf = unsafe { core::ptr::read(&raw const (*refcount).buf) };
+        let mut buf: Buf = rc.take_buf();
         buf.ator = &raw mut ator;
         // `buf` is the just-moved `Buf`, now owning its stack `ator`.
         buf_free(BufView::from_mut(&mut buf));
@@ -2006,28 +2011,27 @@ pub(crate) fn evaluate_transform_flags(
                 EvalPropName::from_slice(&sp::Lcl_Scaling[..sp::Lcl_Scaling.len() - 1]),
                 time,
             ));
-            let hs: *mut Prop = helper_scale.as_mut_ptr();
-            // SAFETY: `hs` is the just-written local `Prop` storage; reading and
-            // writing its own value fields.
-            if (unsafe { (*hs).flags.raw() } & PropFlags::NOT_FOUND.raw()) != 0 {
-                // SAFETY: as above.
-                unsafe {
-                    (*hs).value_vec4.x = 1.0;
-                    (*hs).value_vec4.y = 1.0;
-                    (*hs).value_vec4.z = 1.0;
-                }
+            // SAFETY: `helper_scale` is this frame's own `Prop` storage, just
+            // written in full above — a live, aligned, write-capable slot that
+            // stays put and that nothing else names for the rest of the body.
+            let hs: &PropView = unsafe { PropView::from_ptr(helper_scale.as_mut_ptr()) };
+            if (hs.flags().raw() & PropFlags::NOT_FOUND.raw()) != 0 {
+                let mut value_vec4: Vec4 = hs.value_vec4();
+                value_vec4.x = 1.0;
+                value_vec4.y = 1.0;
+                value_vec4.z = 1.0;
+                hs.set_value_vec4(value_vec4);
             }
-            // SAFETY: as above.
-            unsafe {
-                (*hs).value_vec4.x *= scale_factor.x;
-                (*hs).value_vec4.y *= scale_factor.y;
-                (*hs).value_vec4.z *= scale_factor.z;
-            }
+            let mut value_vec4: Vec4 = hs.value_vec4();
+            value_vec4.x *= scale_factor.x;
+            value_vec4.y *= scale_factor.y;
+            value_vec4.z *= scale_factor.z;
+            hs.set_value_vec4(value_vec4);
             // C: `translation_scale = &helper_scale.value_vec3;`
-            // SAFETY: `&raw const (*hs).value_vec4` addresses the local prop's own
+            // SAFETY: `hs.value_vec4_ptr()` addresses the local prop's own
             // value, reinterpreted as the `Vec3` translation scale; the borrow is
             // read-only and the local is not written through `hs` after it.
-            translation_scale = Some(unsafe { &*(&raw const (*hs).value_vec4 as *const Vec3) });
+            translation_scale = Some(unsafe { &*(hs.value_vec4_ptr() as *const Vec3) });
         }
     }
 

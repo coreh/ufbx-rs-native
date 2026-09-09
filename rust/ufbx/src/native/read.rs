@@ -856,60 +856,61 @@ pub(crate) fn read_definitions(uc: &Context) -> Result<(), Fail> {
         let tmpl: *mut Template = uc.tmp_stack_view().push_zero::<Template>(1);
         uc.set_num_templates(uc.num_templates().wrapping_add(1));
         ufbxi_check!(uc, !tmpl.is_null(), "tmpl");
-        // SAFETY: `tmpl` is the fresh non-null push result above; the fetch
-        // yields the value, so the only raw op is the write into its own field.
-        unsafe {
-            (*tmpl).type_ = ufbxi_check_some!(
+        // SAFETY: `tmpl` is the fresh non-null push result above — a live,
+        // arena-owned `ufbxi_template` in uc's tmp stack, which only appends,
+        // so the slot stays alive, unmoved and write-capable for this iteration.
+        let tmpl: &View<Template> = unsafe { View::<Template>::from_ptr(tmpl) };
+
+        tmpl.set_type(
+            ufbxi_check_some!(
                 uc,
                 get_val1::<Checked<*const u8>>(object),
                 "ufbxi_get_val1(object, \"C\", (char**)&tmpl->type)"
             )
-            .0;
-        }
+            .0,
+        );
 
         // Pre-7000 FBX versions don't have property templates, they just have
         // the object counts by themselves.
         let props = find_child(object, sp::PropertyTemplate.as_ptr());
         if let Some(props) = props {
-            // SAFETY: as above, for `tmpl`'s own `sub_type` field.
-            unsafe {
-                (*tmpl).sub_type = ufbxi_check_some!(
+            let sub_type: &StringView = tmpl.sub_type_view();
+            sub_type.set(
+                ufbxi_check_some!(
                     uc,
                     get_val1::<Checked<String>>(props),
                     "ufbxi_get_val1(props, \"S\", &tmpl->sub_type)"
                 )
-                .0;
-            }
+                .0,
+            );
 
             // Remove the "Fbx" prefix from sub-types, remember to re-intern!
-            // SAFETY: `tmpl` is the fresh push result above; `sub_type` was
-            // just filled by the `S` read, so it is a pooled NUL-terminated
-            // string of `length` bytes and the compares/advance below stay
-            // inside it (each is guarded by a length check). The re-intern
-            // views that same live field in place.
-            unsafe {
-                if (*tmpl).sub_type.length > 3
-                    && strncmp((*tmpl).sub_type.data, b"Fbx\0".as_ptr(), 3) == 0
+            // SAFETY: `sub_type` was just filled by the `S` read, so it is a
+            // pooled NUL-terminated string of `length` bytes and the
+            // compares/advance below stay inside it (each is guarded by a
+            // length check).
+            if sub_type.length() > 3
+                && unsafe { strncmp(sub_type.data(), b"Fbx\0".as_ptr(), 3) } == 0
+            {
+                // C strips the prefix by advancing `data` and shortening
+                // `length` in place; the pair is republished as one descriptor.
+                let mut stripped: String =
+                    String::new_c(unsafe { sub_type.data().add(3) }, sub_type.length() - 3);
+
+                // HACK: LOD groups use LODGroup for Template, LodGroup for Object?
+                // SAFETY: `stripped` spans 8 readable bytes of that same pooled
+                // string (its own length, just checked).
+                if stripped.length == 8
+                    && unsafe { memcmp(slice_from_ptr(stripped.data, 8), b"LODGroup") } == 0
                 {
-                    (*tmpl).sub_type.data = (*tmpl).sub_type.data.add(3);
-                    (*tmpl).sub_type.length -= 3;
-
-                    // HACK: LOD groups use LODGroup for Template, LodGroup for Object?
-                    if (*tmpl).sub_type.length == 8
-                        && memcmp(slice_from_ptr((*tmpl).sub_type.data, 8), b"LODGroup") == 0
-                    {
-                        (*tmpl).sub_type.data = LOD_GROUP.as_ptr();
-                    }
-
-                    let sub_type = StringView::from_ptr(&raw mut (*tmpl).sub_type);
-                    push_string_place_str(uc.string_pool_view(), sub_type, false)?;
+                    stripped.data = LOD_GROUP.as_ptr();
                 }
+                sub_type.set(stripped);
 
-                // SAFETY: `&raw mut (*tmpl).props` addresses the freshly pushed
-                // template's own `ufbx_props` field in uc's tmp stack —
-                // write-capable provenance, stable for this call.
-                read_properties(uc, props, PropsView::from_ptr(&raw mut (*tmpl).props))?;
+                push_string_place_str(uc.string_pool_view(), sub_type, false)?;
             }
+
+            read_properties(uc, props, tmpl.props_view())?;
         }
     }
 
@@ -1349,24 +1350,25 @@ pub(crate) unsafe fn push_synthetic_element_size(
         uc.tmp_elements_view().push_zero::<u64>(aligned_size / 8) as *mut Element;
     ufbxi_check_return!(uc, !elem.is_null(), core::ptr::null_mut(), "elem");
     // SAFETY: `elem` is the fresh non-null zeroed push result checked above,
-    // sized to hold an `ufbx_element` header.
-    unsafe {
-        (*elem).type_ = type_;
-        (*elem).element_id = element_id;
-        (*elem).typed_id = typed_id;
-    }
+    // sized to hold an `ufbx_element` header — a live, arena-owned slot in uc's
+    // `tmp_elements` buffer, which only appends, so it stays alive, unmoved and
+    // write-capable for the rest of this call.
+    let elem_view: &View<Element> = unsafe { View::<Element>::from_ptr(elem) };
+
+    elem_view.set_type(type_);
+    elem_view.set_element_id(element_id);
+    elem_view.set_typed_id(typed_id);
     // SAFETY: `get_dom_node` returns either null or a DOM node owned by uc's
-    // buffers — `opt_ref`'s contract; `elem` is the fresh push result.
-    unsafe { (*elem).dom_node = opt_ref(get_dom_node(uc, node)) };
+    // buffers — `opt_ref`'s contract.
+    elem_view.set_dom_node(unsafe { opt_ref(get_dom_node(uc, node)) });
     if !name.is_null() {
+        // C writes `elem->name.data` then `elem->name.length`; the zeroed slot
+        // makes publishing the whole descriptor store the same bytes, and the
+        // stored pointer keeps its original whole-object provenance, as C's
+        // `elem->name.data = name` does.
         // SAFETY: `name` is non-null (checked) and NUL-terminated (fn
-        // contract), which is what `strlen` requires; the pointer stored keeps
-        // its original whole-object provenance, as C's
-        // `elem->name.data = name` does; `elem` is the fresh push result.
-        unsafe {
-            (*elem).name.data = name;
-            (*elem).name.length = strlen(name);
-        }
+        // contract), which is what `strlen` requires.
+        elem_view.set_name(String::new_c(name, unsafe { strlen(name) }));
     }
 
     ufbxi_check_return!(
@@ -4748,18 +4750,19 @@ pub(crate) fn read_nurbs_curve(
     let nurbs: *mut NurbsCurve =
         unsafe { push_element::<NurbsCurve>(uc, info, ElementType::NurbsCurve) };
     ufbxi_check!(uc, !nurbs.is_null(), "nurbs");
+    // SAFETY: `nurbs` is the fresh non-null element just pushed into uc's own
+    // element arena — reached through `*mut` (write-capable provenance for
+    // `Mut`), live and unmoved for the rest of the load; the fields below are
+    // the ones this function fills in.
+    let nurbs: &View<NurbsCurve> = unsafe { View::<NurbsCurve>::from_ptr(nurbs) };
 
     let mut dimension: i32 = 3;
 
-    // SAFETY: `nurbs` is the fresh non-null element pushed above; the fetch
-    // yields the value, so the only raw op is the write into its own field.
-    unsafe {
-        (*nurbs).basis.order = ufbxi_check_some!(
-            uc,
-            find_val1::<i32>(node, sp::Order.as_ptr()),
-            "ufbxi_find_val1(node, ufbxi_Order, \"I\", &nurbs->basis.order)"
-        ) as u32;
-    }
+    nurbs.basis().set_order(ufbxi_check_some!(
+        uc,
+        find_val1::<i32>(node, sp::Order.as_ptr()),
+        "ufbxi_find_val1(node, ufbxi_Order, \"I\", &nurbs->basis.order)"
+    ) as u32);
     if let Some(got) = find_val1::<i32>(node, sp::Dimension.as_ptr()) {
         dimension = got;
     }
@@ -4772,14 +4775,8 @@ pub(crate) fn read_nurbs_curve(
     // NUL-terminated parse-tree string, whose terminator bounds `strlen` and
     // whose bytes stay live and unwritten for the parse tree's lifetime.
     let form: &[u8] = unsafe { slice_from_ptr(form, strlen(form)) };
-    // SAFETY: `nurbs` is the fresh non-null element pushed above.
-    unsafe {
-        (*nurbs).basis.topology = read_nurbs_topology(form);
-    }
-    // SAFETY: `nurbs` is the fresh non-null element pushed above.
-    unsafe {
-        (*nurbs).basis.is_2d = dimension == 2;
-    }
+    nurbs.basis().set_topology(read_nurbs_topology(form));
+    nurbs.basis().set_is_2d(dimension == 2);
 
     if !uc.opts_view().ignore_geometry() {
         let points: Option<&View<ValueArray>> = find_array(node, sp::Points.as_ptr(), b'r');
@@ -4790,15 +4787,18 @@ pub(crate) fn read_nurbs_curve(
         let knot: &View<ValueArray> = knot.unwrap();
         ufbxi_check!(uc, points.size() % 4 == 0, "points->size % 4 == 0");
 
-        // SAFETY: `nurbs` is the fresh non-null element pushed above. The
-        // `'r'` payloads are `size` reals — `points.size` being a multiple of 4
-        // (checked) makes it `size / 4` `ufbx_vec4` control points.
-        unsafe {
-            (*nurbs).control_points.count = points.size() / 4;
-            (*nurbs).control_points.data = points.data() as *const Vec4;
-            (*nurbs).basis.knot_vector.data = knot.data() as *const Real;
-            (*nurbs).basis.knot_vector.count = knot.size();
-        }
+        // The `'r'` payloads are `size` reals — `points.size` being a multiple
+        // of 4 (checked) makes it `size / 4` `ufbx_vec4` control points; the
+        // C's field-write order is kept.
+        nurbs.control_points_view().set_count(points.size() / 4);
+        nurbs
+            .control_points_view()
+            .set_data(points.data() as *const Vec4);
+        nurbs
+            .basis()
+            .knot_vector_view()
+            .set_data(knot.data() as *const Real);
+        nurbs.basis().knot_vector_view().set_count(knot.size());
     }
 
     Ok(())
@@ -6149,23 +6149,18 @@ pub(crate) fn read_material(
     let material: *mut Material =
         unsafe { push_element::<Material>(uc, info, ElementType::Material) };
     ufbxi_check!(uc, !material.is_null(), "material");
+    // SAFETY: `material` is the fresh non-null element pushed above — a
+    // result-buffer slot that stays alive, unmoved and write-capable for the
+    // rest of this call.
+    let material: &View<Material, Mut> = unsafe { View::<Material>::from_ptr(material) };
 
     if let Some(got) = find_val1::<Checked<String>>(node, sp::ShadingModel.as_ptr()) {
-        // SAFETY: `material` is the fresh non-null element pushed above.
-        unsafe {
-            (*material).shading_model_name = got.0;
-        }
+        material.set_shading_model_name(got.0);
     } else {
-        // SAFETY: `material` is the fresh non-null element.
-        unsafe {
-            (*material).shading_model_name = EMPTY_STRING.0;
-        }
+        material.set_shading_model_name(EMPTY_STRING.0);
     }
 
-    // SAFETY: `material` is the fresh non-null element.
-    unsafe {
-        (*material).shader_prop_prefix = EMPTY_STRING.0;
-    }
+    material.set_shader_prop_prefix(EMPTY_STRING.0);
 
     Ok(())
 }
@@ -6388,14 +6383,16 @@ pub(crate) fn read_pose(
     // pointer; `Pose` is the element struct for `ElementType::Pose`.
     let pose: *mut Pose = unsafe { push_element::<Pose>(uc, info, ElementType::Pose) };
     ufbxi_check!(uc, !pose.is_null(), "pose");
+    // SAFETY: `pose` is the fresh non-null element just pushed into uc's own
+    // element arena — reached through `*mut` (write-capable provenance for
+    // `Mut`), live and unmoved for the rest of the load; the fields below are
+    // the ones this function fills in.
+    let pose: &View<Pose> = unsafe { View::<Pose>::from_ptr(pose) };
 
     // TODO: What are the actual other types?
     // C-parity: `sub_type` is matched by POINTER IDENTITY against the interned
     // `ufbxi_BindPose` constant, so compare the borrowed run's own address.
-    // SAFETY: `pose` is the fresh non-null element pushed above.
-    unsafe {
-        (*pose).is_bind_pose = sub_type.as_ptr() == sp::BindPose.as_ptr();
-    }
+    pose.set_is_bind_pose(sub_type.as_ptr() == sp::BindPose.as_ptr());
 
     let mut num_bones: usize = 0;
     // C: `ufbxi_for(ufbxi_node, n, node->children, node->num_children)`
@@ -6450,20 +6447,17 @@ pub(crate) fn read_pose(
     }
 
     // HACK: Transport `ufbxi_tmp_bone_pose` array through the `ufbx_bone_pose` pointer
-    // SAFETY: `pose` is the fresh non-null element pushed above, and the
-    // `num_bones` `TmpBonePose` values pushed by the loop are the top of
-    // `tmp_stack`, so `push_pop` moves exactly that run into `tmp`.
-    unsafe {
-        (*pose).bone_poses.count = num_bones;
-        (*pose).bone_poses.data = uc
-            .tmp_view()
-            .push_pop::<TmpBonePose>(uc.tmp_stack_view(), num_bones)
-            as *const BonePose;
-    }
-    // SAFETY: `pose` is the fresh non-null element.
+    // The `num_bones` `TmpBonePose` values pushed by the loop are the top of
+    // `tmp_stack`, so `push_pop` moves exactly that run into `tmp`; C's
+    // field-write order is kept.
+    pose.bone_poses_view().set_count(num_bones);
+    pose.bone_poses_view().set_data(
+        uc.tmp_view()
+            .push_pop::<TmpBonePose>(uc.tmp_stack_view(), num_bones) as *const BonePose,
+    );
     ufbxi_check!(
         uc,
-        !unsafe { (*pose).bone_poses.data }.is_null(),
+        !pose.bone_poses_view().data().is_null(),
         "pose->bone_poses.data"
     );
 
@@ -6771,17 +6765,16 @@ pub(crate) fn read_constraint(
     let constraint: *mut Constraint =
         unsafe { push_element::<Constraint>(uc, info, ElementType::Constraint) };
     ufbxi_check!(uc, !constraint.is_null(), "constraint");
+    // SAFETY: `constraint` is the fresh non-null element just pushed into uc's
+    // own element arena — reached through `*mut` (write-capable provenance for
+    // `Mut`), live and unmoved for the rest of the load; the fields below are
+    // the ones this function fills in.
+    let constraint: &View<Constraint> = unsafe { View::<Constraint>::from_ptr(constraint) };
 
     if let Some(got) = find_val1::<Checked<String>>(node, sp::Type.as_ptr()) {
-        // SAFETY: `constraint` is the fresh non-null element pushed above.
-        unsafe {
-            (*constraint).type_name = got.0;
-        }
+        constraint.set_type_name(got.0);
     } else {
-        // SAFETY: `constraint` is the fresh non-null element pushed above.
-        unsafe {
-            (*constraint).type_name = EMPTY_STRING.0;
-        }
+        constraint.set_type_name(EMPTY_STRING.0);
     }
 
     // C: `ufbxi_for(const ufbxi_constraint_type, ctype, ufbxi_constraint_types, ufbxi_arraycount(ufbxi_constraint_types))`
@@ -6790,14 +6783,11 @@ pub(crate) fn read_constraint(
     while ctype != ctype_end {
         // SAFETY: `ctype` walks `CONSTRAINT_TYPES` and stops at `ctype_end`, so it
         // points at a live table entry whose `name` is a NUL-terminated literal;
-        // `constraint` is the fresh non-null element and its `type_name.data` is
-        // either the fetched interned string or `EMPTY_STRING`, both
-        // NUL-terminated.
-        if unsafe { strcmp((*constraint).type_name.data, (*ctype).name) } == 0 {
-            // SAFETY: as above — `ctype` is in bounds and `constraint` is live.
-            unsafe {
-                (*constraint).type_ = (*ctype).type_;
-            }
+        // the constraint's `type_name.data` is either the fetched interned
+        // string or `EMPTY_STRING`, both NUL-terminated.
+        if unsafe { strcmp(constraint.type_name().data, (*ctype).name) } == 0 {
+            // SAFETY: as above — `ctype` is in bounds of the table.
+            constraint.set_type(unsafe { (*ctype).type_ });
             break;
         }
         // SAFETY: `ctype` is in bounds of `CONSTRAINT_TYPES` and stepping it one
