@@ -130,6 +130,10 @@ impl<M: Mode> View<ValueArray, M> {
     pub(crate) fn size(&self) -> usize {
         view_read_shared!(self, size)
     }
+    #[inline(always)]
+    pub(crate) fn type_(&self) -> u8 {
+        view_read_shared!(self, type_)
+    }
 }
 
 // ufbx.c:6197-6213 `ufbxi_node`
@@ -4423,21 +4427,23 @@ unsafe fn get_val_at_raw(node: &NodeView, ix: usize, fmt: u8, v: *mut c_void) ->
 // ufbx.c:7794-7803 `ufbxi_get_array`
 #[inline(never)]
 #[must_use]
-pub(crate) fn get_array(node: &NodeView, fmt: u8) -> *mut ValueArray {
+pub(crate) fn get_array(node: &NodeView, fmt: u8) -> Option<&View<ValueArray>> {
     if node.value_type_mask() != ValueType::Array as u16 {
-        return core::ptr::null_mut();
+        return None;
     }
-    let array: *mut ValueArray = node.array();
+    // SAFETY: the mask says `Array`, so the node's `content.array` arm names a
+    // live arena `ValueArray` that outlives the borrowed node (the NodeView mint
+    // invariant); it is reached through `*mut`, so its provenance is
+    // write-capable as `Mut` requires.
+    let array: &View<ValueArray> = unsafe { View::<ValueArray>::from_ptr(node.array()) };
     let mut fmt = fmt;
     if fmt != b'?' {
         fmt = normalize_array_type(fmt, b'b');
-        // SAFETY: `array` is the node's array-arm pointer to a valid arena
-        // `ValueArray`; reading its `type_` byte cannot violate validity.
-        if unsafe { (*array).type_ } != fmt {
-            return core::ptr::null_mut();
+        if array.type_() != fmt {
+            return None;
         }
     }
-    array
+    Some(array)
 }
 
 // -- Typed value fetch (port-local layer over `ufbxi_get_val_at`)
@@ -4610,11 +4616,8 @@ pub(crate) fn find_val2<T0: ValOut, T1: ValOut>(
 // ufbx.c:7862-7867 `ufbxi_find_array`
 #[inline(never)]
 #[must_use]
-pub(crate) fn find_array(node: &NodeView, name: *const u8, fmt: u8) -> *mut ValueArray {
-    let child: &NodeView = match find_child(node, name) {
-        Some(child) => child,
-        None => return core::ptr::null_mut(),
-    };
+pub(crate) fn find_array(node: &NodeView, name: *const u8, fmt: u8) -> Option<&View<ValueArray>> {
+    let child: &NodeView = find_child(node, name)?;
     get_array(child, fmt)
 }
 
@@ -8052,20 +8055,30 @@ mod tests {
                 Some(children.as_mut_ptr().add(1))
             );
 
-            assert_eq!(get_array(child1, real_type), &mut array as *mut _);
+            let array_ptr: *mut ValueArray = &mut array;
+            assert_eq!(
+                get_array(child1, real_type).map(|v| v.as_ptr() as *mut ValueArray),
+                Some(array_ptr)
+            );
             // 'r' normalizes to the array's concrete type in either Real mode.
-            assert_eq!(get_array(child1, b'r'), &mut array as *mut _);
-            assert!(get_array(child1, b'i').is_null());
+            assert_eq!(
+                get_array(child1, b'r').map(|v| v.as_ptr() as *mut ValueArray),
+                Some(array_ptr)
+            );
+            assert!(get_array(child1, b'i').is_none());
             // '?' skips the type check entirely.
-            assert_eq!(get_array(child1, b'?'), &mut array as *mut _);
+            assert_eq!(
+                get_array(child1, b'?').map(|v| v.as_ptr() as *mut ValueArray),
+                Some(array_ptr)
+            );
             // A non-array node has no array.
-            assert!(get_array(child0, b'?').is_null());
+            assert!(get_array(child0, b'?').is_none());
 
             assert_eq!(
-                find_array(node, name_b.as_ptr(), real_type),
-                &mut array as *mut _
+                find_array(node, name_b.as_ptr(), real_type).map(|v| v.as_ptr() as *mut ValueArray),
+                Some(array_ptr)
             );
-            assert!(find_array(node, name_a.as_ptr(), real_type).is_null());
+            assert!(find_array(node, name_a.as_ptr(), real_type).is_none());
         }
     }
 

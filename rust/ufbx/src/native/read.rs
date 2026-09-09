@@ -167,11 +167,8 @@ pub(crate) fn read_embedded_blob(
         None => return Ok(()),
     };
 
-    let content_arr: *mut ValueArray = get_array(node, b'C');
-    if !content_arr.is_null() {
-        // SAFETY: `get_array` returned the node's own initialized array
-        // descriptor, which stays live and unwritten with the parse tree.
-        let content_arr = unsafe { View::<ValueArray, Const>::from_ptr(content_arr) };
+    let content_arr: Option<&View<ValueArray>> = get_array(node, b'C');
+    if let Some(content_arr) = content_arr {
         if content_arr.size() == 0 {
             return Ok(());
         }
@@ -569,12 +566,11 @@ pub(crate) fn read_thumbnail(
         }
     }
 
-    let data_arr: *mut ValueArray = find_array(node, sp::ImageData.as_ptr(), b'c');
-    if !data_arr.is_null() {
-        // SAFETY: `data_arr` is non-null (checked) and points at the node's own
-        // retained array descriptor; its payload spans `size` readable bytes
+    let data_arr: Option<&View<ValueArray>> = find_array(node, sp::ImageData.as_ptr(), b'c');
+    if let Some(data_arr) = data_arr {
+        // SAFETY: the array descriptor's payload spans `size` readable bytes
         // and stays live and unwritten while the thumbnail references it.
-        let data = unsafe { Blob::new_c((*data_arr).data as *const u8, (*data_arr).size) };
+        let data = unsafe { Blob::new_c(data_arr.data() as *const u8, data_arr.size()) };
         thumbnail.data_view().set(data);
     }
 
@@ -2343,27 +2339,17 @@ pub(crate) unsafe fn read_vertex_element(
     // the `ufbx_real**` cast survives at the two writes through it below.
     let p_dst_data: &View<VoidList> = attrib.values_view();
 
-    let data: *mut ValueArray = find_array(node, data_name.as_ptr(), data_type);
-    let indices: *mut ValueArray = find_array(node, index_name.as_ptr(), b'i');
+    let data: Option<&View<ValueArray>> = find_array(node, data_name.as_ptr(), data_type);
+    let indices: Option<&View<ValueArray>> = find_array(node, index_name.as_ptr(), b'i');
 
     if !uc.opts_view().strict() {
-        if data.is_null() {
+        if data.is_none() {
             return Ok(());
         }
     }
 
-    ufbxi_check!(uc, !data.is_null(), "data");
-    // SAFETY: `data` is non-null (checked just above) and `find_array` returns
-    // the node's own array descriptor, live for as long as the parse tree and
-    // reached through `*mut` (write-capable provenance for `Mut`).
-    let data: &View<ValueArray> = unsafe { View::<ValueArray>::from_ptr(data) };
-    // SAFETY: the view is minted only in the non-null arm, where `indices` is
-    // likewise a live parse-tree array descriptor reached through `*mut`.
-    let indices: Option<&View<ValueArray>> = if indices.is_null() {
-        None
-    } else {
-        Some(unsafe { View::<ValueArray>::from_ptr(indices) })
-    };
+    ufbxi_check!(uc, data.is_some(), "data");
+    let data: &View<ValueArray> = data.unwrap();
     ufbxi_check!(
         uc,
         data.size() % num_components == 0,
@@ -2648,12 +2634,8 @@ pub(crate) unsafe fn read_vertex_element(
 
     if uc.opts_view().retain_vertex_attrib_w() {
         if let Some(w_name) = w_name {
-            let w_data: *mut ValueArray = find_array(node, w_name.as_ptr(), b'r');
-            if !w_data.is_null() {
-                // SAFETY: `w_data` is non-null (checked just above) and `find_array`
-                // returns the node's own array descriptor, live for as long as the
-                // parse tree and reached through `*mut` (write-capable provenance).
-                let w_data: &View<ValueArray> = unsafe { View::<ValueArray>::from_ptr(w_data) };
+            let w_data: Option<&View<ValueArray>> = find_array(node, w_name.as_ptr(), b'r');
+            if let Some(w_data) = w_data {
                 if w_data.size() == num_elems {
                     // The `'r'` array's payload is a run of `size` `ufbx_real`s.
                     attrib.values_w_view().set_count(w_data.size());
@@ -2695,8 +2677,8 @@ pub(crate) unsafe fn read_truncated_array<T>(
     fmt: u8,
     size: usize,
 ) -> Result<(), Fail> {
-    let arr: *mut ValueArray = find_array(node, name, fmt);
-    if arr.is_null() {
+    let arr: Option<&View<ValueArray>> = find_array(node, name, fmt);
+    let Some(arr) = arr else {
         ufbxi_check!(
             uc,
             ufbxi_warnf!(
@@ -2709,12 +2691,8 @@ pub(crate) unsafe fn read_truncated_array<T>(
             "ufbxi_warnf_imp(&uc->warnings, UFBX_WARNING_MISSING_GEOMETRY_DATA, ~0u, \"Missing geometry data: %s\", name)"
         );
         return Ok(());
-    }
+    };
 
-    // SAFETY: `arr` is non-null (the null case returned above) and points at
-    // the node's own array descriptor, live for as long as the parse tree and
-    // reached through `*mut` (write-capable provenance for `Mut`).
-    let arr: &View<ValueArray> = unsafe { View::<ValueArray>::from_ptr(arr) };
     let mut data: *mut c_void = arr.data();
     if arr.size() < size {
         ufbxi_check!(
@@ -2962,20 +2940,16 @@ pub(crate) fn read_shape(
         return Ok(());
     }
 
-    let vertices: *mut ValueArray = get_array(node_vertices, b'r');
-    let indices: *mut ValueArray = get_array(node_indices, b'i');
+    let vertices: Option<&View<ValueArray>> = get_array(node_vertices, b'r');
+    let indices: Option<&View<ValueArray>> = get_array(node_indices, b'i');
 
     ufbxi_check!(
         uc,
-        !vertices.is_null() && !indices.is_null(),
+        vertices.is_some() && indices.is_some(),
         "vertices && indices"
     );
-    // SAFETY: `vertices` is non-null (checked above) and `get_array` returns the
-    // node's own array descriptor, live for as long as the parse tree and
-    // reached through `*mut` (write-capable provenance for `Mut`).
-    let vertices: &View<ValueArray> = unsafe { View::<ValueArray>::from_ptr(vertices) };
-    // SAFETY: as above, for the `'i'` descriptor, likewise non-null.
-    let indices: &View<ValueArray> = unsafe { View::<ValueArray>::from_ptr(indices) };
+    let vertices: &View<ValueArray> = vertices.unwrap();
+    let indices: &View<ValueArray> = indices.unwrap();
     ufbxi_check!(uc, vertices.size() % 3 == 0, "vertices->size % 3 == 0");
     ufbxi_check!(
         uc,
@@ -2999,14 +2973,7 @@ pub(crate) fn read_shape(
     shape.offset_vertices_view().set_count(num_offsets);
 
     if let Some(node_normals) = node_normals {
-        let normals: *mut ValueArray = get_array(node_normals, b'r');
-        // SAFETY: the view is minted only in the non-null arm, where `normals`
-        // is likewise a live parse-tree array descriptor reached through `*mut`.
-        let normals: Option<&View<ValueArray>> = if normals.is_null() {
-            None
-        } else {
-            Some(unsafe { View::<ValueArray>::from_ptr(normals) })
-        };
+        let normals: Option<&View<ValueArray>> = get_array(node_normals, b'r');
         ufbxi_check!(
             uc,
             normals.is_some_and(|normals| normals.size() == vertices.size()),
@@ -3898,31 +3865,21 @@ pub(crate) fn read_mesh(uc: &Context, node: &NodeView, info: &ElementInfoView) -
         return Ok(());
     }
 
-    let vertices: *mut ValueArray = get_array(node_vertices, b'r');
-    let indices: *mut ValueArray = if let Some(node_indices) = node_indices {
+    let vertices: Option<&View<ValueArray>> = get_array(node_vertices, b'r');
+    let indices: Option<&View<ValueArray>> = if let Some(node_indices) = node_indices {
         get_array(node_indices, b'i')
     } else {
-        core::ptr::null_mut()
+        None
     };
-    let edge_indices: *mut ValueArray = find_array(node, sp::Edges.as_ptr(), b'i');
-    ufbxi_check!(uc, !vertices.is_null(), "vertices");
+    let edge_indices: Option<&View<ValueArray>> = find_array(node, sp::Edges.as_ptr(), b'i');
+    ufbxi_check!(uc, vertices.is_some(), "vertices");
     // If node_indices exists, it must be an array
     ufbxi_check!(
         uc,
-        node_indices.is_none() || !indices.is_null(),
+        node_indices.is_none() || indices.is_some(),
         "!node_indices || indices"
     );
-    // SAFETY: `vertices` is non-null (checked above) and `get_array` returns the
-    // node's own array descriptor, live for as long as the parse tree and
-    // reached through `*mut` (write-capable provenance for `Mut`).
-    let vertices: &View<ValueArray> = unsafe { View::<ValueArray>::from_ptr(vertices) };
-    // SAFETY: the view is minted only in the non-null arm, where `indices` is
-    // likewise a live parse-tree array descriptor reached through `*mut`.
-    let indices: Option<&View<ValueArray>> = if indices.is_null() {
-        None
-    } else {
-        Some(unsafe { View::<ValueArray>::from_ptr(indices) })
-    };
+    let vertices: &View<ValueArray> = vertices.unwrap();
     ufbxi_check!(uc, vertices.size() % 3 == 0, "vertices->size % 3 == 0");
 
     mesh.set_num_vertices(vertices.size() / 3);
@@ -3986,11 +3943,7 @@ pub(crate) fn read_mesh(uc: &Context, node: &NodeView, info: &ElementInfoView) -
     }
 
     // Read edges before un-negating the indices
-    if !edge_indices.is_null() {
-        // SAFETY: `edge_indices` is non-null (checked) and `find_array` returns
-        // a node's own array descriptor, live for as long as the parse tree and
-        // reached through `*mut` (write-capable provenance for `Mut`).
-        let edge_indices: &View<ValueArray> = unsafe { View::<ValueArray>::from_ptr(edge_indices) };
+    if let Some(edge_indices) = edge_indices {
         let num_edges: usize = edge_indices.size();
         let edges: *mut Edge = uc.result_view().push::<Edge>(num_edges);
         ufbxi_check!(uc, !edges.is_null(), "edges");
@@ -4424,16 +4377,7 @@ pub(crate) fn read_mesh(uc: &Context, node: &NodeView, info: &ElementInfoView) -
                     )
                 }?;
             } else if mapping == sp::AllSame.as_ptr() {
-                let arr: *mut ValueArray = find_array(n, sp::Materials.as_ptr(), b'i');
-                // SAFETY: the view is minted only in the non-null arm, where
-                // `find_array` returned a node's own array descriptor, live for
-                // as long as the parse tree and reached through `*mut`
-                // (write-capable provenance for `Mut`).
-                let arr: Option<&View<ValueArray>> = if arr.is_null() {
-                    None
-                } else {
-                    Some(unsafe { View::<ValueArray>::from_ptr(arr) })
-                };
+                let arr: Option<&View<ValueArray>> = find_array(n, sp::Materials.as_ptr(), b'i');
                 ufbxi_check!(
                     uc,
                     arr.is_some_and(|arr| arr.size() >= 1),
@@ -4574,7 +4518,8 @@ pub(crate) fn read_mesh(uc: &Context, node: &NodeView, info: &ElementInfoView) -
                 if let Some(Unchecked(mapping)) =
                     find_val1::<Unchecked<*const u8>>(n, sp::MappingInformationType.as_ptr())
                 {
-                    let arr: *mut ValueArray = find_array(n, sp::TextureId.as_ptr(), b'i');
+                    let arr: Option<&View<ValueArray>> =
+                        find_array(n, sp::TextureId.as_ptr(), b'i');
 
                     let tex: *mut TmpMeshTexture =
                         uc.tmp_mesh_textures_view().push_zero::<TmpMeshTexture>(1);
@@ -4584,12 +4529,8 @@ pub(crate) fn read_mesh(uc: &Context, node: &NodeView, info: &ElementInfoView) -
                     // buf and reached through `*mut` (write-capable for `Mut`).
                     let tex: &View<TmpMeshTexture> =
                         unsafe { View::<TmpMeshTexture>::from_ptr(tex) };
-                    if !arr.is_null() {
-                        // SAFETY: `arr` is non-null (checked) — a node's own
-                        // array descriptor, live for as long as the parse tree
-                        // and reached through `*mut` (write-capable for `Mut`);
-                        // its `'i'` payload is a run of `size` `u32`s.
-                        let arr: &View<ValueArray> = unsafe { View::<ValueArray>::from_ptr(arr) };
+                    if let Some(arr) = arr {
+                        // The `'i'` payload is a run of `size` `u32`s.
                         tex.set_face_texture(arr.data() as *mut u32);
                         tex.set_num_faces(arr.size());
                     }
@@ -4835,27 +4776,22 @@ pub(crate) fn read_nurbs_curve(
     }
 
     if !uc.opts_view().ignore_geometry() {
-        let points: *mut ValueArray = find_array(node, sp::Points.as_ptr(), b'r');
-        let knot: *mut ValueArray = find_array(node, sp::KnotVector.as_ptr(), b'r');
-        ufbxi_check!(uc, !points.is_null(), "points");
-        ufbxi_check!(uc, !knot.is_null(), "knot");
-        // SAFETY: `points` is non-null (checked above) and `find_array` returns
-        // the node's own array descriptor, live for as long as the parse tree.
-        ufbxi_check!(
-            uc,
-            unsafe { (*points).size } % 4 == 0,
-            "points->size % 4 == 0"
-        );
+        let points: Option<&View<ValueArray>> = find_array(node, sp::Points.as_ptr(), b'r');
+        let knot: Option<&View<ValueArray>> = find_array(node, sp::KnotVector.as_ptr(), b'r');
+        ufbxi_check!(uc, points.is_some(), "points");
+        ufbxi_check!(uc, knot.is_some(), "knot");
+        let points: &View<ValueArray> = points.unwrap();
+        let knot: &View<ValueArray> = knot.unwrap();
+        ufbxi_check!(uc, points.size() % 4 == 0, "points->size % 4 == 0");
 
-        // SAFETY: `nurbs` is the fresh non-null element; `points`/`knot` are the
-        // live array descriptors checked non-null above, whose `'r'` payloads are
-        // `size` reals — `points.size` being a multiple of 4 (checked) makes it
-        // `size / 4` `ufbx_vec4` control points.
+        // SAFETY: `nurbs` is the fresh non-null element pushed above. The
+        // `'r'` payloads are `size` reals — `points.size` being a multiple of 4
+        // (checked) makes it `size / 4` `ufbx_vec4` control points.
         unsafe {
-            (*nurbs).control_points.count = (*points).size / 4;
-            (*nurbs).control_points.data = (*points).data as *const Vec4;
-            (*nurbs).basis.knot_vector.data = (*knot).data as *const Real;
-            (*nurbs).basis.knot_vector.count = (*knot).size;
+            (*nurbs).control_points.count = points.size() / 4;
+            (*nurbs).control_points.data = points.data() as *const Vec4;
+            (*nurbs).basis.knot_vector.data = knot.data() as *const Real;
+            (*nurbs).basis.knot_vector.count = knot.size();
         }
     }
 
@@ -4922,20 +4858,15 @@ pub(crate) fn read_nurbs_surface(
     nurbs.set_span_subdivision_v(if step_v > 0 { step_v as u32 } else { 4u32 });
 
     if !uc.opts_view().ignore_geometry() {
-        let points: *mut ValueArray = find_array(node, sp::Points.as_ptr(), b'r');
-        let knot_u: *mut ValueArray = find_array(node, sp::KnotVectorU.as_ptr(), b'r');
-        let knot_v: *mut ValueArray = find_array(node, sp::KnotVectorV.as_ptr(), b'r');
-        ufbxi_check!(uc, !points.is_null(), "points");
-        ufbxi_check!(uc, !knot_u.is_null(), "knot_u");
-        ufbxi_check!(uc, !knot_v.is_null(), "knot_v");
-        // SAFETY: `points` is non-null (checked above) and `find_array` returns
-        // the node's own array descriptor, live for as long as the parse tree
-        // and reached through `*mut` (write-capable provenance for `Mut`).
-        let points: &View<ValueArray> = unsafe { View::<ValueArray>::from_ptr(points) };
-        // SAFETY: as `points` — likewise a live, non-null descriptor.
-        let knot_u: &View<ValueArray> = unsafe { View::<ValueArray>::from_ptr(knot_u) };
-        // SAFETY: as `points` — likewise a live, non-null descriptor.
-        let knot_v: &View<ValueArray> = unsafe { View::<ValueArray>::from_ptr(knot_v) };
+        let points: Option<&View<ValueArray>> = find_array(node, sp::Points.as_ptr(), b'r');
+        let knot_u: Option<&View<ValueArray>> = find_array(node, sp::KnotVectorU.as_ptr(), b'r');
+        let knot_v: Option<&View<ValueArray>> = find_array(node, sp::KnotVectorV.as_ptr(), b'r');
+        ufbxi_check!(uc, points.is_some(), "points");
+        ufbxi_check!(uc, knot_u.is_some(), "knot_u");
+        ufbxi_check!(uc, knot_v.is_some(), "knot_v");
+        let points: &View<ValueArray> = points.unwrap();
+        let knot_u: &View<ValueArray> = knot_u.unwrap();
+        let knot_v: &View<ValueArray> = knot_v.unwrap();
         ufbxi_check!(uc, points.size() % 4 == 0, "points->size % 4 == 0");
         ufbxi_check!(
             uc,
@@ -4977,21 +4908,17 @@ pub(crate) fn read_line(uc: &Context, node: &NodeView, info: &ElementInfoView) -
     ufbxi_check!(uc, !line.is_null(), "line");
 
     if !uc.opts_view().ignore_geometry() {
-        let points: *mut ValueArray = find_array(node, sp::Points.as_ptr(), b'r');
-        let points_index: *mut ValueArray = find_array(node, sp::PointsIndex.as_ptr(), b'i');
-        ufbxi_check!(uc, !points.is_null(), "points");
-        ufbxi_check!(uc, !points_index.is_null(), "points_index");
-        // SAFETY: all three pointers are non-null (checked above). `line` is
-        // the fresh element pushed into uc's stable temporary arena, while
-        // `points`/`points_index` are the node's own live array descriptors;
-        // all were reached through write-capable pointers.
-        let (line, points, points_index): (&View<LineCurve>, &View<ValueArray>, &View<ValueArray>) = unsafe {
-            (
-                View::<LineCurve>::from_ptr(line),
-                View::<ValueArray>::from_ptr(points),
-                View::<ValueArray>::from_ptr(points_index),
-            )
-        };
+        let points: Option<&View<ValueArray>> = find_array(node, sp::Points.as_ptr(), b'r');
+        let points_index: Option<&View<ValueArray>> =
+            find_array(node, sp::PointsIndex.as_ptr(), b'i');
+        ufbxi_check!(uc, points.is_some(), "points");
+        ufbxi_check!(uc, points_index.is_some(), "points_index");
+        let points: &View<ValueArray> = points.unwrap();
+        let points_index: &View<ValueArray> = points_index.unwrap();
+        // SAFETY: `line` is the fresh non-null element pushed into uc's stable
+        // temporary arena, reached through `*mut` (write-capable provenance for
+        // `Mut`) and live for the rest of the load.
+        let line: &View<LineCurve> = unsafe { View::<LineCurve>::from_ptr(line) };
         ufbxi_check!(uc, points.size() % 3 == 0, "points->size % 3 == 0");
 
         if points.size() > 0 {
@@ -5246,19 +5173,18 @@ pub(crate) fn read_skin(uc: &Context, node: &NodeView, info: &ElementInfoView) -
         }
     }
 
-    let indices: *mut ValueArray = find_array(node, sp::Indexes.as_ptr(), b'i');
-    let weights: *mut ValueArray = find_array(node, sp::BlendWeights.as_ptr(), b'r');
-    if !indices.is_null() && !weights.is_null() {
+    let indices: Option<&View<ValueArray>> = find_array(node, sp::Indexes.as_ptr(), b'i');
+    let weights: Option<&View<ValueArray>> = find_array(node, sp::BlendWeights.as_ptr(), b'r');
+    // C: `if (indices && weights)` — both operands are side-effect free.
+    if let (Some(indices), Some(weights)) = (indices, weights) {
         // TODO strict: ufbxi_check(indices->size == weights->size);
         // SAFETY: `dq_vertices_raw()`/`dq_weights_raw()` address the viewed
-        // deformer's own lists; `indices`/`weights` are the live array
-        // descriptors checked non-null above, whose `'i'`/`'r'` payloads are
-        // `size` `u32`s and `size` reals, so the shorter of the two sizes bounds
-        // both runs.
+        // deformer's own lists; the `'i'`/`'r'` payloads are `size` `u32`s and
+        // `size` reals, so the shorter of the two sizes bounds both runs.
         unsafe {
-            skin.set_num_dq_weights(min_sz((*indices).size, (*weights).size));
-            (*skin.dq_vertices_raw()).data = (*indices).data as *const u32;
-            (*skin.dq_weights_raw()).data = (*weights).data as *const Real;
+            skin.set_num_dq_weights(min_sz(indices.size(), weights.size()));
+            (*skin.dq_vertices_raw()).data = indices.data() as *const u32;
+            (*skin.dq_weights_raw()).data = weights.data() as *const Real;
             (*skin.dq_vertices_raw()).count = skin.num_dq_weights();
             (*skin.dq_weights_raw()).count = skin.num_dq_weights();
         }
@@ -5283,44 +5209,37 @@ pub(crate) fn read_skin_cluster(
         unsafe { push_element::<SkinCluster>(uc, info, ElementType::SkinCluster) };
     ufbxi_check!(uc, !cluster.is_null(), "cluster");
 
-    let indices: *mut ValueArray = find_array(node, sp::Indexes.as_ptr(), b'i');
-    let weights: *mut ValueArray = find_array(node, sp::Weights.as_ptr(), b'r');
+    let indices: Option<&View<ValueArray>> = find_array(node, sp::Indexes.as_ptr(), b'i');
+    let weights: Option<&View<ValueArray>> = find_array(node, sp::Weights.as_ptr(), b'r');
 
-    if !indices.is_null() && !weights.is_null() {
-        // SAFETY: `indices`/`weights` are non-null (checked above) and
-        // `find_array` returns the node's own array descriptors, live for as long
-        // as the parse tree.
+    // C: `if (indices && weights)` — both operands are side-effect free.
+    if let (Some(indices), Some(weights)) = (indices, weights) {
         ufbxi_check!(
             uc,
-            unsafe { (*indices).size } == unsafe { (*weights).size },
+            indices.size() == weights.size(),
             "indices->size == weights->size"
         );
-        // SAFETY: `cluster` is the fresh non-null element; `indices`/`weights`
-        // are the live descriptors checked above, whose `'i'`/`'r'` payloads are
-        // `size` `u32`s and `size` reals, of equal length (just checked).
+        // SAFETY: `cluster` is the fresh non-null element; the `'i'`/`'r'`
+        // payloads are `size` `u32`s and `size` reals, of equal length (just
+        // checked).
         unsafe {
-            (*cluster).num_weights = (*indices).size;
-            (*cluster).vertices.data = (*indices).data as *const u32;
-            (*cluster).weights.data = (*weights).data as *const Real;
+            (*cluster).num_weights = indices.size();
+            (*cluster).vertices.data = indices.data() as *const u32;
+            (*cluster).weights.data = weights.data() as *const Real;
             (*cluster).vertices.count = (*cluster).num_weights;
             (*cluster).weights.count = (*cluster).num_weights;
         }
     }
 
-    let transform: *mut ValueArray = find_array(node, sp::Transform.as_ptr(), b'r');
-    let transform_link: *mut ValueArray = find_array(node, sp::TransformLink.as_ptr(), b'r');
-    if !transform.is_null() && !transform_link.is_null() {
-        // SAFETY: `transform` is non-null (checked above) and is the node's own
-        // live array descriptor.
+    let transform: Option<&View<ValueArray>> = find_array(node, sp::Transform.as_ptr(), b'r');
+    let transform_link: Option<&View<ValueArray>> =
+        find_array(node, sp::TransformLink.as_ptr(), b'r');
+    // C: `if (transform && transform_link)` — both operands are side-effect free.
+    if let (Some(transform), Some(transform_link)) = (transform, transform_link) {
+        ufbxi_check!(uc, transform.size() >= 16, "transform->size >= 16");
         ufbxi_check!(
             uc,
-            unsafe { (*transform).size } >= 16,
-            "transform->size >= 16"
-        );
-        // SAFETY: as above, for `transform_link`.
-        ufbxi_check!(
-            uc,
-            unsafe { (*transform_link).size } >= 16,
+            transform_link.size() >= 16,
             "transform_link->size >= 16"
         );
 
@@ -5332,11 +5251,11 @@ pub(crate) fn read_skin_cluster(
         unsafe {
             read_transform_matrix(
                 View::<Matrix>::from_ptr(&raw mut (*cluster).mesh_node_to_bone),
-                &*((*transform).data as *const [Real; 16]),
+                &*(transform.data() as *const [Real; 16]),
             );
             read_transform_matrix(
                 View::<Matrix>::from_ptr(&raw mut (*cluster).bind_to_world),
-                &*((*transform_link).data as *const [Real; 16]),
+                &*(transform_link.data() as *const [Real; 16]),
             );
         }
     }
@@ -5364,15 +5283,11 @@ pub(crate) fn read_blend_channel(
     // SAFETY: `ufbx_real_list` is a plain pointer/count pair, for which the
     // all-zero bit pattern is a valid (empty, null-data) value.
     let mut list: List<Real> = unsafe { core::mem::zeroed() };
-    let full_weights: *mut ValueArray = find_array(node, sp::FullWeights.as_ptr(), b'r');
-    if !full_weights.is_null() {
-        // SAFETY: `full_weights` is non-null (checked above) and `find_array`
-        // returns the node's own array descriptor, live for as long as the parse
-        // tree; its `'r'` payload is a run of `size` reals.
-        unsafe {
-            list.data = (*full_weights).data as *const Real;
-            list.count = (*full_weights).size;
-        }
+    let full_weights: Option<&View<ValueArray>> = find_array(node, sp::FullWeights.as_ptr(), b'r');
+    if let Some(full_weights) = full_weights {
+        // The `'r'` payload is a run of `size` reals.
+        list.data = full_weights.data() as *const Real;
+        list.count = full_weights.size();
     }
     ufbxi_check!(
         uc,
@@ -5753,50 +5668,43 @@ pub(crate) fn read_animation_curve(
 
     // C: `ufbxi_value_array *times, *values, *attr_flags, *attrs, *refs;`
     // — declared uninitialized, each written by the `ufbxi_check(x = ...)`
-    // assignment-in-condition below. Each descriptor is minted as a view right
-    // after its own null check.
-    let times: *mut ValueArray = find_array(node, sp::KeyTime.as_ptr(), b'l');
+    // assignment-in-condition below. Each descriptor is unwrapped right after
+    // its own presence check.
+    let times: Option<&View<ValueArray>> = find_array(node, sp::KeyTime.as_ptr(), b'l');
     ufbxi_check!(
         uc,
-        !times.is_null(),
+        times.is_some(),
         "times = ufbxi_find_array(node, ufbxi_KeyTime, 'l')"
     );
-    // SAFETY: `times` is non-null (checked above) and is the parse node's own
-    // arena-owned array descriptor — write-capable provenance, live for as long
-    // as the parse tree.
-    let times: &View<ValueArray> = unsafe { View::<ValueArray>::from_ptr(times) };
-    let values: *mut ValueArray = find_array(node, sp::KeyValueFloat.as_ptr(), b'r');
+    let times: &View<ValueArray> = times.unwrap();
+    let values: Option<&View<ValueArray>> = find_array(node, sp::KeyValueFloat.as_ptr(), b'r');
     ufbxi_check!(
         uc,
-        !values.is_null(),
+        values.is_some(),
         "values = ufbxi_find_array(node, ufbxi_KeyValueFloat, 'r')"
     );
-    // SAFETY: as for `times` — the node's own live array descriptor.
-    let values: &View<ValueArray> = unsafe { View::<ValueArray>::from_ptr(values) };
-    let attr_flags: *mut ValueArray = find_array(node, sp::KeyAttrFlags.as_ptr(), b'i');
+    let values: &View<ValueArray> = values.unwrap();
+    let attr_flags: Option<&View<ValueArray>> = find_array(node, sp::KeyAttrFlags.as_ptr(), b'i');
     ufbxi_check!(
         uc,
-        !attr_flags.is_null(),
+        attr_flags.is_some(),
         "attr_flags = ufbxi_find_array(node, ufbxi_KeyAttrFlags, 'i')"
     );
-    // SAFETY: as for `times` — the node's own live array descriptor.
-    let attr_flags: &View<ValueArray> = unsafe { View::<ValueArray>::from_ptr(attr_flags) };
-    let attrs: *mut ValueArray = find_array(node, sp::KeyAttrDataFloat.as_ptr(), b'?');
+    let attr_flags: &View<ValueArray> = attr_flags.unwrap();
+    let attrs: Option<&View<ValueArray>> = find_array(node, sp::KeyAttrDataFloat.as_ptr(), b'?');
     ufbxi_check!(
         uc,
-        !attrs.is_null(),
+        attrs.is_some(),
         "attrs = ufbxi_find_array(node, ufbxi_KeyAttrDataFloat, '?')"
     );
-    // SAFETY: as for `times` — the node's own live array descriptor.
-    let attrs: &View<ValueArray> = unsafe { View::<ValueArray>::from_ptr(attrs) };
-    let refs: *mut ValueArray = find_array(node, sp::KeyAttrRefCount.as_ptr(), b'i');
+    let attrs: &View<ValueArray> = attrs.unwrap();
+    let refs: Option<&View<ValueArray>> = find_array(node, sp::KeyAttrRefCount.as_ptr(), b'i');
     ufbxi_check!(
         uc,
-        !refs.is_null(),
+        refs.is_some(),
         "refs = ufbxi_find_array(node, ufbxi_KeyAttrRefCount, 'i')"
     );
-    // SAFETY: as for `times` — the node's own live array descriptor.
-    let refs: &View<ValueArray> = unsafe { View::<ValueArray>::from_ptr(refs) };
+    let refs: &View<ValueArray> = refs.unwrap();
 
     // Time and value arrays that define the keyframes should be parallel
     ufbxi_check!(
@@ -6350,25 +6258,23 @@ pub(crate) fn read_layered_texture(
         unsafe { push_element_extra::<TextureExtra>(uc, (*texture).element.element_id) };
     ufbxi_check!(uc, !extra.is_null(), "extra");
 
-    let alphas: *mut ValueArray = find_array(node, sp::Alphas.as_ptr(), b'r');
-    if !alphas.is_null() {
-        // SAFETY: `extra` is the fresh non-null extra checked above; `alphas` is
-        // non-null (checked) and is the node's own live array descriptor, whose
+    let alphas: Option<&View<ValueArray>> = find_array(node, sp::Alphas.as_ptr(), b'r');
+    if let Some(alphas) = alphas {
+        // SAFETY: `extra` is the fresh non-null extra checked above; the
         // `'r'` payload is a run of `size` reals.
         unsafe {
-            (*extra).alphas = (*alphas).data as *mut Real;
-            (*extra).num_alphas = (*alphas).size;
+            (*extra).alphas = alphas.data() as *mut Real;
+            (*extra).num_alphas = alphas.size();
         }
     }
 
-    let blend_modes: *mut ValueArray = find_array(node, sp::BlendModes.as_ptr(), b'i');
-    if !blend_modes.is_null() {
-        // SAFETY: `extra` is the fresh non-null extra; `blend_modes` is non-null
-        // (checked) and is the node's own live array descriptor, whose `'i'`
-        // payload is a run of `size` `i32`s.
+    let blend_modes: Option<&View<ValueArray>> = find_array(node, sp::BlendModes.as_ptr(), b'i');
+    if let Some(blend_modes) = blend_modes {
+        // SAFETY: `extra` is the fresh non-null extra; the `'i'` payload is a
+        // run of `size` `i32`s.
         unsafe {
-            (*extra).blend_modes = (*blend_modes).data as *mut i32;
-            (*extra).num_blend_modes = (*blend_modes).size;
+            (*extra).blend_modes = blend_modes.data() as *mut i32;
+            (*extra).num_blend_modes = blend_modes.size();
         }
     }
 
@@ -6539,14 +6445,11 @@ pub(crate) fn read_pose(
             validate_fbx_id(uc, &mut fbx_id)?;
         }
 
-        let matrix: *mut ValueArray = find_array(n, sp::Matrix.as_ptr(), b'r');
-        if matrix.is_null() {
+        let matrix: Option<&View<ValueArray>> = find_array(n, sp::Matrix.as_ptr(), b'r');
+        let Some(matrix) = matrix else {
             continue;
-        }
-        // SAFETY: `matrix` is non-null (the null case continued above) and
-        // `find_array` returns the node's own array descriptor, live for as long
-        // as the parse tree.
-        ufbxi_check!(uc, unsafe { (*matrix).size } >= 16, "matrix->size >= 16");
+        };
+        ufbxi_check!(uc, matrix.size() >= 16, "matrix->size >= 16");
 
         let tmp_pose: *mut TmpBonePose = uc.tmp_stack_view().push::<TmpBonePose>(1);
         ufbxi_check!(uc, !tmp_pose.is_null(), "tmp_pose");
@@ -6564,7 +6467,7 @@ pub(crate) fn read_pose(
         unsafe {
             read_transform_matrix(
                 View::<Matrix>::from_ptr(&raw mut (*tmp_pose).bone_to_world),
-                &*((*matrix).data as *const [Real; 16]),
+                &*(matrix.data() as *const [Real; 16]),
             )
         };
     }
@@ -6736,12 +6639,8 @@ pub(crate) fn read_selection_set(
 // convention `find_array`/`find_val1` carry as safe fns.
 #[inline(never)]
 pub(crate) fn find_uint32_list(dst: &View<List<u32>, Mut>, node: &NodeView, name: *const u8) {
-    let arr: *mut ValueArray = find_array(node, name, b'i');
-    if !arr.is_null() {
-        // SAFETY: `arr` is non-null (checked) and `find_array` returns the node's
-        // own array descriptor — arena memory, live and unmoved for as long as
-        // the parse tree, with write-capable provenance.
-        let arr: &View<ValueArray, Mut> = unsafe { View::<ValueArray, Mut>::from_ptr(arr) };
+    let arr: Option<&View<ValueArray>> = find_array(node, name, b'i');
+    if let Some(arr) = arr {
         dst.set_data(arr.data() as *const u32);
         dst.set_count(arr.size());
     }
@@ -8090,14 +7989,10 @@ pub(crate) unsafe fn read_take_anim_channel(
     }
 
     // Find the key array, early return with success if not found as we may have only a default
-    let keys: *mut ValueArray = find_array(node, sp::Key.as_ptr(), b'd');
-    if keys.is_null() {
+    let keys: Option<&View<ValueArray>> = find_array(node, sp::Key.as_ptr(), b'd');
+    let Some(keys) = keys else {
         return Ok(());
-    }
-    // SAFETY: `keys` is non-null (checked above) and `find_array` returns the
-    // node's own array descriptor, live for as long as the parse tree and
-    // reached through `*mut` (write-capable provenance for `Mut`).
-    let keys: &View<ValueArray> = unsafe { View::<ValueArray>::from_ptr(keys) };
+    };
 
     let mut curve_fbx_id: u64 = 0;
     // SAFETY: `&raw mut curve_fbx_id` is a live local `uint64_t` slot, `name` is the
@@ -9587,44 +9482,37 @@ pub(crate) unsafe fn read_legacy_link(
     ufbxi_check!(uc, !cluster.is_null(), "cluster");
 
     // TODO: Merge with ufbxi_read_skin_cluster(), at least partially?
-    let indices: *mut ValueArray = find_array(node, sp::Indexes.as_ptr(), b'i');
-    let weights: *mut ValueArray = find_array(node, sp::Weights.as_ptr(), b'r');
+    let indices: Option<&View<ValueArray>> = find_array(node, sp::Indexes.as_ptr(), b'i');
+    let weights: Option<&View<ValueArray>> = find_array(node, sp::Weights.as_ptr(), b'r');
 
-    if !indices.is_null() && !weights.is_null() {
-        // SAFETY: `indices` and `weights` are non-null (checked) and `find_array`
-        // returns the node's own array descriptors, live for as long as the parse
-        // tree.
+    // C: `if (indices && weights)` — both operands are side-effect free.
+    if let (Some(indices), Some(weights)) = (indices, weights) {
         ufbxi_check!(
             uc,
-            unsafe { (*indices).size } == unsafe { (*weights).size },
+            indices.size() == weights.size(),
             "indices->size == weights->size"
         );
         // SAFETY: `cluster` is the fresh non-null element pushed above, and the
         // two live array descriptors carry `size` `uint32_t` / `ufbx_real` values
         // respectively, with the two sizes equal (checked above).
         unsafe {
-            (*cluster).num_weights = (*indices).size;
-            (*cluster).vertices.data = (*indices).data as *const u32;
-            (*cluster).weights.data = (*weights).data as *const Real;
+            (*cluster).num_weights = indices.size();
+            (*cluster).vertices.data = indices.data() as *const u32;
+            (*cluster).weights.data = weights.data() as *const Real;
             (*cluster).vertices.count = (*cluster).num_weights;
             (*cluster).weights.count = (*cluster).num_weights;
         }
     }
 
-    let transform: *mut ValueArray = find_array(node, sp::Transform.as_ptr(), b'r');
-    let transform_link: *mut ValueArray = find_array(node, sp::TransformLink.as_ptr(), b'r');
-    if !transform.is_null() && !transform_link.is_null() {
-        // SAFETY: `transform` is non-null (checked) and `find_array` returns the
-        // node's own array descriptor, live for as long as the parse tree.
+    let transform: Option<&View<ValueArray>> = find_array(node, sp::Transform.as_ptr(), b'r');
+    let transform_link: Option<&View<ValueArray>> =
+        find_array(node, sp::TransformLink.as_ptr(), b'r');
+    // C: `if (transform && transform_link)` — both operands are side-effect free.
+    if let (Some(transform), Some(transform_link)) = (transform, transform_link) {
+        ufbxi_check!(uc, transform.size() >= 16, "transform->size >= 16");
         ufbxi_check!(
             uc,
-            unsafe { (*transform).size } >= 16,
-            "transform->size >= 16"
-        );
-        // SAFETY: as above, for `transform_link`.
-        ufbxi_check!(
-            uc,
-            unsafe { (*transform_link).size } >= 16,
+            transform_link.size() >= 16,
             "transform_link->size >= 16"
         );
 
@@ -9636,11 +9524,11 @@ pub(crate) unsafe fn read_legacy_link(
         unsafe {
             read_transform_matrix(
                 View::<Matrix>::from_ptr(&raw mut (*cluster).mesh_node_to_bone),
-                &*((*transform).data as *const [Real; 16]),
+                &*(transform.data() as *const [Real; 16]),
             );
             read_transform_matrix(
                 View::<Matrix>::from_ptr(&raw mut (*cluster).bind_to_world),
-                &*((*transform_link).data as *const [Real; 16]),
+                &*(transform_link.data() as *const [Real; 16]),
             );
         }
     }
@@ -9795,20 +9683,15 @@ pub(crate) fn read_legacy_mesh(
         return Ok(());
     }
 
-    let vertices: *mut ValueArray = get_array(node_vertices, b'r');
-    let indices: *mut ValueArray = get_array(node_indices, b'i');
+    let vertices: Option<&View<ValueArray>> = get_array(node_vertices, b'r');
+    let indices: Option<&View<ValueArray>> = get_array(node_indices, b'i');
     ufbxi_check!(
         uc,
-        !vertices.is_null() && !indices.is_null(),
+        vertices.is_some() && indices.is_some(),
         "vertices && indices"
     );
-    // SAFETY: `vertices` and `indices` are non-null (checked above) and
-    // `get_array` returns the node's own array descriptor, live for as long as
-    // the parse tree and reached through `*mut` (write-capable provenance for
-    // `Mut`).
-    let vertices: &View<ValueArray> = unsafe { View::<ValueArray>::from_ptr(vertices) };
-    // SAFETY: as above, for the `'i'` descriptor.
-    let indices: &View<ValueArray> = unsafe { View::<ValueArray>::from_ptr(indices) };
+    let vertices: &View<ValueArray> = vertices.unwrap();
+    let indices: &View<ValueArray> = indices.unwrap();
     ufbxi_check!(uc, vertices.size() % 3 == 0, "vertices->size % 3 == 0");
 
     // `vertices`'s `'r'` payload holds `size` reals, a multiple of 3 (checked),
@@ -9868,12 +9751,8 @@ pub(crate) fn read_legacy_mesh(
 
     // Normals are either per-vertex or per-index in legacy FBX files?
     // If the version is 5000 prefer per-vertex, otherwise per-index...
-    let normals: *mut ValueArray = find_array(node, sp::Normals.as_ptr(), b'r');
-    if !normals.is_null() {
-        // SAFETY: `normals` is non-null (checked) and `find_array` returns the
-        // node's own array descriptor, live for as long as the parse tree and
-        // reached through `*mut` (write-capable provenance for `Mut`).
-        let normals: &View<ValueArray> = unsafe { View::<ValueArray>::from_ptr(normals) };
+    let normals: Option<&View<ValueArray>> = find_array(node, sp::Normals.as_ptr(), b'r');
+    if let Some(normals) = normals {
         let num_normals: usize = normals.size() / 3;
         let per_vertex: bool = num_normals == mesh.num_vertices();
         let per_index: bool = num_normals == mesh.num_indices();
@@ -9983,16 +9862,7 @@ pub(crate) fn read_legacy_mesh(
                 )
             }?;
         } else if mapping == sp::AllSame.as_ptr() {
-            let arr: *mut ValueArray = find_array(node, sp::Materials.as_ptr(), b'i');
-            // SAFETY: the view is minted only in the non-null arm, where
-            // `find_array` returned the node's own array descriptor, live for
-            // as long as the parse tree and reached through `*mut`
-            // (write-capable provenance for `Mut`).
-            let arr: Option<&View<ValueArray>> = if arr.is_null() {
-                None
-            } else {
-                Some(unsafe { View::<ValueArray>::from_ptr(arr) })
-            };
+            let arr: Option<&View<ValueArray>> = find_array(node, sp::Materials.as_ptr(), b'i');
             let mut material: u32 = 0;
             if arr.is_some_and(|arr| arr.size() >= 1) {
                 // The guard above admits only a live descriptor with `size >= 1`,
@@ -10242,20 +10112,18 @@ pub(crate) fn read_legacy_model(uc: &Context, node: &NodeView) -> Result<(), Fai
     }
 
     // Children are represented as an array of strings
-    let children: *mut ValueArray = find_array(node, sp::Children.as_ptr(), b's');
-    if !children.is_null() {
-        // SAFETY: `children` is the non-null `'s'`-typed value array the search
-        // returned, so its `data` is a run of `size` pooled `ufbx_string`s;
-        // `i < size` keeps the indexing in bounds.
-        unsafe {
-            let names: *mut String = (*children).data as *mut String;
-            let mut i: usize = 0;
-            while i < (*children).size {
-                let child_fbx_id: u64 = synthetic_id_from_string(uc, (*names.add(i)).data);
-                ufbxi_check!(uc, child_fbx_id != 0, "child_fbx_id");
-                connect_oo(uc, child_fbx_id, info.fbx_id)?;
-                i += 1;
-            }
+    let children: Option<&View<ValueArray>> = find_array(node, sp::Children.as_ptr(), b's');
+    if let Some(children) = children {
+        let names: *mut String = children.data() as *mut String;
+        let mut i: usize = 0;
+        while i < children.size() {
+            // SAFETY: the `'s'`-typed value array's `data` is a run of `size`
+            // pooled `ufbx_string`s; `i < size` keeps the indexing in bounds.
+            let child_data: *const u8 = unsafe { (*names.add(i)).data };
+            let child_fbx_id: u64 = synthetic_id_from_string(uc, child_data);
+            ufbxi_check!(uc, child_fbx_id != 0, "child_fbx_id");
+            connect_oo(uc, child_fbx_id, info.fbx_id)?;
+            i += 1;
         }
     }
 
