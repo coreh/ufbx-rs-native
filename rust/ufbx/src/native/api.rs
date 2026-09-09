@@ -5020,6 +5020,20 @@ macro_rules! vertex_attrib_views {
                 let values: &View<List<$elem>, M> = view_project!(self, values);
                 values.data()
             }
+            /// ufbx's `(ufbx_vertex_attrib*)&mesh->vertex_foo` cast: the typed
+            /// attribute viewed in place through the shared `ufbx_vertex_attrib`
+            /// layout it is a prefix-identical copy of (same field sequence, same
+            /// size — pinned by the `size_of` asserts in native/read.rs).
+            #[inline(always)]
+            pub(crate) fn attrib_view(&self) -> &View<crate::generated::VertexAttrib, M> {
+                // SAFETY: in-place reinterpretation of the receiver's own slot:
+                // both structs are `repr(C)` with the same size and the same
+                // field sequence (`exists`, a `data`/`count` list, `indices`,
+                // `value_reals`, `unique_per_vertex`, `values_w`), so every
+                // `VertexAttrib` leaf lands on the matching typed leaf; the
+                // view inherits the receiver's provenance, mode, and lifetime.
+                unsafe { View::mint(self.as_ptr() as *mut crate::generated::VertexAttrib) }
+            }
         }
     )*};
 }

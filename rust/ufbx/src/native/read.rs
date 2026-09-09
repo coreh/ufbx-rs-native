@@ -4118,13 +4118,7 @@ pub(crate) fn read_mesh(uc: &Context, node: &NodeView, info: &ElementInfoView) -
             if mesh.vertex_normal().exists() {
                 continue;
             }
-            // SAFETY: `vertex_normal_raw()` addresses the mesh's own live
-            // `ufbx_vertex_vec3` field, reached through `*mut` (write-capable
-            // provenance for `Mut`); the static asserts pin
-            // `ufbx_vertex_vec3` to `ufbx_vertex_attrib`'s layout.
-            let attrib: &View<VertexAttrib> = unsafe {
-                View::<VertexAttrib>::from_ptr(mesh.vertex_normal_raw() as *mut VertexAttrib)
-            };
+            let attrib: &View<VertexAttrib> = mesh.vertex_normal().attrib_view();
             // SAFETY: `read_vertex_element` is an `unsafe fn`; the interned name
             // runs are NUL-terminated (its contract) and the `3` value-real
             // count matches that attribute type.
@@ -4152,12 +4146,7 @@ pub(crate) fn read_mesh(uc: &Context, node: &NodeView, info: &ElementInfoView) -
             if let Some(got) = get_val1::<i32>(n) {
                 layer.set_index(got as u32);
             }
-            // SAFETY: `layer.elem_raw()` addresses the in-bounds slot's live
-            // `ufbx_vertex_vec3`, tmp-stack memory reached through `*mut`
-            // (write-capable provenance for `Mut`); the static asserts pin
-            // `ufbx_vertex_vec3` to `ufbx_vertex_attrib`'s layout.
-            let attrib: &View<VertexAttrib> =
-                unsafe { View::<VertexAttrib>::from_ptr(layer.elem_raw() as *mut VertexAttrib) };
+            let attrib: &View<VertexAttrib> = layer.elem_view().attrib_view();
             // SAFETY: `read_vertex_element` is an `unsafe fn`; the interned name
             // runs are NUL-terminated (its contract) and the `3` value-real
             // count matches the attribute.
@@ -4188,12 +4177,7 @@ pub(crate) fn read_mesh(uc: &Context, node: &NodeView, info: &ElementInfoView) -
             if let Some(got) = get_val1::<i32>(n) {
                 layer.set_index(got as u32);
             }
-            // SAFETY: `layer.elem_raw()` addresses the in-bounds slot's live
-            // `ufbx_vertex_vec3`, tmp-stack memory reached through `*mut`
-            // (write-capable provenance for `Mut`); the static asserts pin
-            // `ufbx_vertex_vec3` to `ufbx_vertex_attrib`'s layout.
-            let attrib: &View<VertexAttrib> =
-                unsafe { View::<VertexAttrib>::from_ptr(layer.elem_raw() as *mut VertexAttrib) };
+            let attrib: &View<VertexAttrib> = layer.elem_view().attrib_view();
             // SAFETY: `read_vertex_element` is an `unsafe fn`; the interned name
             // runs are NUL-terminated (its contract) and the `3` value-real
             // count matches the attribute.
@@ -4235,12 +4219,7 @@ pub(crate) fn read_mesh(uc: &Context, node: &NodeView, info: &ElementInfoView) -
                 set.set_name(EMPTY_STRING.0);
             }
 
-            // SAFETY: `set.vertex_uv_raw()` addresses the in-bounds slot's live
-            // `ufbx_vertex_vec2`, result-arena memory reached through `*mut`
-            // (write-capable provenance for `Mut`); the static asserts pin
-            // `ufbx_vertex_vec2` to `ufbx_vertex_attrib`'s layout.
-            let attrib: &View<VertexAttrib> =
-                unsafe { View::<VertexAttrib>::from_ptr(set.vertex_uv_raw() as *mut VertexAttrib) };
+            let attrib: &View<VertexAttrib> = set.vertex_uv().attrib_view();
             // SAFETY: `read_vertex_element` is an `unsafe fn`; the interned name
             // runs are NUL-terminated (its contract) and the `2` value-real
             // count matches the attribute.
@@ -4273,13 +4252,7 @@ pub(crate) fn read_mesh(uc: &Context, node: &NodeView, info: &ElementInfoView) -
                 set.set_name(EMPTY_STRING.0);
             }
 
-            // SAFETY: `set.vertex_color_raw()` addresses the in-bounds slot's
-            // live `ufbx_vertex_vec4`, result-arena memory reached through
-            // `*mut` (write-capable provenance for `Mut`); the static asserts
-            // pin `ufbx_vertex_vec4` to `ufbx_vertex_attrib`'s layout.
-            let attrib: &View<VertexAttrib> = unsafe {
-                View::<VertexAttrib>::from_ptr(set.vertex_color_raw() as *mut VertexAttrib)
-            };
+            let attrib: &View<VertexAttrib> = set.vertex_color().attrib_view();
             // SAFETY: `read_vertex_element` is an `unsafe fn`; the interned name
             // runs are NUL-terminated (its contract) and the `4` value-real
             // count matches the attribute.
@@ -4301,13 +4274,7 @@ pub(crate) fn read_mesh(uc: &Context, node: &NodeView, info: &ElementInfoView) -
                     .set_count(mesh.color_sets().count - 1);
             }
         } else if n.name() == sp::LayerElementVertexCrease.as_ptr() {
-            // SAFETY: `vertex_crease_raw()` addresses the mesh's own live
-            // `ufbx_vertex_real` field, reached through `*mut` (write-capable
-            // provenance for `Mut`); the static asserts pin `ufbx_vertex_real`
-            // to `ufbx_vertex_attrib`'s layout.
-            let attrib: &View<VertexAttrib> = unsafe {
-                View::<VertexAttrib>::from_ptr(mesh.vertex_crease_raw() as *mut VertexAttrib)
-            };
+            let attrib: &View<VertexAttrib> = mesh.vertex_crease().attrib_view();
             // SAFETY: `read_vertex_element` is an `unsafe fn`; the interned name
             // runs are NUL-terminated (its contract) and the `1` value-real
             // count matches the attribute.
@@ -9961,12 +9928,7 @@ pub(crate) fn read_legacy_mesh(
         let set: &View<UvSet> = unsafe { View::<UvSet>::from_ptr(set) };
         set.set_index(0);
         set.name_view().set(EMPTY_STRING.0);
-        // SAFETY: `set.vertex_uv_raw()` is the `ufbx_vertex_vec2` slot of the
-        // fresh non-null set, result-arena memory reached through `*mut`
-        // (write-capable provenance for `Mut`); the static asserts pin
-        // `ufbx_vertex_vec2` to `ufbx_vertex_attrib`'s layout.
-        let attrib: &View<VertexAttrib> =
-            unsafe { View::<VertexAttrib>::from_ptr(set.vertex_uv_raw() as *mut VertexAttrib) };
+        let attrib: &View<VertexAttrib> = set.vertex_uv().attrib_view();
         // SAFETY: `read_vertex_element` is an `unsafe fn`; the interned name
         // runs are NUL-terminated (its contract) and the `'r'`/2 attribute
         // shape matches the slot.

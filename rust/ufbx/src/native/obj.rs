@@ -1715,22 +1715,12 @@ pub(crate) fn obj_pop_meshes(uc: &Context) -> Result<(), Fail> {
             }
 
             // SAFETY: `tmp_indices` is the checked scratch allocation sized for
-            // the widest mesh. Each attribute view is minted over a distinct
-            // vertex-attribute field of `fbx_mesh`, live and write-capable
-            // through this mesh element, reinterpreted onto the shared
-            // `ufbx_vertex_attrib` layout prefix (C's cast).
-            let (tmp_indices_run, position, uv, normal) = unsafe {
-                (
-                    Run::<u64>::from_raw_parts(tmp_indices, max_indices),
-                    View::<VertexAttrib>::from_ptr(
-                        fbx_mesh.vertex_position_raw() as *mut VertexAttrib
-                    ),
-                    View::<VertexAttrib>::from_ptr(fbx_mesh.vertex_uv_raw() as *mut VertexAttrib),
-                    View::<VertexAttrib>::from_ptr(
-                        fbx_mesh.vertex_normal_raw() as *mut VertexAttrib
-                    ),
-                )
-            };
+            // the widest mesh.
+            let tmp_indices_run = unsafe { Run::<u64>::from_raw_parts(tmp_indices, max_indices) };
+            // C's `(ufbx_vertex_attrib*)&mesh->vertex_foo` casts, viewed in place.
+            let position = fbx_mesh.vertex_position().attrib_view();
+            let uv = fbx_mesh.vertex_uv().attrib_view();
+            let normal = fbx_mesh.vertex_normal().attrib_view();
             obj_setup_attrib(
                 uc,
                 mesh,

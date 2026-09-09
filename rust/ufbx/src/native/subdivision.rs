@@ -2034,25 +2034,6 @@ pub(crate) fn subdivide_layer(
     Ok(())
 }
 
-// Rust-port infrastructure (not a ufbx.c function): every `ufbxi_subdivide_attrib`
-// call site in `ufbxi_subdivide_mesh_level` (ufbx.c:29657 onwards) passes
-// `(ufbx_vertex_attrib*)&x->vertex_foo` — the type-erasing cast onto the shared
-// `{ exists, values, indices, value_reals, ... }` prefix of `ufbx_vertex_vec2` /
-// `_vec3` / `_vec4` / `_real`. This is that cast, in one place.
-//
-// # Safety
-// `ptr` must address a live `ufbx_vertex_*` field laid out with the
-// `ufbx_vertex_attrib` prefix, owned by a context or arena that keeps it alive
-// and unmoved for `'a`, and its provenance must be write-capable (the
-// `View<_, Mut>` mint vouch).
-#[cfg(feature = "subdivision")]
-#[inline(always)]
-unsafe fn attrib_view<'a, T>(ptr: *mut T) -> &'a View<VertexAttrib> {
-    // SAFETY: the caller vouches for liveness, the `ufbx_vertex_attrib` layout
-    // prefix and write-capable provenance (fn contract above).
-    unsafe { View::<VertexAttrib>::from_ptr(ptr as *mut VertexAttrib) }
-}
-
 // ufbx.c:29464-29489 `ufbxi_subdivide_attrib`
 // Safe `fn`: the attribute arrives as a view; the residual raw ops initialize
 // and mint views over the two `MaybeUninit` locals this fn owns. Completed
@@ -2511,10 +2492,7 @@ pub(crate) unsafe fn subdivide_mesh_level(
 
     subdivide_attrib(
         sc,
-        // SAFETY: `vertex_position_raw()` addresses `result`'s own live
-        // `vertex_position` field, reinterpreted as the type-erased attribute
-        // `subdivide_attrib` subdivides in place (C's cast).
-        unsafe { attrib_view(result.vertex_position_raw()) },
+        result.vertex_position().attrib_view(),
         sc.opts_view().boundary(),
         false,
     )?;
@@ -2579,29 +2557,23 @@ pub(crate) unsafe fn subdivide_mesh_level(
         for set in Run::from_list(uv_sets).iter() {
             subdivide_attrib(
                 sc,
-                // SAFETY: `vertex_uv_raw()` addresses this live `UvSet`'s own
-                // attribute field, subdivided in place.
-                unsafe { attrib_view(set.vertex_uv_raw()) },
+                set.vertex_uv().attrib_view(),
                 sc.opts_view().uv_boundary(),
                 true,
             )?;
             if sc.opts_view().interpolate_tangents() {
-                // SAFETY: as above, for this set's tangent and bitangent
-                // attribute fields.
-                unsafe {
-                    subdivide_attrib(
-                        sc,
-                        attrib_view(set.vertex_tangent_raw()),
-                        sc.opts_view().uv_boundary(),
-                        true,
-                    )?;
-                    subdivide_attrib(
-                        sc,
-                        attrib_view(set.vertex_bitangent_raw()),
-                        sc.opts_view().uv_boundary(),
-                        true,
-                    )?;
-                }
+                subdivide_attrib(
+                    sc,
+                    set.vertex_tangent().attrib_view(),
+                    sc.opts_view().uv_boundary(),
+                    true,
+                )?;
+                subdivide_attrib(
+                    sc,
+                    set.vertex_bitangent().attrib_view(),
+                    sc.opts_view().uv_boundary(),
+                    true,
+                )?;
             } else {
                 // SAFETY: each `*_raw()` addresses a live attribute field of this
                 // set, zeroed in place to its own size.
@@ -2626,9 +2598,7 @@ pub(crate) unsafe fn subdivide_mesh_level(
         for set in Run::from_list(color_sets).iter() {
             subdivide_attrib(
                 sc,
-                // SAFETY: `vertex_color_raw()` addresses this live `ColorSet`'s
-                // own attribute field, subdivided in place.
-                unsafe { attrib_view(set.vertex_color_raw()) },
+                set.vertex_color().attrib_view(),
                 sc.opts_view().uv_boundary(),
                 true,
             )?;
@@ -2668,9 +2638,7 @@ pub(crate) unsafe fn subdivide_mesh_level(
     if sc.opts_view().interpolate_normals() && !sc.opts_view().ignore_normals() {
         subdivide_attrib(
             sc,
-            // SAFETY: `vertex_normal_raw()` addresses `result`'s own live normal
-            // attribute, subdivided in place.
-            unsafe { attrib_view(result.vertex_normal_raw()) },
+            result.vertex_normal().attrib_view(),
             sc.opts_view().boundary(),
             true,
         )?;
@@ -2689,9 +2657,7 @@ pub(crate) unsafe fn subdivide_mesh_level(
         } else {
             subdivide_attrib(
                 sc,
-                // SAFETY: `skinned_normal_raw()` addresses `result`'s own live
-                // skinned-normal attribute, subdivided in place.
-                unsafe { attrib_view(result.skinned_normal_raw()) },
+                result.skinned_normal().attrib_view(),
                 sc.opts_view().boundary(),
                 true,
             )?;
@@ -2717,9 +2683,7 @@ pub(crate) unsafe fn subdivide_mesh_level(
     } else {
         subdivide_attrib(
             sc,
-            // SAFETY: `skinned_position_raw()` addresses `result`'s own live
-            // skinned-position attribute, subdivided in place.
-            unsafe { attrib_view(result.skinned_position_raw()) },
+            result.skinned_position().attrib_view(),
             sc.opts_view().boundary(),
             false,
         )?;
