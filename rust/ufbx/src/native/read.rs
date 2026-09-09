@@ -10381,6 +10381,41 @@ pub(crate) union Strblob {
 const _: () = assert!(size_of::<Strblob>() == size_of::<String>());
 const _: () = assert!(size_of::<Strblob>() == size_of::<Blob>());
 
+// ufbx's `(ufbxi_strblob*)&elem->filename` casts: a `String` / `Blob` place
+// viewed in place through the union it is a member of. The `raw` flag that
+// selects the member at every accessor must match the place's own type, as
+// the C casts do (`false` for `ufbx_string` places, `true` for `ufbx_blob`).
+impl<M: Mode> View<String, M> {
+    #[inline(always)]
+    pub(crate) fn strblob_view(&self) -> &View<Strblob, M> {
+        // SAFETY: in-place reinterpretation of the receiver's own slot as the
+        // union it is the `str_` member of (same size, asserted above); the
+        // view inherits the receiver's provenance, mode, and lifetime.
+        unsafe { View::mint(self.as_ptr() as *mut Strblob) }
+    }
+}
+
+impl<M: Mode> View<Blob, M> {
+    #[inline(always)]
+    pub(crate) fn strblob_view(&self) -> &View<Strblob, M> {
+        // SAFETY: in-place reinterpretation of the receiver's own slot as the
+        // union it is the `blob` member of (same size, asserted above); the
+        // view inherits the receiver's provenance, mode, and lifetime.
+        unsafe { View::mint(self.as_ptr() as *mut Strblob) }
+    }
+}
+
+// ufbx.c:16547-16555 `ufbxi_strblob_data` + `ufbxi_strblob_length` as one run:
+// the `raw`-selected member's bytes, borrowed for the view's own lifetime.
+#[inline(always)]
+pub(crate) fn strblob_bytes<M: Mode>(strblob: &View<Strblob, M>, raw: bool) -> &[u8] {
+    // SAFETY: per the mint's per-leaf discipline the `raw`-selected member is
+    // a valid `ufbx_string` / `ufbx_blob`: `data` addresses `length` / `size`
+    // readable bytes that stay live and unwritten while this view borrow lasts
+    // (interned pool strings are never moved or rewritten; ufbx.c:4897).
+    unsafe { slice_from_ptr(strblob_data(strblob, raw), strblob_length(strblob, raw)) }
+}
+
 // ufbx.c:16536-16545 `ufbxi_strblob_set` string member
 #[inline(never)]
 pub(crate) fn strblob_set_string(dst: &View<Strblob>, value: String) {

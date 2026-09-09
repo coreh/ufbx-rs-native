@@ -245,7 +245,7 @@ use crate::native::platform::{
 use crate::native::read::{
     deduplicate_properties, find_fbx_id, fix_index, init_synthetic_vec3_prop, mesh_part_add_face,
     opt_ref, resolve_relative_filename, set_own_prop_vec3_uniform, setup_geometry_transform_helper,
-    setup_scale_helper, sort_properties, strblob_data, strblob_length, strblob_set_blob,
+    setup_scale_helper, sort_properties, strblob_bytes, strblob_length, strblob_set_blob,
     strblob_set_string, unscaled_transform_to_matrix, update_vertex_first_index, NodeExtra,
     Strblob, SENTINEL_INDEX_CONSECUTIVE, SENTINEL_INDEX_ZERO,
 };
@@ -7405,35 +7405,28 @@ pub(crate) fn next_path_segment(data: &[u8], begin: usize) -> usize {
 
 // ufbx.c:21368-21435 `ufbxi_absolute_to_relative_path`
 #[inline(never)]
-pub(crate) unsafe fn absolute_to_relative_path(
+// Safe `fn`: the three strblobs arrive as views over live places (the
+// relative path is written last, through `p_dst`'s own setter); the scratch
+// path is assembled through a bounds-checked slice over `uc`'s tmp array, so
+// the C sizing hazard noted below trips an index assertion instead of an
+// overrun.
+pub(crate) fn absolute_to_relative_path(
     uc: &Context,
-    p_dst: *mut Strblob,
-    p_rel: *const Strblob,
-    p_src: *const Strblob,
+    p_dst: &View<Strblob>,
+    p_rel: &View<Strblob>,
+    p_src: &View<Strblob>,
     raw: bool,
 ) -> Result<(), Fail> {
-    let (rel, src, mut rel_length, src_length): (*const u8, *const u8, usize, usize) = {
-        // SAFETY: `p_rel` points to a live, initialized `ufbx_strblob` (fn
-        // contract), so the `raw`-selected member's data pointer is readable;
-        // the read-only tag ends with this block, before anything writes
-        // through `p_dst`.
-        let p_rel: &View<Strblob, Const> = unsafe { View::<_, Const>::from_ptr(p_rel) };
-        // SAFETY: as above, for `p_src`.
-        let p_src: &View<Strblob, Const> = unsafe { View::<_, Const>::from_ptr(p_src) };
-        (
-            strblob_data(p_rel, raw),
-            strblob_data(p_src, raw),
-            strblob_length(p_rel, raw),
-            strblob_length(p_src, raw),
-        )
-    };
+    // C: `const char *rel = ufbxi_strblob_data(p_rel, raw);` etc. — the four
+    // header reads, carried as the two selected byte runs.
+    let rel_bytes: &[u8] = strblob_bytes(p_rel, raw);
+    let src_bytes: &[u8] = strblob_bytes(p_src, raw);
+    let mut rel_length: usize = rel_bytes.len();
+    let src_length: usize = src_bytes.len();
 
     if rel_length == 0 || src_length == 0 {
         return Ok(());
     }
-    // SAFETY: the viewed strblobs above supply their selected data extents.
-    let rel_bytes = unsafe { slice_from_ptr(rel, rel_length) };
-    let src_bytes = unsafe { slice_from_ptr(src, src_length) };
 
     // Absolute paths must start with the same character (either drive or '/')
     if rel_bytes[0] != src_bytes[0] {
@@ -7467,7 +7460,12 @@ pub(crate) unsafe fn absolute_to_relative_path(
         },
         "ufbxi_grow_array_size((&uc->ator_tmp), sizeof(**(&uc->tmp_arr)), (&uc->tmp_arr), (&uc->tmp_arr_size), (max_length))"
     );
-    let tmp: *mut u8 = uc.tmp_arr();
+    // SAFETY: the grow above sized `uc`'s own tmp array to at least
+    // `max_length` bytes, one contiguous write-capable allocation that nothing
+    // else touches until the intern below reads it back; the bytes may still
+    // be uninitialized, which a `u8` slice written before it is read
+    // tolerates. The exclusive borrow ends at that read.
+    let tmp: &mut [u8] = unsafe { core::slice::from_raw_parts_mut(uc.tmp_arr(), max_length) };
     let mut tmp_length: usize = 0;
 
     let mut rel_begin: usize = 0;
@@ -7490,25 +7488,24 @@ pub(crate) unsafe fn absolute_to_relative_path(
 
     while rel_begin < rel_length {
         let rel_end: usize = next_path_segment(&rel_bytes[..rel_length], rel_begin);
-        // SAFETY: `tmp` is the grown tmp array of `max_length == 2 * rel_length
-        // + src_length` bytes. Each iteration writes three bytes and advances
-        // `rel_begin` past one `rel` segment plus its separator, so as long as
-        // every remaining segment is non-empty the stride is at least two and
-        // this loop emits at most `1.5 * (rel_length - rel_begin)` bytes, which
-        // together with the `src_length - src_begin` bytes the copy loop below
-        // writes stays inside `max_length`. A run of consecutive separators in
-        // `rel` shortens that stride to one and is the only shape this sizing
-        // does not cover; the port keeps the C sizing (ufbx.c:21405-21411)
-        // rather than diverging, and the `ufbx_assert!` after the loops reports
-        // the overrun in debug builds.
-        unsafe {
-            *tmp.add(tmp_length) = b'.';
-            tmp_length += 1;
-            *tmp.add(tmp_length) = b'.';
-            tmp_length += 1;
-            *tmp.add(tmp_length) = separator;
-            tmp_length += 1;
-        }
+        // `tmp` holds `max_length == 2 * rel_length + src_length` bytes. Each
+        // iteration writes three bytes and advances `rel_begin` past one `rel`
+        // segment plus its separator, so as long as every remaining segment is
+        // non-empty the stride is at least two and this loop emits at most
+        // `1.5 * (rel_length - rel_begin)` bytes, which together with the
+        // `src_length - src_begin` bytes the copy loop below writes stays
+        // inside `max_length`. A run of consecutive separators in `rel`
+        // shortens that stride to one and is the only shape this sizing does
+        // not cover; the port keeps the C sizing (ufbx.c:21405-21411) rather
+        // than diverging, and the slice indexing asserts before any byte
+        // would land past it (the `ufbx_assert!` after the loops is C's own
+        // late check).
+        tmp[tmp_length] = b'.';
+        tmp_length += 1;
+        tmp[tmp_length] = b'.';
+        tmp_length += 1;
+        tmp[tmp_length] = separator;
+        tmp_length += 1;
         rel_begin = rel_end + 1;
     }
 
@@ -7516,20 +7513,14 @@ pub(crate) unsafe fn absolute_to_relative_path(
         let src_end: usize = next_path_segment(src_bytes, src_begin);
         let len: usize = src_end - src_begin;
 
-        // SAFETY: `[src_begin, src_end)` lies inside the `src` run; `tmp` is the
-        // grown tmp array of `max_length` bytes and the copied segments plus
-        // their separators total exactly `src_length - src_begin` bytes on top
-        // of the `..`-prefix written above, so the same accounting as that loop
-        // applies — it fits in `max_length` for every `rel` without a run of
-        // consecutive separators; the tmp array is a distinct allocation from
-        // the interned `src` string.
-        unsafe { ptr::copy_nonoverlapping(src.add(src_begin), tmp.add(tmp_length), len) };
+        // The copied segments plus their separators total exactly
+        // `src_length - src_begin` bytes on top of the `..`-prefix written
+        // above, so the same accounting as that loop applies.
+        tmp[tmp_length..tmp_length + len].copy_from_slice(&src_bytes[src_begin..src_end]);
         tmp_length += len;
 
         if src_end < src_length {
-            // SAFETY: as above — the separator is the byte accounted for the
-            // segment that follows.
-            unsafe { *tmp.add(tmp_length) = separator };
+            tmp[tmp_length] = separator;
             tmp_length += 1;
         }
 
@@ -7540,12 +7531,12 @@ pub(crate) unsafe fn absolute_to_relative_path(
 
     // C-parity: `raw` is hardcoded `true` here, independent of the `raw`
     // parameter that selected the source/destination strblob members.
-    // SAFETY: `tmp`/`tmp_length` describe the bytes just written into the tmp
-    // array.
+    // SAFETY: `tmp[..tmp_length]` are the initialized bytes just written into
+    // the tmp array; the pool copies them.
     let dst: *const u8 = unsafe {
         sp::push_string(
             uc.string_pool_view(),
-            tmp,
+            tmp.as_ptr(),
             tmp_length,
             ptr::null_mut(),
             true,
@@ -7553,9 +7544,6 @@ pub(crate) unsafe fn absolute_to_relative_path(
     };
     ufbxi_check!(uc, !dst.is_null(), "dst");
 
-    // SAFETY: `p_dst` points to a live, write-capable `ufbx_strblob` to write
-    // (fn contract).
-    let p_dst: &View<Strblob> = unsafe { View::<_, Mut>::from_ptr(p_dst) };
     // `dst`/`tmp_length` describe the string just interned in `uc`'s pool. The
     // discriminator visibly selects the matching union member for publication.
     let dst = String::new_c(dst, tmp_length);
@@ -7578,25 +7566,28 @@ pub(crate) fn resolve_filenames(
     raw: bool,
 ) -> Result<(), Fail> {
     if strblob_length(relative_filename, raw) == 0 {
-        let original_file_path: *const Strblob = if raw {
-            uc.scene_view().metadata_view().raw_original_file_path_ptr() as *const Strblob
+        // C: `(const ufbxi_strblob*)&uc->scene.metadata.raw_original_file_path`
+        // / `.original_file_path` — the metadata path field of matching
+        // `raw`-ness, viewed in place.
+        let original_file_path: &View<Strblob> = if raw {
+            uc.scene_view()
+                .metadata_view()
+                .raw_original_file_path_view()
+                .strblob_view()
         } else {
-            uc.scene_view().metadata_view().original_file_path_ptr() as *const Strblob
+            uc.scene_view()
+                .metadata_view()
+                .original_file_path_view()
+                .strblob_view()
         };
 
-        // SAFETY: `relative_filename`/`absolute_filename` view live strblobs of the
-        // element being resolved (view mint invariant), and `original_file_path`
-        // addresses the scene metadata's own path field, which the accessors above
-        // hand out as a `Strblob`-shaped view of the matching `raw`-ness.
-        unsafe {
-            absolute_to_relative_path(
-                uc,
-                relative_filename.get(),
-                original_file_path,
-                absolute_filename.get(),
-                raw,
-            )
-        }?;
+        absolute_to_relative_path(
+            uc,
+            relative_filename,
+            original_file_path,
+            absolute_filename,
+            raw,
+        )?;
     }
 
     resolve_relative_filename(uc, filename, relative_filename, raw)?;
@@ -7735,85 +7726,57 @@ pub(crate) fn fetch_file_content(
 
 // ufbx.c:21490-21528 `ufbxi_resolve_file_content`
 #[inline(never)]
-pub(crate) fn resolve_file_content<'a>(uc: &'a Context) -> Result<(), Fail> {
+pub(crate) fn resolve_file_content(uc: &Context) -> Result<(), Fail> {
     let initial_stack: usize = uc.tmp_stack_view().num_items();
 
-    // SAFETY: walks the stored `videos` element-pointer run of the uc-owned scene
-    // (`count` entries); the resolve/push helpers receive views over places inside
-    // that same video, whose write-capable provenance backs every strblob, string,
-    // and blob view minted over them.
-    unsafe {
-        // C: `ufbxi_for_ptr_list(ufbx_video, p_video, uc->scene.videos)`
-        let mut p_video: *mut *mut Video = uc.scene_view().videos_view().data() as *mut *mut Video;
-        let p_video_end: *mut *mut Video = add_ptr(p_video, uc.scene_view().videos_view().count());
-        while p_video != p_video_end {
-            let video: *mut Video = *p_video;
-            resolve_filenames(
-                uc,
-                View::<Strblob>::from_ptr(&raw mut (*video).filename as *mut Strblob),
-                View::<Strblob>::from_ptr(&raw mut (*video).absolute_filename as *mut Strblob),
-                View::<Strblob>::from_ptr(&raw mut (*video).relative_filename as *mut Strblob),
-                false,
-            )?;
-            resolve_filenames(
-                uc,
-                View::<Strblob>::from_ptr(&raw mut (*video).raw_filename as *mut Strblob),
-                View::<Strblob>::from_ptr(&raw mut (*video).raw_absolute_filename as *mut Strblob),
-                View::<Strblob>::from_ptr(&raw mut (*video).raw_relative_filename as *mut Strblob),
-                true,
-            )?;
-            push_file_content(
-                uc,
-                View::<String>::from_ptr(&raw mut (*video).absolute_filename),
-                View::<Blob>::from_ptr(&raw mut (*video).content),
-            )?;
-            p_video = p_video.add(1);
-        }
+    // C: `ufbxi_for_ptr_list(ufbx_video, p_video, uc->scene.videos)`
+    let videos: &RefListView<Video> = uc.scene_view().videos_view();
+    for video_ix in 0..videos.count() {
+        let video: &View<Video> = videos.at(video_ix);
+        resolve_filenames(
+            uc,
+            video.filename_view().strblob_view(),
+            video.absolute_filename_view().strblob_view(),
+            video.relative_filename_view().strblob_view(),
+            false,
+        )?;
+        resolve_filenames(
+            uc,
+            video.raw_filename_view().strblob_view(),
+            video.raw_absolute_filename_view().strblob_view(),
+            video.raw_relative_filename_view().strblob_view(),
+            true,
+        )?;
+        push_file_content(uc, video.absolute_filename_view(), video.content_view())?;
     }
 
-    // SAFETY: walks the stored `audio_clips` element-pointer run of the uc-owned
-    // scene (`count` entries); each clip's props are reached through an
-    // arena-anchored view with NUL-terminated literal names, and the resolve/push
-    // helpers receive views over places inside that same clip, whose write-capable
-    // provenance backs every strblob, string, and blob view minted over them.
-    unsafe {
-        // C: `ufbxi_for_ptr_list(ufbx_audio_clip, p_clip, uc->scene.audio_clips)`
-        let mut p_clip: *mut *mut AudioClip =
-            uc.scene_view().audio_clips_view().data() as *mut *mut AudioClip;
-        let p_clip_end: *mut *mut AudioClip =
-            add_ptr(p_clip, uc.scene_view().audio_clips_view().count());
-        while p_clip != p_clip_end {
-            let clip_view: &'a AudioClipView = AudioClipView::from_ptr(*p_clip);
-            let clip: *mut AudioClip = clip_view.get();
-            (*clip).absolute_filename =
-                find_string_len(clip_view.props_view(), b"Path", EMPTY_STRING.0);
-            (*clip).relative_filename =
-                find_string_len(clip_view.props_view(), b"RelPath", EMPTY_STRING.0);
-            (*clip).raw_absolute_filename =
-                find_blob_len(clip_view.props_view(), b"Path", EMPTY_BLOB.0);
-            (*clip).raw_relative_filename =
-                find_blob_len(clip_view.props_view(), b"RelPath", EMPTY_BLOB.0);
-            resolve_filenames(
-                uc,
-                View::<Strblob>::from_ptr(&raw mut (*clip).filename as *mut Strblob),
-                View::<Strblob>::from_ptr(&raw mut (*clip).absolute_filename as *mut Strblob),
-                View::<Strblob>::from_ptr(&raw mut (*clip).relative_filename as *mut Strblob),
-                false,
-            )?;
-            resolve_filenames(
-                uc,
-                View::<Strblob>::from_ptr(&raw mut (*clip).raw_filename as *mut Strblob),
-                View::<Strblob>::from_ptr(&raw mut (*clip).raw_absolute_filename as *mut Strblob),
-                View::<Strblob>::from_ptr(&raw mut (*clip).raw_relative_filename as *mut Strblob),
-                true,
-            )?;
-            push_file_content(
-                uc,
-                View::<String>::from_ptr(&raw mut (*clip).absolute_filename),
-                View::<Blob>::from_ptr(&raw mut (*clip).content),
-            )?;
-            p_clip = p_clip.add(1);
-        }
+    // C: `ufbxi_for_ptr_list(ufbx_audio_clip, p_clip, uc->scene.audio_clips)`
+    let audio_clips: &RefListView<AudioClip> = uc.scene_view().audio_clips_view();
+    for clip_ix in 0..audio_clips.count() {
+        let clip: &AudioClipView = audio_clips.at(clip_ix);
+        clip.set_absolute_filename(find_string_len(clip.props_view(), b"Path", EMPTY_STRING.0));
+        clip.set_relative_filename(find_string_len(
+            clip.props_view(),
+            b"RelPath",
+            EMPTY_STRING.0,
+        ));
+        clip.set_raw_absolute_filename(find_blob_len(clip.props_view(), b"Path", EMPTY_BLOB.0));
+        clip.set_raw_relative_filename(find_blob_len(clip.props_view(), b"RelPath", EMPTY_BLOB.0));
+        resolve_filenames(
+            uc,
+            clip.filename_view().strblob_view(),
+            clip.absolute_filename_view().strblob_view(),
+            clip.relative_filename_view().strblob_view(),
+            false,
+        )?;
+        resolve_filenames(
+            uc,
+            clip.raw_filename_view().strblob_view(),
+            clip.raw_absolute_filename_view().strblob_view(),
+            clip.raw_relative_filename_view().strblob_view(),
+            true,
+        )?;
+        push_file_content(uc, clip.absolute_filename_view(), clip.content_view())?;
     }
 
     uc.set_num_file_content(uc.tmp_stack_view().num_items() - initial_stack);
@@ -8843,31 +8806,18 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
             cache_view.set_format(format);
         }
 
-        // SAFETY: each `*_raw()` addresses one of the viewed cache file's own
-        // `ufbx_string` filename fields, which are `Strblob`-shaped for `raw`
-        // `false`, and carries the cache-file view's write-capable provenance.
         resolve_filenames(
             uc,
-            unsafe { View::<Strblob>::from_ptr(cache_view.filename_raw() as *mut Strblob) },
-            unsafe {
-                View::<Strblob>::from_ptr(cache_view.absolute_filename_raw() as *mut Strblob)
-            },
-            unsafe {
-                View::<Strblob>::from_ptr(cache_view.relative_filename_raw() as *mut Strblob)
-            },
+            cache_view.filename_view().strblob_view(),
+            cache_view.absolute_filename_view().strblob_view(),
+            cache_view.relative_filename_view().strblob_view(),
             false,
         )?;
-        // SAFETY: as above, for its own `ufbx_blob` raw filename fields, which are
-        // `Strblob`-shaped for `raw` `true`.
         resolve_filenames(
             uc,
-            unsafe { View::<Strblob>::from_ptr(cache_view.raw_filename_raw() as *mut Strblob) },
-            unsafe {
-                View::<Strblob>::from_ptr(cache_view.raw_absolute_filename_raw() as *mut Strblob)
-            },
-            unsafe {
-                View::<Strblob>::from_ptr(cache_view.raw_relative_filename_raw() as *mut Strblob)
-            },
+            cache_view.raw_filename_view().strblob_view(),
+            cache_view.raw_absolute_filename_view().strblob_view(),
+            cache_view.raw_relative_filename_view().strblob_view(),
             true,
         )?;
     }
@@ -9845,27 +9795,18 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
 
         finalize_shader_texture(uc, texture)?;
 
-        // SAFETY: the projections address the viewed texture's own `ufbx_string`
-        // filename fields, which are `Strblob`-shaped for `raw` `false`, and carry
-        // the texture view's write-capable provenance.
         resolve_filenames(
             uc,
-            unsafe { View::<Strblob>::from_ptr(texture.filename_raw() as *mut Strblob) },
-            unsafe { View::<Strblob>::from_ptr(texture.absolute_filename_raw() as *mut Strblob) },
-            unsafe { View::<Strblob>::from_ptr(texture.relative_filename_raw() as *mut Strblob) },
+            texture.filename_view().strblob_view(),
+            texture.absolute_filename_view().strblob_view(),
+            texture.relative_filename_view().strblob_view(),
             false,
         )?;
-        // SAFETY: as above, for its own `ufbx_blob` raw filename fields, which are
-        // `Strblob`-shaped for `raw` `true`.
         resolve_filenames(
             uc,
-            unsafe { View::<Strblob>::from_ptr(texture.raw_filename_raw() as *mut Strblob) },
-            unsafe {
-                View::<Strblob>::from_ptr(texture.raw_absolute_filename_raw() as *mut Strblob)
-            },
-            unsafe {
-                View::<Strblob>::from_ptr(texture.raw_relative_filename_raw() as *mut Strblob)
-            },
+            texture.raw_filename_view().strblob_view(),
+            texture.raw_absolute_filename_view().strblob_view(),
+            texture.raw_relative_filename_view().strblob_view(),
             true,
         )?;
 

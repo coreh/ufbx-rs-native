@@ -1139,10 +1139,6 @@ impl ObjContext {
     pub(crate) fn mtllib_relative_path(&self) -> crate::prelude::Blob {
         view_read!(self, mtllib_relative_path)
     }
-    #[inline(always)]
-    pub(crate) fn mtllib_relative_path_mut_ptr(&self) -> *mut crate::prelude::Blob {
-        view_raw_mut!(self, mtllib_relative_path)
-    }
 
     #[inline(always)]
     pub(crate) fn group_view(&self) -> &crate::prelude::StringView {
@@ -2668,8 +2664,8 @@ impl SceneMetadataView {
         view_write!(self, original_file_path, original_file_path)
     }
     #[inline(always)]
-    pub(crate) fn original_file_path_ptr(&self) -> *const crate::prelude::String {
-        view_raw_const!(self, original_file_path)
+    pub(crate) fn original_file_path_view(&self) -> &crate::prelude::StringView {
+        unsafe { &*(&raw mut (*self.get()).original_file_path as *mut crate::prelude::StringView) }
     }
 
     // --- Blob leaves: whole setter + BlobView sub-view + _mut_ptr / _ptr ---
@@ -2690,8 +2686,10 @@ impl SceneMetadataView {
         view_write!(self, raw_original_file_path, raw_original_file_path)
     }
     #[inline(always)]
-    pub(crate) fn raw_original_file_path_ptr(&self) -> *const crate::prelude::Blob {
-        view_raw_const!(self, raw_original_file_path)
+    pub(crate) fn raw_original_file_path_view(&self) -> &crate::prelude::BlobView {
+        unsafe {
+            &*(&raw mut (*self.get()).raw_original_file_path as *mut crate::prelude::BlobView)
+        }
     }
 
     // --- warnings (List<Warning>): ListView sub-view + whole-addr _mut_ptr ---
