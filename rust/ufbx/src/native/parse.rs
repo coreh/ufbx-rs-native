@@ -645,6 +645,14 @@ impl AsciiTokenView {
         view_write!(self, str_len, str_len);
     }
     #[inline(always)]
+    pub(crate) fn set_str_data(&self, str_data: *mut u8) {
+        view_write!(self, str_data, str_data);
+    }
+    #[inline(always)]
+    pub(crate) fn set_str_cap(&self, str_cap: usize) {
+        view_write!(self, str_cap, str_cap);
+    }
+    #[inline(always)]
     pub(crate) fn str_data_mut_ptr(&self) -> *mut *mut u8 {
         view_raw_mut!(self, str_data)
     }
@@ -661,12 +669,37 @@ impl AsciiTokenView {
         view_write!(self, type_, type_);
     }
     #[inline(always)]
+    pub(crate) fn negative(&self) -> bool {
+        view_read!(self, negative)
+    }
+    #[inline(always)]
     pub(crate) fn set_negative(&self, negative: bool) {
         view_write!(self, negative, negative);
     }
-    // `value.name_len` / `value.i64_` / `value.f64_` — writes of ONE member of
-    // the `value` overlay. Two-level paths, so they carry their own safety
-    // argument instead of the single-leaf macros.
+    // `value.name_len` / `value.i64_` / `value.f64_` — reads and writes of ONE
+    // member of the `value` overlay. Two-level paths, so they carry their own
+    // safety argument instead of the single-leaf macros. Every arm is an
+    // 8-byte scalar with all bit patterns valid, so a read of an initialized
+    // `value` is sound whichever arm last wrote it; which arm is meaningful is
+    // discriminated by `type_` at the call site (PORTING.md "Unions").
+    #[inline(always)]
+    pub(crate) fn value_name_len(&self) -> usize {
+        // SAFETY: reading the `name_len` arm of the `value` union of this
+        // view's live `AsciiToken` (mint invariant); all bit patterns valid.
+        unsafe { (*self.get()).value.name_len }
+    }
+    #[inline(always)]
+    pub(crate) fn value_i64(&self) -> i64 {
+        // SAFETY: reading the `i64_` arm of the `value` union of this view's
+        // live `AsciiToken` (mint invariant); all bit patterns valid.
+        unsafe { (*self.get()).value.i64_ }
+    }
+    #[inline(always)]
+    pub(crate) fn value_f64(&self) -> f64 {
+        // SAFETY: reading the `f64_` arm of the `value` union of this view's
+        // live `AsciiToken` (mint invariant); all bit patterns valid.
+        unsafe { (*self.get()).value.f64_ }
+    }
     #[inline(always)]
     pub(crate) fn set_value_name_len(&self, name_len: usize) {
         // SAFETY: `get()` yields a pointer to this view's live, unmoved
@@ -753,6 +786,16 @@ impl AsciiView {
         view_read!(self, retain_buf)
     }
     #[inline(always)]
+    pub(crate) fn set_retain_buf(&self, retain_buf: *mut Buf) {
+        view_write!(self, retain_buf, retain_buf)
+    }
+    /// Whole-`AsciiToken` copy of the current token, for the C
+    /// `ua->prev_token = ua->token;` struct assignment (memcpy semantics).
+    #[inline(always)]
+    pub(crate) fn token(&self) -> AsciiToken {
+        view_read!(self, token)
+    }
+    #[inline(always)]
     pub(crate) fn src(&self) -> *const u8 {
         view_read!(self, src)
     }
@@ -785,12 +828,28 @@ impl AsciiView {
         view_write!(self, src_end, src_end)
     }
     #[inline(always)]
+    pub(crate) fn src_is_retained(&self) -> bool {
+        view_read!(self, src_is_retained)
+    }
+    #[inline(always)]
     pub(crate) fn set_src_is_retained(&self, src_is_retained: bool) {
         view_write!(self, src_is_retained, src_is_retained)
     }
     #[inline(always)]
+    pub(crate) fn found_version(&self) -> bool {
+        view_read!(self, found_version)
+    }
+    #[inline(always)]
     pub(crate) fn set_found_version(&self, found_version: bool) {
         view_write!(self, found_version, found_version)
+    }
+    #[inline(always)]
+    pub(crate) fn parse_as_f32(&self) -> bool {
+        view_read!(self, parse_as_f32)
+    }
+    #[inline(always)]
+    pub(crate) fn set_parse_as_f32(&self, parse_as_f32: bool) {
+        view_write!(self, parse_as_f32, parse_as_f32)
     }
 }
 

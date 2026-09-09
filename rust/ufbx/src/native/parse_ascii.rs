@@ -50,9 +50,9 @@ use crate::native::float_parse::{
 use crate::native::hash::hash_string_check_ascii;
 use crate::native::parse::{
     array_type_size, is_array_node, is_raw_string, normalize_array_type, report_progress,
-    update_parse_state, ArrayInfo, Ascii, AsciiToken, AsciiTokenView, AsciiView, Context, Node,
-    ParseState, Value, ValueArray, ValueType, ARRAY_FLAG_ACCURATE_F32, ARRAY_FLAG_PAD_BEGIN,
-    ARRAY_FLAG_RESULT, ARRAY_FLAG_TMP_BUF, MAX_NODE_DEPTH, MAX_NON_ARRAY_VALUES,
+    update_parse_state, ArrayInfo, AsciiTokenView, AsciiView, Context, Node, ParseState, Value,
+    ValueArray, ValueType, ARRAY_FLAG_ACCURATE_F32, ARRAY_FLAG_PAD_BEGIN, ARRAY_FLAG_RESULT,
+    ARRAY_FLAG_TMP_BUF, MAX_NODE_DEPTH, MAX_NON_ARRAY_VALUES,
 };
 use crate::native::platform::{
     add_ptr, f64_to_i32, f64_to_i64, max_sz, min32, to_size, ufbx_assert, ufbxi_dev_assert,
@@ -504,29 +504,24 @@ pub(crate) struct AsciiSpan {
 // ufbx.c:9666-9708 `ufbxi_ascii_store_array`
 #[inline(never)]
 pub(crate) fn ascii_store_array(uc: &Context, tmp_buf: &BufView) -> Result<(), Fail> {
-    let ua: *mut Ascii = uc.ascii_mut_ptr();
+    let ua: &AsciiView = uc.ascii_view();
 
     // The `retain_buf` field is a raw back-pointer the ascii reader stores for
     // its own pushes; recover the pointer from the view.
-    // SAFETY: `ua` is `uc`'s own live `ascii` sub-context (via `ascii_mut_ptr`);
-    // this writes its `retain_buf` field in place.
-    unsafe {
-        (*ua).retain_buf = tmp_buf.get();
-    }
+    ua.set_retain_buf(tmp_buf.get());
 
     loop {
-        // SAFETY: `ua` is `uc`'s own live `ascii` sub-context; `src`/`src_yield`
-        // bracket the readable source window (`src <= src_yield`).
-        let buffered: usize = to_size(unsafe { (*ua).src_yield as isize - (*ua).src as isize });
+        // `src`/`src_yield` bracket the readable source window
+        // (`src <= src_yield`).
+        let buffered: usize = to_size(ua.src_yield() as isize - ua.src() as isize);
         if buffered == 0 {
             let c: u8 = ascii_yield(uc);
             ufbxi_check!(uc, c != b'\0', "c != '\\0'");
             continue;
         }
 
-        // SAFETY: `ua` is `uc`'s own live `ascii` sub-context; reads its `src`
-        // cursor, which points inside the source window.
-        let begin: *const u8 = unsafe { (*ua).src };
+        // The `src` cursor points inside the source window.
+        let begin: *const u8 = ua.src();
         let end: *const u8;
         // SAFETY: `begin` is the live `src` cursor and `buffered` is the readable
         // `src..src_yield` run.
@@ -539,11 +534,8 @@ pub(crate) fn ascii_store_array(uc: &Context, tmp_buf: &BufView) -> Result<(), F
             // `begin + buffered` is its one-past-the-end (== `src_yield`).
             end = unsafe { begin.add(buffered) };
         }
-        // SAFETY: `ua` is `uc`'s own live `ascii` sub-context; `end` lands in
-        // `[begin, src_yield]`, still within the source window.
-        unsafe {
-            (*ua).src = end;
-        }
+        // `end` lands in `[begin, src_yield]`, still within the source window.
+        ua.set_src(end);
 
         let mut length: usize = to_size(end as isize - begin as isize);
         let span: *mut AsciiSpan = uc.tmp_ascii_spans_view().push::<AsciiSpan>(1);
@@ -557,9 +549,7 @@ pub(crate) fn ascii_store_array(uc: &Context, tmp_buf: &BufView) -> Result<(), F
         unsafe {
             (*span).length = length;
         }
-        // SAFETY: `ua` is `uc`'s own live `ascii` sub-context; reads its
-        // `src_is_retained` flag.
-        if unsafe { (*ua).src_is_retained } || uc.read_fn().is_none() {
+        if ua.src_is_retained() || uc.read_fn().is_none() {
             // SAFETY: `span` is the live pushed slot; `begin` points into the
             // retained/inline source window, kept alive for the span's lifetime.
             unsafe {
@@ -581,11 +571,8 @@ pub(crate) fn ascii_store_array(uc: &Context, tmp_buf: &BufView) -> Result<(), F
         }
     }
 
-    // SAFETY: `ua` is `uc`'s own live `ascii` sub-context; clears its
-    // `retain_buf` back-pointer.
-    unsafe {
-        (*ua).retain_buf = core::ptr::null_mut();
-    }
+    // Clear the `retain_buf` back-pointer.
+    ua.set_retain_buf(core::ptr::null_mut());
 
     Ok(())
 }
@@ -600,7 +587,7 @@ pub(crate) fn ascii_store_array(uc: &Context, tmp_buf: &BufView) -> Result<(), F
 #[must_use]
 #[inline(never)]
 pub(crate) fn ascii_try_ignore_string(uc: &Context, token: &AsciiTokenView) -> bool {
-    let ua: *mut Ascii = uc.ascii_mut_ptr();
+    let ua: &AsciiView = uc.ascii_view();
 
     let c: u8 = ascii_skip_whitespace(uc);
     token.set_str_len(0);
@@ -608,16 +595,11 @@ pub(crate) fn ascii_try_ignore_string(uc: &Context, token: &AsciiTokenView) -> b
     if c == b'"' {
         // Replace `prev_token` with `token` but swap the buffers so `token` uses
         // the now-unused string buffer of the old `prev_token`.
-        // SAFETY: `ua` is `uc`'s own live `ascii` sub-context (via
-        // `ascii_mut_ptr`); these read and rewrite its `token`/`prev_token`
-        // fields in place.
-        unsafe {
-            let swap_data: *mut u8 = (*ua).prev_token.str_data;
-            let swap_cap: usize = (*ua).prev_token.str_cap;
-            (*ua).prev_token = (*ua).token;
-            (*ua).token.str_data = swap_data;
-            (*ua).token.str_cap = swap_cap;
-        }
+        let swap_data: *mut u8 = ua.prev_token_view().str_data();
+        let swap_cap: usize = ua.prev_token_view().str_cap();
+        ua.prev_token_view().write_value(ua.token());
+        ua.token_view().set_str_data(swap_data);
+        ua.token_view().set_str_cap(swap_cap);
 
         token.set_type_(ASCII_STRING);
         // Skip opening quote
@@ -639,19 +621,15 @@ pub(crate) fn ascii_try_ignore_string(uc: &Context, token: &AsciiTokenView) -> b
 // ufbx.c:9738-9896 `ufbxi_ascii_next_token`
 #[inline(never)]
 pub(crate) fn ascii_next_token(uc: &Context, token: &AsciiTokenView) -> Result<(), Fail> {
-    let ua: *mut Ascii = uc.ascii_mut_ptr();
+    let ua: &AsciiView = uc.ascii_view();
 
     // Replace `prev_token` with `token` but swap the buffers so `token` uses
     // the now-unused string buffer of the old `prev_token`.
-    // SAFETY: `ua` is `uc`'s own live `ascii` sub-context (via `ascii_mut_ptr`);
-    // these read and rewrite its `token`/`prev_token` fields in place.
-    unsafe {
-        let swap_data: *mut u8 = (*ua).prev_token.str_data;
-        let swap_cap: usize = (*ua).prev_token.str_cap;
-        (*ua).prev_token = (*ua).token;
-        (*ua).token.str_data = swap_data;
-        (*ua).token.str_cap = swap_cap;
-    }
+    let swap_data: *mut u8 = ua.prev_token_view().str_data();
+    let swap_cap: usize = ua.prev_token_view().str_cap();
+    ua.prev_token_view().write_value(ua.token());
+    ua.token_view().set_str_data(swap_data);
+    ua.token_view().set_str_cap(swap_cap);
 
     let mut c: u8 = ascii_skip_whitespace(uc);
     token.set_str_len(0);
@@ -725,9 +703,7 @@ pub(crate) fn ascii_next_token(uc: &Context, token: &AsciiTokenView) -> Result<(
             );
         } else if token.type_() == ASCII_FLOAT {
             let mut flags: u32 = uc.double_parse_flags();
-            // SAFETY: `ua` is `uc`'s own live `ascii` sub-context; reads its
-            // `parse_as_f32` flag.
-            if unsafe { (*ua).parse_as_f32 } {
+            if ua.parse_as_f32() {
                 flags = PARSE_DOUBLE_AS_BINARY32;
             }
             token.set_value_f64(parse_double(input, &mut end, flags));
@@ -742,17 +718,15 @@ pub(crate) fn ascii_next_token(uc: &Context, token: &AsciiTokenView) -> Result<(
         c = ascii_next(uc);
         while c != b'"' {
             // Optimized string parsing for non-special characters
-            // SAFETY: `ua` is `uc`'s own live `ascii` sub-context; the
-            // `src`/`src_yield` reads are of its live cursors. When the peek/next
-            // that produced `c` left a readable byte, `src < src_yield <= src_end`
-            // holds, so `src + 1` is at most the source window's one-past-the-end;
-            // on the exhausted-source path the cursors are equal and the
-            // comparison rejects the fast run before any byte is read.
-            if unsafe { (*ua).src.add(1) < (*ua).src_yield } {
-                // SAFETY: `ua` is `uc`'s own live `ascii` sub-context; reads its
-                // `src`/`src_yield` cursors delimiting the readable window.
-                let begin: *const u8 = unsafe { (*ua).src };
-                let mut end: *const u8 = unsafe { (*ua).src_yield };
+            // SAFETY: when the peek/next that produced `c` left a readable byte,
+            // `src < src_yield <= src_end` holds, so `src + 1` is at most the
+            // source window's one-past-the-end; on the exhausted-source path the
+            // cursors are equal and the comparison rejects the fast run before
+            // any byte is read.
+            if unsafe { ua.src().add(1) } < ua.src_yield() {
+                // The `src`/`src_yield` cursors delimit the readable window.
+                let begin: *const u8 = ua.src();
+                let mut end: *const u8 = ua.src_yield();
                 // SAFETY: `[begin, end)` is a sub-run of the readable source
                 // window.
                 let bytes = unsafe {
@@ -781,11 +755,9 @@ pub(crate) fn ascii_next_token(uc: &Context, token: &AsciiTokenView) -> Result<(
                             to_size(end as isize - begin as isize),
                         )
                     }?;
-                    // SAFETY: `ua` is `uc`'s own live `ascii` sub-context; `end`
-                    // lands inside the readable window, a valid `src` cursor.
-                    unsafe {
-                        (*ua).src = end;
-                    }
+                    // `end` lands inside the readable window, a valid `src`
+                    // cursor.
+                    ua.set_src(end);
                     c = ascii_peek(uc);
                     continue;
                 }
@@ -907,28 +879,23 @@ pub(crate) fn ascii_read_int_array(
     type_: u8,
     p_num_read: &mut usize,
 ) -> Result<(), Fail> {
-    let ua: *mut Ascii = uc.ascii_mut_ptr();
-    // SAFETY: `ua` is `uc`'s own live `ascii` sub-context (via `ascii_mut_ptr`);
-    // reads its `parse_as_f32` flag.
-    if unsafe { (*ua).parse_as_f32 } {
+    let ua: &AsciiView = uc.ascii_view();
+    if ua.parse_as_f32() {
         return Ok(());
     }
     let initial_items: usize = uc.tmp_stack_view().num_items();
 
     let mut val: i64;
-    // SAFETY: `ua` is `uc`'s own live `ascii` sub-context; reads its current
-    // token's `type_`, and its `value.i64_` union member holds the parsed int
-    // whenever the type is `ASCII_INT`.
-    if unsafe { (*ua).token.type_ } == ASCII_INT {
-        val = unsafe { (*ua).token.value.i64_ };
+    // The current token's `value.i64_` union member holds the parsed int
+    // whenever its type is `ASCII_INT`.
+    if ua.token_view().type_() == ASCII_INT {
+        val = ua.token_view().value_i64();
     } else {
         return Ok(());
     }
 
-    // SAFETY: `ua` is `uc`'s own live `ascii` sub-context; reads its `src` cursor
-    // and `src_yield` window end.
-    let base: *const u8 = unsafe { (*ua).src };
-    let end: *const u8 = unsafe { (*ua).src_yield };
+    let base: *const u8 = ua.src();
+    let end: *const u8 = ua.src_yield();
     // C's `src`/`src_scan` cursors, carried as offsets from `base` so the scan
     // below is bounds-checked against the window run.
     let window_len: usize = to_size(end as isize - base as isize);
@@ -1003,11 +970,9 @@ pub(crate) fn ascii_read_int_array(
     // C: `if (src != ua->src)` — `src` starts at `ua->src` and only ever moves
     // forward within the window, so a nonzero offset is exactly that test.
     if src != 0 {
-        // SAFETY: `ua` is `uc`'s own live `ascii` sub-context; `src` is an offset
-        // inside its window, so `base + src` is a valid cursor to store back.
-        unsafe {
-            (*ua).src = base.add(src);
-        }
+        // SAFETY: `src` is an offset inside the source window, so `base + src`
+        // is a valid cursor to store back.
+        ua.set_src(unsafe { base.add(src) });
         // `uc`'s own `ascii.token` is retokenized in place.
         ascii_next_token(uc, uc.ascii_view().token_view())?;
     }
@@ -1458,34 +1423,29 @@ pub(crate) fn ascii_read_float_array(
     type_: u8,
     p_num_read: &mut usize,
 ) -> Result<(), Fail> {
-    let ua: *mut Ascii = uc.ascii_mut_ptr();
-    // SAFETY: `ua` is `uc`'s own live `ascii` sub-context (via `ascii_mut_ptr`);
-    // reads its `parse_as_f32` flag.
-    if unsafe { (*ua).parse_as_f32 } {
+    let ua: &AsciiView = uc.ascii_view();
+    if ua.parse_as_f32() {
         return Ok(());
     }
 
     let mut val: f64;
-    // SAFETY: `ua` is `uc`'s own live `ascii` sub-context; reads its current
-    // token. For an `ASCII_FLOAT` token the `value.f64_` union member is live;
-    // for `ASCII_INT` the `value.i64_` member and `negative` flag are.
-    if unsafe { (*ua).token.type_ } == ASCII_FLOAT {
-        val = unsafe { (*ua).token.value.f64_ };
-    } else if unsafe { (*ua).token.type_ } == ASCII_INT {
-        let fsign: f64 = if unsafe { (*ua).token.value.i64_ == 0 && (*ua).token.negative } {
+    // For an `ASCII_FLOAT` token the `value.f64_` union member is live; for
+    // `ASCII_INT` the `value.i64_` member and `negative` flag are.
+    if ua.token_view().type_() == ASCII_FLOAT {
+        val = ua.token_view().value_f64();
+    } else if ua.token_view().type_() == ASCII_INT {
+        let fsign: f64 = if ua.token_view().value_i64() == 0 && ua.token_view().negative() {
             -1.0
         } else {
             1.0
         };
-        val = unsafe { (*ua).token.value.i64_ } as f64 * fsign;
+        val = ua.token_view().value_i64() as f64 * fsign;
     } else {
         return Ok(());
     }
 
-    // SAFETY: `ua` is `uc`'s own live `ascii` sub-context; reads its `src` cursor
-    // and `src_yield` window end.
-    let base: *const u8 = unsafe { (*ua).src };
-    let end: *const u8 = unsafe { (*ua).src_yield };
+    let base: *const u8 = ua.src();
+    let end: *const u8 = ua.src_yield();
     // C's `src`/`src_scan` cursors, carried as offsets from `base` so the scan
     // below is bounds-checked against the window run.
     let window_len: usize = to_size(end as isize - base as isize);
@@ -1562,11 +1522,9 @@ pub(crate) fn ascii_read_float_array(
     // C: `if (src != ua->src)` — `src` starts at `ua->src` and only ever moves
     // forward within the window, so a nonzero offset is exactly that test.
     if src != 0 {
-        // SAFETY: `ua` is `uc`'s own live `ascii` sub-context; `src` is an offset
-        // inside its window, so `base + src` is a valid cursor to store back.
-        unsafe {
-            (*ua).src = base.add(src);
-        }
+        // SAFETY: `src` is an offset inside the source window, so `base + src`
+        // is a valid cursor to store back.
+        ua.set_src(unsafe { base.add(src) });
         // `uc`'s own `ascii.token` is retokenized in place.
         ascii_next_token(uc, uc.ascii_view().token_view())?;
     }
@@ -1726,19 +1684,16 @@ fn ascii_parse_node_rec(
     tmp_buf: &BufView,
     recursive: bool,
 ) -> Result<(), Fail> {
-    let ua: *mut Ascii = uc.ascii_mut_ptr();
+    let ua: &AsciiView = uc.ascii_view();
 
-    // SAFETY: `ua` is `uc`'s own live `ascii` sub-context (via `ascii_mut_ptr`);
-    // reads its current token's `type_`.
-    if unsafe { (*ua).token.type_ } == b'}' {
+    if ua.token_view().type_() == b'}' {
         // `uc`'s own `ascii.token` is retokenized in place.
         ascii_next_token(uc, uc.ascii_view().token_view())?;
         *p_end = true;
         return Ok(());
     }
 
-    // SAFETY: `ua` is `uc`'s own live `ascii` sub-context; reads its token type.
-    if unsafe { (*ua).token.type_ } == ASCII_END {
+    if ua.token_view().type_() == ASCII_END {
         ufbxi_check_msg!(uc, depth == 0, "Truncated file");
         *p_end = true;
         return Ok(());
@@ -1746,8 +1701,7 @@ fn ascii_parse_node_rec(
 
     // Parse the name eg. "Node:" token and intern the name
     ufbxi_check!(uc, depth < MAX_NODE_DEPTH, "depth < UFBXI_MAX_NODE_DEPTH");
-    // SAFETY: `ua` is `uc`'s own live `ascii` sub-context; reads its token type.
-    if !uc.sure_fbx() && depth == 0 && unsafe { (*ua).token.type_ } != ASCII_NAME {
+    if !uc.sure_fbx() && depth == 0 && ua.token_view().type_() != ASCII_NAME {
         ufbxi_fail_msg!(uc, "Expected a 'Name:' token", "Not an FBX file");
     }
     ufbxi_check!(
@@ -1755,17 +1709,17 @@ fn ascii_parse_node_rec(
         ascii_accept(uc, ASCII_NAME),
         "ufbxi_ascii_accept(uc, UFBXI_ASCII_NAME)"
     );
-    // SAFETY: `ua` is `uc`'s own live `ascii` sub-context; the accepted name token
-    // moved to `prev_token`, whose `value.name_len` union member is live.
-    let name_len: usize = unsafe { (*ua).prev_token.value.name_len };
+    // The accepted name token moved to `prev_token`, whose `value.name_len`
+    // union member is live.
+    let name_len: usize = ua.prev_token_view().value_name_len();
     ufbxi_check!(uc, name_len <= 0xff, "name_len <= 0xff");
-    // SAFETY: `ua` is `uc`'s own live `ascii` sub-context; `prev_token.str_data`
-    // holds `str_len` readable name bytes, interned via `uc`'s own string pool.
+    // SAFETY: `prev_token.str_data` holds `str_len` readable name bytes,
+    // interned via `uc`'s own string pool.
     let name: *const u8 = unsafe {
         push_string(
             uc.string_pool_view(),
-            (*ua).prev_token.str_data,
-            (*ua).prev_token.str_len,
+            ua.prev_token_view().str_data(),
+            ua.prev_token_view().str_len(),
             core::ptr::null_mut(),
             true,
         )
@@ -1829,10 +1783,7 @@ fn ascii_parse_node_rec(
         // since KeyAttrDataFloat packs integer data (!) into floating point values so we
         // should try to be as exact as possible.
         if (arr_info.flags & ARRAY_FLAG_ACCURATE_F32) != 0 {
-            // SAFETY: `ua` is `uc`'s own live `ascii` sub-context; sets its flag.
-            unsafe {
-                (*ua).parse_as_f32 = true;
-            }
+            ua.set_parse_as_f32(true);
         }
 
         arr_elem_size = array_type_size(arr_type);
@@ -1859,8 +1810,7 @@ fn ascii_parse_node_rec(
     }
 
     // Some fields in ASCII may have leading commas eg. `Content: , "base64-string"`
-    // SAFETY: `ua` is `uc`'s own live `ascii` sub-context; reads its token type.
-    if unsafe { (*ua).token.type_ } == b',' {
+    if ua.token_view().type_() == b',' {
         // HACK: If we are parsing an "array" that should be ignored, ie. `Content` when
         // `opts.ignore_embedded == true` try to skip the next token string if possible.
         if arr_type == b'-' {
@@ -1892,9 +1842,7 @@ fn ascii_parse_node_rec(
 
     // NOTE: Infinite loop to allow skipping the comma parsing via `continue`.
     loop {
-        // SAFETY: `ua` is `uc`'s own live `ascii` sub-context; the `&raw mut`
-        // projects the address of its own `prev_token` field without a reference.
-        let tok: *mut AsciiToken = unsafe { &raw mut (*ua).prev_token };
+        let tok: &AsciiTokenView = ua.prev_token_view();
 
         if arr_type != 0 {
             let mut num_read: usize = 0;
@@ -1923,9 +1871,8 @@ fn ascii_parse_node_rec(
                         } else {
                             tmp_buf
                         };
-                        // SAFETY: `tok` addresses `ua`'s live `prev_token`; reads
-                        // its base64 source pair.
-                        let (src_data, src_len) = unsafe { ((*tok).str_data, (*tok).str_len) };
+                        // `tok`'s base64 source pair.
+                        let (src_data, src_len) = (tok.str_data(), tok.str_len());
                         let capacity: usize = src_len / 4 * 3 + 3;
                         let data = buf.push::<u8>(capacity);
                         ufbxi_check!(uc, !data.is_null(), "v->data");
@@ -1948,8 +1895,8 @@ fn ascii_parse_node_rec(
                         // writes its `data`/`length` from `tok`'s live `prev_token`
                         // string.
                         unsafe {
-                            (*v).data = (*tok).str_data;
-                            (*v).length = (*tok).str_len;
+                            (*v).data = tok.str_data();
+                            (*v).length = tok.str_len();
                         }
                         // SAFETY: `v` is that same live `String` slot, holding
                         // the pair just written.
@@ -1967,10 +1914,8 @@ fn ascii_parse_node_rec(
                 // indexes a live slot of the local `vals` run.
                 let v: *mut Value = vals.at(num_values as usize).get();
 
-                // SAFETY: `tok` addresses `ua`'s live `prev_token`; reads its
-                // `str_data`/`str_len`.
-                let str_: *const u8 = unsafe { (*tok).str_data };
-                let length: usize = unsafe { (*tok).str_len };
+                let str_: *const u8 = tok.str_data();
+                let length: usize = tok.str_len();
                 ufbxi_check!(uc, !str_.is_null(), "str");
 
                 if length == 0 {
@@ -2011,10 +1956,10 @@ fn ascii_parse_node_rec(
                 }
             }
         } else if ascii_accept(uc, ASCII_INT) {
-            // SAFETY: `tok` addresses `ua`'s live `prev_token`; the accepted int
-            // token's `value.i64_` union member and `negative` flag are live.
-            let val: i64 = unsafe { (*tok).value.i64_ };
-            let fsign: Real = if val == 0 && unsafe { (*tok).negative } {
+            // The accepted int token's `value.i64_` union member and `negative`
+            // flag are live.
+            let val: i64 = tok.value_i64();
+            let fsign: Real = if val == 0 && tok.negative() {
                 -1.0f32 as Real
             } else {
                 1.0f32 as Real
@@ -2023,18 +1968,12 @@ fn ascii_parse_node_rec(
             match arr_type {
                 0 => {
                     // Parse version from comment if there was no magic comment
-                    // SAFETY: `ua` is `uc`'s own live `ascii` sub-context; reads
-                    // its `found_version` flag.
-                    if !unsafe { (*ua).found_version }
+                    if !ua.found_version()
                         && parse_state == ParseState::FbxVersion
                         && num_values == 0
                     {
                         if val >= 6000 && val <= 10000 {
-                            // SAFETY: `ua` is `uc`'s own live `ascii` sub-context;
-                            // sets its `found_version` flag.
-                            unsafe {
-                                (*ua).found_version = true;
-                            }
+                            ua.set_found_version(true);
                             uc.set_version(val as u32);
                         }
                     }
@@ -2110,9 +2049,8 @@ fn ascii_parse_node_rec(
                 _ => ufbxi_fail!(uc, "Bad array dst type"),
             }
         } else if ascii_accept(uc, ASCII_FLOAT) {
-            // SAFETY: `tok` addresses `ua`'s live `prev_token`; the accepted float
-            // token's `value.f64_` union member is live.
-            let val: f64 = unsafe { (*tok).value.f64_ };
+            // The accepted float token's `value.f64_` union member is live.
+            let val: f64 = tok.value_f64();
 
             match arr_type {
                 0 => {
@@ -2194,27 +2132,24 @@ fn ascii_parse_node_rec(
         } else if ascii_accept(uc, ASCII_BARE_WORD) {
             let mut val: i64 = 0;
             let mut val_f: f64 = 0.0;
-            // SAFETY: `tok` addresses `ua`'s live `prev_token`; reads its `str_len`.
-            if unsafe { (*tok).str_len } >= 1 {
+            if tok.str_len() >= 1 {
                 // C-parity: `tok->str_data` is `char *` and the oracle targets make
                 // C `char` signed, so a byte >= 0x80 converts to a NEGATIVE `int64_t`
                 // here (PORTING.md "`char` (value, where signedness is observable)").
                 // SAFETY: `str_len >= 1`, so `tok->str_data`'s first byte is readable
                 // and reinterpreted as a signed `i8`.
-                val = unsafe { *((*tok).str_data as *const i8) } as i64;
+                val = unsafe { *(tok.str_data() as *const i8) } as i64;
                 val_f = val as f64;
-                // SAFETY: `tok` addresses `ua`'s live `prev_token`; reads its `str_len`.
-                if unsafe { (*tok).str_len } > 1 && unsafe { (*tok).str_len } < 64 {
+                if tok.str_len() > 1 && tok.str_len() < 64 {
                     // Try to parse the bare word as NAN/INF
                     let mut str_data = core::mem::MaybeUninit::<[u8; 64]>::uninit(); // ufbxi_uninit
                     let str_data: *mut u8 = str_data.as_mut_ptr() as *mut u8;
-                    // SAFETY: `tok` addresses `ua`'s live `prev_token`; reads its `str_len`.
-                    let str_len: usize = unsafe { (*tok).str_len };
+                    let str_len: usize = tok.str_len();
                     // SAFETY: `str_len < 64`, so copying `str_len` bytes from
                     // `tok->str_data` into the 64-byte local `str_data` fits, and
                     // writing the NUL at index `str_len` (< 64) stays in bounds.
                     unsafe {
-                        core::ptr::copy_nonoverlapping((*tok).str_data, str_data, str_len);
+                        core::ptr::copy_nonoverlapping(tok.str_data(), str_data, str_len);
                         *str_data.add(str_len) = b'\0';
                     }
                     let mut inf_nan: f64 = 0.0;
@@ -2309,9 +2244,9 @@ fn ascii_parse_node_rec(
                 ascii_accept(uc, ASCII_INT),
                 "ufbxi_ascii_accept(uc, UFBXI_ASCII_INT)"
             );
-            // SAFETY: `ua` is `uc`'s own live `ascii` sub-context; the accepted int
-            // count moved to `prev_token`, whose `value.i64_` union member is live.
-            let count: i64 = unsafe { (*ua).prev_token.value.i64_ };
+            // The accepted int count moved to `prev_token`, whose `value.i64_`
+            // union member is live.
+            let count: i64 = ua.prev_token_view().value_i64();
 
             if ascii_accept(uc, b'{') {
                 ufbxi_check!(
@@ -2326,9 +2261,7 @@ fn ascii_parse_node_rec(
                     ascii_skip_until(uc, b'}')?;
                 } else if uc.parse_threaded()
                     && !uc.opts_view().force_single_thread_ascii_parsing()
-                    // SAFETY: `ua` is `uc`'s own live `ascii` sub-context; reads its
-                    // `parse_as_f32` flag.
-                    && !unsafe { (*ua).parse_as_f32 }
+                    && !ua.parse_as_f32()
                     && (arr_type == b'i'
                         || arr_type == b'l'
                         || arr_type == b'f'
@@ -2363,10 +2296,7 @@ fn ascii_parse_node_rec(
         ufbxi_check!(uc, ascii_accept(uc, b'}'), "ufbxi_ascii_accept(uc, '}')");
     }
 
-    // SAFETY: `ua` is `uc`'s own live `ascii` sub-context; clears its flag.
-    unsafe {
-        (*ua).parse_as_f32 = false;
-    }
+    ua.set_parse_as_f32(false);
 
     if arr_type != 0 {
         if arr_type == b'-' {
