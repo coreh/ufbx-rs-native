@@ -5745,86 +5745,80 @@ pub(crate) fn finalize_shader_texture<'a>(
 
     let shader: *mut ShaderTexture = uc.result_view().push_zero(1);
     ufbxi_check!(uc, !shader.is_null(), "shader");
+    // SAFETY: `shader` is the fresh non-null push above — a live, arena-owned
+    // `ufbx_shader_texture` in uc's result buffer, which only appends, so the
+    // slot stays alive, unmoved and write-capable for the rest of this call.
+    let shader: &ShaderTextureView = unsafe { ShaderTextureView::from_ptr(shader) };
 
-    // SAFETY: `shader` is the fresh non-null push above; `type_` passed the
-    // range check above, so the transmute is of a valid discriminant; the prop
-    // lookups use NUL-terminated static names and every `prop` is null-checked.
-    unsafe {
-        (*shader).type_ = core::mem::transmute::<u32, ShaderTextureType>(type_);
+    // SAFETY: `type_` passed the range check above, so the transmute is of a
+    // valid `ufbx_shader_texture_type` discriminant.
+    shader.set_type(unsafe { core::mem::transmute::<u32, ShaderTextureType>(type_) });
 
-        // C: `static const char *const name_props[] = { "3dsMax|params|OSLShaderName" };`
-        static NAME_PROPS: [&[u8]; 1] = [b"3dsMax|params|OSLShaderName"];
+    // C: `static const char *const name_props[] = { "3dsMax|params|OSLShaderName" };`
+    static NAME_PROPS: [&[u8]; 1] = [b"3dsMax|params|OSLShaderName"];
 
-        // C: `static const char *const source_props[] = { "3dsMax|params|OSLCode" };`
-        static SOURCE_PROPS: [&[u8]; 1] = [b"3dsMax|params|OSLCode"];
+    // C: `static const char *const source_props[] = { "3dsMax|params|OSLCode" };`
+    static SOURCE_PROPS: [&[u8]; 1] = [b"3dsMax|params|OSLCode"];
 
-        (*shader).shader_source.data = EMPTY_CHAR.as_ptr();
-        (*shader).shader_name.data = EMPTY_CHAR.as_ptr();
+    // C writes only the `data` half of each string; the slot is zeroed, so
+    // publishing the whole descriptor with the zero length it already has
+    // stores the same bytes.
+    shader.set_shader_source(String::new_c(EMPTY_CHAR.as_ptr(), 0));
+    shader.set_shader_name(String::new_c(EMPTY_CHAR.as_ptr(), 0));
 
-        // C: `ufbxi_nounroll for (size_t i = 0; i < ufbxi_arraycount(name_props); i++)`
-        for i in 0..NAME_PROPS.len() {
-            if let Some(prop) = find_prop_len(texture_view.props_view(), NAME_PROPS[i]) {
-                (*shader).shader_name = prop.value_str();
-                break;
-            }
-        }
-
-        // C: `ufbxi_nounroll for (size_t i = 0; i < ufbxi_arraycount(source_props); i++)`
-        for i in 0..SOURCE_PROPS.len() {
-            if let Some(prop) = find_prop_len(texture_view.props_view(), SOURCE_PROPS[i]) {
-                (*shader).shader_source = prop.value_str();
-                (*shader).raw_shader_source = prop.value_blob();
-                break;
-            }
+    // C: `ufbxi_nounroll for (size_t i = 0; i < ufbxi_arraycount(name_props); i++)`
+    for i in 0..NAME_PROPS.len() {
+        if let Some(prop) = find_prop_len(texture_view.props_view(), NAME_PROPS[i]) {
+            shader.set_shader_name(prop.value_str());
+            break;
         }
     }
 
-    // SAFETY: `shader` is the fresh non-null push above — a live, arena-owned
-    // `ufbx_shader_texture` — so the mint's liveness and write-capable
-    // provenance hold.
-    shader_texture_find_prefix(uc, texture_view, unsafe {
-        ShaderTextureView::from_ptr(shader)
-    })?;
+    // C: `ufbxi_nounroll for (size_t i = 0; i < ufbxi_arraycount(source_props); i++)`
+    for i in 0..SOURCE_PROPS.len() {
+        if let Some(prop) = find_prop_len(texture_view.props_view(), SOURCE_PROPS[i]) {
+            shader.set_shader_source(prop.value_str());
+            shader.set_raw_shader_source(prop.value_blob());
+            break;
+        }
+    }
 
-    // SAFETY: `shader` is the fresh push above; the suffix scan walks `name`
-    // backwards from its own length, so `begin` stays inside the interned
-    // string it slices.
-    unsafe {
-        if (*shader).shader_name.length == 0 {
-            let mut name: String = (*shader).prop_prefix;
-            if sp::remove_suffix_c(
-                StringView::from_mut(&mut name),
-                b" Parameters/Connections|\0",
-            ) {
-                let mut begin: usize = name.length;
+    shader_texture_find_prefix(uc, texture_view, shader)?;
+
+    if shader.shader_name_view().length() == 0 {
+        let mut name: String = shader.prop_prefix();
+        if sp::remove_suffix_c(
+            StringView::from_mut(&mut name),
+            b" Parameters/Connections|\0",
+        ) {
+            let mut begin: usize = name.length;
+            // SAFETY: the suffix scan walks `name` backwards from its own
+            // length, so every probed byte and the resulting `begin` offset stay
+            // inside the interned string `name` describes.
+            unsafe {
                 while begin > 0 && *name.data.add(begin - 1) != b'|' {
                     begin -= 1;
                 }
-
-                (*shader).shader_name.data = name.data.add(begin);
-                (*shader).shader_name.length = name.length - begin;
-                // SAFETY: `shader` is the fresh push above, so its
-                // `shader_name` leaf is a live `String` slot.
-                let shader_name = StringView::from_ptr(&raw mut (*shader).shader_name);
-                sp::push_string_place_str(uc.string_pool_view(), shader_name, false)?;
+                shader.set_shader_name(String::new_c(name.data.add(begin), name.length - begin));
             }
+            sp::push_string_place_str(uc.string_pool_view(), shader.shader_name_view(), false)?;
         }
+    }
 
-        if (*shader).shader_name.length == 0 {
-            if max_texture.length > 0 {
-                (*shader).shader_name = max_texture;
-            }
+    if shader.shader_name_view().length() == 0 {
+        if max_texture.length > 0 {
+            shader.set_shader_name(max_texture);
         }
+    }
 
-        if classid != 0 {
-            (*shader).shader_type_id = classid;
-        }
+    if classid != 0 {
+        shader.set_shader_type_id(classid);
+    }
 
-        if (*shader).prop_prefix.length == 0 {
-            // If we not find any shader properties so we might have guessed wrong.
-            // We "leak" (freed with scene) the shader in this case but it's negligible.
-            return Ok(());
-        }
+    if shader.prop_prefix_view().length() == 0 {
+        // If we not find any shader properties so we might have guessed wrong.
+        // We "leak" (freed with scene) the shader in this case but it's negligible.
+        return Ok(());
     }
 
     // SAFETY: walks the texture's own property table (`count` entries); the
@@ -5841,10 +5835,7 @@ pub(crate) fn finalize_shader_texture<'a>(
         );
         for prop in props {
             let mut name: String = prop.name();
-            if !sp::remove_prefix_str(
-                StringView::from_mut(&mut name),
-                ShaderTextureView::from_ptr(shader).prop_prefix_view(),
-            ) {
+            if !sp::remove_prefix_str(StringView::from_mut(&mut name), shader.prop_prefix_view()) {
                 continue;
             }
 
@@ -5853,10 +5844,7 @@ pub(crate) fn finalize_shader_texture<'a>(
             if sp::remove_suffix_c(StringView::from_mut(&mut base_name), b"_map\0")
                 || sp::remove_suffix_c(StringView::from_mut(&mut base_name), b".shader\0")
             {
-                let base = find_shader_texture_input_len(
-                    ShaderTextureView::from_ptr(shader),
-                    base_name.as_bytes(),
-                );
+                let base = find_shader_texture_input_len(shader, base_name.as_bytes());
                 if let Some(base) = base {
                     base.set_texture_prop(Some(prop.to_ref()));
                     continue;
@@ -5864,10 +5852,7 @@ pub(crate) fn finalize_shader_texture<'a>(
             } else if sp::remove_suffix_c(StringView::from_mut(&mut base_name), b".connected\0")
                 || sp::remove_suffix_c(StringView::from_mut(&mut base_name), b"Enabled\0")
             {
-                let base = find_shader_texture_input_len(
-                    ShaderTextureView::from_ptr(shader),
-                    base_name.as_bytes(),
-                );
+                let base = find_shader_texture_input_len(shader, base_name.as_bytes());
                 if let Some(base) = base {
                     base.set_texture_enabled_prop(Some(prop.to_ref()));
                     continue;
@@ -5881,7 +5866,7 @@ pub(crate) fn finalize_shader_texture<'a>(
                     uc.ator_tmp_view(),
                     uc.tmp_arr_mut_ptr(),
                     uc.tmp_arr_size_mut_ptr(),
-                    (*shader)
+                    (*shader.get())
                         .inputs
                         .count
                         .wrapping_add(1)
@@ -5889,13 +5874,17 @@ pub(crate) fn finalize_shader_texture<'a>(
                 ),
                 "ufbxi_grow_array_size((&uc->ator_tmp), sizeof(**(&uc->tmp_arr)), (&uc->tmp_arr), (&uc->tmp_arr_size), ((shader->inputs.count + 1) * sizeof(ufbx_shader_texture_input)))"
             );
-            (*shader).inputs.data = uc.tmp_arr() as *const ShaderTextureInput;
+            // `inputs.data`/`inputs.count` are a run/count pair the readers trust
+            // together and the `count++` idiom below advances the count alone, so
+            // the pair stays a raw write.
+            (*shader.get()).inputs.data = uc.tmp_arr() as *const ShaderTextureInput;
 
             // Add a new property
             // C: `ufbx_shader_texture_input *input = &shader->inputs.data[shader->inputs.count++];`
-            let input: *mut ShaderTextureInput =
-                ((*shader).inputs.data as *mut ShaderTextureInput).add((*shader).inputs.count);
-            (*shader).inputs.count += 1;
+            let input: *mut ShaderTextureInput = ((*shader.get()).inputs.data
+                as *mut ShaderTextureInput)
+                .add((*shader.get()).inputs.count);
+            (*shader.get()).inputs.count += 1;
             ptr::write_bytes(input, 0, 1);
 
             // NOTE: This is a bit hackish, we are using a suffix of an interned string. It won't compare
@@ -5912,12 +5901,17 @@ pub(crate) fn finalize_shader_texture<'a>(
     // into uc's own result buffer, then records the fresh run on the texture's
     // own shader.
     unsafe {
-        (*shader).inputs.data = uc
-            .result_view()
-            .push_copy_raw::<ShaderTextureInput>((*shader).inputs.count, (*shader).inputs.data);
-        ufbxi_check!(uc, !(*shader).inputs.data.is_null(), "shader->inputs.data");
+        (*shader.get()).inputs.data = uc.result_view().push_copy_raw::<ShaderTextureInput>(
+            (*shader.get()).inputs.count,
+            (*shader.get()).inputs.data,
+        );
+        ufbxi_check!(
+            uc,
+            !(*shader.get()).inputs.data.is_null(),
+            "shader->inputs.data"
+        );
 
-        (*texture).shader = opt_ref(shader);
+        (*texture).shader = opt_ref(shader.get());
         (*texture).type_ = TextureType::Shader;
         uc.scene_view()
             .metadata_view()
@@ -5934,11 +5928,11 @@ pub(crate) fn finalize_shader_texture<'a>(
             for i in 0..FILE_SHADERS.len() {
                 let fs: *const FileShader = &FILE_SHADERS[i];
 
-                if ((*fs).shader_id != 0 && (*shader).shader_type_id == (*fs).shader_id)
-                    || strcmp((*shader).shader_name.data, (*fs).shader_name) == 0
+                if ((*fs).shader_id != 0 && shader.shader_type_id() == (*fs).shader_id)
+                    || strcmp(shader.shader_name_view().data(), (*fs).shader_name) == 0
                 {
                     let input: *mut ShaderTextureInput =
-                        find_shader_texture_input(shader, (*fs).input_name);
+                        find_shader_texture_input(shader.get(), (*fs).input_name);
                     if !input.is_null() {
                         // TODO: Support for specifying relative filename here if ever needed
                         // C-parity: `prop` is dereferenced unconditionally
@@ -5965,7 +5959,7 @@ pub(crate) fn finalize_shader_texture<'a>(
         // explicit `&'a` annotation forces the reinterpret lifetime to unify with the
         // `uc` borrow rather than infer free.
         let texture_view: &'a TextureView = TextureView::from_ptr(texture);
-        update_shader_texture(texture_view, ShaderTextureView::from_ptr(shader));
+        update_shader_texture(texture_view, shader);
     }
 
     Ok(())

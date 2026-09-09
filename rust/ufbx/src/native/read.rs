@@ -1207,6 +1207,11 @@ pub(crate) unsafe fn push_element_size(
     size: usize,
     type_: ElementType,
 ) -> *mut Element {
+    // SAFETY: `info` addresses a live, initialized `ufbxi_element_info` (this
+    // fn's contract) reached through `*mut`, so it stays alive, unmoved and
+    // write-capable for the whole call.
+    let info: &ElementInfoView = unsafe { ElementInfoView::from_ptr(info) };
+
     // C-parity: `~0x7u` in `(size + 7u) & ~0x7u` is an `unsigned int`
     // (0xFFFFFFF8) zero-extended to `size_t`, so the mask also clears the upper
     // 32 bits. Unreachable in practice (`size` is always a `sizeof`), ported
@@ -1237,9 +1242,11 @@ pub(crate) unsafe fn push_element_size(
     );
     ufbxi_check_return!(
         uc,
-        // SAFETY: `info` is the caller's live `ufbxi_element_info` (fn
-        // contract), so `&(*info).fbx_id` borrows its `fbx_id` field.
-        !unsafe { uc.tmp_element_fbx_ids_view().push_copy_fast_ref(&(*info).fbx_id) }.is_null(),
+        // The copy only READS the source slot, so a temporary holding the same
+        // id stands in for C's `&info->fbx_id`.
+        !uc.tmp_element_fbx_ids_view()
+            .push_copy_fast_ref(&info.fbx_id())
+            .is_null(),
         core::ptr::null_mut(),
         "((uint64_t*)ufbxi_push_size_copy_fast((&uc->tmp_element_fbx_ids), sizeof(uint64_t), (1), (&info->fbx_id)))"
     );
@@ -1248,29 +1255,22 @@ pub(crate) unsafe fn push_element_size(
     let elem: *mut Element =
         uc.tmp_elements_view().push_zero::<u64>(aligned_size / 8) as *mut Element;
     ufbxi_check_return!(uc, !elem.is_null(), core::ptr::null_mut(), "elem");
+    // C: `elem->props = info->props;` is a struct memcpy; `Props` is not `Copy`
+    // (it holds an `Option<Ref<Props>>`) but has no drop glue, so the bitwise
+    // duplicate `info.props()` yields stores without double-free.
     // SAFETY: `elem` is the fresh non-null zeroed push result checked above,
-    // sized to hold an `ufbx_element` header; `info` is the caller's live
-    // `ufbxi_element_info`.
+    // sized to hold an `ufbx_element` header, so each projection addresses a
+    // live, properly aligned field of its own.
     unsafe {
         (*elem).type_ = type_;
         (*elem).element_id = element_id;
         (*elem).typed_id = typed_id;
-        (*elem).name = (*info).name;
+        (*elem).name = info.name();
+        core::ptr::write(&raw mut (*elem).props, info.props());
     }
-    // C: `elem->props = info->props;` is a struct memcpy; `Props` is not `Copy`
-    // (it holds an `Option<Ref<Props>>`) but has no drop glue.
-    // SAFETY: both projections address live, properly aligned `Props` fields —
-    // `elem`'s zeroed header and `info`'s initialized one; `Props` has no drop
-    // glue, so the bitwise read/write duplicates it without double-free.
-    unsafe {
-        core::ptr::write(
-            &raw mut (*elem).props,
-            core::ptr::read(&raw const (*info).props),
-        )
-    };
-    // SAFETY: `info.dom_node` is either null or a live DOM node owned by uc's
+    // SAFETY: `info.dom_node()` is either null or a live DOM node owned by uc's
     // buffers — `opt_ref`'s contract; `elem` is the fresh push result.
-    unsafe { (*elem).dom_node = opt_ref((*info).dom_node) };
+    unsafe { (*elem).dom_node = opt_ref(info.dom_node()) };
 
     if !uc.p_element_id().is_null() {
         // SAFETY: `p_element_id` is non-null (checked) and points at the
@@ -1287,8 +1287,7 @@ pub(crate) unsafe fn push_element_size(
 
     ufbxi_check_return!(
         uc,
-        // SAFETY: `info` is the caller's live `ufbxi_element_info`.
-        insert_fbx_id(uc, unsafe { (*info).fbx_id }, element_id).is_ok(),
+        insert_fbx_id(uc, info.fbx_id(), element_id).is_ok(),
         core::ptr::null_mut(),
         "ufbxi_insert_fbx_id(uc, info->fbx_id, element_id)"
     );
@@ -1676,25 +1675,24 @@ pub(crate) fn setup_geometry_transform_helper(
             )
         };
         ufbxi_check!(uc, !geo_node.is_null(), "geo_node");
+        // SAFETY: `geo_node` is the fresh non-null element checked above — a
+        // result-buffer slot that stays alive, unmoved and write-capable for
+        // the rest of this block.
+        let geo_node: &View<UfbxNode, Mut> = unsafe { View::<UfbxNode>::from_ptr(geo_node) };
         ufbxi_check!(
             uc,
-            // SAFETY: `geo_node` is the fresh non-null element checked above,
-            // so the borrow addresses its own `element.element_id`.
+            // SAFETY: the copy source is `geo_node`'s own `element.element_id`,
+            // a live, readable `u32` that does not overlap the pushed chunk.
             !unsafe {
                 uc.tmp_node_ids_view()
-                    .push_copy_ref(&(*geo_node).element.element_id)
+                    .push_copy_raw(1, geo_node.element().element_id_ptr())
             }
             .is_null(),
             "((uint32_t*)ufbxi_push_size_copy((&uc->tmp_node_ids), sizeof(uint32_t), (1), (&geo_node->element.element_id)))"
         );
         // C: `geo_node->element.dom_node = node->element.dom_node;` — pointer
         // copy; `Option<Ref<T>>` is niche-packed to a bare pointer.
-        // SAFETY: the projection addresses `geo_node`'s own live `dom_node`
-        // field — `geo_node` is the fresh element above; the field has no drop
-        // glue, so the bitwise copy stores safely.
-        unsafe {
-            (*geo_node).element.dom_node = node.element().dom_node();
-        }
+        geo_node.element().set_dom_node(node.element().dom_node());
 
         let props: *mut Prop = uc.result_view().push_zero::<Prop>(3);
         ufbxi_check!(uc, !props.is_null(), "props");
@@ -1724,24 +1722,26 @@ pub(crate) fn setup_geometry_transform_helper(
             );
         }
 
-        // SAFETY: `geo_node` is the fresh non-null element above.
-        unsafe {
-            (*geo_node).element.props.props.data = props;
-            (*geo_node).element.props.props.count = 3;
-        }
+        // C writes `data` then `count`; the pair is published as one list
+        // descriptor so no reader can observe a mismatched run.
+        // SAFETY: `props` addresses the three live, zero-initialized `ufbx_prop`
+        // slots pushed into the result buffer above, which the resulting scene
+        // retains — the `List::from_raw_parts` escaping-run contract.
+        geo_node
+            .element()
+            .props()
+            .set_props(unsafe { List::from_raw_parts(props, 3) });
 
         node.set_has_geometry_transform(true);
-        // SAFETY: `geo_node` is the fresh non-null element above.
-        unsafe { (*geo_node).is_geometry_transform_helper = true };
+        geo_node.set_is_geometry_transform_helper(true);
 
         connect_oo(uc, geo_fbx_id, node_fbx_id)?;
         uc.set_has_geometry_transform_nodes(true);
 
         let extra: *mut NodeExtra = push_element_extra(uc, node.element().element_id());
         ufbxi_check!(uc, !extra.is_null(), "extra");
-        // SAFETY: `extra` is the fresh non-null extra-data slot checked above
-        // and `geo_node` the fresh element above.
-        unsafe { (*extra).geometry_helper_id = (*geo_node).element.element_id };
+        // SAFETY: `extra` is the fresh non-null extra-data slot checked above.
+        unsafe { (*extra).geometry_helper_id = geo_node.element().element_id() };
     }
 
     Ok(())
@@ -1917,45 +1917,36 @@ pub(crate) fn read_model(
     // pointer; `UfbxNode` is the element struct for `ElementType::Node`.
     let elem_node: *mut UfbxNode = unsafe { push_element::<UfbxNode>(uc, info, ElementType::Node) };
     ufbxi_check!(uc, !elem_node.is_null(), "elem_node");
+    // SAFETY: `elem_node` is the fresh non-null element checked above — a
+    // result-buffer slot that stays alive, unmoved and write-capable for the
+    // rest of this call.
+    let elem_node: &View<UfbxNode, Mut> = unsafe { View::<UfbxNode>::from_ptr(elem_node) };
     ufbxi_check!(
         uc,
-        // SAFETY: `elem_node` is the fresh non-null element checked above, so
-        // the borrow addresses its own `element.element_id`.
+        // SAFETY: the copy source is `elem_node`'s own `element.element_id`,
+        // a live, readable `u32` that does not overlap the pushed chunk.
         !unsafe {
             uc.tmp_node_ids_view()
-                .push_copy_ref(&(*elem_node).element.element_id)
+                .push_copy_raw(1, elem_node.element().element_id_ptr())
         }
         .is_null(),
         "((uint32_t*)ufbxi_push_size_copy((&uc->tmp_node_ids), sizeof(uint32_t), (1), (&elem_node->element.element_id)))"
     );
 
-    let inherit_type: i64 = find_int(
-        // SAFETY: `elem_node` is the fresh non-null element above, so the
-        // projection addresses its own `element.props`.
-        unsafe { PropsView::from_ptr(&raw mut (*elem_node).element.props) },
-        &sp::InheritType,
-        -1,
-    );
-    // SAFETY: `elem_node` is the fresh non-null element above.
-    unsafe {
-        match inherit_type {
-            // RrSs
-            0 => (*elem_node).original_inherit_mode = InheritMode::ComponentwiseScale,
-            // Rrs
-            2 => (*elem_node).original_inherit_mode = InheritMode::IgnoreParentScale,
-            _ => {}
-        }
+    let inherit_type: i64 = find_int(elem_node.element().props(), &sp::InheritType, -1);
+    match inherit_type {
+        // RrSs
+        0 => elem_node.set_original_inherit_mode(InheritMode::ComponentwiseScale),
+        // Rrs
+        2 => elem_node.set_original_inherit_mode(InheritMode::IgnoreParentScale),
+        _ => {}
     }
 
     if uc.opts_view().inherit_mode_handling() == InheritModeHandling::Preserve {
-        // SAFETY: `elem_node` is the fresh non-null element above.
-        unsafe { (*elem_node).inherit_mode = (*elem_node).original_inherit_mode };
+        elem_node.set_inherit_mode(elem_node.original_inherit_mode());
     } else if uc.opts_view().inherit_mode_handling() == InheritModeHandling::Ignore {
-        // SAFETY: as above.
-        unsafe {
-            (*elem_node).original_inherit_mode = InheritMode::Normal;
-            (*elem_node).inherit_mode = InheritMode::Normal;
-        }
+        elem_node.set_original_inherit_mode(InheritMode::Normal);
+        elem_node.set_inherit_mode(InheritMode::Normal);
     }
 
     Ok(())
@@ -3077,6 +3068,21 @@ impl ElementInfoView {
     #[inline(always)]
     pub(crate) fn fbx_id(&self) -> u64 {
         view_read!(self, fbx_id)
+    }
+    #[inline(always)]
+    pub(crate) fn name(&self) -> String {
+        view_read!(self, name)
+    }
+    /// The property table BY VALUE — C's `elem->props = info->props;` struct
+    /// assignment. `Props` is not `Copy` (it holds an `Option<Ref<Props>>`) but
+    /// has no drop glue, so the bitwise duplicate is the ported memcpy.
+    #[inline(always)]
+    pub(crate) fn props(&self) -> Props {
+        view_read!(self, props)
+    }
+    #[inline(always)]
+    pub(crate) fn dom_node(&self) -> *mut crate::generated::DomNode {
+        view_read!(self, dom_node)
     }
     #[inline(always)]
     pub(crate) fn props_view(&self) -> &PropsView {
@@ -6177,53 +6183,41 @@ pub(crate) fn read_texture(
     // pointer; `Texture` is the element struct for `ElementType::Texture`.
     let texture: *mut Texture = unsafe { push_element::<Texture>(uc, info, ElementType::Texture) };
     ufbxi_check!(uc, !texture.is_null(), "texture");
+    // SAFETY: `texture` is the fresh non-null element pushed above — a
+    // result-buffer slot that stays alive, unmoved and write-capable for the
+    // rest of this call.
+    let texture: &View<Texture, Mut> = unsafe { View::<Texture>::from_ptr(texture) };
 
-    // SAFETY: `texture` is the fresh non-null element pushed above.
-    unsafe {
-        (*texture).type_ = TextureType::File;
+    texture.set_type(TextureType::File);
 
-        (*texture).filename = EMPTY_STRING.0;
-        (*texture).absolute_filename = EMPTY_STRING.0;
-        (*texture).relative_filename = EMPTY_STRING.0;
+    texture.set_filename(EMPTY_STRING.0);
+    texture.set_absolute_filename(EMPTY_STRING.0);
+    texture.set_relative_filename(EMPTY_STRING.0);
+
+    if let Some(got) = find_val1::<Checked<String>>(node, sp::FileName.as_ptr()) {
+        texture.set_absolute_filename(got.0);
+    }
+    if let Some(got) = find_val1::<Checked<String>>(node, sp::Filename.as_ptr()) {
+        texture.set_absolute_filename(got.0);
+    }
+    if let Some(got) = find_val1::<Checked<String>>(node, sp::RelativeFileName.as_ptr()) {
+        texture.set_relative_filename(got.0);
+    }
+    if let Some(got) = find_val1::<Checked<String>>(node, sp::RelativeFilename.as_ptr()) {
+        texture.set_relative_filename(got.0);
     }
 
-    // SAFETY: `texture` is the fresh non-null element pushed above; each fetch
-    // yields its value, so the only raw op is the write into its own field.
-    unsafe {
-        if let Some(got) = find_val1::<Checked<String>>(node, sp::FileName.as_ptr()) {
-            (*texture).absolute_filename = got.0;
-        }
-        if let Some(got) = find_val1::<Checked<String>>(node, sp::Filename.as_ptr()) {
-            (*texture).absolute_filename = got.0;
-        }
+    if let Some(got) = find_val1::<Blob>(node, sp::FileName.as_ptr()) {
+        texture.set_raw_absolute_filename(got);
     }
-    // SAFETY: as above.
-    unsafe {
-        if let Some(got) = find_val1::<Checked<String>>(node, sp::RelativeFileName.as_ptr()) {
-            (*texture).relative_filename = got.0;
-        }
-        if let Some(got) = find_val1::<Checked<String>>(node, sp::RelativeFilename.as_ptr()) {
-            (*texture).relative_filename = got.0;
-        }
+    if let Some(got) = find_val1::<Blob>(node, sp::Filename.as_ptr()) {
+        texture.set_raw_absolute_filename(got);
     }
-
-    // SAFETY: as above.
-    unsafe {
-        if let Some(got) = find_val1::<Blob>(node, sp::FileName.as_ptr()) {
-            (*texture).raw_absolute_filename = got;
-        }
-        if let Some(got) = find_val1::<Blob>(node, sp::Filename.as_ptr()) {
-            (*texture).raw_absolute_filename = got;
-        }
+    if let Some(got) = find_val1::<Blob>(node, sp::RelativeFileName.as_ptr()) {
+        texture.set_raw_relative_filename(got);
     }
-    // SAFETY: as above.
-    unsafe {
-        if let Some(got) = find_val1::<Blob>(node, sp::RelativeFileName.as_ptr()) {
-            (*texture).raw_relative_filename = got;
-        }
-        if let Some(got) = find_val1::<Blob>(node, sp::RelativeFilename.as_ptr()) {
-            (*texture).raw_relative_filename = got;
-        }
+    if let Some(got) = find_val1::<Blob>(node, sp::RelativeFilename.as_ptr()) {
+        texture.set_raw_relative_filename(got);
     }
 
     Ok(())
@@ -6294,59 +6288,42 @@ pub(crate) fn read_video(
     // pointer; `Video` is the element struct for `ElementType::Video`.
     let video: *mut Video = unsafe { push_element::<Video>(uc, info, ElementType::Video) };
     ufbxi_check!(uc, !video.is_null(), "video");
+    // SAFETY: `video` is the fresh non-null element pushed above — a result-buffer
+    // slot that stays alive, unmoved and write-capable for the rest of this call.
+    let video: &View<Video, Mut> = unsafe { View::<Video>::from_ptr(video) };
 
-    // SAFETY: `video` is the fresh non-null element pushed above.
-    unsafe {
-        (*video).filename = EMPTY_STRING.0;
-        (*video).absolute_filename = EMPTY_STRING.0;
-        (*video).relative_filename = EMPTY_STRING.0;
-    }
+    video.set_filename(EMPTY_STRING.0);
+    video.set_absolute_filename(EMPTY_STRING.0);
+    video.set_relative_filename(EMPTY_STRING.0);
 
-    // SAFETY: `video` is the fresh non-null element pushed above; each fetch
-    // yields its value, so the only raw op is the write into its own field.
-    unsafe {
-        if let Some(got) = find_val1::<Checked<String>>(node, sp::FileName.as_ptr()) {
-            (*video).absolute_filename = got.0;
-        }
-        if let Some(got) = find_val1::<Checked<String>>(node, sp::Filename.as_ptr()) {
-            (*video).absolute_filename = got.0;
-        }
+    if let Some(got) = find_val1::<Checked<String>>(node, sp::FileName.as_ptr()) {
+        video.set_absolute_filename(got.0);
     }
-    // SAFETY: as above.
-    unsafe {
-        if let Some(got) = find_val1::<Checked<String>>(node, sp::RelativeFileName.as_ptr()) {
-            (*video).relative_filename = got.0;
-        }
-        if let Some(got) = find_val1::<Checked<String>>(node, sp::RelativeFilename.as_ptr()) {
-            (*video).relative_filename = got.0;
-        }
+    if let Some(got) = find_val1::<Checked<String>>(node, sp::Filename.as_ptr()) {
+        video.set_absolute_filename(got.0);
+    }
+    if let Some(got) = find_val1::<Checked<String>>(node, sp::RelativeFileName.as_ptr()) {
+        video.set_relative_filename(got.0);
+    }
+    if let Some(got) = find_val1::<Checked<String>>(node, sp::RelativeFilename.as_ptr()) {
+        video.set_relative_filename(got.0);
     }
 
-    // SAFETY: as above.
-    unsafe {
-        if let Some(got) = find_val1::<Blob>(node, sp::FileName.as_ptr()) {
-            (*video).raw_absolute_filename = got;
-        }
-        if let Some(got) = find_val1::<Blob>(node, sp::Filename.as_ptr()) {
-            (*video).raw_absolute_filename = got;
-        }
+    if let Some(got) = find_val1::<Blob>(node, sp::FileName.as_ptr()) {
+        video.set_raw_absolute_filename(got);
     }
-    // SAFETY: as above.
-    unsafe {
-        if let Some(got) = find_val1::<Blob>(node, sp::RelativeFileName.as_ptr()) {
-            (*video).raw_relative_filename = got;
-        }
-        if let Some(got) = find_val1::<Blob>(node, sp::RelativeFilename.as_ptr()) {
-            (*video).raw_relative_filename = got;
-        }
+    if let Some(got) = find_val1::<Blob>(node, sp::Filename.as_ptr()) {
+        video.set_raw_absolute_filename(got);
+    }
+    if let Some(got) = find_val1::<Blob>(node, sp::RelativeFileName.as_ptr()) {
+        video.set_raw_relative_filename(got);
+    }
+    if let Some(got) = find_val1::<Blob>(node, sp::RelativeFilename.as_ptr()) {
+        video.set_raw_relative_filename(got);
     }
 
     let content_node = find_child(node, sp::Content.as_ptr());
-    // SAFETY: `video` is the fresh non-null element, so `&raw mut (*video).content`
-    // is the live `ufbx_blob` out-slot `read_embedded_blob` writes — arena memory
-    // with write-capable provenance, live and unmoved for the call.
-    let content_blob: &BlobView = unsafe { BlobView::from_ptr(&raw mut (*video).content) };
-    read_embedded_blob(uc, content_blob, content_node)?;
+    read_embedded_blob(uc, video.content_view(), content_node)?;
 
     Ok(())
 }

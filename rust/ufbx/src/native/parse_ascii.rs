@@ -50,8 +50,8 @@ use crate::native::float_parse::{
 use crate::native::hash::hash_string_check_ascii;
 use crate::native::parse::{
     array_type_size, is_array_node, is_raw_string, normalize_array_type, report_progress,
-    update_parse_state, ArrayInfo, AsciiTokenView, AsciiView, Context, Node, ParseState, Value,
-    ValueArray, ValueType, ARRAY_FLAG_ACCURATE_F32, ARRAY_FLAG_PAD_BEGIN, ARRAY_FLAG_RESULT,
+    update_parse_state, ArrayInfo, AsciiTokenView, AsciiView, Context, Node, NodeView, ParseState,
+    Value, ValueArray, ValueType, ARRAY_FLAG_ACCURATE_F32, ARRAY_FLAG_PAD_BEGIN, ARRAY_FLAG_RESULT,
     ARRAY_FLAG_TMP_BUF, MAX_NODE_DEPTH, MAX_NON_ARRAY_VALUES,
 };
 use crate::native::platform::{
@@ -1730,11 +1730,16 @@ fn ascii_parse_node_rec(
     // calling code after its done parsing all of it's children.
     let node: *mut Node = uc.tmp_stack_view().push_zero::<Node>(1);
     ufbxi_check!(uc, !node.is_null(), "node");
-    // SAFETY: `node` is the freshly pushed, non-null `Node` slot; writes its own
-    // `name`/`name_len` fields.
+    // SAFETY: `node` is the freshly pushed, non-null `Node` slot in `uc`'s own
+    // temp stack, which only appends, so the slot stays alive, unmoved and
+    // write-capable for the rest of this call.
+    let node: &NodeView = unsafe { NodeView::from_ptr(node) };
+    // `name`/`name_len` are a run/length pair `name_bytes()` reads together, so
+    // they are published as one raw write rather than through split setters.
+    // SAFETY: `node.get()` is that live slot; writes exactly its two name fields.
     unsafe {
-        (*node).name = name;
-        (*node).name_len = name_len as u8;
+        (*node.get()).name = name;
+        (*node.get()).name_len = name_len as u8;
     }
 
     let mut in_ascii_array: bool = false;
@@ -1771,13 +1776,12 @@ fn ascii_parse_node_rec(
 
         let arr: *mut ValueArray = tmp_buf.push::<ValueArray>(1);
         ufbxi_check!(uc, !arr.is_null(), "arr");
-        // SAFETY: `node` is the live pushed `Node` slot and `arr` the live pushed
-        // `ValueArray`; writes `node`'s value-type/array fields and `arr`'s type.
-        unsafe {
-            (*node).value_type_mask = ValueType::Array as u16;
-            (*node).content.array = arr;
-            (*arr).type_ = arr_type;
-        }
+        node.set_value_type_mask(ValueType::Array as u16);
+        node.set_content_array(arr);
+        // SAFETY: `arr` is the freshly pushed, non-null `ValueArray` slot in
+        // `tmp_buf`, which only appends, so it stays alive, unmoved and
+        // write-capable for the rest of this call.
+        unsafe { View::<ValueArray>::from_ptr(arr) }.set_type_(arr_type);
 
         // Parse array values using strtof() if the array destination is 32-bit float
         // since KeyAttrDataFloat packs integer data (!) into floating point values so we
@@ -1822,9 +1826,9 @@ fn ascii_parse_node_rec(
         }
     }
 
-    // SAFETY: `node` is the live pushed `Node` slot; reads its interned `name`
-    // pointer, which `update_parse_state` matches against known node names.
-    let parse_state: ParseState = unsafe { update_parse_state(parent_state, (*node).name) };
+    // SAFETY: `update_parse_state` matches `node`'s interned `name` pointer
+    // against known node names.
+    let parse_state: ParseState = unsafe { update_parse_state(parent_state, node.name()) };
     // C: `ufbxi_value vals[UFBXI_MAX_NON_ARRAY_VALUES];` — left uninitialized;
     // only the `[0, num_values)` prefix written in the loop below is ever read
     // (by the `ufbxi_push_copy` at the end).
@@ -1865,6 +1869,10 @@ fn ascii_parse_node_rec(
                     let raw: bool = arr_type == b's';
                     let v: *mut String = uc.tmp_stack_view().push::<String>(1);
                     ufbxi_check!(uc, !v.is_null(), "v");
+                    // SAFETY: `v` is the freshly pushed, non-null `String` slot in
+                    // `uc`'s temp stack, alive, unmoved and write-capable for the
+                    // rest of this branch.
+                    let v: &StringView = unsafe { StringView::from_ptr(v) };
                     if arr_type == b'C' {
                         let buf: &BufView = if uc.opts_view().retain_dom() {
                             uc.result_view()
@@ -1886,21 +1894,10 @@ fn ascii_parse_node_rec(
                             )
                         };
                         let length = decode_base64(uc, dst, src, &mut arr_error)?;
-                        // SAFETY: `v` is the freshly pushed `String` slot; this
-                        // writes its complete value after the decode length is known.
-                        unsafe { core::ptr::write(v, String::new_c(data, length)) };
+                        v.set(String::new_c(data, length));
                         ufbx_assert!(length <= capacity);
                     } else {
-                        // SAFETY: `v` is the freshly pushed, non-null `String` slot;
-                        // writes its `data`/`length` from `tok`'s live `prev_token`
-                        // string.
-                        unsafe {
-                            (*v).data = tok.str_data();
-                            (*v).length = tok.str_len();
-                        }
-                        // SAFETY: `v` is that same live `String` slot, holding
-                        // the pair just written.
-                        let v = unsafe { StringView::from_ptr(v) };
+                        v.set(String::new_c(tok.str_data(), tok.str_len()));
                         push_string_place_str(uc.string_pool_view(), v, raw)?;
                     }
                 } else {
@@ -2299,14 +2296,14 @@ fn ascii_parse_node_rec(
     ua.set_parse_as_f32(false);
 
     if arr_type != 0 {
+        // `arr_type != 0` means this node was tagged an array above, so `node`'s
+        // live `content.array` union member names the `ValueArray` pushed there.
+        // SAFETY: that slot lives in `tmp_buf`, which only appends, so it stays
+        // alive, unmoved and write-capable for the rest of this call.
+        let arr: &View<ValueArray> = unsafe { View::<ValueArray>::from_ptr(node.array()) };
         if arr_type == b'-' {
-            // SAFETY: this node was tagged an array above, so `node`'s live
-            // `content.array` union member points at the pushed `ValueArray`;
-            // writes its `data`/`size` fields to the empty state.
-            unsafe {
-                (*(*node).content.array).data = core::ptr::null_mut();
-                (*(*node).content.array).size = 0;
-            }
+            arr.set_data(core::ptr::null_mut());
+            arr.set_size(0);
         } else {
             let mut arr_data: *mut c_void = core::ptr::null_mut();
 
@@ -2366,24 +2363,16 @@ fn ascii_parse_node_rec(
             }
             ufbxi_check!(uc, !arr_data.is_null(), "arr_data");
             if (arr_info.flags & ARRAY_FLAG_PAD_BEGIN) != 0 {
-                // SAFETY: `node`'s live `content.array` points at the pushed
-                // `ValueArray`; `arr_data` has the 4-element pad prefix, so skipping
-                // `4 * arr_elem_size` bytes yields the real data start, and the size
-                // drops those 4 pad elements.
-                unsafe {
-                    (*(*node).content.array).data = (arr_data as *mut u8)
-                        .add(4usize.wrapping_mul(arr_elem_size))
-                        as *mut c_void;
-                    (*(*node).content.array).size =
-                        num_values.wrapping_add(deferred_size).wrapping_sub(4) as usize;
-                }
+                // SAFETY: `arr_data` has the 4-element pad prefix, so skipping
+                // `4 * arr_elem_size` bytes stays inside the run and yields the
+                // real data start; the size drops those 4 pad elements.
+                arr.set_data(unsafe {
+                    (arr_data as *mut u8).add(4usize.wrapping_mul(arr_elem_size)) as *mut c_void
+                });
+                arr.set_size(num_values.wrapping_add(deferred_size).wrapping_sub(4) as usize);
             } else {
-                // SAFETY: `node`'s live `content.array` points at the pushed
-                // `ValueArray`; writes its `data`/`size` for the un-padded case.
-                unsafe {
-                    (*(*node).content.array).data = arr_data;
-                    (*(*node).content.array).size = num_values.wrapping_add(deferred_size) as usize;
-                }
+                arr.set_data(arr_data);
+                arr.set_size(num_values.wrapping_add(deferred_size) as usize);
             }
 
             // Pop alignment helper
@@ -2451,16 +2440,14 @@ fn ascii_parse_node_rec(
         }
     } else {
         num_values = min32(num_values, MAX_NON_ARRAY_VALUES as u32);
-        // SAFETY: `node` is the live pushed `Node` slot; writes its value-type mask
-        // and copies the `num_values` written `vals` entries into `tmp_buf` (a live
-        // buf) as its `content.vals`.
-        unsafe {
-            (*node).value_type_mask = type_mask as u16;
-            (*node).content.vals =
-                tmp_buf.push_copy_raw::<Value>(num_values as usize, vals.as_mut_ptr());
-        }
-        // SAFETY: `node` is the live pushed slot; reads back its `content.vals`.
-        ufbxi_check!(uc, !unsafe { (*node).content.vals }.is_null(), "node->vals");
+        node.set_value_type_mask(type_mask as u16);
+        // SAFETY: `vals` addresses the `num_values` `Value` entries written by
+        // the loop above (`num_values <= MAX_NON_ARRAY_VALUES`, the run's
+        // length), copied into `tmp_buf`, a live buf.
+        node.set_content_vals(unsafe {
+            tmp_buf.push_copy_raw::<Value>(num_values as usize, vals.as_mut_ptr())
+        });
+        ufbxi_check!(uc, !node.vals().is_null(), "node->vals");
     }
 
     // Recursively parse the children of this node. Update the parse state
@@ -2478,16 +2465,18 @@ fn ascii_parse_node_rec(
             }
 
             // Pop children from `tmp_stack` to a contiguous array
-            // SAFETY: `node` is the live pushed `Node` slot; moves its `num_children`
-            // parsed children from the temp stack into `tmp_buf` as its `children`.
+            // `children`/`num_children` are a run/count pair `children_iter()`
+            // reads together, so they stay raw writes rather than split setters.
+            // SAFETY: `node.get()` is the live pushed `Node` slot; moves its
+            // `num_children` parsed children from the temp stack into `tmp_buf`.
             unsafe {
-                (*node).children = tmp_buf.push_pop::<Node>(uc.tmp_stack_view(), num_children);
+                (*node.get()).children =
+                    tmp_buf.push_pop::<Node>(uc.tmp_stack_view(), num_children);
             }
-            // SAFETY: `node` is the live pushed slot; reads back its `children`.
-            ufbxi_check!(uc, !unsafe { (*node).children }.is_null(), "node->children");
-            // SAFETY: `node` is the live pushed slot; writes its `num_children`.
+            ufbxi_check!(uc, !node.children().is_null(), "node->children");
+            // SAFETY: `node.get()` is that same live slot; completes the pair.
             unsafe {
-                (*node).num_children = num_children as u32;
+                (*node.get()).num_children = num_children as u32;
             }
         }
 

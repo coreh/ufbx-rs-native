@@ -38,7 +38,9 @@
 use crate::generated::{Error, ErrorFrame, ErrorType, Panic};
 use crate::native::platform::{min_sz, ufbx_assert, ufbxi_ignore};
 use crate::native::printf::{vprint, PrintArg, PrintBuffer};
-use crate::native::view::{view_project, view_raw_mut, view_read, view_write};
+use crate::native::view::{
+    view_project, view_raw_mut, view_raw_shared, view_read_shared, view_write, Mode, View,
+};
 use crate::prelude::String;
 
 // Zero-sized failure token: the C `return 0` failure channel. The actual
@@ -1367,44 +1369,61 @@ pub(crate) use ufbxi_check_opts_return_no_error;
 // Typed interior-mutable VIEW over an `Error` field, reinterpreted in place.
 pub(crate) type ErrorView = crate::native::view::View<Error>;
 
-impl ErrorView {
+// Mode-generic (`M: Mode`): the recorders hold `Mut` views over uc-owned error
+// slots, while `ufbx_format_error` reads a caller's `const ufbx_error *` through
+// a frozen `Const` view — these accessors only read.
+impl<M: Mode> View<Error, M> {
     #[inline(always)]
     pub(crate) fn type_(&self) -> crate::generated::ErrorType {
-        view_read!(self, type_)
-    }
-    #[inline(always)]
-    pub(crate) fn set_type_(&self, type_: crate::generated::ErrorType) {
-        view_write!(self, type_, type_)
+        view_read_shared!(self, type_)
     }
     #[inline(always)]
     pub(crate) fn stack_size(&self) -> u32 {
-        view_read!(self, stack_size)
-    }
-    #[inline(always)]
-    pub(crate) fn set_stack_size(&self, stack_size: u32) {
-        view_write!(self, stack_size, stack_size)
+        view_read_shared!(self, stack_size)
     }
     /// One frame of the error's own `stack` array, as a view (C:
     /// `&err->stack[index]`).
     #[inline(always)]
-    pub(crate) fn stack_frame_view(&self, index: usize) -> &ErrorFrameView {
+    pub(crate) fn stack_frame_view(&self, index: usize) -> &View<ErrorFrame, M> {
         assert!(index < ERROR_STACK_MAX_DEPTH);
         // SAFETY: `stack` is an `[ErrorFrame; ERROR_STACK_MAX_DEPTH]` inside the
-        // live, write-capable `Error` this view was minted over (the mint
-        // invariant), so the array projection plus the in-bounds `index`
-        // (asserted above) addresses one live `ErrorFrame` slot in the same
-        // allocation.
+        // live `Error` this view was minted over (the mint invariant), so the
+        // array projection plus the in-bounds `index` (asserted above) addresses
+        // one live `ErrorFrame` slot in the same allocation, inheriting the
+        // receiver's `M`-adequate provenance.
         unsafe {
-            ErrorFrameView::from_ptr(
-                (&raw mut (*self.get()).stack)
+            View::mint(
+                (&raw const (*self.as_ptr()).stack)
                     .cast::<ErrorFrame>()
+                    .cast_mut()
                     .add(index),
             )
         }
     }
     #[inline(always)]
     pub(crate) fn info_length(&self) -> usize {
-        view_read!(self, info_length)
+        view_read_shared!(self, info_length)
+    }
+    /// The error's own inline info buffer, as a readable byte pointer
+    /// (ERROR_INFO_LENGTH bytes).
+    #[inline(always)]
+    pub(crate) fn info_ptr(&self) -> *const u8 {
+        view_raw_shared!(self, info_buf) as *const u8
+    }
+    #[inline(always)]
+    pub(crate) fn description_view(&self) -> &View<String, M> {
+        view_project!(self, description)
+    }
+}
+
+impl ErrorView {
+    #[inline(always)]
+    pub(crate) fn set_type_(&self, type_: crate::generated::ErrorType) {
+        view_write!(self, type_, type_)
+    }
+    #[inline(always)]
+    pub(crate) fn set_stack_size(&self, stack_size: u32) {
+        view_write!(self, stack_size, stack_size)
     }
     #[inline(always)]
     pub(crate) fn set_info_length(&self, info_length: usize) {
@@ -1416,31 +1435,31 @@ impl ErrorView {
     pub(crate) fn info_mut_ptr(&self) -> *mut u8 {
         view_raw_mut!(self, info_buf) as *mut u8
     }
-    #[inline(always)]
-    pub(crate) fn description_view(&self) -> &crate::prelude::StringView {
-        // SAFETY: `View` is `#[repr(transparent)]` over its storage, so the
-        // field pointer reinterprets in place as a `StringView`; the field sits
-        // inside the live `Error` this view was minted from, keeping the derived
-        // `&StringView` valid for the lifetime of `&self`.
-        unsafe { &*(&raw mut (*self.get()).description as *mut crate::prelude::StringView) }
-    }
 }
 
 // Typed interior-mutable VIEW over one `ErrorFrame` of an `Error`'s stack.
 pub(crate) type ErrorFrameView = crate::native::view::View<ErrorFrame>;
 
+// Mode-generic for the same reason as the `Error` reads above.
+impl<M: Mode> View<ErrorFrame, M> {
+    #[inline(always)]
+    pub(crate) fn source_line(&self) -> u32 {
+        view_read_shared!(self, source_line)
+    }
+    #[inline(always)]
+    pub(crate) fn function_view(&self) -> &View<String, M> {
+        view_project!(self, function)
+    }
+    #[inline(always)]
+    pub(crate) fn description_view(&self) -> &View<String, M> {
+        view_project!(self, description)
+    }
+}
+
 impl ErrorFrameView {
     #[inline(always)]
     pub(crate) fn set_source_line(&self, source_line: u32) {
         view_write!(self, source_line, source_line)
-    }
-    #[inline(always)]
-    pub(crate) fn function_view(&self) -> &crate::prelude::StringView {
-        view_project!(self, function)
-    }
-    #[inline(always)]
-    pub(crate) fn description_view(&self) -> &crate::prelude::StringView {
-        view_project!(self, description)
     }
 }
 

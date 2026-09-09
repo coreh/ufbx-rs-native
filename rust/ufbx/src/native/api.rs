@@ -841,16 +841,22 @@ pub(crate) unsafe fn format_error(dst: *mut u8, dst_size: usize, error: *const E
         return 0;
     }
 
+    // SAFETY: `error` is non-null (checked) and points at a live `ufbx_error` —
+    // the raw-pointer contract of this `unsafe fn`. It arrives as a `*const`
+    // from a public caller's borrow, so only readable provenance may be assumed
+    // and the bytes are frozen for the call: the `Const` mint contract.
+    let error: &View<Error, Const> = unsafe { View::<Error, Const>::from_ptr(error) };
+
     let mut offset: usize = 0;
 
     {
         let num: i32;
-        // SAFETY: `error` is non-null (checked) and points at a live `Error` —
-        // the raw-pointer contract of this `unsafe fn`; reading its own field.
-        if unsafe { (*error).info_length > 0 && (*error).info_length < ERROR_INFO_LENGTH } {
+        if error.info_length() > 0 && error.info_length() < ERROR_INFO_LENGTH {
             // SAFETY: `dst.add(offset)` stays within the `dst_size`-byte output
-            // buffer (`offset <= dst_size - 1`), and each `(*error)` read takes a
-            // field of the live `Error`; `ufbxi_snprintf!` honors the length cap.
+            // buffer (`offset <= dst_size - 1`), the description pointer is the
+            // error's own NUL-terminated span and `info_ptr()` its own inline
+            // buffer, of which `info_length < ERROR_INFO_LENGTH` bytes are
+            // printed; `ufbxi_snprintf!` honors the length cap.
             num = unsafe {
                 ufbxi_snprintf!(
                     dst.add(offset),
@@ -859,17 +865,17 @@ pub(crate) unsafe fn format_error(dst: *mut u8, dst_size: usize, error: *const E
                     SOURCE_VERSION / 1000000,
                     SOURCE_VERSION / 1000 % 1000,
                     SOURCE_VERSION % 1000,
-                    if !(*error).description.data.is_null() {
-                        (*error).description.data
+                    if !error.description_view().data().is_null() {
+                        error.description_view().data()
                     } else {
                         b"Unknown error\0".as_ptr()
                     },
-                    (*error).info_length as i32,
-                    (*error).info_buf.data.as_ptr() as *const u8,
+                    error.info_length() as i32,
+                    error.info_ptr(),
                 )
             };
         } else {
-            // SAFETY: as above.
+            // SAFETY: as above, without the info span.
             num = unsafe {
                 ufbxi_snprintf!(
                     dst.add(offset),
@@ -878,8 +884,8 @@ pub(crate) unsafe fn format_error(dst: *mut u8, dst_size: usize, error: *const E
                     SOURCE_VERSION / 1000000,
                     SOURCE_VERSION / 1000 % 1000,
                     SOURCE_VERSION % 1000,
-                    if !(*error).description.data.is_null() {
-                        (*error).description.data
+                    if !error.description_view().data().is_null() {
+                        error.description_view().data()
                     } else {
                         b"Unknown error\0".as_ptr()
                     },
@@ -892,30 +898,23 @@ pub(crate) unsafe fn format_error(dst: *mut u8, dst_size: usize, error: *const E
         }
     }
 
-    // SAFETY: live `Error` per above; reading its own `stack_size` field.
-    let stack_size: usize = min_sz(
-        unsafe { (*error).stack_size } as usize,
-        ERROR_STACK_MAX_DEPTH,
-    );
+    let stack_size: usize = min_sz(error.stack_size() as usize, ERROR_STACK_MAX_DEPTH);
     let line_width: i32 = 6;
     for i in 0..stack_size {
         // C: `const ufbx_error_frame *frame = &error->stack[i];`
-        // SAFETY: `&raw const (*error).stack` addresses the live `Error`'s stack
-        // array and `i < stack_size <= ERROR_STACK_MAX_DEPTH` is a valid index.
-        let frame: *const ErrorFrame =
-            unsafe { (&raw const (*error).stack as *const ErrorFrame).add(i) };
+        let frame: &View<ErrorFrame, Const> = error.stack_frame_view(i);
         // SAFETY: `dst.add(offset)` stays within the `dst_size`-byte output
-        // buffer, and `frame` is the live stack frame just indexed; the reads
-        // take its own NUL-terminated span fields.
+        // buffer, and the two span pointers are the frame's own NUL-terminated
+        // `function`/`description` strings.
         let num: i32 = unsafe {
             ufbxi_snprintf!(
                 dst.add(offset),
                 dst_size - offset,
                 "%*u:%s: %s\n",
                 line_width,
-                (*frame).source_line,
-                (*frame).function.data,
-                (*frame).description.data,
+                frame.source_line(),
+                frame.function_view().data(),
+                frame.description_view().data(),
             )
         };
         if num > 0 {
@@ -2068,64 +2067,45 @@ pub(crate) fn evaluate_transform_flags(
 
     // C: `ufbx_transform transform; // ufbxi_uninit`
     let mut transform = MaybeUninit::<Transform>::uninit(); // ufbxi_uninit
-    let t: *mut Transform = transform.as_mut_ptr();
+                                                            // SAFETY: this frame's own `Transform` storage — a live, correctly aligned,
+                                                            // write-capable slot that stays put for the rest of the body and that
+                                                            // nothing else names; its bytes may still be uninitialized, which the
+                                                            // view's `MaybeUninit` storage tolerates.
+    let t: &View<Transform, Mut> = unsafe { View::<Transform>::from_ptr(transform.as_mut_ptr()) };
     if (components & TransformFlags::INCLUDE_TRANSLATION.raw()) != 0 {
-        // SAFETY: `t` is the local transform storage; `get_transform` reads
-        // read-only views over the local `props` and the live `node`, neither
-        // written through while the views are held, and the result is written
-        // into `t`.
-        unsafe {
-            core::ptr::write(
-                t,
-                get_transform(
-                    View::<Props, Const>::from_ref(&props),
-                    order,
-                    node,
-                    translation_scale,
-                ),
-            );
-        }
+        t.write_value(get_transform(
+            View::<Props, Const>::from_ref(&props),
+            order,
+            node,
+            translation_scale,
+        ));
     } else {
-        // SAFETY: `t` is the local transform storage; writing its own field.
-        unsafe {
-            (*t).translation = ZERO_VEC3;
-        }
+        t.set_translation(ZERO_VEC3);
         if (components & TransformFlags::INCLUDE_ROTATION.raw()) != 0 {
-            // SAFETY: `t` is the local transform; `get_rotation` reads read-only
-            // views over the local `props` and the live `node`, neither written
-            // through while the views are held.
-            unsafe {
-                (*t).rotation = get_rotation(View::<Props, Const>::from_ref(&props), order, node);
-            }
+            t.set_rotation(get_rotation(
+                View::<Props, Const>::from_ref(&props),
+                order,
+                node,
+            ));
         } else {
-            // SAFETY: local transform storage; writing its own field.
-            unsafe {
-                (*t).rotation = IDENTITY_QUAT;
-            }
+            t.set_rotation(IDENTITY_QUAT);
         }
         if (components & TransformFlags::INCLUDE_SCALE.raw()) != 0 {
-            // SAFETY: `t` is the local transform; `get_scale` reads read-only
-            // views over the local `props` and the live `node`, neither written
-            // through while the views are held.
-            unsafe {
-                (*t).scale = get_scale(View::<Props, Const>::from_ref(&props), node);
-            }
+            t.set_scale(get_scale(View::<Props, Const>::from_ref(&props), node));
         } else {
-            // SAFETY: local transform storage; writing its own field.
-            unsafe {
-                (*t).scale = ONE_VEC3;
-            }
+            t.set_scale(ONE_VEC3);
         }
     }
 
     if use_scale_factor {
-        // SAFETY: `t` is the local transform, fully initialized above; scaling
-        // its own components.
-        unsafe {
-            (*t).scale.x *= scale_factor.x;
-            (*t).scale.y *= scale_factor.y;
-            (*t).scale.z *= scale_factor.z;
-        }
+        // C scales the three components in place; the transform is fully
+        // initialized above, so reading the vector back and republishing it
+        // stores the same bytes.
+        let mut scale: Vec3 = t.scale();
+        scale.x *= scale_factor.x;
+        scale.y *= scale_factor.y;
+        scale.z *= scale_factor.z;
+        t.set_scale(scale);
     }
     // SAFETY: `transform` is fully initialized on every path above.
     unsafe { transform.assume_init() }

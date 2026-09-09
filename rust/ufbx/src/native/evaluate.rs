@@ -2466,28 +2466,26 @@ pub(crate) unsafe fn next_prop_slow(iter: &View<PropIter, Mut>) -> *const Prop {
 // C: `ufbxi_forceinline`.
 #[inline(always)]
 pub(crate) unsafe fn next_prop(iter: *mut PropIter) -> *const Prop {
-    // SAFETY (every `*iter` access in this fn): `iter` is the caller's live
-    // `PropIter` — the raw-pointer contract of this `unsafe fn`.
-    if unsafe { (*iter).over } == unsafe { (*iter).over_end } {
-        if unsafe { (*iter).prop } == unsafe { (*iter).prop_end } {
+    // SAFETY: `iter` is the caller's live `PropIter` — the raw-pointer contract
+    // of this `unsafe fn` — reached through `*mut`, so its provenance is
+    // write-capable.
+    let iter: &View<PropIter, Mut> = unsafe { View::<PropIter, Mut>::from_ptr(iter) };
+    if iter.over() == iter.over_end() {
+        if iter.prop() == iter.prop_end() {
             return ptr::null();
         }
         // C: `return iter->prop++;`
-        let prop: *const Prop = unsafe { (*iter).prop };
+        let prop: *const Prop = iter.prop();
         // SAFETY: `prop` is short of `prop_end`, so it is inside the element's
         // prop run and `prop + 1` is at most one past its end.
-        unsafe { (*iter).prop = prop.add(1) };
+        iter.set_prop(unsafe { prop.add(1) });
         prop
     } else {
-        // SAFETY: `iter` is the caller's live `PropIter` — the raw-pointer
-        // contract of this `unsafe fn` — reached through `*mut`, so its
-        // provenance is write-capable.
-        let iter_view: &View<PropIter, Mut> = unsafe { View::<PropIter, Mut>::from_ptr(iter) };
         // SAFETY: `iter` is as `init_prop_iter` left it, so its `prop`/`over`
         // cursors sit inside the element's prop run and the anim's override run
         // and stop at the matching `*_end` — the run-bounds contract of
         // `next_prop_slow`.
-        unsafe { next_prop_slow(iter_view) }
+        unsafe { next_prop_slow(iter) }
     }
 }
 
@@ -4805,18 +4803,19 @@ pub(crate) unsafe extern "C" fn prop_override_prop_name_less(
     vb: *const c_void,
 ) -> bool {
     ufbxi_ignore!(user);
-    let a: *const PropOverride = va as *const PropOverride;
-    let b: *const PropOverride = vb as *const PropOverride;
     // SAFETY: the sort comparator contract guarantees `va` and `vb` each point
-    // to a live `ufbx_prop_override` element of the array being sorted, so both
-    // `_internal_key` fields are readable.
-    if unsafe { (*a)._internal_key != (*b)._internal_key } {
-        // SAFETY: as above.
-        return unsafe { (*a)._internal_key < (*b)._internal_key };
+    // to a live `ufbx_prop_override` element of the array being sorted, and the
+    // sort writes nothing through the array while a comparison runs, so the
+    // elements are frozen for these borrows — the `Const` mint contract.
+    let a: &View<PropOverride, Const> =
+        unsafe { View::<PropOverride, Const>::from_ptr(va as *const PropOverride) };
+    // SAFETY: as above, for `vb`.
+    let b: &View<PropOverride, Const> =
+        unsafe { View::<PropOverride, Const>::from_ptr(vb as *const PropOverride) };
+    if a._internal_key() != b._internal_key() {
+        return a._internal_key() < b._internal_key();
     }
-    // SAFETY: as above, reading each element's `prop_name` string by value;
-    // `str_less` only compares the spans those strings describe.
-    unsafe { str_less((*a).prop_name.as_bytes(), (*b).prop_name.as_bytes()) }
+    str_less(a.prop_name_view().bytes(), b.prop_name_view().bytes())
 }
 
 // ufbx.c:26536-26543 `ufbxi_prop_override_less`
@@ -4826,24 +4825,25 @@ pub(crate) unsafe extern "C" fn prop_override_less(
     vb: *const c_void,
 ) -> bool {
     ufbxi_ignore!(user);
-    let a: *const PropOverride = va as *const PropOverride;
-    let b: *const PropOverride = vb as *const PropOverride;
     // SAFETY: the sort comparator contract guarantees `va` and `vb` each point
-    // to a live `ufbx_prop_override` element of the array being sorted, so both
-    // `element_id` fields are readable.
-    if unsafe { (*a).element_id != (*b).element_id } {
-        // SAFETY: as above.
-        return unsafe { (*a).element_id < (*b).element_id };
+    // to a live `ufbx_prop_override` element of the array being sorted, and the
+    // sort writes nothing through the array while a comparison runs, so the
+    // elements are frozen for these borrows — the `Const` mint contract.
+    let a: &View<PropOverride, Const> =
+        unsafe { View::<PropOverride, Const>::from_ptr(va as *const PropOverride) };
+    // SAFETY: as above, for `vb`.
+    let b: &View<PropOverride, Const> =
+        unsafe { View::<PropOverride, Const>::from_ptr(vb as *const PropOverride) };
+    if a.element_id() != b.element_id() {
+        return a.element_id() < b.element_id();
     }
-    // SAFETY: as above, for the `_internal_key` fields.
-    if unsafe { (*a)._internal_key != (*b)._internal_key } {
-        // SAFETY: as above.
-        return unsafe { (*a)._internal_key < (*b)._internal_key };
+    if a._internal_key() != b._internal_key() {
+        return a._internal_key() < b._internal_key();
     }
-    // SAFETY: as above; at the one call site (the post-interning sort in
+    // SAFETY: at the one call site (the post-interning sort in
     // `create_anim_imp`) every `prop_name` is a STRINGS-table entry or a
     // NUL-terminated `push_anim_string` copy, so `strcmp` stays inside both.
-    unsafe { strcmp((*a).prop_name.data, (*b).prop_name.data) < 0 }
+    unsafe { strcmp(a.prop_name().data, b.prop_name().data) < 0 }
 }
 
 // ufbx.c:26545-26550 `ufbxi_transform_override_less`
@@ -5901,29 +5901,33 @@ pub(crate) struct BakeProp {
 // Rust-port infra (not a ufbx.c type): reinterpret-in-place VIEW over a
 // `BakeProp`. The C `ufbxi_for(ufbxi_bake_prop, prop, props, count)` loops walk a
 // contiguous `push_pop`-materialized `BakeProp` run; `Run<BakeProp>` carries
-// that pair through the baking pipeline and yields `&BakePropView`, replacing
+// that pair through the baking pipeline and yields `&View<BakeProp>`, replacing
 // raw `prop.add(1)` navigation with safe indexing, sub-runs, and iteration
 // after one root construction vouch.
+// Mode-generic (`M: Mode`): the baking pipeline holds `Mut` runs, while
+// `ufbxi_bake_prop_less` compares two elements through frozen `Const` views
+// minted from the sort's `*const` operands — these accessors only read.
 #[cfg(feature = "baking")]
 #[cfg(feature = "baking")]
-pub(crate) type BakePropView = crate::native::view::View<BakeProp>;
+impl<M: Mode> View<BakeProp, M> {
+    #[inline(always)]
+    pub(crate) fn sort_id(&self) -> u32 {
+        view_read_shared!(self, sort_id)
+    }
 
-#[cfg(feature = "baking")]
-#[cfg(feature = "baking")]
-impl BakePropView {
     #[inline(always)]
     pub(crate) fn prop_name(&self) -> *const u8 {
-        view_read!(self, prop_name)
+        view_read_shared!(self, prop_name)
     }
 
     #[inline(always)]
     pub(crate) fn anim_value(&self) -> *mut AnimValue {
-        view_read!(self, anim_value)
+        view_read_shared!(self, anim_value)
     }
 
     #[inline(always)]
     pub(crate) fn element_id(&self) -> u32 {
-        view_read!(self, element_id)
+        view_read_shared!(self, element_id)
     }
 }
 
@@ -5935,25 +5939,26 @@ pub(crate) unsafe extern "C" fn bake_prop_less(
     vb: *const c_void,
 ) -> bool {
     ufbxi_ignore!(user);
-    let a: *const BakeProp = va as *const BakeProp;
-    let b: *const BakeProp = vb as *const BakeProp;
     // SAFETY: the sort comparator contract guarantees `va` and `vb` each point
-    // to a live `ufbxi_bake_prop` element of the array being sorted, so both
-    // `sort_id` fields are readable.
-    if unsafe { (*a).sort_id != (*b).sort_id } {
-        // SAFETY: as above.
-        return unsafe { (*a).sort_id < (*b).sort_id };
+    // to a live `ufbxi_bake_prop` element of the array being sorted, and the
+    // sort writes nothing through the array while a comparison runs, so the
+    // elements are frozen for these borrows — the `Const` mint contract.
+    let a: &View<BakeProp, Const> =
+        unsafe { View::<BakeProp, Const>::from_ptr(va as *const BakeProp) };
+    // SAFETY: as above, for `vb`.
+    let b: &View<BakeProp, Const> =
+        unsafe { View::<BakeProp, Const>::from_ptr(vb as *const BakeProp) };
+    if a.sort_id() != b.sort_id() {
+        return a.sort_id() < b.sort_id();
     }
-    // SAFETY: as above, for the `element_id` fields.
-    if unsafe { (*a).element_id != (*b).element_id } {
-        // SAFETY: as above.
-        return unsafe { (*a).element_id < (*b).element_id };
+    if a.element_id() != b.element_id() {
+        return a.element_id() < b.element_id();
     }
-    // SAFETY: as above, comparing the two `prop_name` pointers themselves.
-    if unsafe { (*a).prop_name != (*b).prop_name } {
-        // SAFETY: as above; both `prop_name`s are pooled NUL-terminated strings,
-        // so `strcmp` stays inside them.
-        return unsafe { strcmp((*a).prop_name, (*b).prop_name) } < 0;
+    // C compares the two `prop_name` pointers themselves before `strcmp`.
+    if a.prop_name() != b.prop_name() {
+        // SAFETY: both `prop_name`s are pooled NUL-terminated strings, so
+        // `strcmp` stays inside them.
+        return unsafe { strcmp(a.prop_name(), b.prop_name()) } < 0;
     }
     false
 }

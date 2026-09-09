@@ -37,8 +37,8 @@ use crate::native::io::{
 };
 use crate::native::parse::{
     array_type_size, get_read_offset, is_array_node, is_raw_string, normalize_array_type,
-    update_parse_state, ArrayInfo, Context, InnerContext, Node, ParseState, Value, ValueArray,
-    ValueNum, ValueType, ARRAY_FLAG_PAD_BEGIN, ARRAY_FLAG_RESULT, ARRAY_FLAG_TMP_BUF,
+    update_parse_state, ArrayInfo, Context, InnerContext, Node, NodeView, ParseState, Value,
+    ValueArray, ValueNum, ValueType, ARRAY_FLAG_PAD_BEGIN, ARRAY_FLAG_RESULT, ARRAY_FLAG_TMP_BUF,
     MAX_NODE_DEPTH, MAX_NON_ARRAY_VALUES,
 };
 use crate::native::platform::{
@@ -49,7 +49,7 @@ use crate::native::string_pool::{
     push_sanitized_string, push_string, push_string_place_str, SanitizedStringView,
 };
 use crate::native::thread::{thread_pool_create_task, thread_pool_run_task, Task};
-use crate::native::view::Run;
+use crate::native::view::{Run, View};
 use crate::prelude::{slice_from_ptr, String, StringView};
 
 // -- Binary parsing
@@ -231,25 +231,31 @@ pub(crate) unsafe fn binary_convert_array(
     dst: *mut c_void,
     size: usize,
 ) -> Result<(), Fail> {
+    // SAFETY: `maybe_uc`, when non-null, points to an `InnerContext` that stays
+    // alive, unmoved and write-capable for this call (the fn contract), reached
+    // through `*mut`, so the borrow may be write-capable as `Context` requires.
+    let maybe_uc: Option<&Context> = if maybe_uc.is_null() {
+        None
+    } else {
+        Some(unsafe { Context::from_ptr(maybe_uc) })
+    };
+
     // TODO: We might want to use the slow path if the machine float/double doesn't match IEEE 754!
     // Convert commented out lines under some `#if UFBX_NON_IEE754` define or something.
     if src_type == dst_type {
-        // SAFETY: reachable only via `binary_parse_node` (the deflate task calls
-        // in only with `src_type != dst_type`), which passes a live
-        // `InnerContext` as `maybe_uc`; the `&&` short-circuit establishes
-        // non-null before the two flag reads.
-        ufbx_assert!(
-            !maybe_uc.is_null()
-                && unsafe { (*maybe_uc).file_big_endian }
-                    != unsafe { (*maybe_uc).local_big_endian }
-        );
-        // SAFETY: `maybe_uc` is the live context asserted above; `from_ptr`
-        // reborrows it, and the caller's `src` holds `size` `src_type`
-        // elements. The bounded span is consumed immediately by the endian
-        // copy into `uc`'s owned `swap_arr`.
+        // C: `ufbx_assert(maybe_uc && maybe_uc->file_big_endian != maybe_uc->local_big_endian);`
+        ufbx_assert!(maybe_uc.is_some_and(|uc| uc.file_big_endian() != uc.local_big_endian()));
+        // SAFETY: this arm is reachable only via `binary_parse_node` (the
+        // deflate task calls in only with `src_type != dst_type`), which always
+        // passes a live `InnerContext` — the same reachability the assert above
+        // states; C dereferences `maybe_uc` here unconditionally.
+        let uc: &Context = unsafe { maybe_uc.unwrap_unchecked() };
+        // SAFETY: the caller's `src` holds `size` `src_type` elements. The
+        // bounded span is consumed immediately by the endian copy into `uc`'s
+        // owned `swap_arr`.
         src = unsafe {
             swap_endian_array(
-                Context::from_ptr(maybe_uc),
+                uc,
                 slice_from_ptr(
                     src as *const u8,
                     size.wrapping_mul(array_type_size(src_type)),
@@ -258,13 +264,7 @@ pub(crate) unsafe fn binary_convert_array(
                 src_type,
             ) as *const c_void
         };
-        ufbxi_check_err!(
-            // SAFETY: `maybe_uc` is the live context asserted above; `&raw mut`
-            // projects its `error` field for the `ErrorView`.
-            unsafe { crate::native::error::ErrorView::from_ptr(&raw mut (*maybe_uc).error) },
-            !src.is_null(),
-            "src"
-        );
+        ufbxi_check_err!(uc.error_view(), !src.is_null(), "src");
         // SAFETY: `src` (the swap buffer, or the caller's decode buffer handed
         // back unchanged for 1-byte types) and `dst` are distinct allocations
         // each holding `size * array_type_size(dst_type)` bytes — the
@@ -279,16 +279,14 @@ pub(crate) unsafe fn binary_convert_array(
         return Ok(());
     }
 
-    // SAFETY: `maybe_uc`, when non-null, points to a live `InnerContext`
-    // (caller contract), so reading `file_big_endian` is valid.
-    if !maybe_uc.is_null() && unsafe { (*maybe_uc).file_big_endian } {
-        // SAFETY: `maybe_uc` is the live, big-endian context just checked;
-        // `from_ptr` reborrows it, and the caller's `src` holds `size`
-        // `src_type` elements. The bounded span is consumed immediately by
-        // the endian copy into `uc`'s owned `swap_arr`.
+    // C: `if (maybe_uc && maybe_uc->file_big_endian) {`
+    if let Some(uc) = maybe_uc.filter(|uc| uc.file_big_endian()) {
+        // SAFETY: the caller's `src` holds `size` `src_type` elements. The
+        // bounded span is consumed immediately by the endian copy into `uc`'s
+        // owned `swap_arr`.
         src = unsafe {
             swap_endian_array(
-                Context::from_ptr(maybe_uc),
+                uc,
                 slice_from_ptr(
                     src as *const u8,
                     size.wrapping_mul(array_type_size(src_type)),
@@ -297,13 +295,7 @@ pub(crate) unsafe fn binary_convert_array(
                 src_type,
             ) as *const c_void
         };
-        ufbxi_check_err!(
-            // SAFETY: `maybe_uc` is the live context just checked; `&raw mut`
-            // projects its `error` field for the `ErrorView`.
-            unsafe { crate::native::error::ErrorView::from_ptr(&raw mut (*maybe_uc).error) },
-            !src.is_null(),
-            "src"
-        );
+        ufbxi_check_err!(uc.error_view(), !src.is_null(), "src");
     }
 
     // The one source run every arm below walks: `size` elements of `src_type`,
@@ -362,18 +354,8 @@ pub(crate) unsafe fn binary_convert_array(
                 b'f' => ufbxi_convert_loop_slow!(d, ufbxi_cast_u8, 4, val, read_f32(val)),
                 b'd' => ufbxi_convert_loop_slow!(d, ufbxi_cast_u8, 8, val, read_f64(val)),
                 _ => {
-                    if !maybe_uc.is_null() {
-                        ufbxi_fail_err!(
-                            // SAFETY: `maybe_uc` is non-null here (just checked) and
-                            // points to a live `InnerContext` (caller contract);
-                            // `&raw mut` projects its `error` field for the view.
-                            unsafe {
-                                crate::native::error::ErrorView::from_ptr(
-                                    &raw mut (*maybe_uc).error,
-                                )
-                            },
-                            "Bad array source type"
-                        );
+                    if let Some(uc) = maybe_uc {
+                        ufbxi_fail_err!(uc.error_view(), "Bad array source type");
                     }
                     return Err(Fail::unrecorded());
                 }
@@ -400,18 +382,8 @@ pub(crate) unsafe fn binary_convert_array(
                 b'f' => ufbxi_convert_loop_slow!(d, ufbxi_cast_f64_to_i32, 4, val, read_f32(val)),
                 b'd' => ufbxi_convert_loop_slow!(d, ufbxi_cast_f64_to_i32, 8, val, read_f64(val)),
                 _ => {
-                    if !maybe_uc.is_null() {
-                        ufbxi_fail_err!(
-                            // SAFETY: `maybe_uc` is non-null here (just checked) and
-                            // points to a live `InnerContext` (caller contract);
-                            // `&raw mut` projects its `error` field for the view.
-                            unsafe {
-                                crate::native::error::ErrorView::from_ptr(
-                                    &raw mut (*maybe_uc).error,
-                                )
-                            },
-                            "Bad array source type"
-                        );
+                    if let Some(uc) = maybe_uc {
+                        ufbxi_fail_err!(uc.error_view(), "Bad array source type");
                     }
                     return Err(Fail::unrecorded());
                 }
@@ -433,18 +405,8 @@ pub(crate) unsafe fn binary_convert_array(
                 b'f' => ufbxi_convert_loop_slow!(d, ufbxi_cast_f64_to_i64, 4, val, read_f32(val)),
                 b'd' => ufbxi_convert_loop_slow!(d, ufbxi_cast_f64_to_i64, 8, val, read_f64(val)),
                 _ => {
-                    if !maybe_uc.is_null() {
-                        ufbxi_fail_err!(
-                            // SAFETY: `maybe_uc` is non-null here (just checked) and
-                            // points to a live `InnerContext` (caller contract);
-                            // `&raw mut` projects its `error` field for the view.
-                            unsafe {
-                                crate::native::error::ErrorView::from_ptr(
-                                    &raw mut (*maybe_uc).error,
-                                )
-                            },
-                            "Bad array source type"
-                        );
+                    if let Some(uc) = maybe_uc {
+                        ufbxi_fail_err!(uc.error_view(), "Bad array source type");
                     }
                     return Err(Fail::unrecorded());
                 }
@@ -466,18 +428,8 @@ pub(crate) unsafe fn binary_convert_array(
                 // case 'f': ufbxi_convert_loop_slow(float, (float), 4, ufbxi_read_f32(val)); break;
                 b'd' => ufbxi_convert_loop_fast!(d, ufbxi_cast_f32, 8, val, read_f64(val)),
                 _ => {
-                    if !maybe_uc.is_null() {
-                        ufbxi_fail_err!(
-                            // SAFETY: `maybe_uc` is non-null here (just checked) and
-                            // points to a live `InnerContext` (caller contract);
-                            // `&raw mut` projects its `error` field for the view.
-                            unsafe {
-                                crate::native::error::ErrorView::from_ptr(
-                                    &raw mut (*maybe_uc).error,
-                                )
-                            },
-                            "Bad array source type"
-                        );
+                    if let Some(uc) = maybe_uc {
+                        ufbxi_fail_err!(uc.error_view(), "Bad array source type");
                     }
                     return Err(Fail::unrecorded());
                 }
@@ -498,18 +450,8 @@ pub(crate) unsafe fn binary_convert_array(
                 b'l' => ufbxi_convert_loop_slow!(d, ufbxi_cast_f64, 8, val, read_i64(val)),
                 b'f' => ufbxi_convert_loop_fast!(d, ufbxi_cast_f64, 4, val, read_f32(val)),
                 _ => {
-                    if !maybe_uc.is_null() {
-                        ufbxi_fail_err!(
-                            // SAFETY: `maybe_uc` is non-null here (just checked) and
-                            // points to a live `InnerContext` (caller contract);
-                            // `&raw mut` projects its `error` field for the view.
-                            unsafe {
-                                crate::native::error::ErrorView::from_ptr(
-                                    &raw mut (*maybe_uc).error,
-                                )
-                            },
-                            "Bad array source type"
-                        );
+                    if let Some(uc) = maybe_uc {
+                        ufbxi_fail_err!(uc.error_view(), "Bad array source type");
                     }
                     return Err(Fail::unrecorded());
                 }
@@ -994,6 +936,10 @@ fn binary_parse_node_rec(
     // calling code after its done parsing all of it's children.
     let node: *mut Node = uc.tmp_stack_view().push_zero::<Node>(1);
     ufbxi_check!(uc, !node.is_null(), "node");
+    // SAFETY: `node` is the freshly pushed, non-null `Node` slot in `uc`'s own
+    // temp stack, which only appends, so the slot stays alive, unmoved and
+    // write-capable for the rest of this call.
+    let node: &NodeView = unsafe { NodeView::from_ptr(node) };
 
     // Parse and intern the name to the string pool.
     let mut name: *const u8 = read_bytes(uc, name_len as usize);
@@ -1010,11 +956,13 @@ fn binary_parse_node_rec(
         )
     };
     ufbxi_check!(uc, !name.is_null(), "name");
-    // SAFETY: `node` is the live zero-initialized `Node` just pushed; write its
-    // name fields.
+    // `name`/`name_len` are a run/length pair `name_bytes()` reads together, so
+    // they are published as one raw write rather than through split setters.
+    // SAFETY: `node.get()` is the live zero-initialized `Node` just pushed;
+    // writes exactly its two name fields.
     unsafe {
-        (*node).name_len = name_len;
-        (*node).name = name;
+        (*node.get()).name_len = name_len;
+        (*node.get()).name = name;
     }
 
     let values_end_offset: u64 = get_read_offset(uc).wrapping_add(values_len);
@@ -1041,15 +989,13 @@ fn binary_parse_node_rec(
         let arr: *mut ValueArray = tmp_buf.push::<ValueArray>(1);
         ufbxi_check!(uc, !arr.is_null(), "arr");
 
-        // SAFETY: `node` is the live pushed `Node`; write its value-type mask and
-        // array pointer (the `content` union's `array` variant).
-        unsafe {
-            (*node).value_type_mask = ValueType::Array as u16;
-            (*node).content.array = arr;
-        }
-        // SAFETY: `arr` is the live `ValueArray` just pushed — write the
-        // array's element type.
-        unsafe { (*arr).type_ = normalize_array_type(arr_info.type_, b'b') };
+        node.set_value_type_mask(ValueType::Array as u16);
+        node.set_content_array(arr);
+        // SAFETY: `arr` is the freshly pushed, non-null `ValueArray` slot in
+        // `tmp_buf`, which only appends, so it stays alive, unmoved and
+        // write-capable for the rest of this branch.
+        let arr: &View<ValueArray> = unsafe { View::<ValueArray>::from_ptr(arr) };
+        arr.set_type_(normalize_array_type(arr_info.type_, b'b'));
 
         // Peek the first bytes of the array. We can always look at least 13 bytes
         // ahead safely as valid FBX files must end in a 13/25 byte NULL record.
@@ -1136,15 +1082,15 @@ fn binary_parse_node_rec(
                     unsafe { inflate_init_retain(uc.inflate_retain()) };
 
                     // SAFETY: `t` is the live zero-initialized `DeflateTask` just
-                    // pushed and `arr` the live `ValueArray`; populate the task's
-                    // fields from the parsed array header.
+                    // pushed; populate the task's fields from the parsed array
+                    // header.
                     unsafe {
                         (*t).src_elem_size = src_elem_size;
                         (*t).encoded_size = encoded_size as usize;
                         (*t).array_size = size as usize;
                         (*t).src_type = src_type;
                         (*t).dst_type = dst_type;
-                        (*t).arr_type = (*arr).type_;
+                        (*t).arr_type = arr.type_();
                         (*t).dst_data = arr_data as *mut c_void;
                         (*t).inflate_retain = uc.inflate_retain();
                     }
@@ -1364,21 +1310,16 @@ fn binary_parse_node_rec(
                 }?;
             }
 
-            // SAFETY: `arr` is the live `ValueArray`; record its data/size.
-            unsafe {
-                (*arr).data = arr_data as *mut c_void;
-                (*arr).size = size as usize;
-            }
+            arr.set_data(arr_data as *mut c_void);
+            arr.set_size(size as usize);
         } else if c == b'0' || c == b'-' {
             // Ignore the array
-            // SAFETY: `arr` is the live `ValueArray`; point it 32 bytes into the
-            // shared zero-size sentinel, a static of at least 64 bytes (so the
-            // offset is in bounds; the size-0 array is never dereferenced).
-            unsafe {
-                (*arr).type_ = if c == b'-' { b'-' } else { dst_type };
-                (*arr).data = ZERO_SIZE_BUFFER.as_ptr().add(32) as *mut c_void;
-                (*arr).size = 0;
-            }
+            arr.set_type_(if c == b'-' { b'-' } else { dst_type });
+            // SAFETY: points 32 bytes into the shared zero-size sentinel, a
+            // static of at least 64 bytes (so the offset is in bounds; the
+            // size-0 array is never dereferenced).
+            arr.set_data(unsafe { ZERO_SIZE_BUFFER.as_ptr().add(32) } as *mut c_void);
+            arr.set_size(0);
         } else {
             // Allocate `num_values` elements for the array and parse single values into it.
             let arr_data: *mut u8 =
@@ -1395,19 +1336,16 @@ fn binary_parse_node_rec(
                     tmp_buf,
                 )
             }?;
-            // SAFETY: `arr` is the live `ValueArray`; record its data/size.
-            unsafe {
-                (*arr).data = arr_data as *mut c_void;
-                (*arr).size = num_values as usize;
-            }
+            arr.set_data(arr_data as *mut c_void);
+            arr.set_size(num_values as usize);
         }
 
         // Post-process boolean arrays
         if !deferred && arr_info.type_ == b'b' {
-            // SAFETY: `arr` is the live `ValueArray`; its `data`/`size` describe
-            // the just-filled, exclusively writable bool run to normalize.
+            // SAFETY: the array's `data`/`size` describe the just-filled,
+            // exclusively writable bool run to normalize.
             let data =
-                unsafe { core::slice::from_raw_parts_mut((*arr).data as *mut u8, (*arr).size) };
+                unsafe { core::slice::from_raw_parts_mut(arr.data() as *mut u8, arr.size()) };
             postprocess_bool_array(data);
         }
     } else {
@@ -1422,9 +1360,7 @@ fn binary_parse_node_rec(
         // fresh chunks, so the run stays alive and unmoved for the loop — the
         // same stability C relies on when it holds `vals` across its pushes.
         let vals_run = unsafe { Run::<Value>::from_raw_parts(vals, num_values as usize) };
-        // SAFETY: `node` is the live pushed `Node`; store the values pointer (the
-        // `content` union's `vals` variant).
-        unsafe { (*node).content.vals = vals };
+        node.set_content_vals(vals);
 
         let mut type_mask: u32 = 0;
         let mut i: usize = 0;
@@ -1576,8 +1512,7 @@ fn binary_parse_node_rec(
             i += 1;
         }
 
-        // SAFETY: `node` is the live pushed `Node`; store its value-type mask.
-        unsafe { (*node).value_type_mask = type_mask as u16 };
+        node.set_value_type_mask(type_mask as u16);
     }
 
     // Skip over remaining values if necessary if we for example truncated
@@ -1595,9 +1530,9 @@ fn binary_parse_node_rec(
     if recursive {
         // Recursively parse the children of this node. Update the parse state
         // to provide context for child node parsing.
-        // SAFETY: `node` is the live pushed `Node`; `update_parse_state` reads its
-        // pooled `name` to derive the child parse state.
-        let parse_state: ParseState = unsafe { update_parse_state(parent_state, (*node).name) };
+        // SAFETY: `update_parse_state` reads `node`'s pooled `name` to derive
+        // the child parse state.
+        let parse_state: ParseState = unsafe { update_parse_state(parent_state, node.name()) };
         let mut num_children: u32 = 0;
         loop {
             // Stop at end offset
@@ -1620,18 +1555,19 @@ fn binary_parse_node_rec(
         }
 
         // Pop children from `tmp_stack` to a contiguous array
-        // SAFETY: `node` is the live pushed `Node`; store its child count, then
-        // its children pointer popped from the tmp stack.
-        unsafe { (*node).num_children = num_children };
+        // `children`/`num_children` are a run/count pair `children_iter()` reads
+        // together, so they stay raw writes rather than split setters.
+        // SAFETY: `node.get()` is the live pushed `Node`; store its child count,
+        // then its children pointer popped from the tmp stack.
+        unsafe { (*node.get()).num_children = num_children };
         if num_children > 0 {
-            // SAFETY: `node` is the live pushed `Node`; `push_pop` moves the
+            // SAFETY: `node.get()` is that same live slot; `push_pop` moves the
             // `num_children` children off the tmp stack into `tmp_buf`.
             unsafe {
-                (*node).children =
+                (*node.get()).children =
                     tmp_buf.push_pop::<Node>(uc.tmp_stack_view(), num_children as usize)
             };
-            // SAFETY: `node` is the live pushed `Node`; read back its children ptr.
-            ufbxi_check!(uc, !unsafe { (*node).children }.is_null(), "node->children");
+            ufbxi_check!(uc, !node.children().is_null(), "node->children");
         }
     } else {
         let current_offset: u64 = get_read_offset(uc);

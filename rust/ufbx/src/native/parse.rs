@@ -136,6 +136,24 @@ impl<M: Mode> View<ValueArray, M> {
     }
 }
 
+// Write surface over the array descriptor the node parsers fill in. The
+// `data` run is only ever handed back out as the raw `data()` pointer, so no
+// safe reader derives a slice from the `(data, size)` pair on its own.
+impl View<ValueArray> {
+    #[inline(always)]
+    pub(crate) fn set_data(&self, value: *mut c_void) {
+        view_write!(self, data, value)
+    }
+    #[inline(always)]
+    pub(crate) fn set_size(&self, value: usize) {
+        view_write!(self, size, value)
+    }
+    #[inline(always)]
+    pub(crate) fn set_type_(&self, value: u8) {
+        view_write!(self, type_, value)
+    }
+}
+
 // ufbx.c:6197-6213 `ufbxi_node`
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -221,6 +239,29 @@ impl NodeView {
         // SAFETY: reading the `array` arm of the `content` union of a valid arena
         // `Node` (PORTING.md "Unions"); a raw pointer, all bit patterns valid.
         unsafe { (*self.get()).content.array }
+    }
+    #[inline(always)]
+    pub(crate) fn set_value_type_mask(&self, value: u16) {
+        view_write!(self, value_type_mask, value)
+    }
+    /// Select the `content` union's `array` arm. The parsers pair this with
+    /// `set_value_type_mask(ValueType::Array)`, which is the discriminant the
+    /// readers above consult; both arms are raw pointers, so neither read is
+    /// affected by the arm actually stored.
+    #[inline(always)]
+    pub(crate) fn set_content_array(&self, value: *mut ValueArray) {
+        // SAFETY: single-leaf place write into the `content` union of the live
+        // viewed `Node`; the receiver's mint invariant supplies the write-capable
+        // slot and the union arm is a plain raw pointer (PORTING.md "Unions").
+        unsafe { core::ptr::write(&raw mut (*self.get()).content.array, value) }
+    }
+    /// Select the `content` union's `vals` arm (see [`Self::set_content_array`]).
+    #[inline(always)]
+    pub(crate) fn set_content_vals(&self, value: *mut Value) {
+        // SAFETY: single-leaf place write into the `content` union of the live
+        // viewed `Node`; the receiver's mint invariant supplies the write-capable
+        // slot and the union arm is a plain raw pointer (PORTING.md "Unions").
+        unsafe { core::ptr::write(&raw mut (*self.get()).content.vals, value) }
     }
 }
 
@@ -5979,6 +6020,34 @@ pub(crate) fn retain_dom_node(
     }
 }
 
+// Rust-port infrastructure (not a ufbx.c section): the leaf surface
+// `retain_dom_node_rec` needs on the `ufbx_dom_value` slots it pushes. The
+// string/blob descriptors are published whole (their `data`/`length` halves are
+// a pair every reader trusts together); the tag and the two numeric leaves are
+// independent.
+impl View<DomValue> {
+    #[inline(always)]
+    pub(crate) fn set_type_(&self, value: DomValueType) {
+        view_write!(self, type_, value)
+    }
+    #[inline(always)]
+    pub(crate) fn set_value_str(&self, value: String) {
+        view_write!(self, value_str, value)
+    }
+    #[inline(always)]
+    pub(crate) fn set_value_blob(&self, value: Blob) {
+        view_write!(self, value_blob, value)
+    }
+    #[inline(always)]
+    pub(crate) fn set_value_int(&self, value: i64) {
+        view_write!(self, value_int, value)
+    }
+    #[inline(always)]
+    pub(crate) fn set_value_float(&self, value: f64) {
+        view_write!(self, value_float, value)
+    }
+}
+
 #[inline(never)]
 fn retain_dom_node_rec(
     uc: &Context,
@@ -6036,28 +6105,39 @@ fn retain_dom_node_rec(
     if node_view.value_type_mask() == ValueType::Array as u16 {
         // `value_type_mask == Array` selects the `array` arm of `node`'s
         // `content` union (PORTING.md "Unions").
-        let arr = node_view.array();
+        // SAFETY: the mask says `Array`, so the node's `content.array` arm names
+        // a live arena `ValueArray` that outlives the borrowed node (the
+        // NodeView mint invariant); it is reached through `*mut`, so its
+        // provenance is write-capable as `Mut` requires.
+        let arr: &View<ValueArray> = unsafe { View::<ValueArray>::from_ptr(node_view.array()) };
         let val: *mut DomValue = uc.result_view().push_zero(1);
         ufbxi_check!(uc, !val.is_null(), "val");
+        // SAFETY: `val` is the freshly pushed, non-null `DomValue` in `uc`'s
+        // result buffer — arena-stable, write-capable memory that outlives this
+        // call.
+        let val: &View<DomValue> = unsafe { View::<DomValue>::from_ptr(val) };
 
         // C: `dst->values.data = val; dst->values.count = 1;`
-        dst_view.values_view().set_data(val);
+        dst_view.values_view().set_data(val.get());
         dst_view.values_view().set_count(1);
 
-        // SAFETY: `val` is the freshly pushed `DomValue` and `arr` the node's
-        // live array descriptor.
-        unsafe {
-            let elem_size = array_type_size((*arr).type_);
-            (*val).value_str.data = EMPTY_CHAR.as_ptr();
-            (*val).value_blob.data = (*arr).data as *const u8;
-            (*val).value_blob.size = (*arr).size.wrapping_mul(elem_size);
-            // C: `val->value_float = (double)(val->value_int = (int64_t)arr->size);`
-            (*val).value_int = (*arr).size as i64;
-            (*val).value_float = (*val).value_int as f64;
-        }
+        let elem_size = array_type_size(arr.type_());
+        // C writes only `val->value_str.data`; the slot is zero-initialized, so
+        // publishing the whole descriptor with the zero length it already has
+        // stores the same bytes.
+        val.set_value_str(String::new_c(EMPTY_CHAR.as_ptr(), 0));
+        // C: `val->value_blob.data = arr->data; val->value_blob.size = ...;`
+        // SAFETY: `arr`'s stored `data`/`size` describe the array payload run
+        // retained by the resulting scene — the `Blob::new_c` escaping-run
+        // contract, the same pair C copies here.
+        val.set_value_blob(unsafe {
+            Blob::new_c(arr.data() as *const u8, arr.size().wrapping_mul(elem_size))
+        });
+        // C: `val->value_float = (double)(val->value_int = (int64_t)arr->size);`
+        val.set_value_int(arr.size() as i64);
+        val.set_value_float(val.value_int() as f64);
 
-        // SAFETY: `arr` is the node's live array descriptor; read its `type_` byte.
-        let arr_type: u8 = unsafe { (*arr).type_ };
+        let arr_type: u8 = arr.type_();
         // C's `switch (arr->type)` selects the tag; the `default:` arm fails
         // without writing, so the write below is reached only on a known type.
         let val_type: DomValueType = match arr_type {
@@ -6072,8 +6152,7 @@ fn retain_dom_node_rec(
             b'-' => DomValueType::ArrayIgnored,
             _ => ufbxi_fail!(uc, "Bad array type"),
         };
-        // SAFETY: `val` is the freshly pushed live `DomValue`; write its tag.
-        unsafe { (*val).type_ = val_type };
+        val.set_type_(val_type);
     } else {
         let mut ix: usize = 0;
         while ix < MAX_NON_ARRAY_VALUES {
@@ -6084,36 +6163,37 @@ fn retain_dom_node_rec(
             }
             let val: *mut DomValue = uc.tmp_stack_view().push_zero(1);
             ufbxi_check!(uc, !val.is_null(), "val");
-            // SAFETY: `val` is the freshly pushed `DomValue`.
-            unsafe { (*val).value_str.data = EMPTY_CHAR.as_ptr() };
+            // SAFETY: `val` is the freshly pushed, non-null `DomValue` slot on
+            // `uc`'s temp stack, which only appends, so it stays alive, unmoved
+            // and write-capable for the rest of this iteration; the next
+            // iteration pushes and mints its own.
+            let val: &View<DomValue> = unsafe { View::<DomValue>::from_ptr(val) };
+            // C writes only `val->value_str.data`; the slot is zero-initialized,
+            // so publishing the whole descriptor with the zero length it already
+            // has stores the same bytes.
+            val.set_value_str(String::new_c(EMPTY_CHAR.as_ptr(), 0));
 
             if mask == ValueType::String as u32 {
-                // SAFETY: `val` is the freshly pushed `DomValue`.
-                unsafe { (*val).type_ = DomValueType::String };
-                // SAFETY: `val` is the freshly pushed `DomValue`; each fetch
-                // yields its value, so the only raw ops are the writes into its
-                // own `value_str` / `value_blob` fields.
-                unsafe {
-                    if let Some(got) = get_val_at::<Checked<String>>(node_view, ix) {
-                        (*val).value_str = got.0;
-                    }
-                    if let Some(got) = get_val_at::<Blob>(node_view, ix) {
-                        (*val).value_blob = got;
-                    }
+                val.set_type_(DomValueType::String);
+                if let Some(got) = get_val_at::<Checked<String>>(node_view, ix) {
+                    val.set_value_str(got.0);
+                }
+                if let Some(got) = get_val_at::<Blob>(node_view, ix) {
+                    val.set_value_blob(got);
                 }
             } else {
                 ufbx_assert!(mask == ValueType::Number as u32);
+                val.set_type_(DomValueType::Number);
                 // `node->vals[ix]` reads the `vals` arm of the `ufbxi_node`
                 // union (PORTING.md "Unions"); both `i` and `f` of the
                 // `ufbxi_value` overlay are read, as in C.
-                // SAFETY: `val` is the freshly pushed `DomValue`; `mask == Number`
-                // means the value-type mask bit for `ix` is set, which the parsers
-                // do only for `ix < num_values`, so `vals.add(ix)` is inside
-                // `node`'s value array and `vals`/`num` are the stored union arms.
+                // SAFETY: `mask == Number` means the value-type mask bit for `ix`
+                // is set, which the parsers do only for `ix < num_values`, so
+                // `vals.add(ix)` is inside `node`'s value array and `vals`/`num`
+                // are the stored union arms.
                 unsafe {
-                    (*val).type_ = DomValueType::Number;
-                    (*val).value_int = (*node_view.vals().add(ix)).num.i;
-                    (*val).value_float = (*node_view.vals().add(ix)).num.f;
+                    val.set_value_int((*node_view.vals().add(ix)).num.i);
+                    val.set_value_float((*node_view.vals().add(ix)).num.f);
                 }
             }
 
@@ -7586,6 +7666,23 @@ impl<M: Mode> View<Transform, M> {
     #[inline(always)]
     pub(crate) fn scale(&self) -> Vec3 {
         view_read_shared!(self, scale)
+    }
+}
+
+// The write half, for the component-by-component transform assembly in
+// `ufbx_evaluate_transform_flags`; the three leaves are independent.
+impl View<Transform> {
+    #[inline(always)]
+    pub(crate) fn set_translation(&self, value: Vec3) {
+        view_write!(self, translation, value)
+    }
+    #[inline(always)]
+    pub(crate) fn set_rotation(&self, value: Quat) {
+        view_write!(self, rotation, value)
+    }
+    #[inline(always)]
+    pub(crate) fn set_scale(&self, value: Vec3) {
+        view_write!(self, scale, value)
     }
 }
 

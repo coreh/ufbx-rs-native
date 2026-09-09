@@ -927,8 +927,15 @@ pub(crate) unsafe fn push_string_imp(
     // SAFETY: as for the `find` above — same map, same key run.
     let entry = unsafe { pool.map_view().insert::<String, _>(hash, &ref_) };
     ufbxi_check_return_err!(pool.error_view(), !entry.is_null(), ptr::null(), "entry");
-    // SAFETY: `entry` is the just-inserted non-null map slot.
-    unsafe { (*entry).length = length };
+    // SAFETY: `entry` is the just-inserted non-null map slot — a live `String`
+    // owned by the pool's map, which stays alive, unmoved and write-capable for
+    // the rest of this call.
+    let entry: &StringView = unsafe { StringView::from_ptr(entry) };
+    // C sets `entry->length` here and `entry->data` in the branches below; the
+    // pair is published as one descriptor instead, since `data`/`length` is the
+    // run every reader of a pooled string trusts together. The only path that
+    // could observe the difference is the `dst` allocation failure below, which
+    // returns NULL and aborts the load without reading the entry back.
     if copy {
         let dst: *mut u8 = pool.buf_view().push::<u8>(length + 1);
         ufbxi_check_return_err!(pool.error_view(), !dst.is_null(), ptr::null(), "dst");
@@ -940,14 +947,11 @@ pub(crate) unsafe fn push_string_imp(
             ptr::copy_nonoverlapping(str_, dst, length);
             *dst.add(length) = b'\0';
         }
-        // SAFETY: `entry` is the live inserted slot.
-        unsafe { (*entry).data = dst };
+        entry.set(String::new_c(dst, length));
     } else {
-        // SAFETY: `entry` is the live inserted slot.
-        unsafe { (*entry).data = str_ };
+        entry.set(String::new_c(str_, length));
     }
-    // SAFETY: `entry` is the live inserted slot.
-    unsafe { (*entry).data }
+    entry.data()
 }
 
 // ufbx.c:5255-5258 `ufbxi_push_string`
