@@ -704,20 +704,24 @@ impl CacheContext {
         view_read!(self, pos_end)
     }
 
-    #[inline(always)]
-    pub(crate) fn set_pos_end(&self, pos_end: *const u8) {
-        view_write!(self, pos_end, pos_end)
-    }
-
     // `pos` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn pos(&self) -> *const u8 {
         view_read!(self, pos)
     }
 
+    /// Publish the buffered read window `pos..pos_end` (C writes the two
+    /// fields separately; they are one invariant, so they are published
+    /// together).
+    ///
+    /// # Safety
+    /// `pos..pos_end` must be one readable byte run (`pos <= pos_end`, same
+    /// allocation) that stays live and unwritten until the window is next
+    /// published.
     #[inline(always)]
-    pub(crate) fn set_pos(&self, pos: *const u8) {
-        view_write!(self, pos, pos)
+    pub(crate) unsafe fn set_window(&self, pos: *const u8, pos_end: *const u8) {
+        view_write!(self, pos, pos);
+        view_write!(self, pos_end, pos_end);
     }
 
     // `file_offset` — scalar value accessor.
@@ -794,20 +798,23 @@ impl CacheContext {
         view_read!(self, num_channels)
     }
 
-    #[inline(always)]
-    pub(crate) fn set_num_channels(&self, num_channels: usize) {
-        view_write!(self, num_channels, num_channels)
-    }
-
     // `channels` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn channels(&self) -> *mut CacheTmpChannel {
         view_read!(self, channels)
     }
 
+    /// Publish the channel run `(channels, num_channels)` (one invariant, so
+    /// one publisher).
+    ///
+    /// # Safety
+    /// `channels` must address at least `num_channels` contiguous initialized
+    /// `CacheTmpChannel` slots in `tmp` that stay live while the context does;
+    /// null is allowed only with `num_channels == 0`.
     #[inline(always)]
-    pub(crate) fn set_channels(&self, channels: *mut CacheTmpChannel) {
-        view_write!(self, channels, channels)
+    pub(crate) unsafe fn set_channels(&self, channels: *mut CacheTmpChannel, num_channels: usize) {
+        view_write!(self, channels, channels);
+        view_write!(self, num_channels, num_channels);
     }
 
     // `ator_tmp` — scalar value accessor.
@@ -863,7 +870,7 @@ pub(crate) unsafe fn cache_read(
     unsafe { core::ptr::copy_nonoverlapping(cc.pos(), dst as *mut u8, buffered) };
     // SAFETY: `buffered <= pos_end - pos`, so the advanced `pos` lands at or
     // before the one-past-the-end `pos_end`.
-    cc.set_pos(unsafe { cc.pos().add(buffered) });
+    unsafe { cc.set_window(cc.pos().add(buffered), cc.pos_end()) };
     size -= buffered;
     cc.set_file_offset(cc.file_offset().wrapping_add(buffered as u64));
     if size == 0 {
@@ -927,10 +934,9 @@ pub(crate) unsafe fn cache_read(
                 "num_read >= size"
             );
         }
-        cc.set_pos(cc.buffer_ptr());
-        // SAFETY: `buffer_size` is the length of `cc`'s own buffer, so this is
-        // its one-past-the-end pointer.
-        cc.set_pos_end(unsafe { cc.buffer_ptr().add(cc.buffer_size()) });
+        // SAFETY: `buffer_size` is the length of `cc`'s own buffer, so the
+        // window is that whole buffer.
+        unsafe { cc.set_window(cc.buffer_ptr(), cc.buffer_ptr().add(cc.buffer_size())) };
 
         // SAFETY: this arm runs with `size < cc.buffer_size()`, so `size` bytes
         // are readable from the freshly refilled buffer at `pos` and writable
@@ -939,7 +945,7 @@ pub(crate) unsafe fn cache_read(
         unsafe { core::ptr::copy_nonoverlapping(cc.pos(), dst as *mut u8, size) };
         // SAFETY: `size < cc.buffer_size()`, so the advanced `pos` stays inside
         // the buffer `pos_end` bounds.
-        cc.set_pos(unsafe { cc.pos().add(size) });
+        unsafe { cc.set_window(cc.pos().add(size), cc.pos_end()) };
         cc.set_file_offset(cc.file_offset().wrapping_add(size as u64));
 
         let num_written: usize = min_sz(size, num_read);
@@ -986,7 +992,7 @@ pub(crate) fn cache_skip(cc: &CacheContext, mut size: u64) -> Result<(), Fail> {
     // construction invariant); `buffered` is clamped to what remains, so the
     // advance stays in bounds.
     let buffered: u64 = unsafe { min64(cc.pos_end().offset_from(cc.pos()) as u64, size) };
-    unsafe { cc.set_pos(cc.pos().add(buffered as usize)) };
+    unsafe { cc.set_window(cc.pos().add(buffered as usize), cc.pos_end()) };
     size -= buffered;
 
     if cc.stream_view().skip_fn().is_some() {
@@ -1498,7 +1504,9 @@ pub(crate) fn cache_load_xml_imp(cc: &CacheContext, doc: &XmlDocumentView) -> Re
         }
 
         if let Some(tag_channels) = tag_channels {
-            cc.set_channels(cc.tmp_view().push_zero(tag_channels.num_children()));
+            // SAFETY: an empty run over the fresh zeroed push (or null on
+            // allocation failure, checked next).
+            unsafe { cc.set_channels(cc.tmp_view().push_zero(tag_channels.num_children()), 0) };
             ufbxi_check_err!(cc.error_view(), !cc.channels().is_null(), "cc->channels");
 
             // C: `ufbxi_for(ufbxi_xml_tag, tag, tag_channels->children, tag_channels->num_children)`
@@ -1520,7 +1528,10 @@ pub(crate) fn cache_load_xml_imp(cc: &CacheContext, doc: &XmlDocumentView) -> Re
                 // unmoved and write-capable for this iteration.
                 let channel: &CacheTmpChannelView =
                     unsafe { CacheTmpChannelView::from_ptr(cc.channels().add(cc.num_channels())) };
-                cc.set_num_channels(cc.num_channels() + 1);
+                // SAFETY: the slot just viewed is inside the zero-initialized
+                // `num_children`-element push, so the run grows by one valid
+                // element.
+                unsafe { cc.set_channels(cc.channels(), cc.num_channels() + 1) };
                 channel.name_view().set(name.value());
                 channel.interpretation_view().set(interpretation.value());
                 push_string_place_str(cc.string_pool_view(), channel.name_view(), false)?;
@@ -1625,10 +1636,9 @@ fn cache_load_file(cc: &CacheContext, filename: &[u8]) -> Result<(), Fail> {
         "Truncated file",
         "magic_len == 16"
     );
-    cc.set_pos(cc.buffer_ptr());
-    // SAFETY: `cc`'s buffer is larger than the 16-byte header, so this is an
-    // interior pointer of that buffer.
-    cc.set_pos_end(unsafe { cc.buffer_ptr().add(16) });
+    // SAFETY: `cc`'s buffer is larger than the 16-byte header, so the window
+    // is a prefix of that buffer.
+    unsafe { cc.set_window(cc.buffer_ptr(), cc.buffer_ptr().add(16)) };
 
     cc.set_file_offset(0);
 

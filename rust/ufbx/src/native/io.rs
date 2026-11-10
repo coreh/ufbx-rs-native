@@ -92,8 +92,9 @@ pub(crate) fn refill(uc: &Context, size: usize, require_size: bool) -> *const u8
         data_to_free = uc.read_buffer();
         let new_buffer: *mut u8 = alloc::<u8>(uc.ator_tmp_view(), new_size);
         ufbxi_check_return!(uc, !new_buffer.is_null(), core::ptr::null(), "new_buffer");
-        uc.set_read_buffer(new_buffer);
-        uc.set_read_buffer_size(new_size);
+        // SAFETY: `new_buffer` is the fresh non-null `new_size`-byte tmp
+        // allocation checked above.
+        unsafe { uc.set_read_buffer(new_buffer, new_size) };
     }
 
     // Copy the remains of the previous buffer to the beginning of the new one

@@ -321,20 +321,24 @@ impl XmlContext {
         view_read!(self, pos_end)
     }
 
-    #[inline(always)]
-    pub(crate) fn set_pos_end(&self, pos_end: *const u8) {
-        view_write!(self, pos_end, pos_end)
-    }
-
     // `pos` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn pos(&self) -> *const u8 {
         view_read!(self, pos)
     }
 
+    /// Publish the scan window `pos..pos_end` (C writes the two fields
+    /// separately; they are one invariant, so they are published together).
+    ///
+    /// # Safety
+    /// `pos..pos_end` must be one NON-EMPTY readable byte run (`pos < pos_end`,
+    /// same allocation) that stays live and unwritten until the window is next
+    /// published: the scanner reads `*pos` and steps `pos` up to `pos_end`
+    /// from safe code on the strength of this call.
     #[inline(always)]
-    pub(crate) fn set_pos(&self, pos: *const u8) {
-        view_write!(self, pos, pos)
+    pub(crate) unsafe fn set_window(&self, pos: *const u8, pos_end: *const u8) {
+        view_write!(self, pos, pos);
+        view_write!(self, pos_end, pos_end);
     }
 
     // `tok_len` — scalar value accessor.
@@ -476,22 +480,26 @@ pub(crate) fn xml_refill(xc: &XmlContext) {
         xc.data_at(num).set(b'\0');
         num += 1;
     }
-    xc.set_pos(xc.data_ptr());
-    // C: `xc->pos_end = xc->data + num;`. `num <= data_size()` after the clamp
-    // above, so this stays within `data`'s one-past-the-end bound.
-    xc.set_pos_end(xc.data_ptr().wrapping_add(num));
+    // C: `xc->pos = xc->data; xc->pos_end = xc->data + num;`
+    // SAFETY: `1 <= num <= data_size()` — a short read appended the sentinel
+    // and a full read filled the non-empty buffer — so the window is a
+    // non-empty prefix of `data`, which lives as long as the context.
+    unsafe { xc.set_window(xc.data_ptr(), xc.data_ptr().add(num)) };
 }
 
 // ufbx.c:7323-7326 `ufbxi_xml_advance`
 #[inline(always)]
 pub(crate) fn xml_advance(xc: &XmlContext) {
     // C: `if (++xc->pos == xc->pos_end)` — pre-increment decomposed.
-    // SAFETY: `pos < pos_end` on entry (the caller reads `*pos` first), and
-    // `pos_end` bounds the current window (the prefix, or the refill buffer
-    // one-past its last byte), so advancing by one reaches at most `pos_end`.
-    xc.set_pos(unsafe { xc.pos().add(1) });
-    if xc.pos() == xc.pos_end() {
+    // SAFETY: the published window is non-empty (`set_window` contract; an
+    // exhausted one is refilled below before returning), so `pos < pos_end`
+    // here and advancing by one reaches at most `pos_end`.
+    let pos = unsafe { xc.pos().add(1) };
+    if pos == xc.pos_end() {
         xml_refill(xc);
+    } else {
+        // SAFETY: `pos < pos_end` — a non-empty suffix of the published window.
+        unsafe { xc.set_window(pos, xc.pos_end()) };
     }
 }
 
@@ -1094,10 +1102,9 @@ pub(crate) unsafe fn load_xml(opts: *mut XmlLoadOpts, error: *mut Error) -> *mut
     // SAFETY: reading a scalar field of the live `opts`.
     if unsafe { (*opts).prefix_length } > 0 {
         // SAFETY: `opts` is live; `prefix`/`prefix_length` describe one caller-
-        // owned run, so the offset forms an in-range one-past-the-end pointer.
+        // owned run, non-empty per the check above and live for the parse.
         unsafe {
-            xc.set_pos((*opts).prefix);
-            xc.set_pos_end((*opts).prefix.add((*opts).prefix_length));
+            xc.set_window((*opts).prefix, (*opts).prefix.add((*opts).prefix_length));
         }
     } else {
         xml_refill(&xc);

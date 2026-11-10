@@ -4276,9 +4276,16 @@ impl Context {
         view_read!(self, read_buffer)
     }
 
+    /// Publish the read buffer `(read_buffer, read_buffer_size)` (one
+    /// invariant, so one publisher).
+    ///
+    /// # Safety
+    /// `read_buffer` must address `read_buffer_size` writable bytes owned by
+    /// `ator_tmp` that stay live until the pair is next published.
     #[inline(always)]
-    pub(crate) fn set_read_buffer(&self, read_buffer: *mut u8) {
-        view_write!(self, read_buffer, read_buffer)
+    pub(crate) unsafe fn set_read_buffer(&self, read_buffer: *mut u8, read_buffer_size: usize) {
+        view_write!(self, read_buffer, read_buffer);
+        view_write!(self, read_buffer_size, read_buffer_size);
     }
 
     // Capacity of `read_buffer` in bytes. Scalar `usize`: value getter + setter.
@@ -4286,11 +4293,6 @@ impl Context {
     #[inline(always)]
     pub(crate) fn read_buffer_size(&self) -> usize {
         view_read!(self, read_buffer_size)
-    }
-
-    #[inline(always)]
-    pub(crate) fn set_read_buffer_size(&self, read_buffer_size: usize) {
-        view_write!(self, read_buffer_size, read_buffer_size)
     }
 }
 
