@@ -752,7 +752,9 @@ impl String {
         let (head, _) = bytes.split_at(length);
         assert!(str::from_utf8(head).is_ok());
         // SAFETY: `head` is `length` readable UTF-8 bytes that live forever.
-        unsafe { String::new_c(head.as_ptr(), length) }
+        // The pointer is taken from the WHOLE run, not from `head`, so its
+        // provenance still covers the terminator C-string readers scan to.
+        unsafe { String::new_c(bytes.as_ptr(), length) }
     }
 
     /// C: `ufbx_empty_string` — zero length over the shared NUL byte.
