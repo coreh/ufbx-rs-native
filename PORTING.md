@@ -298,7 +298,9 @@ format")` on anything else. **Port `ufbxi_vprint`/`ufbxi_vsnprintf` byte-for-
 byte**; variadic entry points (`ufbxi_snprintf` 3375, `ufbxi_panicf_imp` 3384,
 `ufbxi_fmt_err_info` 3510, `ufbxi_warnf_imp` 4874 via the `ufbxi_warnf*`
 macros) become `&[PrintArg]` slices built by `macro_rules!` wrappers at call
-sites. **Never substitute `format!`/`write!`** — truncation semantics and the
+sites. A `%s` argument is `PrintArg::Str(&[u8])`: the scan stops at the first
+NUL, the `%.*s` precision, or the end of the slice (which reads as the
+terminator); a raw C string enters through the unsafe `PrintArg::c_str`. **Never substitute `format!`/`write!`** — truncation semantics and the
 returned length feed `ufbx_error.info_length` (3516, 4854) and geometry-cache
 frame filenames (`"Frame%uTick%u.%s"`, ufbx.c:24521-24523 — divergence changes
 which external files are opened).
@@ -516,7 +518,8 @@ bind). The goal is not a zero unsafe count — it is that every residual
 - **Fn boundaries take borrows, not raw pointers**: `Option<&WarningsView>`
   over nullable `*mut`, `&K` keys, `FailStr` over `*const u8` fmt. A fn stays
   an honest `unsafe fn` when a raw-pointer PARAM is genuinely dereferenced
-  under a contract the type can't carry (printf `%s`, map key pointees) —
+  under a contract the type can't carry (map key pointees, a raw printf
+  format string) —
   safety theater (safe signature, unchecked deref inside) is worse than a
   declared obligation.
 - **Unsafe scope shrinks progressively**: function-wide `unsafe` gives way to

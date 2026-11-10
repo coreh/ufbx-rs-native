@@ -5112,7 +5112,7 @@ pub(crate) fn create_anim_imp(ac: &CreateAnimContext) -> Result<FinishedImp<Anim
                         Some(ac.error_view()),
                         "element %u prop \"%s\"",
                         prev.element_id(),
-                        prev.prop_name_view().data()
+                        prev.prop_name_view().bytes()
                     );
                 }
                 ufbxi_fail_err_msg!(ac.error_view(), "Duplicate override", "Duplicate override");

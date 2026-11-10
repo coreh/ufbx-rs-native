@@ -871,12 +871,12 @@ pub(crate) unsafe fn format_error(dst: *mut u8, dst_size: usize, error: *const E
                     SOURCE_VERSION / 1000 % 1000,
                     SOURCE_VERSION % 1000,
                     if !error.description_view().data().is_null() {
-                        error.description_view().data()
+                        crate::native::printf::PrintArg::c_str(error.description_view().data())
                     } else {
-                        b"Unknown error\0".as_ptr()
+                        crate::native::printf::PrintArg::from(b"Unknown error\0")
                     },
                     error.info_length() as i32,
-                    error.info_ptr(),
+                    crate::native::printf::PrintArg::c_str(error.info_ptr()),
                 )
             };
         } else {
@@ -890,9 +890,9 @@ pub(crate) unsafe fn format_error(dst: *mut u8, dst_size: usize, error: *const E
                     SOURCE_VERSION / 1000 % 1000,
                     SOURCE_VERSION % 1000,
                     if !error.description_view().data().is_null() {
-                        error.description_view().data()
+                        crate::native::printf::PrintArg::c_str(error.description_view().data())
                     } else {
-                        b"Unknown error\0".as_ptr()
+                        crate::native::printf::PrintArg::from(b"Unknown error\0")
                     },
                 )
             };
@@ -918,8 +918,8 @@ pub(crate) unsafe fn format_error(dst: *mut u8, dst_size: usize, error: *const E
                 "%*u:%s: %s\n",
                 line_width,
                 frame.source_line(),
-                frame.function_view().data(),
-                frame.description_view().data(),
+                crate::native::printf::PrintArg::c_str(frame.function_view().data()),
+                crate::native::printf::PrintArg::c_str(frame.description_view().data()),
             )
         };
         if num > 0 {

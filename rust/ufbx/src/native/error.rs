@@ -604,9 +604,8 @@ pub(crate) unsafe fn set_err_info(err: Option<&ErrorView>, data: *const u8, mut 
 // early-out is the `None` arm.
 //
 // # Safety
-// `fmt` must be a NUL-terminated format string whose conversions match `args`
-// one-for-one — including every `%s` argument being a NUL-terminated run. That
-// pairing is prose in C and no parameter type carries it.
+// `fmt` must be a NUL-terminated format string. (`%s` arguments ride as byte
+// slices in `PrintArg::Str`, so they carry their own readability.)
 #[inline(never)]
 pub(crate) unsafe fn fmt_err_info(err: Option<&ErrorView>, fmt: *const u8, args: &[PrintArg]) {
     let Some(err) = err else {
@@ -1487,7 +1486,7 @@ mod tests {
                 "Frame%uTick%u.%s",
                 12u32,
                 7u32,
-                b"pc2\0".as_ptr()
+                b"pc2\0"
             )
         };
         assert_eq!(len, 16);
@@ -1500,8 +1499,7 @@ mod tests {
         let mut buf = [0xAAu8; 8];
         // SAFETY: `buf.as_mut_ptr()`/`buf.len()` describe the local array
         // exactly, and the `%s` argument is a NUL-terminated byte literal.
-        let len =
-            unsafe { ufbxi_snprintf!(buf.as_mut_ptr(), buf.len(), "%s", b"0123456789\0".as_ptr()) };
+        let len = unsafe { ufbxi_snprintf!(buf.as_mut_ptr(), buf.len(), "%s", b"0123456789\0") };
         // pos saturates at length (8); returned min(pos, size - 1) = 7.
         assert_eq!(len, 7);
         assert_eq!(&buf[..8], b"0123456\0");

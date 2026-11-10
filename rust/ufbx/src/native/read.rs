@@ -2259,8 +2259,10 @@ pub(crate) unsafe fn warn_polygon_mapping(
             uc,
             WarningType::MissingPolygonMapping,
             "Ignoring geometry '%s' with bad mapping mode '%s'",
-            data_name,
-            mapping,
+            // SAFETY: both are NUL-terminated runs (fn contract above).
+            unsafe { crate::native::printf::PrintArg::c_str(data_name) },
+            // SAFETY: as above.
+            unsafe { crate::native::printf::PrintArg::c_str(mapping) },
         )
         .is_ok(),
         "ufbxi_warnf_imp(&uc->warnings, UFBX_WARNING_MISSING_POLYGON_MAPPING, ~0u, \"Ignoring geometry '%s' with bad mapping mode '%s'\", data_name, mapping)"
@@ -2640,9 +2642,9 @@ pub(crate) unsafe fn read_vertex_element(
                             uc,
                             WarningType::BadVertexWAttribute,
                             "Bad W array size %s=%zu, %s=%zu",
-                            w_name.as_ptr(),
+                            w_name,
                             w_data.size(),
-                            data_name.as_ptr(),
+                            data_name,
                             num_elems,
                         )
                         .is_ok(),
@@ -2660,7 +2662,8 @@ pub(crate) unsafe fn read_vertex_element(
 /// # Safety
 /// `fmt` must select array elements with the same size, alignment and value
 /// validity as `T`. The source array payload, or the result-buffer copy made
-/// here, must remain live and unmoved for every later use of `dst`.
+/// here, must remain live and unmoved for every later use of `dst`. `name`
+/// must point at a NUL-terminated run (it feeds the warnings' `%s`).
 #[inline(never)]
 pub(crate) unsafe fn read_truncated_array<T>(
     uc: &Context,
@@ -2678,7 +2681,8 @@ pub(crate) unsafe fn read_truncated_array<T>(
                 uc,
                 WarningType::MissingGeometryData,
                 "Missing geometry data: %s",
-                name,
+                // SAFETY: `name` is a NUL-terminated run (fn contract).
+                unsafe { crate::native::printf::PrintArg::c_str(name) },
             )
             .is_ok(),
             "ufbxi_warnf_imp(&uc->warnings, UFBX_WARNING_MISSING_GEOMETRY_DATA, ~0u, \"Missing geometry data: %s\", name)"
@@ -2690,7 +2694,14 @@ pub(crate) unsafe fn read_truncated_array<T>(
     if arr.size() < size {
         ufbxi_check!(
             uc,
-            ufbxi_warnf!(uc, WarningType::TruncatedArray, "Truncated array: %s", name).is_ok(),
+            ufbxi_warnf!(
+                uc,
+                WarningType::TruncatedArray,
+                "Truncated array: %s",
+                // SAFETY: `name` is a NUL-terminated run (fn contract).
+                unsafe { crate::native::printf::PrintArg::c_str(name) }
+            )
+            .is_ok(),
             "ufbxi_warnf_imp(&uc->warnings, UFBX_WARNING_TRUNCATED_ARRAY, ~0u, \"Truncated array: %s\", name)"
         );
 

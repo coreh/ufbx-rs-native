@@ -282,12 +282,12 @@ pub(crate) fn alloc_size(ator: &AllocatorView, size: usize, n: usize) -> *mut c_
         // stores a real error slot; the `ator.error = NULL` stores
         // (ufbx.c:25389, 26424) back retained, free-only refcount buffers
         // whose allocator never allocates. `ator.name()` is its NUL-terminated
-        // allocator name, the `%s` printf argument contract of `fmt_err_info`.
+        // allocator name, the `PrintArg::c_str` contract.
         unsafe {
             ufbxi_fmt_err_info!(
                 Some(crate::native::error::ErrorView::from_ptr(ator.error())),
                 "%s",
-                ator.name()
+                crate::native::printf::PrintArg::c_str(ator.name())
             )
         };
         return core::ptr::null_mut();
@@ -307,12 +307,12 @@ pub(crate) fn alloc_size(ator: &AllocatorView, size: usize, n: usize) -> *mut c_
         // stores a real error slot; the `ator.error = NULL` stores
         // (ufbx.c:25389, 26424) back retained, free-only refcount buffers
         // whose allocator never allocates. `ator.name()` is its NUL-terminated
-        // allocator name, the `%s` printf argument contract of `fmt_err_info`.
+        // allocator name, the `PrintArg::c_str` contract.
         unsafe {
             ufbxi_fmt_err_info!(
                 Some(crate::native::error::ErrorView::from_ptr(ator.error())),
                 "%s",
-                ator.name()
+                crate::native::printf::PrintArg::c_str(ator.name())
             )
         };
         return core::ptr::null_mut();
@@ -358,12 +358,12 @@ pub(crate) fn alloc_size(ator: &AllocatorView, size: usize, n: usize) -> *mut c_
         // stores a real error slot; the `ator.error = NULL` stores
         // (ufbx.c:25389, 26424) back retained, free-only refcount buffers
         // whose allocator never allocates. `ator.name()` is its NUL-terminated
-        // allocator name, the `%s` printf argument contract of `fmt_err_info`.
+        // allocator name, the `PrintArg::c_str` contract.
         unsafe {
             ufbxi_fmt_err_info!(
                 Some(crate::native::error::ErrorView::from_ptr(ator.error())),
                 "%s",
-                ator.name()
+                crate::native::printf::PrintArg::c_str(ator.name())
             )
         };
         return core::ptr::null_mut();

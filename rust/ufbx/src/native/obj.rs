@@ -2435,13 +2435,14 @@ pub(crate) fn obj_load_mtl(uc: &Context) -> Result<(), Fail> {
             if !has_stream {
                 ufbxi_check!(
                     uc,
-                    // The `%s` argument is the caller-supplied `obj_mtl_path`,
-                    // a NUL-terminated string (PrintArg pointer contract).
                     ufbxi_warnf!(
                         uc,
                         WarningType::MissingExternalFile,
                         "Could not open .mtl file: %s",
-                        uc.opts_view().obj_mtl_path_view().data()
+                        // SAFETY: the `%s` argument is the caller-supplied
+                        // `obj_mtl_path`, a NUL-terminated string (the
+                        // `ufbx_load_opts` contract C's `%s` relies on).
+                        unsafe { crate::native::printf::PrintArg::c_str(uc.opts_view().obj_mtl_path_view().data()) }
                     )
                     .is_ok(),
                     "ufbxi_warnf_imp(&uc->warnings, UFBX_WARNING_MISSING_EXTERNAL_FILE, ~0u, \"Could not open .mtl file: %s\", uc->opts.obj_mtl_path.data)"
@@ -2491,7 +2492,7 @@ pub(crate) fn obj_load_mtl(uc: &Context) -> Result<(), Fail> {
                             uc,
                             WarningType::MissingExternalFile,
                             "Could not open .mtl file: %s",
-                            (*dst).data
+                            crate::native::printf::PrintArg::c_str((*dst).data)
                         )
                     }
                     .is_ok(),
@@ -2555,14 +2556,13 @@ pub(crate) fn obj_load_mtl(uc: &Context) -> Result<(), Fail> {
                 if has_stream {
                     ufbxi_check!(
                         uc,
-                        // The `%s` argument `copy` is the fresh arena copy of
-                        // the filename, terminator included (PrintArg pointer
-                        // contract).
                         ufbxi_warnf!(
                             uc,
                             WarningType::ImplicitMtl,
                             "Opened .mtl file derived from .obj filename: %s",
-                            copy as *const u8
+                            // SAFETY: `copy` is the fresh arena copy of the
+                            // filename, terminator included.
+                            unsafe { crate::native::printf::PrintArg::c_str(copy as *const u8) }
                         )
                         .is_ok(),
                         "ufbxi_warnf_imp(&uc->warnings, UFBX_WARNING_IMPLICIT_MTL, ~0u, \"Opened .mtl file derived from .obj filename: %s\", copy)"

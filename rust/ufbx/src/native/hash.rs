@@ -439,7 +439,7 @@ impl MapView {
     //   validity: the cmp may dereference pointers *inside* `K` (e.g.
     //   `map_cmp_const_char_ptr` follows the stored `char *` to a
     //   NUL-terminated string) — callers must pass keys meeting that pointee
-    //   contract, same standing as the printf `%s` PrintArg contract.
+    //   contract.
 
     // ufbx.c:4657 `ufbxi_map_grow(map, type, min_size)`
     /// # Safety

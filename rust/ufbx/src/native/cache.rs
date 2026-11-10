@@ -1714,10 +1714,10 @@ pub(crate) fn cache_load_frame_files(cc: &CacheContext) -> Result<(), Fail> {
         return Ok(());
     }
 
-    let extension: *const u8;
+    let extension: &[u8];
     match cc.xml_format() {
-        CacheXmlFormat::Mcc => extension = b"mc\0".as_ptr(),
-        CacheXmlFormat::Mcx => extension = b"mcx\0".as_ptr(),
+        CacheXmlFormat::Mcc => extension = b"mc\0",
+        CacheXmlFormat::Mcx => extension = b"mcx\0",
         _ => return Ok(()),
     }
 
@@ -2653,7 +2653,7 @@ pub(crate) fn load_external_cache(uc: &Context, file: &ExternalFileView) -> Resu
                         uc,
                         WarningType::MissingExternalFile,
                         "Failed to open geometry cache: %s",
-                        file.filename().data
+                        file.filename_view().bytes()
                     )
                     .is_ok(),
                     "ufbxi_warnf_imp(&uc->warnings, UFBX_WARNING_MISSING_EXTERNAL_FILE, ~0u, \"Failed to open geometry cache: %s\", file->filename.data)"

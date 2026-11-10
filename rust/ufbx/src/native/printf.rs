@@ -23,58 +23,69 @@ use crate::native::platform::{ufbxi_dev_assert, ufbxi_unreachable};
 // `va_arg` type the restricted format subset can pull. Slices of these are the
 // ONE sanctioned slice use in ported paths.
 #[derive(Clone, Copy, Debug)]
-pub(crate) enum PrintArg {
+pub(crate) enum PrintArg<'a> {
     /// `va_arg(args, int)` — `*` / `.*` width and precision arguments.
     Int(i32),
     /// `va_arg(args, uint32_t)` — `%u`.
     Uint(u32),
     /// `va_arg(args, size_t)` — `%zu`.
     Size(usize),
-    /// `va_arg(args, const char*)` — `%s` (NUL-terminated unless bounded by `%.*s`).
-    Str(*const u8),
+    /// `va_arg(args, const char*)` — `%s`. C's pointer is carried as the byte
+    /// run it addresses: `print_append` stops at the first NUL, at the `%.*s`
+    /// precision, or at the end of the slice (an exhausted slice reads as the
+    /// terminator, the `c_strcmp` convention). For a NUL-terminated C string
+    /// borrowed up to (or through) its terminator that is byte-for-byte the C
+    /// scan, and the slice borrow carries the readability the scan needs.
+    Str(&'a [u8]),
 }
 
-impl From<i32> for PrintArg {
-    fn from(v: i32) -> PrintArg {
+impl From<i32> for PrintArg<'_> {
+    fn from(v: i32) -> Self {
         PrintArg::Int(v)
     }
 }
-impl From<u32> for PrintArg {
-    fn from(v: u32) -> PrintArg {
+impl From<u32> for PrintArg<'_> {
+    fn from(v: u32) -> Self {
         PrintArg::Uint(v)
     }
 }
-impl From<usize> for PrintArg {
-    fn from(v: usize) -> PrintArg {
+impl From<usize> for PrintArg<'_> {
+    fn from(v: usize) -> Self {
         PrintArg::Size(v)
     }
 }
-impl From<*const u8> for PrintArg {
-    fn from(v: *const u8) -> PrintArg {
+impl<'a> From<&'a [u8]> for PrintArg<'a> {
+    fn from(v: &'a [u8]) -> PrintArg<'a> {
         PrintArg::Str(v)
     }
 }
-impl From<*mut u8> for PrintArg {
-    fn from(v: *mut u8) -> PrintArg {
+impl<'a, const N: usize> From<&'a [u8; N]> for PrintArg<'a> {
+    fn from(v: &'a [u8; N]) -> PrintArg<'a> {
         PrintArg::Str(v)
     }
 }
-impl From<&'static str> for PrintArg {
-    // Convenience for NUL-terminated static literals at call sites
-    // (C passes string literals directly as `const char *`). The literal MUST
-    // carry an explicit trailing NUL (`"...\0"`) — C literals get it
-    // implicitly, Rust ones do not, and `print_append` scans to NUL when the
-    // width is unbounded (`%s` without `.*`).
-    fn from(v: &'static str) -> PrintArg {
-        debug_assert!(
-            v.ends_with('\0'),
-            "PrintArg %s literals must be \\0-terminated"
-        );
-        PrintArg::Str(v.as_ptr())
+impl From<&'static str> for PrintArg<'static> {
+    // Convenience for static literals at call sites (C passes string literals
+    // directly as `const char *`).
+    fn from(v: &'static str) -> PrintArg<'static> {
+        PrintArg::Str(v.as_bytes())
     }
 }
 
-impl PrintArg {
+impl<'a> PrintArg<'a> {
+    /// `%s` argument from a raw C string: the run from `str_` up to its NUL.
+    ///
+    /// # Safety
+    /// `str_` must point at a NUL-terminated byte run that stays live and
+    /// unwritten for `'a`.
+    pub(crate) unsafe fn c_str(str_: *const u8) -> PrintArg<'a> {
+        // SAFETY: fn contract above — every byte up to the terminator is
+        // readable, which is exactly the run `strlen` measures.
+        PrintArg::Str(unsafe {
+            crate::prelude::slice_from_ptr(str_, crate::native::error::strlen(str_))
+        })
+    }
+
     // The `as_*` accessors are the `va_arg` reinterpretations. A wrong-type
     // pull is UB in C (garbage read); here it trips "Bad printf format" and
     // yields a defined dummy so execution continues if asserts are off.
@@ -105,12 +116,12 @@ impl PrintArg {
             }
         }
     }
-    fn as_str(self) -> *const u8 {
+    fn as_str(self) -> &'a [u8] {
         match self {
             PrintArg::Str(v) => v,
             _ => {
                 ufbxi_unreachable!("Bad printf format");
-                b"\0".as_ptr()
+                b""
             }
         }
     }
@@ -118,7 +129,7 @@ impl PrintArg {
 
 // `va_arg`: pull the next argument. Exhausting the argument list is UB in C;
 // defined-but-asserting here.
-fn va_arg(args: &[PrintArg], ix: &mut usize) -> PrintArg {
+fn va_arg<'a>(args: &[PrintArg<'a>], ix: &mut usize) -> PrintArg<'a> {
     if *ix < args.len() {
         let arg = args[*ix];
         *ix += 1;
@@ -148,17 +159,16 @@ pub(crate) unsafe fn print_append(
     buf: *mut PrintBuffer,
     min_width: usize,
     max_width: usize,
-    str: *const u8,
+    str: &[u8],
 ) {
     // SAFETY: `buf` is a live, writable `PrintBuffer` (fn raw-param contract);
     // this borrow is the only access path to it for the rest of the fn.
     let buf = unsafe { &mut *buf };
     let mut width: usize = 0;
+    // C scans to the NUL or `max_width`; the end of the slice reads as the
+    // terminator (`PrintArg::Str`).
     while width < max_width {
-        // SAFETY: `str` is readable up to its NUL or `max_width` bytes, whichever
-        // comes first (the `%s` / `%.*s` caller contract); the scan stops at the
-        // first NUL, so index `width` stays inside that run.
-        if unsafe { *str.add(width) } == 0 {
+        if width >= str.len() || str[width] == 0 {
             break;
         }
         width += 1;
@@ -174,10 +184,9 @@ pub(crate) unsafe fn print_append(
     }
     for i in 0..width {
         if buf.pos < buf.length {
-            // SAFETY: `i < width` bytes of `str` are readable per the scan above,
-            // and `buf.dst` addresses `buf.length` writable bytes with
+            // SAFETY: `buf.dst` addresses `buf.length` writable bytes with
             // `buf.pos < buf.length` established by the guard.
-            unsafe { *buf.dst.add(buf.pos) = *str.add(i) };
+            unsafe { *buf.dst.add(buf.pos) = str[i] };
             buf.pos += 1;
         }
     }
@@ -256,9 +265,7 @@ pub(crate) unsafe fn vprint(buf: *mut PrintBuffer, fmt: *const u8, args: &[Print
             }
             if (flags & PRINT_STRING) != 0 {
                 let str = va_arg(args, &mut arg_ix).as_str();
-                // SAFETY: `buf` is the live `PrintBuffer` this fn received, and
-                // the `%s` argument points at a byte run readable to its NUL (or
-                // to `max_width` bytes) — the caller's `PrintArg::Str` contract.
+                // SAFETY: `buf` is the live `PrintBuffer` this fn received.
                 unsafe { print_append(buf, min_width, max_width, str) };
             } else if (flags & PRINT_UNSIGNED) != 0 {
                 let value: u64 = if (flags & PRINT_SIZE_T) != 0 {
@@ -270,10 +277,11 @@ pub(crate) unsafe fn vprint(buf: *mut PrintBuffer, fmt: *const u8, args: &[Print
                 // one past its end and it holds room for the NUL plus every
                 // digit of a `u64`.
                 let str = unsafe { print_format_int(buffer.as_mut_ptr().add(buffer.len()), value) };
-                // SAFETY: `buf` is the live `PrintBuffer` this fn received, and
-                // `print_format_int` returned a NUL-terminated digit run inside
-                // `buffer`, which outlives the call.
-                unsafe { print_append(buf, min_width, max_width, str) };
+                // SAFETY: `print_format_int` returned the start of its
+                // NUL-terminated digit run inside `buffer`.
+                let start = unsafe { str.offset_from(buffer.as_ptr()) } as usize;
+                // SAFETY: `buf` is the live `PrintBuffer` this fn received.
+                unsafe { print_append(buf, min_width, max_width, &buffer[start..]) };
             } else {
                 ufbxi_unreachable!("Bad printf format");
             }
@@ -311,9 +319,6 @@ pub(crate) unsafe fn vprint(buf: *mut PrintBuffer, fmt: *const u8, args: &[Print
 mod tests {
     use super::*;
 
-    // Stays `unsafe fn`: `args` is a raw-pointer carrier — every
-    // `PrintArg::Str` holds a `*const u8` that `%s` reads up to its NUL (or up
-    // to a `%.*s` precision), an obligation only the caller can discharge.
     unsafe fn fmt(buf: &mut [u8], fmt: &str, args: &[PrintArg]) -> (usize, Vec<u8>) {
         let mut pb = PrintBuffer {
             dst: buf.as_mut_ptr(),
@@ -322,9 +327,7 @@ mod tests {
         };
         let fmt_nul: Vec<u8> = fmt.as_bytes().iter().copied().chain([0u8]).collect();
         // SAFETY: `pb` describes the caller's `buf` slice, `fmt_nul` is the
-        // format string with a NUL appended, and every `PrintArg::Str` in `args`
-        // is readable to its NUL or to its `%.*s` precision per this fn's own
-        // raw-carrier contract.
+        // format string with a NUL appended.
         unsafe { vprint(&mut pb, fmt_nul.as_ptr(), args) };
         let nul = buf.iter().position(|&b| b == 0).unwrap();
         (pb.pos, buf[..nul].to_vec())
@@ -337,7 +340,7 @@ mod tests {
             let (pos, out) = fmt(
                 &mut buf,
                 "hello %u world %s",
-                &[PrintArg::Uint(1234), PrintArg::Str(b"str\0".as_ptr())],
+                &[PrintArg::Uint(1234), PrintArg::Str(b"str\0")],
             );
             assert_eq!(out, b"hello 1234 world str");
             assert_eq!(pos, 20);
@@ -370,7 +373,7 @@ mod tests {
             let (_, out) = fmt(
                 &mut buf,
                 "(%.*s)",
-                &[PrintArg::Int(3), PrintArg::Str(b"abcdef\0".as_ptr())],
+                &[PrintArg::Int(3), PrintArg::Str(b"abcdef\0")],
             );
             assert_eq!(out, b"(abc)");
         }
