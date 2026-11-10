@@ -903,16 +903,31 @@ impl AsciiView {
     pub(crate) fn set_read_first_comment(&self, read_first_comment: bool) {
         view_write!(self, read_first_comment, read_first_comment)
     }
+    /// Write one field of the ASCII scan window (`src`, `src_yield`,
+    /// `src_end`). C writes them one at a time; together they are one
+    /// invariant.
+    ///
+    /// # Safety
+    /// The ASCII scanner reads `*src` and steps `src` from safe code on the
+    /// strength of these writes. Once the write sequence this call belongs to
+    /// is complete — and before anything reads through the window —
+    /// `src..src_end` must be one readable byte run (`src <= src_end`, same
+    /// allocation) that stays live and unwritten until the window is next
+    /// published, and `src_yield` must lie within it.
     #[inline(always)]
-    pub(crate) fn set_src(&self, src: *const u8) {
+    pub(crate) unsafe fn set_src(&self, src: *const u8) {
         view_write!(self, src, src)
     }
+    /// # Safety
+    /// The scan-window contract on [`Self::set_src`].
     #[inline(always)]
-    pub(crate) fn set_src_yield(&self, src_yield: *const u8) {
+    pub(crate) unsafe fn set_src_yield(&self, src_yield: *const u8) {
         view_write!(self, src_yield, src_yield)
     }
+    /// # Safety
+    /// The scan-window contract on [`Self::set_src`].
     #[inline(always)]
-    pub(crate) fn set_src_end(&self, src_end: *const u8) {
+    pub(crate) unsafe fn set_src_end(&self, src_end: *const u8) {
         view_write!(self, src_end, src_end)
     }
     #[inline(always)]
@@ -4150,8 +4165,19 @@ impl Context {
         view_read!(self, data)
     }
 
+    /// Write one field of the parser read window (`data_begin`, `data`,
+    /// `data_size`, `yield_size`). C writes them one at a time; together they
+    /// are one invariant.
+    ///
+    /// # Safety
+    /// Safe parser code reads through the window on the strength of these
+    /// writes. Once the write sequence this call belongs to is complete — and
+    /// before anything reads through the window — `data` must address
+    /// `data_size + yield_size` readable bytes that stay live and unwritten
+    /// until the window is next published, with `data_begin <= data` in the
+    /// same allocation. All-null with zero sizes is the empty window.
     #[inline(always)]
-    pub(crate) fn set_data(&self, data: *const u8) {
+    pub(crate) unsafe fn set_data(&self, data: *const u8) {
         view_write!(self, data, data)
     }
 
@@ -4161,8 +4187,10 @@ impl Context {
         view_read!(self, data_size)
     }
 
+    /// # Safety
+    /// The parser-window contract on [`Self::set_data`].
     #[inline(always)]
-    pub(crate) fn set_data_size(&self, data_size: usize) {
+    pub(crate) unsafe fn set_data_size(&self, data_size: usize) {
         view_write!(self, data_size, data_size)
     }
 
@@ -4172,8 +4200,10 @@ impl Context {
         view_read!(self, yield_size)
     }
 
+    /// # Safety
+    /// The parser-window contract on [`Self::set_data`].
     #[inline(always)]
-    pub(crate) fn set_yield_size(&self, yield_size: usize) {
+    pub(crate) unsafe fn set_yield_size(&self, yield_size: usize) {
         view_write!(self, yield_size, yield_size)
     }
 
@@ -4211,8 +4241,10 @@ impl Context {
         view_read!(self, data_begin)
     }
 
+    /// # Safety
+    /// The parser-window contract on [`Self::set_data`].
     #[inline(always)]
-    pub(crate) fn set_data_begin(&self, data_begin: *const u8) {
+    pub(crate) unsafe fn set_data_begin(&self, data_begin: *const u8) {
         view_write!(self, data_begin, data_begin)
     }
 

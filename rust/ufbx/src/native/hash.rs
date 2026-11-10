@@ -1420,16 +1420,18 @@ mod tests {
 
     fn make_test_ator(err: &ErrorView) -> Allocator {
         let mut ator = MaybeUninit::<Allocator>::zeroed();
-        init_ator(
-            // `err.get()` is the live `Error` the view was minted over (its
-            // mint invariant), and it outlives the allocator built here.
-            err.get(),
-            // SAFETY: `ator.as_mut_ptr()` is this frame's live, unmoved
-            // `Allocator` slot, as `View::from_ptr` requires.
-            unsafe { AllocatorView::from_ptr(ator.as_mut_ptr()) },
-            NO_ATOR_OPTS,
-            c"test",
-        );
+        unsafe {
+            init_ator(
+                // `err.get()` is the live `Error` the view was minted over (its
+                // mint invariant), and it outlives the allocator built here.
+                err.get(),
+                // SAFETY: `ator.as_mut_ptr()` is this frame's live, unmoved
+                // `Allocator` slot, as `View::from_ptr` requires.
+                AllocatorView::from_ptr(ator.as_mut_ptr()),
+                NO_ATOR_OPTS,
+                c"test",
+            );
+        }
         // SAFETY: `init_ator` wrote every config field; `current_size` and
         // `num_allocs` hold valid zeroes from the `zeroed()` storage, so the
         // whole `Allocator` is initialized.

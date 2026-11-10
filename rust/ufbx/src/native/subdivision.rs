@@ -3214,18 +3214,22 @@ pub(crate) fn subdivide_mesh_imp(
     // Initializing sc's own two allocators from sc's own error slot and sc's
     // own opts allocator descriptors, named by `'static` NUL-terminated
     // literals.
-    init_ator(
-        sc.error_mut_ptr(),
-        sc.ator_tmp_view(),
-        Some(sc.opts_view().temp_allocator_view()),
-        c"temp",
-    );
-    init_ator(
-        sc.error_mut_ptr(),
-        sc.ator_result_view(),
-        Some(sc.opts_view().result_allocator_view()),
-        c"result",
-    );
+    // SAFETY: `sc`'s allocators report into `sc`'s own error slot, which lives
+    // in the same context and so outlives every use of them.
+    unsafe {
+        init_ator(
+            sc.error_mut_ptr(),
+            sc.ator_tmp_view(),
+            Some(sc.opts_view().temp_allocator_view()),
+            c"temp",
+        );
+        init_ator(
+            sc.error_mut_ptr(),
+            sc.ator_result_view(),
+            Some(sc.opts_view().result_allocator_view()),
+            c"result",
+        );
+    }
 
     sc.result_view().set_unordered(true);
     sc.source_view().set_unordered(true);

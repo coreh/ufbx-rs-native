@@ -2302,22 +2302,27 @@ pub(crate) unsafe fn load_geometry_cache(
     // zero-initializer these lines port.
     let cc: CacheContext = unsafe { core::mem::zeroed() };
     let mut ator_tmp: Allocator = unsafe { core::mem::zeroed() };
-    init_ator(
-        cc.error_mut_ptr(),
-        AllocatorView::from_mut(&mut ator_tmp),
-        Some(View::<RawAllocatorOpts, Const>::from_ref(
-            &opts.temp_allocator,
-        )),
-        c"temp",
-    );
-    init_ator(
-        cc.error_mut_ptr(),
-        cc.ator_result_view(),
-        Some(View::<RawAllocatorOpts, Const>::from_ref(
-            &opts.result_allocator,
-        )),
-        c"result",
-    );
+    // SAFETY: both allocators report into `cc`'s own error slot; `cc` is this
+    // frame's context and stays in place for the whole load, which also bounds
+    // the local `ator_tmp`.
+    unsafe {
+        init_ator(
+            cc.error_mut_ptr(),
+            AllocatorView::from_mut(&mut ator_tmp),
+            Some(View::<RawAllocatorOpts, Const>::from_ref(
+                &opts.temp_allocator,
+            )),
+            c"temp",
+        );
+        init_ator(
+            cc.error_mut_ptr(),
+            cc.ator_result_view(),
+            Some(View::<RawAllocatorOpts, Const>::from_ref(
+                &opts.result_allocator,
+            )),
+            c"result",
+        );
+    }
     // SAFETY: `ator_tmp` was initialized above and remains live, unmoved, and
     // write-capable through cache loading and teardown. This context owns it,
     // so allocations reached through the published pointer are freed through

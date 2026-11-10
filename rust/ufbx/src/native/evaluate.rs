@@ -902,8 +902,12 @@ pub(crate) unsafe fn load_imp(uc: &Context) -> Result<(), Fail> {
     if uc.data().is_null() {
         ufbxi_dev_assert!(uc.data_begin().is_null());
         // C: `uc->data_begin = uc->data = ufbxi_zero_size_buffer;`
-        uc.set_data(ZERO_SIZE_BUFFER.as_ptr());
-        uc.set_data_begin(uc.data());
+        // SAFETY: `data` is null only when no bytes were supplied, so both
+        // sizes are zero: the empty window over a live static instead of null.
+        unsafe {
+            uc.set_data(ZERO_SIZE_BUFFER.as_ptr());
+            uc.set_data_begin(uc.data());
+        }
     }
 
     uc.set_retain_vertex_w(
@@ -1355,18 +1359,22 @@ pub(crate) unsafe fn load(
     // without reading any of the still-uninitialized bytes around it.
     unsafe { (&raw mut (*inflate_retain.as_mut_ptr()).initialized).write(false) };
 
-    init_ator(
-        uc.error_mut_ptr(),
-        uc.ator_tmp_view(),
-        Some(uc.opts_view().temp_allocator_view()),
-        c"temp",
-    );
-    init_ator(
-        uc.error_mut_ptr(),
-        uc.ator_result_view(),
-        Some(uc.opts_view().result_allocator_view()),
-        c"result",
-    );
+    // SAFETY: `uc`'s allocators report into `uc`'s own error slot, which lives
+    // in the same context and so outlives every use of them.
+    unsafe {
+        init_ator(
+            uc.error_mut_ptr(),
+            uc.ator_tmp_view(),
+            Some(uc.opts_view().temp_allocator_view()),
+            c"temp",
+        );
+        init_ator(
+            uc.error_mut_ptr(),
+            uc.ator_result_view(),
+            Some(uc.opts_view().result_allocator_view()),
+            c"result",
+        );
+    }
 
     if uc.opts_view().read_buffer_size() == 0 {
         uc.opts_view().set_read_buffer_size(0x4000);
@@ -4512,18 +4520,22 @@ pub(crate) unsafe fn evaluate_scene(
     });
     ec.set_time(time);
 
-    init_ator(
-        ec.error_mut_ptr(),
-        ec.ator_tmp_view(),
-        Some(ec.opts_view().temp_allocator_view()),
-        c"temp",
-    );
-    init_ator(
-        ec.error_mut_ptr(),
-        ec.ator_result_view(),
-        Some(ec.opts_view().result_allocator_view()),
-        c"result",
-    );
+    // SAFETY: `ec`'s allocators report into `ec`'s own error slot, which lives
+    // in the same context and so outlives every use of them.
+    unsafe {
+        init_ator(
+            ec.error_mut_ptr(),
+            ec.ator_tmp_view(),
+            Some(ec.opts_view().temp_allocator_view()),
+            c"temp",
+        );
+        init_ator(
+            ec.error_mut_ptr(),
+            ec.ator_result_view(),
+            Some(ec.opts_view().result_allocator_view()),
+            c"result",
+        );
+    }
 
     // SAFETY: the empty evaluation buffers are context fields wired to their
     // initialized sibling allocators. Each allocator remains live until its
@@ -4932,12 +4944,16 @@ pub(crate) fn create_anim_imp(ac: &CreateAnimContext) -> Result<FinishedImp<Anim
     // Initializing ac's own result allocator from ac's own error slot and ac's
     // own opts allocator descriptor, named by a `'static` NUL-terminated
     // literal.
-    init_ator(
-        ac.error_mut_ptr(),
-        ac.ator_result_view(),
-        Some(ac.opts_view().result_allocator_view()),
-        c"result",
-    );
+    // SAFETY: `ac`'s allocator reports into `ac`'s own error slot, which lives
+    // in the same context and so outlives every use of it.
+    unsafe {
+        init_ator(
+            ac.error_mut_ptr(),
+            ac.ator_result_view(),
+            Some(ac.opts_view().result_allocator_view()),
+            c"result",
+        );
+    }
     ac.result_view().set_unordered(true);
     // SAFETY: this empty result buffer and its initialized allocator are
     // sibling fields of the stable create-anim context; chunks and allocator
@@ -8093,18 +8109,22 @@ pub(crate) unsafe fn bake_anim_imp(bc: &BakeContext, anim: *const Anim) -> Resul
         );
     }
 
-    init_ator(
-        bc.error_mut_ptr(),
-        bc.ator_tmp_view(),
-        Some(bc.opts_view().temp_allocator_view()),
-        c"temp",
-    );
-    init_ator(
-        bc.error_mut_ptr(),
-        bc.ator_result_view(),
-        Some(bc.opts_view().result_allocator_view()),
-        c"result",
-    );
+    // SAFETY: `bc`'s allocators report into `bc`'s own error slot, which lives
+    // in the same context and so outlives every use of them.
+    unsafe {
+        init_ator(
+            bc.error_mut_ptr(),
+            bc.ator_tmp_view(),
+            Some(bc.opts_view().temp_allocator_view()),
+            c"temp",
+        );
+        init_ator(
+            bc.error_mut_ptr(),
+            bc.ator_result_view(),
+            Some(bc.opts_view().result_allocator_view()),
+            c"result",
+        );
+    }
 
     // SAFETY: all buffers below are empty fields of the stable bake context.
     // `result` uses the initialized result allocator and every scratch buffer

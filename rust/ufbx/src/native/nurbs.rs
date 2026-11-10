@@ -575,18 +575,22 @@ pub(crate) fn tessellate_nurbs_curve_imp(
     // Initializing tc's own two allocators from tc's own error slot and tc's
     // own opts allocator descriptors, named by `'static` NUL-terminated
     // literals.
-    init_ator(
-        tc.error_mut_ptr(),
-        tc.ator_tmp_view(),
-        Some(tc.opts_view().temp_allocator_view()),
-        c"temp",
-    );
-    init_ator(
-        tc.error_mut_ptr(),
-        tc.ator_result_view(),
-        Some(tc.opts_view().result_allocator_view()),
-        c"result",
-    );
+    // SAFETY: `tc`'s allocators report into `tc`'s own error slot, which lives
+    // in the same context and so outlives every use of them.
+    unsafe {
+        init_ator(
+            tc.error_mut_ptr(),
+            tc.ator_tmp_view(),
+            Some(tc.opts_view().temp_allocator_view()),
+            c"temp",
+        );
+        init_ator(
+            tc.error_mut_ptr(),
+            tc.ator_result_view(),
+            Some(tc.opts_view().result_allocator_view()),
+            c"result",
+        );
+    }
 
     tc.result_view().set_unordered(true);
     // SAFETY: the empty result buffer and initialized result allocator are
@@ -761,18 +765,22 @@ pub(crate) fn tessellate_nurbs_surface_imp(
     // Initializing tc's own two allocators from tc's own error slot and tc's
     // own opts allocator descriptors, named by `'static` NUL-terminated
     // literals.
-    init_ator(
-        tc.error_mut_ptr(),
-        tc.ator_tmp_view(),
-        Some(tc.opts_view().temp_allocator_view()),
-        c"temp",
-    );
-    init_ator(
-        tc.error_mut_ptr(),
-        tc.ator_result_view(),
-        Some(tc.opts_view().result_allocator_view()),
-        c"result",
-    );
+    // SAFETY: `tc`'s allocators report into `tc`'s own error slot, which lives
+    // in the same context and so outlives every use of them.
+    unsafe {
+        init_ator(
+            tc.error_mut_ptr(),
+            tc.ator_tmp_view(),
+            Some(tc.opts_view().temp_allocator_view()),
+            c"temp",
+        );
+        init_ator(
+            tc.error_mut_ptr(),
+            tc.ator_result_view(),
+            Some(tc.opts_view().result_allocator_view()),
+            c"result",
+        );
+    }
 
     tc.result_view().set_unordered(true);
     tc.tmp_view().set_unordered(true);

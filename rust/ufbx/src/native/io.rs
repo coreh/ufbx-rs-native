@@ -179,9 +179,16 @@ pub(crate) fn refill(uc: &Context, size: usize, require_size: bool) -> *const u8
         uc.data_offset()
             .wrapping_add(to_size(uc.data() as isize - uc.data_begin() as isize) as u64),
     );
-    uc.set_data_begin(uc.read_buffer());
-    uc.set_data(uc.read_buffer());
-    uc.set_data_size(data_size);
+    // SAFETY: the window becomes the first `data_size` bytes of the read
+    // buffer, which the code above just filled (carried-over bytes plus user
+    // reads) and which holds at least that many. `yield_size` is the callers':
+    // `yield_` rewrites it right after this returns, every other caller runs
+    // with it at zero.
+    unsafe {
+        uc.set_data_begin(uc.read_buffer());
+        uc.set_data(uc.read_buffer());
+        uc.set_data_size(data_size);
+    }
 
     uc.read_buffer()
 }
@@ -189,15 +196,23 @@ pub(crate) fn refill(uc: &Context, size: usize, require_size: bool) -> *const u8
 // ufbx.c:6783-6787 `ufbxi_pause_progress`
 #[inline(always)]
 pub(crate) fn pause_progress(uc: &Context) {
-    uc.set_data_size(uc.data_size() + uc.yield_size());
-    uc.set_yield_size(0);
+    // SAFETY: moves the yield bytes into `data_size`; their sum, and so the
+    // window, is unchanged.
+    unsafe {
+        uc.set_data_size(uc.data_size() + uc.yield_size());
+        uc.set_yield_size(0);
+    }
 }
 
 // ufbx.c:6789-6799 `ufbxi_resume_progress`
 #[inline(never)]
 pub(crate) fn resume_progress(uc: &Context) -> Result<(), Fail> {
-    uc.set_yield_size(min_sz(uc.data_size(), uc.progress_interval()));
-    uc.set_data_size(uc.data_size() - uc.yield_size());
+    // SAFETY: splits off at most `data_size` bytes as the yield; the sum, and
+    // so the window, is unchanged.
+    unsafe {
+        uc.set_yield_size(min_sz(uc.data_size(), uc.progress_interval()));
+        uc.set_data_size(uc.data_size() - uc.yield_size());
+    }
 
     if get_read_offset(uc).wrapping_sub(uc.latest_progress_bytes()) >= uc.progress_interval() as u64
     {
@@ -215,14 +230,24 @@ pub(crate) fn resume_progress(uc: &Context) -> Result<(), Fail> {
 #[inline(never)]
 pub(crate) fn yield_(uc: &Context, size: usize) -> *const u8 {
     let ret: *const u8;
-    uc.set_data_size(uc.data_size() + uc.yield_size());
+    // SAFETY: first step of the re-split that ends below: `data_size` absorbs
+    // the yield bytes (C order) and `yield_size` is rewritten before anything
+    // reads through the window.
+    unsafe {
+        uc.set_data_size(uc.data_size() + uc.yield_size());
+    }
     if uc.data_size() >= size {
         ret = uc.data();
     } else {
         ret = refill(uc, size, true);
     }
-    uc.set_yield_size(min_sz(uc.data_size(), max_sz(size, uc.progress_interval())));
-    uc.set_data_size(uc.data_size() - uc.yield_size());
+    // SAFETY: completes the re-split: `yield_size <= data_size` and the two
+    // again sum to the bytes available at `data` (the old window, or the
+    // refilled buffer).
+    unsafe {
+        uc.set_yield_size(min_sz(uc.data_size(), max_sz(size, uc.progress_interval())));
+        uc.set_data_size(uc.data_size() - uc.yield_size());
+    }
 
     ufbxi_check_return!(
         uc,
@@ -259,8 +284,12 @@ pub(crate) fn read_bytes(uc: &Context, size: usize) -> *const u8 {
 
     // Advance the read position inside the current buffer
     let next_data = cursor_after(uc, size);
-    uc.set_yield_size(uc.yield_size() - size);
-    uc.set_data(next_data);
+    // SAFETY: `size <= yield_size` here (checked above, or established by
+    // `yield_`), so the window drops `size` bytes from its front.
+    unsafe {
+        uc.set_yield_size(uc.yield_size() - size);
+        uc.set_data(next_data);
+    }
     ret
 }
 
@@ -270,8 +299,12 @@ pub(crate) fn consume_bytes(uc: &Context, size: usize) {
     // Bytes must have been checked first with `ufbxi_peek_bytes()`
     ufbx_assert!(size <= uc.yield_size());
     let next_data = cursor_after(uc, size);
-    uc.set_yield_size(uc.yield_size() - size);
-    uc.set_data(next_data);
+    // SAFETY: `size <= yield_size` (asserted above), so the window drops
+    // `size` bytes from its front.
+    unsafe {
+        uc.set_yield_size(uc.yield_size() - size);
+        uc.set_data(next_data);
+    }
 }
 
 // ufbx.c:6851-6896 `ufbxi_skip_bytes`
@@ -282,8 +315,13 @@ pub(crate) fn skip_bytes(uc: &Context, mut size: u64) -> Result<(), Fail> {
 
         if size > uc.data_size() as u64 {
             size -= uc.data_size() as u64;
-            uc.set_data(cursor_after(uc, uc.data_size()));
-            uc.set_data_size(0);
+            // SAFETY: skips to the end of the buffered bytes (`pause_progress`
+            // zeroed the yield): the empty window at their one-past-the-end
+            // pointer.
+            unsafe {
+                uc.set_data(cursor_after(uc, uc.data_size()));
+                uc.set_data_size(0);
+            }
 
             uc.set_data_offset(uc.data_offset().wrapping_add(size));
             while size >= MAX_SKIP_SIZE as u64 {
@@ -332,8 +370,12 @@ pub(crate) fn skip_bytes(uc: &Context, mut size: u64) -> Result<(), Fail> {
                 );
             }
         } else {
-            uc.set_data(cursor_after(uc, size as usize));
-            uc.set_data_size(uc.data_size() - size as usize);
+            // SAFETY: `size <= data_size` on this branch, so the window drops
+            // `size` bytes from its front.
+            unsafe {
+                uc.set_data(cursor_after(uc, size as usize));
+                uc.set_data_size(uc.data_size() - size as usize);
+            }
         }
 
         // C: `ufbxi_check(ufbxi_resume_progress(uc));` — caller-side frame.
@@ -380,8 +422,12 @@ pub(crate) unsafe fn read_to(uc: &Context, dst: *mut c_void, mut size: usize) ->
         }
         dst_run.subrun(len, size - len).as_mut_ptr()
     };
-    uc.set_data(cursor_after(uc, len));
-    uc.set_data_size(uc.data_size() - len);
+    // SAFETY: `len <= data_size` (it is the minimum of the two sizes), so the
+    // window drops `len` bytes from its front.
+    unsafe {
+        uc.set_data(cursor_after(uc, len));
+        uc.set_data_size(uc.data_size() - len);
+    }
     ptr = next_ptr;
     size -= len;
 
@@ -395,9 +441,12 @@ pub(crate) unsafe fn read_to(uc: &Context, dst: *mut c_void, mut size: usize) ->
                 .wrapping_add(to_size(uc.data() as isize - uc.data_begin() as isize) as u64),
         );
 
-        uc.set_data_begin(core::ptr::null());
-        uc.set_data(core::ptr::null());
-        uc.set_data_size(0);
+        // SAFETY: the empty window.
+        unsafe {
+            uc.set_data_begin(core::ptr::null());
+            uc.set_data(core::ptr::null());
+            uc.set_data_size(0);
+        }
         ufbxi_check!(uc, uc.read_fn().is_some(), "uc->read_fn");
 
         while size > 0 {
@@ -555,7 +604,11 @@ pub(crate) unsafe fn begin_file_context(
         } else {
             Some(unsafe { View::<RawAllocatorOpts, Const>::from_ptr(ator_opts) })
         };
-        init_ator(fc.error_mut_ptr(), fc.ator_view(), ator_opts, c"file");
+        // SAFETY: `fc`'s allocator reports into `fc`'s own error slot, which
+        // lives in the same context and so outlives every use of it.
+        unsafe {
+            init_ator(fc.error_mut_ptr(), fc.ator_view(), ator_opts, c"file");
+        }
     }
 }
 
@@ -1083,7 +1136,11 @@ mod tests {
     fn init_tmp_ator(uc: &Context) {
         // Initializing `uc`'s own `ator_tmp`/`error` fields through its view
         // getters; absent opts select the defaults.
-        init_ator(uc.error_mut_ptr(), uc.ator_tmp_view(), NO_ATOR_OPTS, c"tmp");
+        // SAFETY: the error slot is a local of this test that outlives the
+        // allocator.
+        unsafe {
+            init_ator(uc.error_mut_ptr(), uc.ator_tmp_view(), NO_ATOR_OPTS, c"tmp");
+        }
     }
 
     struct SliceReader {
@@ -1301,8 +1358,12 @@ mod tests {
 
         // `read_to` progress accounting expects the cursor pair to share one
         // live allocation even when the remaining window is empty.
-        context.set_data(LIVE_BASE.as_ptr());
-        context.set_data_begin(LIVE_BASE.as_ptr() as *mut u8);
+        // SAFETY: an empty window (both sizes are zero) over a live static
+        // byte.
+        unsafe {
+            context.set_data(LIVE_BASE.as_ptr());
+            context.set_data_begin(LIVE_BASE.as_ptr() as *mut u8);
+        }
 
         // SAFETY: zero bytes require no writable destination; C explicitly
         // permits NULL for this case, and `read_to` must not dereference it.

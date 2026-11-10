@@ -159,25 +159,38 @@ pub(crate) fn ascii_refill(uc: &Context) -> u8 {
             return b'\0';
         }
 
-        ua.set_src(dst_buffer);
-        uc.set_data_begin(dst_buffer);
-        uc.set_data(dst_buffer);
-        // SAFETY: `num_read <= dst_size` (checked above), so the end cursor is
-        // at most one past the end of `dst_buffer`, and `num_read > 0` means
-        // the first byte was written by the read.
+        // SAFETY: the scan window becomes the `num_read` bytes just read into
+        // `dst_buffer`: `0 < num_read <= dst_size` (checked above), so the
+        // end cursor is at most one past the end of the buffer and the first
+        // byte is readable. `src_yield` is rewritten by the caller before the
+        // scanner resumes. The parser cursor only mirrors
+        // `src` (C: "TODO: Unify these properly"): its sizes are left stale,
+        // which relies on nothing reading through the parser window while the
+        // ASCII scanner owns the input — the mirror feeds the `data -
+        // data_begin` progress offset only.
         unsafe {
+            ua.set_src(dst_buffer);
+            uc.set_data_begin(dst_buffer);
+            uc.set_data(dst_buffer);
             ua.set_src_end(dst_buffer.add(num_read));
             *ua.src()
         }
     } else {
         // If the user didn't specify a `read_fn()` treat anything
         // past the initial data buffer as EOF.
-        ua.set_src(ASCII_EMPTY_STRING.as_ptr());
-        uc.set_data_begin(ASCII_EMPTY_STRING.as_ptr());
-        uc.set_data(ASCII_EMPTY_STRING.as_ptr());
-        // SAFETY: `src` was just set to the one-byte `ASCII_EMPTY_STRING`
-        // static, so `+ 1` is its one-past-the-end.
-        ua.set_src_end(unsafe { ua.src().add(1) });
+        // SAFETY: the scan window becomes the one-byte `ASCII_EMPTY_STRING`
+        // static (`+ 1` is its one-past-the-end); `src_yield` is rewritten by
+        // the caller before the scanner resumes. The parser cursor only mirrors
+        // `src` (C: "TODO: Unify these properly"): its sizes are left stale,
+        // which relies on nothing reading through the parser window while the
+        // ASCII scanner owns the input — the mirror feeds the `data -
+        // data_begin` progress offset only.
+        unsafe {
+            ua.set_src(ASCII_EMPTY_STRING.as_ptr());
+            uc.set_data_begin(ASCII_EMPTY_STRING.as_ptr());
+            uc.set_data(ASCII_EMPTY_STRING.as_ptr());
+            ua.set_src_end(ua.src().add(1));
+        }
         b'\0'
     }
 }
@@ -197,15 +210,19 @@ pub(crate) fn ascii_yield(uc: &Context) -> u8 {
     }
 
     if to_size(ua.src_end() as isize - ua.src() as isize) < uc.progress_interval() {
-        ua.set_src_yield(ua.src_end());
+        // SAFETY: `src_end` is the window's own end.
+        unsafe { ua.set_src_yield(ua.src_end()) };
     } else {
         // SAFETY: this branch has `src_end - src >= progress_interval`, so the
         // yield cursor lands at or before `src_end`, inside the source window.
-        ua.set_src_yield(unsafe { ua.src().add(uc.progress_interval()) });
+        unsafe { ua.set_src_yield(ua.src().add(uc.progress_interval())) };
     }
 
     // TODO: Unify these properly
-    uc.set_data(ua.src());
+    // SAFETY: mirrors the scan cursor into the parser cursor, sizes left
+    // stale; nothing reads through the parser window in ASCII mode (see
+    // `ascii_refill`), the mirror feeds the progress offset only.
+    unsafe { uc.set_data(ua.src()) };
     ufbxi_check_return!(
         uc,
         report_progress(uc).is_ok(),
@@ -236,7 +253,7 @@ pub(crate) fn ascii_next(uc: &Context) -> u8 {
     }
     // SAFETY: `src != src_yield` and `src <= src_yield <= src_end` (the source
     // window invariant), so the one-step advance stays within that window.
-    ua.set_src(unsafe { ua.src().add(1) });
+    unsafe { ua.set_src(ua.src().add(1)) };
     if ua.src() == ua.src_yield() {
         return ascii_yield(uc);
     }
@@ -534,8 +551,9 @@ pub(crate) fn ascii_store_array(uc: &Context, tmp_buf: &BufView) -> Result<(), F
             // `begin + buffered` is its one-past-the-end (== `src_yield`).
             end = unsafe { begin.add(buffered) };
         }
-        // `end` lands in `[begin, src_yield]`, still within the source window.
-        ua.set_src(end);
+        // SAFETY: `end` lands in `[begin, src_yield]`, still within the
+        // source window.
+        unsafe { ua.set_src(end) };
 
         let mut length: usize = to_size(end as isize - begin as isize);
         let span: *mut AsciiSpan = uc.tmp_ascii_spans_view().push::<AsciiSpan>(1);
@@ -755,9 +773,9 @@ pub(crate) fn ascii_next_token(uc: &Context, token: &AsciiTokenView) -> Result<(
                             to_size(end as isize - begin as isize),
                         )
                     }?;
-                    // `end` lands inside the readable window, a valid `src`
-                    // cursor.
-                    ua.set_src(end);
+                    // SAFETY: `end` lands inside the readable window, a valid
+                    // `src` cursor.
+                    unsafe { ua.set_src(end) };
                     c = ascii_peek(uc);
                     continue;
                 }
@@ -972,7 +990,7 @@ pub(crate) fn ascii_read_int_array(
     if src != 0 {
         // SAFETY: `src` is an offset inside the source window, so `base + src`
         // is a valid cursor to store back.
-        ua.set_src(unsafe { base.add(src) });
+        unsafe { ua.set_src(base.add(src)) };
         // `uc`'s own `ascii.token` is retokenized in place.
         ascii_next_token(uc, uc.ascii_view().token_view())?;
     }
@@ -1524,7 +1542,7 @@ pub(crate) fn ascii_read_float_array(
     if src != 0 {
         // SAFETY: `src` is an offset inside the source window, so `base + src`
         // is a valid cursor to store back.
-        ua.set_src(unsafe { base.add(src) });
+        unsafe { ua.set_src(base.add(src)) };
         // `uc`'s own `ascii.token` is retokenized in place.
         ascii_next_token(uc, uc.ascii_view().token_view())?;
     }

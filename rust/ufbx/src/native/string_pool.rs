@@ -1904,12 +1904,16 @@ mod tests {
         };
         // SAFETY: `err` has its own boxed allocation, live and unmoved for the
         // test; the raw address is the one vouch for it.
-        init_ator(
-            &raw mut *fx.err,
-            AllocatorView::from_mut(fx.ator.as_mut()),
-            NO_ATOR_OPTS,
-            c"test",
-        );
+        // SAFETY: the error slot is a local of this test that outlives the
+        // allocator.
+        unsafe {
+            init_ator(
+                &raw mut *fx.err,
+                AllocatorView::from_mut(fx.ator.as_mut()),
+                NO_ATOR_OPTS,
+                c"test",
+            );
+        }
         let ator = fx.ator.as_mut() as *mut Allocator;
         fx.pool.error = fx.err.as_mut();
         fx.pool.buf.ator = ator;

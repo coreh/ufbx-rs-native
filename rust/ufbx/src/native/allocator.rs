@@ -822,10 +822,15 @@ pub(crate) const NO_ATOR_OPTS: Option<&'static View<RawAllocatorOpts, Const>> = 
 // `error` stays a RAW pointer, matching `AllocatorView::set_error`: it is
 // STORED into `ator->error` and dereferenced long after any borrow taken here
 // would end, so a reference param would silently promise a lifetime the type
-// cannot carry. The `Allocator` type invariant documented on `alloc_size` —
-// the error slot outlives the allocator — is the caller's, exactly as in C.
+// cannot carry.
+//
+// # Safety
+// `error` must be null, or point to an `Error` slot that stays live, unmoved
+// and write-capable for as long as `ator` can allocate or fail: the safe
+// allocation fns write the failure into it (the `Allocator` type invariant
+// documented on `alloc_size`).
 #[inline(never)]
-pub(crate) fn init_ator<M: Mode>(
+pub(crate) unsafe fn init_ator<M: Mode>(
     error: *mut Error,
     ator: &AllocatorView,
     opts: Option<&View<RawAllocatorOpts, M>>,
@@ -893,14 +898,16 @@ mod tests {
 
     fn make_ator(error: &ErrorView, opts: Option<&View<RawAllocatorOpts, Const>>) -> Allocator {
         let mut ator = MaybeUninit::<Allocator>::zeroed();
-        init_ator(
-            error.get(),
-            // SAFETY: `ator.as_mut_ptr()` addresses this frame's own
-            // `Allocator` slot, live and unmoved for the call.
-            unsafe { AllocatorView::from_ptr(ator.as_mut_ptr()) },
-            opts,
-            c"test",
-        );
+        unsafe {
+            init_ator(
+                error.get(),
+                // SAFETY: `ator.as_mut_ptr()` addresses this frame's own
+                // `Allocator` slot, live and unmoved for the call.
+                AllocatorView::from_ptr(ator.as_mut_ptr()),
+                opts,
+                c"test",
+            );
+        }
         // SAFETY: the slot is zero-initialized above and `init_ator` writes
         // every remaining field (`current_size`/`num_allocs` stay 0, matching
         // the memset of the containing C context), so all fields are

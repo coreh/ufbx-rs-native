@@ -6821,16 +6821,21 @@ pub(crate) fn read_selection_set(
 // `name` stays a raw `*const u8`: it is an interned pooled-string pointer
 // compared by IDENTITY inside `find_child` (never dereferenced), the same
 // convention `find_array`/`find_val1` carry as safe fns.
+//
+// # Safety
+// The array named `name`, if `node` has one, must be parsed into the result
+// buffer (`UFBXI_ARRAY_FLAG_RESULT` in `ufbxi_is_array_node`), so its payload
+// lives as long as the scene that `dst` belongs to.
 #[inline(never)]
-pub(crate) fn find_uint32_list(dst: &View<List<u32>, Mut>, node: &NodeView, name: *const u8) {
+pub(crate) unsafe fn find_uint32_list(
+    dst: &View<List<u32>, Mut>,
+    node: &NodeView,
+    name: *const u8,
+) {
     let arr: Option<&View<ValueArray>> = find_array(node, name, b'i');
     if let Some(arr) = arr {
         // SAFETY: a found `'i'` array's payload is exactly `size` initialized
-        // `u32`s. Its lifetime rests on the callers: the only three
-        // (`read_selection_node`) pass `VertexIndexArray` / `EdgeIndexArray` /
-        // `PolygonIndexArray`, which `ufbxi_is_array_node` parses into the
-        // result buffer (`UFBXI_ARRAY_FLAG_RESULT`), so the run lives as long
-        // as the scene. This fn's safe signature does not enforce that.
+        // `u32`s, and it lives as long as the scene (fn contract).
         unsafe {
             dst.set_data(arr.data() as *const u32);
             dst.set_count(arr.size());
@@ -6867,9 +6872,14 @@ pub(crate) fn read_selection_node(
         sel.set_include_node(true);
     }
 
-    find_uint32_list(sel.vertices_view(), node, sp::VertexIndexArray.as_ptr());
-    find_uint32_list(sel.edges_view(), node, sp::EdgeIndexArray.as_ptr());
-    find_uint32_list(sel.faces_view(), node, sp::PolygonIndexArray.as_ptr());
+    // SAFETY: `ufbxi_is_array_node` parses `VertexIndexArray`,
+    // `EdgeIndexArray` and `PolygonIndexArray` into the result buffer
+    // (`UFBXI_ARRAY_FLAG_RESULT`).
+    unsafe {
+        find_uint32_list(sel.vertices_view(), node, sp::VertexIndexArray.as_ptr());
+        find_uint32_list(sel.edges_view(), node, sp::EdgeIndexArray.as_ptr());
+        find_uint32_list(sel.faces_view(), node, sp::PolygonIndexArray.as_ptr());
+    }
 
     Ok(())
 }
@@ -7867,20 +7877,31 @@ pub(crate) unsafe fn read_objects_threaded(uc: &Context) -> Result<(), Fail> {
             // buffer is a separate `ator_tmp` allocation, so the two are disjoint.
             unsafe { core::ptr::copy_nonoverlapping(ua.src(), uc.read_buffer(), size) };
             // C: `uc->data = uc->data_begin = ua->src = uc->read_buffer;`
-            ua.set_src(uc.read_buffer());
-            uc.set_data_begin(ua.src());
-            uc.set_data(uc.data_begin());
-            ua.set_src_end(uc.read_buffer().wrapping_add(size));
+            // SAFETY: the scan window becomes the `size` bytes just copied to
+            // the front of `read_buffer` (which holds at least `size`), with
+            // `src_yield` set inside it right below. The parser cursor only
+            // mirrors `src` (sizes left stale; nothing reads through the
+            // parser window in ASCII mode).
+            unsafe {
+                ua.set_src(uc.read_buffer());
+                uc.set_data_begin(ua.src());
+                uc.set_data(uc.data_begin());
+                ua.set_src_end(uc.read_buffer().wrapping_add(size));
+            }
             ua.set_src_is_retained(false);
             ua.set_src_buf(core::ptr::null_mut());
             // SAFETY: `src`/`src_end` address the same `read_buffer` allocation,
             // so their difference is well defined.
             if to_size(unsafe { ua.src_end().offset_from(ua.src()) }) < uc.progress_interval() {
-                ua.set_src_yield(ua.src_end());
+                // SAFETY: `src_end` is the window's own end.
+                unsafe { ua.set_src_yield(ua.src_end()) };
             } else {
-                ua.set_src_yield(ua.src().wrapping_add(uc.progress_interval()));
+                // SAFETY: this branch has `src_end - src >= progress_interval`,
+                // so the yield cursor lands inside the window.
+                unsafe { ua.set_src_yield(ua.src().wrapping_add(uc.progress_interval())) };
             }
-            uc.set_data(ua.src());
+            // SAFETY: mirrors the scan cursor, as above.
+            unsafe { uc.set_data(ua.src()) };
         }
 
         buf_clear(tmp_buf);

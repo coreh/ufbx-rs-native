@@ -673,9 +673,14 @@ pub(crate) unsafe fn load_memory(
     // storage; the write zero-fills exactly its `InnerContext` byte extent.
     unsafe { core::ptr::write_bytes(uc.get() as *mut u8, 0, size_of::<InnerContext>()) };
     // C: `uc.data_begin = uc.data = (const char *)data;`
-    uc.set_data(data as *const u8);
-    uc.set_data_begin(uc.data());
-    uc.set_data_size(size);
+    // SAFETY: the window is the caller's `size` readable bytes at `data` (this
+    // fn's raw-pointer contract), live for the whole load; `yield_size` is
+    // zero in the freshly zeroed context.
+    unsafe {
+        uc.set_data(data as *const u8);
+        uc.set_data_begin(uc.data());
+        uc.set_data_size(size);
+    }
     uc.set_progress_bytes_total(size as u64);
     // SAFETY: `uc` is the initialized context; `opts` is null-or-live (sentinels
     // validated by the macro when non-null; `evaluate::load` zero-fills on null).
@@ -779,9 +784,14 @@ pub(crate) unsafe fn load_stream_prefix(
     // storage; the write zero-fills exactly its `InnerContext` byte extent.
     unsafe { core::ptr::write_bytes(uc.get() as *mut u8, 0, size_of::<InnerContext>()) };
     // C: `uc.data_begin = uc.data = (const char *)prefix;`
-    uc.set_data(prefix as *const u8);
-    uc.set_data_begin(uc.data());
-    uc.set_data_size(prefix_size);
+    // SAFETY: the window is the stream's `prefix_size` readable prefix bytes
+    // (the `ufbx_stream` contract), live for the whole load; `yield_size` is
+    // zero in the freshly zeroed context.
+    unsafe {
+        uc.set_data(prefix as *const u8);
+        uc.set_data_begin(uc.data());
+        uc.set_data_size(prefix_size);
+    }
     // SAFETY: `stream` points at the caller's live `RawStream`; each read takes
     // one of its own callback/user fields.
     unsafe {
@@ -7647,12 +7657,16 @@ mod tests {
         // (only POD fields are read before `init_ator` writes it).
         let mut ator = unsafe { core::mem::MaybeUninit::<Allocator>::zeroed().assume_init() };
         let opts = RawAllocatorOpts::default();
-        init_ator(
-            error,
-            AllocatorView::from_mut(&mut ator),
-            Some(View::<RawAllocatorOpts, Const>::from_ref(&opts)),
-            c"test",
-        );
+        // SAFETY: the error slot is a local of this test that outlives the
+        // allocator.
+        unsafe {
+            init_ator(
+                error,
+                AllocatorView::from_mut(&mut ator),
+                Some(View::<RawAllocatorOpts, Const>::from_ref(&opts)),
+                c"test",
+            );
+        }
 
         // SAFETY: an all-zero bit pattern is a valid `Buf` for this test.
         let mut buf = unsafe { core::mem::MaybeUninit::<Buf>::zeroed().assume_init() };
@@ -8304,12 +8318,16 @@ mod tests {
         // SAFETY: an all-zero bit pattern is a valid `Allocator` for this test.
         let mut ator = unsafe { core::mem::MaybeUninit::<Allocator>::zeroed().assume_init() };
         let opts = RawAllocatorOpts::default();
-        init_ator(
-            error,
-            AllocatorView::from_mut(&mut ator),
-            Some(View::<RawAllocatorOpts, Const>::from_ref(&opts)),
-            c"test",
-        );
+        // SAFETY: the error slot is a local of this test that outlives the
+        // allocator.
+        unsafe {
+            init_ator(
+                error,
+                AllocatorView::from_mut(&mut ator),
+                Some(View::<RawAllocatorOpts, Const>::from_ref(&opts)),
+                c"test",
+            );
+        }
 
         // SAFETY: an all-zero bit pattern is a valid `Buf` for this test.
         let mut buf = unsafe { core::mem::MaybeUninit::<Buf>::zeroed().assume_init() };

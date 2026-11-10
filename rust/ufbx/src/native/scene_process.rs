@@ -3229,18 +3229,21 @@ pub(crate) fn find_prop_connection<'a>(
 // `p_index: &ListView<u32>` carries C's `uint32_t **p_index`: the out-slot is
 // the `data` leaf of an index list living in scene memory, so the write goes
 // through the list view's own setter rather than an `&mut` over arena memory.
+//
+// # Safety
+// If `p_index` holds the zero (or consecutive) sentinel, its count must have
+// been folded into `uc`'s `max_zero_indices` (or `max_consecutive_indices`),
+// and `uc.zero_indices()` / `uc.consecutive_indices()` must already be the
+// result-buffer runs sized by those maxima.
 #[inline(always)]
-pub(crate) fn patch_index_pointer(uc: &Context, p_index: &ListView<u32>) {
+pub(crate) unsafe fn patch_index_pointer(uc: &Context, p_index: &ListView<u32>) {
     if std::ptr::eq(p_index.data(), SENTINEL_INDEX_ZERO.as_ptr()) {
-        // SAFETY: only lists whose count was folded into `max_zero_indices`
-        // are ever given the zero sentinel, so the count is covered by the
-        // `max_zero_indices`-element zero-filled result-buffer run that
-        // `finalize_scene` installs before patching (scene lifetime). This
-        // module-wide sizing invariant is not checked here.
+        // SAFETY: fn contract — the list's count is covered by the
+        // `max_zero_indices`-element zero-filled run (scene lifetime).
         unsafe { p_index.set_data(uc.zero_indices()) };
     } else if std::ptr::eq(p_index.data(), SENTINEL_INDEX_CONSECUTIVE.as_ptr()) {
-        // SAFETY: as above, for `max_consecutive_indices` and the run filled
-        // with `0..max_consecutive_indices`.
+        // SAFETY: fn contract, for `max_consecutive_indices` and the run
+        // filled with `0..max_consecutive_indices`.
         unsafe { p_index.set_data(uc.consecutive_indices()) };
     }
 }
@@ -9099,26 +9102,36 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
         for mesh_ix in 0..scene_meshes.count() {
             let mesh: &View<Mesh> = scene_meshes.at(mesh_ix);
 
-            patch_index_pointer(uc, mesh.vertex_position().indices_view());
-            patch_index_pointer(uc, mesh.vertex_normal().indices_view());
-            patch_index_pointer(uc, mesh.vertex_color().indices_view());
-            patch_index_pointer(uc, mesh.vertex_crease().indices_view());
-            patch_index_pointer(uc, mesh.face_material_view());
-            patch_index_pointer(uc, mesh.face_group_view());
+            // SAFETY: every index list a mesh reader tagged with a sentinel had its
+            // count folded into `max_zero_indices` / `max_consecutive_indices`
+            // (ufbx.c:13213, 13711, 17674), and the two shared runs sized by
+            // those maxima were installed just above.
+            unsafe {
+                patch_index_pointer(uc, mesh.vertex_position().indices_view());
+                patch_index_pointer(uc, mesh.vertex_normal().indices_view());
+                patch_index_pointer(uc, mesh.vertex_color().indices_view());
+                patch_index_pointer(uc, mesh.vertex_crease().indices_view());
+                patch_index_pointer(uc, mesh.face_material_view());
+                patch_index_pointer(uc, mesh.face_group_view());
 
-            patch_index_pointer(uc, mesh.skinned_position().indices_view());
-            patch_index_pointer(uc, mesh.skinned_normal().indices_view());
+                patch_index_pointer(uc, mesh.skinned_position().indices_view());
+                patch_index_pointer(uc, mesh.skinned_normal().indices_view());
+            }
 
             // C: `ufbxi_for_list(ufbx_uv_set, set, mesh->uv_sets)`
             for set in Run::from_list(mesh.uv_sets_view()).iter() {
-                patch_index_pointer(uc, set.vertex_uv().indices_view());
-                patch_index_pointer(uc, set.vertex_bitangent().indices_view());
-                patch_index_pointer(uc, set.vertex_tangent().indices_view());
+                // SAFETY: as for the mesh's own attributes above.
+                unsafe {
+                    patch_index_pointer(uc, set.vertex_uv().indices_view());
+                    patch_index_pointer(uc, set.vertex_bitangent().indices_view());
+                    patch_index_pointer(uc, set.vertex_tangent().indices_view());
+                }
             }
 
             // C: `ufbxi_for_list(ufbx_color_set, set, mesh->color_sets)`
             for cset in Run::from_list(mesh.color_sets_view()).iter() {
-                patch_index_pointer(uc, cset.vertex_color().indices_view());
+                // SAFETY: as for the mesh's own attributes above.
+                unsafe { patch_index_pointer(uc, cset.vertex_color().indices_view()) };
             }
 
             // Generate normals if necessary
@@ -9160,7 +9173,8 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
 
             if mesh.face_group_parts().count == 1 {
                 let part: &View<MeshPart> = mesh.face_group_parts_view().at(0);
-                patch_index_pointer(uc, part.face_indices_view());
+                // SAFETY: as for the mesh's own attributes above.
+                unsafe { patch_index_pointer(uc, part.face_indices_view()) };
             }
 
             fetch_mesh_materials(uc, mesh.materials_view(), mesh, true)?;

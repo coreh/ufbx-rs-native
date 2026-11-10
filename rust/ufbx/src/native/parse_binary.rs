@@ -1206,9 +1206,15 @@ fn binary_parse_node_rec(
                 {
                     // Yield right after this if we crossed the yield threshold
                     if encoded_size as usize > uc.yield_size() {
-                        uc.set_data_size(uc.data_size().wrapping_add(uc.yield_size()));
-                        uc.set_yield_size(encoded_size as usize);
-                        uc.set_data_size(uc.data_size().wrapping_sub(uc.yield_size()));
+                        // SAFETY: re-splits the window so the yield covers
+                        // `encoded_size` bytes: `yield_size + data_size >=
+                        // encoded_size` (enclosing check), and the three
+                        // writes keep their sum unchanged.
+                        unsafe {
+                            uc.set_data_size(uc.data_size().wrapping_add(uc.yield_size()));
+                            uc.set_yield_size(encoded_size as usize);
+                            uc.set_data_size(uc.data_size().wrapping_sub(uc.yield_size()));
+                        }
                     }
 
                     decoded_data = uc.data() as *mut c_void;

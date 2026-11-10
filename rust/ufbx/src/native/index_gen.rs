@@ -204,7 +204,11 @@ pub(crate) unsafe fn generate_indices(
     } else {
         Some(unsafe { View::<RawAllocatorOpts, Const>::from_ptr(allocator) })
     };
-    init_ator(error.get(), ator_view, allocator, c"allocator");
+    // SAFETY: the caller's error view outlives the allocator, which is a local
+    // used only within this call.
+    unsafe {
+        init_ator(error.get(), ator_view, allocator, c"allocator");
+    }
 
     let mut local_streams = MaybeUninit::<[VertexStream; LOCAL_STREAMS_COUNT]>::uninit(); // ufbxi_uninit
     let mut local_packed_vertex = MaybeUninit::<[u64; LOCAL_PACKED_VERTEX_COUNT]>::uninit(); // ufbxi_uninit

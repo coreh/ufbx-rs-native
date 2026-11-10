@@ -400,7 +400,13 @@ pub(crate) fn obj_init(uc: &Context) -> Result<(), Fail> {
     }
 
     // .obj parsing does its own yield logic
-    uc.set_data_size(uc.data_size() + uc.yield_size());
+    // SAFETY: folds the yield bytes into `data_size` as `pause_progress` does,
+    // except `yield_size` is left stale (C order), so from here `data_size`
+    // alone bounds the window. This relies on obj parsing using only
+    // `data`/`data_size` and `refill`, never the yield-aware readers.
+    unsafe {
+        uc.set_data_size(uc.data_size() + uc.yield_size());
+    }
 
     uc.obj().object_view().set(EMPTY_STRING.0);
     uc.obj().group_view().set(EMPTY_STRING.0);
@@ -563,10 +569,12 @@ pub(crate) fn obj_read_line(uc: &Context) -> Result<(), Fail> {
     uc.obj()
         .line_view()
         .set(unsafe { String::new_c(line_data, line_len) });
-    // SAFETY: `line_len` bytes were just scanned out of uc's read window, so
-    // advancing `data` past them stays inside the buffer.
-    unsafe { uc.set_data(line_data.add(line_len)) };
-    uc.set_data_size(uc.data_size() - line_len);
+    // SAFETY: `line_len` bytes were just scanned out of uc's read window
+    // (`line_len <= data_size`), so the window drops them from its front.
+    unsafe {
+        uc.set_data(line_data.add(line_len));
+        uc.set_data_size(uc.data_size() - line_len);
+    }
 
     uc.obj()
         .set_read_progress(uc.obj().read_progress() + line_len);
@@ -2426,17 +2434,25 @@ pub(crate) fn obj_load_mtl(uc: &Context) -> Result<(), Fail> {
     uc.set_read_fn(None);
     uc.set_close_fn(None);
     uc.set_read_user(core::ptr::null_mut());
-    uc.set_data_begin(core::ptr::null());
-    uc.set_data(core::ptr::null());
-    uc.set_data_size(0);
-    uc.set_yield_size(0);
+    // SAFETY: the empty window.
+    unsafe {
+        uc.set_data_begin(core::ptr::null());
+        uc.set_data(core::ptr::null());
+        uc.set_data_size(0);
+        uc.set_yield_size(0);
+    }
     uc.set_eof(false);
     uc.obj().set_eof(false);
 
     if uc.opts_view().obj_mtl_data_view().size() > 0 {
-        uc.set_data(uc.opts_view().obj_mtl_data_view().data());
-        uc.set_data_begin(uc.data());
-        uc.set_data_size(uc.opts_view().obj_mtl_data_view().size());
+        // SAFETY: the window is the caller's `obj_mtl_data` blob: `size`
+        // readable bytes at `data` (load-options contract), live for the
+        // load; `yield_size` was zeroed above.
+        unsafe {
+            uc.set_data(uc.opts_view().obj_mtl_data_view().data());
+            uc.set_data_begin(uc.data());
+            uc.set_data_size(uc.opts_view().obj_mtl_data_view().size());
+        }
         obj_parse_mtl(uc)?;
         return Ok(());
     }
