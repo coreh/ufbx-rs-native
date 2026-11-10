@@ -2708,7 +2708,9 @@ pub(crate) fn find_external_file<'a>(
         if type_ != a.type_() {
             type_ < a.type_()
         } else {
-            str_cmp(a.filename_view().bytes(), name) < 0
+            // C: `strcmp(a->filename.data, name) < 0` — the lookup stops at the
+            // first NUL, unlike the sort's length-aware `ufbxi_str_cmp`.
+            crate::native::error::c_strcmp(a.filename_view().bytes(), name) < 0
         }
     };
     let equal = |file_ix: usize| {
