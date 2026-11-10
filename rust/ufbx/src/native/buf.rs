@@ -387,18 +387,13 @@ impl BufView {
     #[must_use]
     pub(crate) fn push_pop<T>(&self, src: &BufView, n: usize) -> *mut T {
         debug_assert!(!core::ptr::eq(self, src));
-        // SAFETY: `src`'s depth — the `push_pop_size` obligation — comes from
-        // the C call-site shape this family transcribes: `n` is the count of
-        // items the same code path just pushed onto `src` (usually read back
-        // as `src->num_items`), so the pop cannot outrun the chunk chain.
-        unsafe { push_pop::<T>(self, src, n) }
+        push_pop::<T>(self, src, n)
     }
     #[inline(always)]
     #[must_use]
     pub(crate) fn push_peek<T>(&self, src: &BufView, n: usize) -> *mut T {
         debug_assert!(!core::ptr::eq(self, src));
-        // SAFETY: as for `push_pop`, peeking instead of popping.
-        unsafe { push_peek::<T>(self, src, n) }
+        push_peek::<T>(self, src, n)
     }
 }
 
@@ -1066,18 +1061,17 @@ pub(crate) fn buf_free_unused(view: &BufView) {
 //
 // # Safety
 //
-// Two obligations, neither of them carried by the parameter types, keep this
-// an `unsafe fn`:
+// One obligation, not carried by the parameter types, keeps this an
+// `unsafe fn`: `dst` is either null or a writable run of `size * n` bytes —
+// an untyped destination whose length is a promise the caller makes.
 //
-// - `dst` is either null or a writable run of `size * n` bytes — an untyped
-//   destination whose length is a promise the caller makes.
-// - The buf is ordered (`!unordered`) and actually holds what is popped:
-//   `num_items >= n`, backed by a chunk chain carrying `size * n` pushed
-//   bytes. `&BufView` vouches for liveness and write provenance, not for
-//   stack depth. On an over-pop the chunk walk reaches a null
-//   `chunks[0]`/`->prev` and dereferences it exactly as C does (ufbx.c:4199,
-//   4212); the C `ufbx_assert`s mirrored in the body are compiled out in
-//   release, so they are not the guard — the caller is.
+// Stack depth is NOT an obligation: the buf must be ordered and hold what is
+// popped (`num_items >= n`, backed by `size * n` pushed bytes), and every
+// step of that is asserted. `ufbx_assert!` is always on in this port, and the
+// chunk walk asserts each chunk it is about to touch is non-null — on an
+// over-pop (or a pop with a different item size than was pushed) C
+// dereferences the null `chunks[0]`/`->prev` (ufbx.c:4199, 4212) and crashes;
+// here the same condition is a panic.
 #[inline(never)]
 pub(crate) unsafe fn pop_size(view: &BufView, size: usize, n: usize, dst: *mut c_void, peek: bool) {
     let b: *mut Buf = view.get();
@@ -1115,9 +1109,8 @@ pub(crate) unsafe fn pop_size(view: &BufView, size: usize, n: usize, dst: *mut c
         // each a live `BufChunk` whose `data` array holds `pushed_pos`/`pos`
         // valid bytes; `chunk_data(chunk).add(pos)` reads inside that array, and
         // the destination of each `copy_nonoverlapping` is a checked sub-run of
-        // `out`, so every copy stays in bounds of two distinct objects. Over-pop
-        // dereferencing a null `chunk->prev` matches C, guarded only by the
-        // `num_items` assert above.
+        // `out`, so every copy stays in bounds of two distinct objects. The
+        // asserts in the whole-chunk arm keep the walk off a null chunk.
         let mut pos = unsafe { (*b).pos };
         let mut chunk = unsafe { (*b).chunks[0] };
         loop {
@@ -1142,14 +1135,15 @@ pub(crate) unsafe fn pop_size(view: &BufView, size: usize, n: usize, dst: *mut c
                 break;
             } else {
                 // Pop the whole chunk
+                // More bytes are needed than the buf's position holds, so
+                // this chunk and its predecessor must exist (see fn docs).
+                ufbx_assert!(!chunk.is_null());
+                ufbx_assert!(!unsafe { (*chunk).prev }.is_null());
                 // C: `ptr -= chunk_pos; bytes_left -= chunk_pos;` — this
                 // chunk's bytes land at the new `bytes_left` offset.
                 bytes_left -= pos;
                 let dst_ptr = out.subrun(bytes_left, pos).as_mut_ptr();
                 unsafe { core::ptr::copy_nonoverlapping(chunk_data(chunk), dst_ptr, pos) };
-                // C-parity: on over-pop `chunk->prev` may be NULL and C
-                // dereferences it (crash), guarded only by the num_items
-                // assert above — do not add a null check here.
                 if !peek {
                     unsafe {
                         (*chunk).pushed_pos = 0;
@@ -1166,9 +1160,8 @@ pub(crate) unsafe fn pop_size(view: &BufView, size: usize, n: usize, dst: *mut c
     } else {
         // SAFETY (every access in this discarding pop loop): `b` is the live
         // `Buf`; `chunk` starts at its active `chunks[0]` and walks the `->prev`
-        // chain of live `BufChunk`s. No data is copied (null `dst`). Over-pop
-        // dereferencing a null `chunk->prev` matches C, guarded only by the
-        // `num_items` assert above.
+        // chain of live `BufChunk`s. No data is copied (null `dst`). The
+        // asserts in the whole-chunk arm keep the walk off a null chunk.
         let mut pos = unsafe { (*b).pos };
         let mut chunk = unsafe { (*b).chunks[0] };
         loop {
@@ -1181,10 +1174,11 @@ pub(crate) unsafe fn pop_size(view: &BufView, size: usize, n: usize, dst: *mut c
                 break;
             } else {
                 // Pop the whole chunk
+                // As in the copying loop: this chunk and its predecessor
+                // must exist.
+                ufbx_assert!(!chunk.is_null());
+                ufbx_assert!(!unsafe { (*chunk).prev }.is_null());
                 bytes_left -= pos;
-                // C-parity: on over-pop `chunk->prev` may be NULL and C
-                // dereferences it (crash), guarded only by the num_items
-                // assert above — do not add a null check here.
                 if !peek {
                     unsafe {
                         (*chunk).pushed_pos = 0;
@@ -1239,24 +1233,18 @@ pub(crate) unsafe fn pop_size(view: &BufView, size: usize, n: usize, dst: *mut c
 
 // ufbx.c:4262-4268 `ufbxi_push_pop_size`
 //
-// # Safety
-//
-// `src` carries the depth the pop consumes: it is ordered (`!unordered`) and
-// holds at least `n` items backed by `size * n` pushed bytes — `pop_size`'s
-// buf-state obligation, which `&BufView` cannot carry.
+// Safe: the destination is the fresh `size * n` push, and `src`'s depth is
+// asserted by `pop_size` itself.
 #[inline(never)]
-pub(crate) unsafe fn push_pop_size(
-    dst: &BufView,
-    src: &BufView,
-    size: usize,
-    n: usize,
-) -> *mut c_void {
+pub(crate) fn push_pop_size(dst: &BufView, src: &BufView, size: usize, n: usize) -> *mut c_void {
+    // The fresh push must not be part of what is popped: the copy below
+    // requires distinct buffers (C call sites always transfer between two).
+    ufbx_assert!(!core::ptr::eq(dst, src));
     let data = push_size(dst, size, n);
     if data.is_null() {
         return core::ptr::null_mut();
     }
-    // SAFETY: `src`'s depth is this fn's own contract, forwarded; `data` is
-    // non-null and valid as `pop_size`'s destination for `size * n` bytes —
+    // SAFETY: `data` is non-null and valid as `pop_size`'s destination for `size * n` bytes —
     // the fresh region `push_size` allocated in `dst`, or, when `n == 0`, the
     // static `ZERO_SIZE_BUFFER` into which `pop_size` writes zero bytes.
     unsafe { pop_size(src, size, n, data, false) };
@@ -1265,16 +1253,11 @@ pub(crate) unsafe fn push_pop_size(
 
 // ufbx.c:4270-4276 `ufbxi_push_peek_size`
 //
-// # Safety
-//
-// As for [`push_pop_size`]: `src` holds the `n` items the peek reads.
+// Safe for the same reason as [`push_pop_size`].
 #[inline(never)]
-pub(crate) unsafe fn push_peek_size(
-    dst: &BufView,
-    src: &BufView,
-    size: usize,
-    n: usize,
-) -> *mut c_void {
+pub(crate) fn push_peek_size(dst: &BufView, src: &BufView, size: usize, n: usize) -> *mut c_void {
+    // Distinct buffers, as for `push_pop_size`.
+    ufbx_assert!(!core::ptr::eq(dst, src));
     let data = push_size(dst, size, n);
     if data.is_null() {
         return core::ptr::null_mut();
@@ -1495,24 +1478,17 @@ pub(crate) unsafe fn peek<T>(b: &BufView, n: usize, dst: *mut T) {
 
 // ufbx.c:4353 `#define ufbxi_push_pop(dst, src, type, n)`
 //
-// # Safety
-//
-// `src` holds the `n` items being popped ([`push_pop_size`]'s obligation).
+// The returned run holds whatever bytes were popped: reading it as `T` is the
+// caller's (raw-pointer) obligation, as for any push result.
 #[inline(always)]
-pub(crate) unsafe fn push_pop<T>(dst: &BufView, src: &BufView, n: usize) -> *mut T {
-    // SAFETY: forwarding this fn's `src`-depth contract to `push_pop_size`.
-    (unsafe { push_pop_size(dst, src, size_of::<T>(), n) }) as *mut T
+pub(crate) fn push_pop<T>(dst: &BufView, src: &BufView, n: usize) -> *mut T {
+    push_pop_size(dst, src, size_of::<T>(), n) as *mut T
 }
 
 // ufbx.c:4354 `#define ufbxi_push_peek(dst, src, type, n)`
-//
-// # Safety
-//
-// As for [`push_pop`]: `src` holds the `n` items the peek reads.
 #[inline(always)]
-pub(crate) unsafe fn push_peek<T>(dst: &BufView, src: &BufView, n: usize) -> *mut T {
-    // SAFETY: forwarding this fn's `src`-depth contract to `push_peek_size`.
-    (unsafe { push_peek_size(dst, src, size_of::<T>(), n) }) as *mut T
+pub(crate) fn push_peek<T>(dst: &BufView, src: &BufView, n: usize) -> *mut T {
+    push_peek_size(dst, src, size_of::<T>(), n) as *mut T
 }
 
 #[cfg(test)]
@@ -1864,14 +1840,11 @@ mod tests {
         );
 
         // Flatten the non-contiguous stack into a contiguous array.
-        // SAFETY: `stack` holds exactly the `N` items pushed above.
-        let arr = unsafe {
-            push_pop::<u64>(
-                BufView::from_mut(&mut result),
-                BufView::from_mut(&mut stack),
-                N,
-            )
-        };
+        let arr = push_pop::<u64>(
+            BufView::from_mut(&mut result),
+            BufView::from_mut(&mut stack),
+            N,
+        );
         assert!(!arr.is_null());
         for i in 0..N {
             assert_eq!(unsafe { *arr.add(i) }, i as u64);
@@ -1882,6 +1855,36 @@ mod tests {
         buf_free(BufView::from_mut(&mut stack));
         buf_free(BufView::from_mut(&mut result));
         assert_eq!(unsafe { (*ator).current_size }, 0);
+    }
+
+    // A pop wider than what was pushed (same item count, larger item size)
+    // must stop at the depth asserts instead of walking off the chunk chain.
+    #[test]
+    #[should_panic]
+    fn test_push_pop_wider_than_pushed_panics() {
+        let mut err = Error::default();
+        let mut ator = MaybeUninit::<Allocator>::zeroed();
+        // SAFETY: `err` and the `ator` slot are this frame's live, unmoved
+        // locals; the mints are the one vouch for them.
+        init_ator(
+            &raw mut err,
+            unsafe { AllocatorView::from_ptr(ator.as_mut_ptr()) },
+            NO_ATOR_OPTS,
+            c"test",
+        );
+        let ator = ator.as_mut_ptr();
+        let mut stack = make_buf(ator, false, false);
+        let mut result = make_buf(ator, false, false);
+
+        for _ in 0..4 {
+            let p = push::<u32>(BufView::from_mut(&mut stack), 1);
+            assert!(!p.is_null());
+        }
+        let _ = push_pop::<u64>(
+            BufView::from_mut(&mut result),
+            BufView::from_mut(&mut stack),
+            4,
+        );
     }
 
     #[test]
