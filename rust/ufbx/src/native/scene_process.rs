@@ -1671,9 +1671,17 @@ pub(crate) fn resolve_connections(uc: &Context) -> Result<(), Fail> {
     ufbxi_check!(uc, !tmp_connections.is_null(), "tmp_connections");
 
     // NOTE: We truncate this array in case not all connections are resolved
-    uc.scene_view()
-        .connections_src_view()
-        .set_data(uc.result_view().push::<Connection>(num_connections));
+    // SAFETY: the scene's `connections_src` count is still the zero it was
+    // initialized with, so the pair is valid as soon as `data` is set; the data
+    // is a fresh `num_connections`-element push on uc's result buffer (scene
+    // lifetime), and a null push is rejected by the check below. The loop
+    // below grows the count one slot at a time, at most `num_connections`,
+    // and fills each slot it claims.
+    unsafe {
+        uc.scene_view()
+            .connections_src_view()
+            .set_data(uc.result_view().push::<Connection>(num_connections))
+    };
     ufbxi_check!(
         uc,
         !uc.scene_view().connections_src_view().data().is_null(),
@@ -2560,12 +2568,19 @@ fn finish_fetched_elements(
 ) -> Result<(), Fail> {
     // C: `ufbx_element_list *list = (ufbx_element_list*)p_dst_list;` — the
     // cast is the parameter type here.
-    p_dst_list.set_data(
-        uc.result_view()
-            .push_pop::<*mut Element>(uc.tmp_stack_view(), num_elements)
-            as *const Ref<Element>,
-    );
-    p_dst_list.set_count(num_elements);
+    // SAFETY: the scan(s) before this call pushed exactly `num_elements`
+    // non-null live scene element pointers onto `tmp_stack`; `push_pop` copies
+    // those into a fresh `num_elements`-slot run on uc's result buffer (scene
+    // lifetime). A null result is rejected by the check below before the list
+    // is read.
+    unsafe {
+        p_dst_list.set_data(
+            uc.result_view()
+                .push_pop::<*mut Element>(uc.tmp_stack_view(), num_elements)
+                as *const Ref<Element>,
+        );
+        p_dst_list.set_count(num_elements);
+    }
     ufbxi_check!(uc, !p_dst_list.data().is_null(), "list->data");
 
     if ignore_duplicates {
@@ -2982,12 +2997,19 @@ pub(crate) fn fetch_mesh_materials(
         }
     }
 
-    list.set_data(
-        uc.result_view()
-            .push_pop::<*mut Material>(uc.tmp_stack_view(), num_materials)
-            as *const Ref<Material>,
-    );
-    list.set_count(num_materials);
+    // SAFETY: the loop above pushed exactly `num_materials` non-null
+    // `ufbx_material` pointers (connection sources typed `Material`) onto
+    // `tmp_stack`; `push_pop` copies those into a fresh `num_materials`-slot
+    // run on uc's result buffer (scene lifetime). A null result is rejected by
+    // the check below before the list is read.
+    unsafe {
+        list.set_data(
+            uc.result_view()
+                .push_pop::<*mut Material>(uc.tmp_stack_view(), num_materials)
+                as *const Ref<Material>,
+        );
+        list.set_count(num_materials);
+    }
     ufbxi_check!(uc, !list.data().is_null(), "list->data");
 
     Ok(())
@@ -3039,12 +3061,19 @@ pub(crate) fn fetch_deformers(
         }
     }
 
-    list.set_data(
-        uc.result_view()
-            .push_pop::<*mut Element>(uc.tmp_stack_view(), num_deformers)
-            as *const Ref<Element>,
-    );
-    list.set_count(num_deformers);
+    // SAFETY: the loop above pushed exactly `num_deformers` copies of
+    // connection `src` refs (non-null live deformer elements) onto
+    // `tmp_stack`; `push_pop` copies those into a fresh `num_deformers`-slot
+    // run on uc's result buffer (scene lifetime). A null result is rejected by
+    // the check below before the list is read.
+    unsafe {
+        list.set_data(
+            uc.result_view()
+                .push_pop::<*mut Element>(uc.tmp_stack_view(), num_deformers)
+                as *const Ref<Element>,
+        );
+        list.set_count(num_deformers);
+    }
     ufbxi_check!(uc, !list.data().is_null(), "list->data");
 
     Ok(())
@@ -3203,9 +3232,16 @@ pub(crate) fn find_prop_connection<'a>(
 #[inline(always)]
 pub(crate) fn patch_index_pointer(uc: &Context, p_index: &ListView<u32>) {
     if std::ptr::eq(p_index.data(), SENTINEL_INDEX_ZERO.as_ptr()) {
-        p_index.set_data(uc.zero_indices());
+        // SAFETY: only lists whose count was folded into `max_zero_indices`
+        // are ever given the zero sentinel, so the count is covered by the
+        // `max_zero_indices`-element zero-filled result-buffer run that
+        // `finalize_scene` installs before patching (scene lifetime). This
+        // module-wide sizing invariant is not checked here.
+        unsafe { p_index.set_data(uc.zero_indices()) };
     } else if std::ptr::eq(p_index.data(), SENTINEL_INDEX_CONSECUTIVE.as_ptr()) {
-        p_index.set_data(uc.consecutive_indices());
+        // SAFETY: as above, for `max_consecutive_indices` and the run filled
+        // with `0..max_consecutive_indices`.
+        unsafe { p_index.set_data(uc.consecutive_indices()) };
     }
 }
 
@@ -6807,16 +6843,25 @@ pub(crate) unsafe fn flip_attrib_winding(
         if !uc.tmp_mesh_consecutive_indices().is_null() {
             // The cached run is `uc`'s own result-arena copy of the consecutive
             // indices for this mesh.
-            indices.set_data(uc.tmp_mesh_consecutive_indices());
+            // SAFETY: the cache is reset per mesh by `flip_winding`, so it is a
+            // copy made below for another attribute list of this same mesh.
+            // Every non-empty attribute index list of a mesh has count
+            // `num_indices`, so the cached initialized result-buffer run
+            // (scene lifetime) covers this list's unchanged count.
+            unsafe { indices.set_data(uc.tmp_mesh_consecutive_indices()) };
             return Ok(());
         }
         // SAFETY: `result_mut_ptr` is `uc`'s own live result buffer, and
         // `indices`' `data`/`count` describe the consecutive-index run being
-        // copied.
-        indices.set_data(unsafe {
-            uc.result_view()
-                .push_copy_raw::<u32>(indices.count(), indices.data())
-        });
+        // copied. The list keeps that count, and the data becomes a fresh
+        // initialized copy of exactly `count` indices in the result buffer
+        // (scene lifetime); a null copy is rejected by the check below.
+        unsafe {
+            indices.set_data(
+                uc.result_view()
+                    .push_copy_raw::<u32>(indices.count(), indices.data()),
+            )
+        };
         ufbxi_check!(uc, !indices.data().is_null(), "indices->data");
         // The push above is the fresh non-null result-arena run.
         uc.set_tmp_mesh_consecutive_indices(indices.data() as *mut u32);
@@ -7962,10 +8007,18 @@ pub(crate) fn finalize_mesh_material(
             // C: `part->index = part_index++;` — assigns the pre-increment value.
             part.set_index(part_index);
             part_index = part_index.wrapping_add(1);
-            part.face_indices_view().set_count(part.num_faces());
             // `buf` is the result buffer the finalized lists are pushed into.
-            part.face_indices_view()
-                .set_data(buf.push::<u32>(part.num_faces()));
+            // SAFETY: the data is a fresh `num_faces`-element push on `buf`
+            // (scene lifetime) for the part's counted face total; a null push
+            // is rejected by the check below. Every face counted for a part in
+            // the first loop has `mat_ix < num_parts` (clamped to the material
+            // count, or 0 with a single part), so the fetch loop below writes
+            // each of the `num_faces` slots before the list is read.
+            unsafe {
+                part.face_indices_view().set_count(part.num_faces());
+                part.face_indices_view()
+                    .set_data(buf.push::<u32>(part.num_faces()));
+            }
             ufbxi_check_err!(
                 error,
                 !part.face_indices_view().data().is_null(),
@@ -7994,9 +8047,14 @@ pub(crate) fn finalize_mesh_material(
         }
 
         let usage_order = mesh.material_part_usage_order_view();
-        usage_order.set_count(num_parts);
         // `buf` is the result buffer the finalized lists are pushed into.
-        usage_order.set_data(buf.push::<u32>(num_parts));
+        // SAFETY: the data is a fresh `num_parts`-element push on `buf` (scene
+        // lifetime); a null push is rejected by the check below, and the loop
+        // after it writes all `num_parts` slots before the sort reads them.
+        unsafe {
+            usage_order.set_count(num_parts);
+            usage_order.set_data(buf.push::<u32>(num_parts));
+        }
         ufbxi_check_err!(
             error,
             !usage_order.data().is_null(),
@@ -8106,10 +8164,16 @@ pub(crate) unsafe fn push_anim(
 pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
     let num_elements: usize = uc.num_elements() as usize;
 
-    uc.scene_view().elements_view().set_count(num_elements);
-    uc.scene_view()
-        .elements_view()
-        .set_data(uc.result_view().push::<*mut Element>(num_elements) as *const Ref<Element>);
+    // SAFETY: the data is a fresh `num_elements`-slot push on uc's result
+    // buffer (scene lifetime); a null push is rejected by the check below. The
+    // loop below writes every slot `0..num_elements` with a non-null element
+    // header from the `element_data` blob before the list is read.
+    unsafe {
+        uc.scene_view().elements_view().set_count(num_elements);
+        uc.scene_view()
+            .elements_view()
+            .set_data(uc.result_view().push::<*mut Element>(num_elements) as *const Ref<Element>);
+    }
     ufbxi_check!(
         uc,
         !uc.scene_view().elements_view().data().is_null(),
@@ -8187,7 +8251,9 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
         unsafe { *scene_elements.add(i) = element };
     }
 
-    uc.scene_view().elements_view().set_count(num_elements);
+    // SAFETY: rewrites the same count the list already holds; the loop above
+    // filled all `num_elements` slots of the result-buffer run.
+    unsafe { uc.scene_view().elements_view().set_count(num_elements) };
     buf_free(uc.tmp_element_offsets_view());
     buf_free(uc.tmp_elements_view());
 
@@ -8233,9 +8299,15 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
             unsafe { slice_from_ptr(typed_offsets as *const usize, num_typed) };
 
         let typed_elems: &RefListView<Element> = uc.scene_view().elements_by_type_at(type_);
-        typed_elems.set_count(num_typed);
-        typed_elems
-            .set_data(uc.result_view().push::<*mut Element>(num_typed) as *const Ref<Element>);
+        // SAFETY: the data is a fresh `num_typed`-slot push on uc's result
+        // buffer (scene lifetime); a null push is rejected by the check below,
+        // and the loop after it writes every slot with a non-null element
+        // header from the `element_data` blob before the list is read.
+        unsafe {
+            typed_elems.set_count(num_typed);
+            typed_elems
+                .set_data(uc.result_view().push::<*mut Element>(num_typed) as *const Ref<Element>);
+        }
         ufbxi_check!(uc, !typed_elems.data().is_null(), "typed_elems->data");
 
         // C stores into `typed_elems->data[i]`; the destination run is derived
@@ -8254,12 +8326,19 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
     }
 
     // Create named elements
-    uc.scene_view()
-        .elements_by_name_view()
-        .set_count(num_elements);
-    uc.scene_view()
-        .elements_by_name_view()
-        .set_data(uc.result_view().push::<NameElement>(num_elements));
+    // SAFETY: the data is a fresh `num_elements`-element push on uc's result
+    // buffer (scene lifetime); a null push is rejected by the check below. The
+    // `Run` taken right after it only addresses slots, and the loop writes
+    // every field of each of the `num_elements` entries before the sort reads
+    // them.
+    unsafe {
+        uc.scene_view()
+            .elements_by_name_view()
+            .set_count(num_elements);
+        uc.scene_view()
+            .elements_by_name_view()
+            .set_data(uc.result_view().push::<NameElement>(num_elements));
+    }
     ufbxi_check!(
         uc,
         !uc.scene_view().elements_by_name_view().data().is_null(),
@@ -8301,13 +8380,24 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
         let node_ref: Ref<Node> = unsafe { *p_node };
         if let Some(parent_ref) = node.parent() {
             let parent: &NodeView = parent_ref.view();
-            parent
-                .children_view()
-                .set_count(parent.children_view().count() + 1);
+            // SAFETY (this count bump and the `set_data` below):
+            // `linearize_nodes` ordered the scene's node-pointer run so each
+            // parent's children are contiguous; the first child seen sets
+            // `data` to its own slot in that run, and each later child is the
+            // next slot, so the count never exceeds the children present in
+            // the run. The slots are non-null `Ref<ufbx_node>`s in uc's result
+            // buffer (scene lifetime). Between the bump and the first `data`
+            // store only `data` is read.
+            unsafe {
+                parent
+                    .children_view()
+                    .set_count(parent.children_view().count() + 1)
+            };
             if parent.children_view().data().is_null() {
                 // `linearize_nodes` ordered the node-pointer run so each parent's
                 // children are contiguous, and `p_node` is the first of them.
-                parent.children_view().set_data(p_node);
+                // SAFETY: see the count bump above.
+                unsafe { parent.children_view().set_data(p_node) };
             }
 
             if node.is_geometry_transform_helper() {
@@ -8349,7 +8439,11 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
             // C: `size_t index = node->all_attribs.count++;` — the
             // pre-increment value.
             let index: usize = node.all_attribs_view().count();
-            node.all_attribs_view().set_count(index + 1);
+            // SAFETY: the count runs ahead of `data` while attributes are
+            // collected (only `count` is read meanwhile); after the loop the
+            // list is retargeted either at a fresh run of exactly `count`
+            // pointers or, for one attribute, at the node's own `attrib` slot.
+            unsafe { node.all_attribs_view().set_count(index + 1) };
             if index == 0 {
                 node.set_attrib(Some(elem_ref));
                 node.set_attrib_type(type_);
@@ -8402,11 +8496,20 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
         }
 
         if node.all_attribs_view().count() > 1 {
-            node.all_attribs_view().set_data(
-                uc.result_view()
-                    .push_pop::<*mut Element>(uc.tmp_stack_view(), node.all_attribs_view().count())
-                    as *const Ref<Element>,
-            );
+            // SAFETY: with `count > 1` the loop above pushed `count` non-null
+            // attribute pointers onto `tmp_stack` (the first `attrib` copied at
+            // `index == 1`, then one per attribute from index 1 on);
+            // `push_pop` copies them into a fresh `count`-slot run on uc's
+            // result buffer (scene lifetime). A null result is rejected by the
+            // check below.
+            unsafe {
+                node.all_attribs_view().set_data(
+                    uc.result_view().push_pop::<*mut Element>(
+                        uc.tmp_stack_view(),
+                        node.all_attribs_view().count(),
+                    ) as *const Ref<Element>,
+                )
+            };
             ufbxi_check!(
                 uc,
                 !node.all_attribs_view().data().is_null(),
@@ -8414,8 +8517,13 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
             );
         } else if node.all_attribs_view().count() == 1 {
             // The node's own single element-pointer field IS the one-entry list.
-            node.all_attribs_view()
-                .set_data(node.attrib_ptr() as *const Ref<Element>);
+            // SAFETY: with `count == 1` the loop set `attrib` to the one
+            // non-null attribute at `index == 0`; its slot lives inside the
+            // node in the result-buffer element blob (scene lifetime).
+            unsafe {
+                node.all_attribs_view()
+                    .set_data(node.attrib_ptr() as *const Ref<Element>)
+            };
         }
 
         fetch_dst_elements_header(
@@ -8441,8 +8549,14 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
         // HACK: Transport `ufbxi_tmp_bone_pose` array through the `ufbx_bone_pose` pointer
         let num_bones: usize = pose.bone_poses_view().count();
         let tmp_poses: *mut TmpBonePose = pose.bone_poses_view().data() as *mut TmpBonePose;
-        pose.bone_poses_view()
-            .set_data(uc.result_view().push::<BonePose>(num_bones));
+        // SAFETY: the data becomes a fresh `num_bones`-element push on uc's
+        // result buffer (scene lifetime), matching the still-stashed count
+        // `num_bones`; a null push is rejected by the check below. The count is
+        // reset to 0 right after it, before anything reads the elements.
+        unsafe {
+            pose.bone_poses_view()
+                .set_data(uc.result_view().push::<BonePose>(num_bones))
+        };
         ufbxi_check!(
             uc,
             !pose.bone_poses_view().data().is_null(),
@@ -8450,7 +8564,8 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
         );
 
         // Filter only found bones
-        pose.bone_poses_view().set_count(0);
+        // SAFETY: a zero count is valid for any data.
+        unsafe { pose.bone_poses_view().set_count(0) };
         // SAFETY: the stashed run is the one `ufbxi_push_pop`-materialized block
         // the pose parse left in this field (ufbx.c:14683), `num_bones`
         // contiguous initialized records, live and unwritten for the walk.
@@ -8483,7 +8598,11 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
                     (pose.bone_poses_view().data() as *mut BonePose).add(bone_ix),
                 )
             };
-            pose.bone_poses_view().set_count(bone_ix + 1);
+            // SAFETY: `bone_ix < num_bones` (one bump per stashed record at
+            // most), so the count stays inside the `num_bones` push; the new
+            // slot's `bone_node`/`bone_to_world` are written just below and its
+            // `bone_to_parent` by `update_pose` before the scene is returned.
+            unsafe { pose.bone_poses_view().set_count(bone_ix + 1) };
             // SAFETY: `elem` is the non-null element checked above, whose type
             // pins it to a live `ufbx_node`.
             bone.set_bone_node(unsafe { Ref::from_ptr(elem as *mut Node) });
@@ -8580,7 +8699,11 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
                     unsafe { *clusters_data.add(i - num_broken) = *clusters_data.add(i) };
                 }
             }
-            clusters.set_count(num_clusters - num_broken);
+            // SAFETY: shrinks the count over the same result-buffer run; the
+            // loop above compacted the `num_clusters - num_broken` clusters
+            // with a bone node into that prefix, each still a non-null live
+            // cluster ref.
+            unsafe { clusters.set_count(num_clusters - num_broken) };
         }
 
         let mut total_weights: usize = 0;
@@ -8632,20 +8755,30 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
         }
 
         if !uc.opts_view().skip_skin_vertices() {
-            skin_view.vertices_view().set_count(num_vertices);
-            skin_view
-                .vertices_view()
-                .set_data(uc.result_view().push_zero::<SkinVertex>(num_vertices));
+            // SAFETY: the data is a fresh zeroed `num_vertices`-element push on
+            // uc's result buffer (scene lifetime); zeroed `ufbx_skin_vertex`es
+            // are valid values, and a null push is rejected by the check below.
+            unsafe {
+                skin_view.vertices_view().set_count(num_vertices);
+                skin_view
+                    .vertices_view()
+                    .set_data(uc.result_view().push_zero::<SkinVertex>(num_vertices));
+            }
             ufbxi_check!(
                 uc,
                 !skin_view.vertices_view().data().is_null(),
                 "skin->vertices.data"
             );
 
-            skin_view.weights_view().set_count(total_weights);
-            skin_view
-                .weights_view()
-                .set_data(uc.result_view().push_zero::<SkinWeight>(total_weights));
+            // SAFETY: the data is a fresh zeroed `total_weights`-element push
+            // on uc's result buffer (scene lifetime); zeroed `ufbx_skin_weight`s
+            // are valid values, and a null push is rejected by the check below.
+            unsafe {
+                skin_view.weights_view().set_count(total_weights);
+                skin_view
+                    .weights_view()
+                    .set_data(uc.result_view().push_zero::<SkinWeight>(total_weights));
+            }
             ufbxi_check!(
                 uc,
                 !skin_view.weights_view().data().is_null(),
@@ -8887,13 +9020,16 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
                         if uc.opts_view().retain_dom() {
                             // SAFETY: `result_view()` is `uc`'s own live result
                             // buffer, and `full_weights`'s `count`/`data` describe
-                            // the weight run being copied.
-                            full_weights.set_data(unsafe {
-                                uc.result_view().push_copy_raw::<Real>(
+                            // the weight run being copied. The list keeps that
+                            // count and the data becomes the fresh initialized
+                            // copy of exactly `count` weights (scene lifetime); a
+                            // null copy is rejected by the check below.
+                            unsafe {
+                                full_weights.set_data(uc.result_view().push_copy_raw::<Real>(
                                     full_weights.count(),
                                     full_weights.data(),
-                                )
-                            });
+                                ))
+                            };
                             ufbxi_check!(uc, !full_weights.data().is_null(), "full_weights->data");
                         }
                         // C: `ufbxi_for_list(ufbx_real, p_weight, *full_weights)`
@@ -9072,8 +9208,16 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
                             unsafe { *materials.add(i) = *mesh_materials.add(i) };
                         }
                         // `materials` is the run just filled in.
-                        node_materials.set_data(materials as *const Ref<Material>);
-                        node_materials.set_count(mesh.materials_view().count());
+                        // SAFETY: `materials` is the non-null result-buffer push
+                        // (scene lifetime) of `mesh->materials.count` slots, all
+                        // written by the two loops above with refs taken from the
+                        // node's and the mesh's own material lists, which
+                        // `fetch_mesh_materials` built from connection sources
+                        // (non-null live materials).
+                        unsafe {
+                            node_materials.set_data(materials as *const Ref<Material>);
+                            node_materials.set_count(mesh.materials_view().count());
+                        }
                     }
                 }
             }
@@ -9082,13 +9226,21 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
                 let num_parts: usize = max_sz(mesh.materials().count, 1);
                 let material_parts = mesh.material_parts_view();
                 // `result_view()` is `uc`'s own result buffer.
-                material_parts.set_data(uc.result_view().push_zero::<MeshPart>(num_parts));
+                // SAFETY: the data is a fresh zeroed `num_parts`-element push on
+                // uc's result buffer (scene lifetime); a null push is rejected by
+                // the check below before the count is raised. Zeroed
+                // `ufbx_mesh_part`s are valid values (empty lists).
+                unsafe {
+                    material_parts.set_data(uc.result_view().push_zero::<MeshPart>(num_parts))
+                };
                 ufbxi_check!(
                     uc,
                     !material_parts.data().is_null(),
                     "mesh->material_parts.data"
                 );
-                material_parts.set_count(num_parts);
+                // SAFETY: see the `set_data` above; the run holds `num_parts`
+                // zeroed parts.
+                unsafe { material_parts.set_count(num_parts) };
             }
 
             if mesh.materials().count <= 1 {
@@ -9103,23 +9255,42 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
                     part.set_num_line_faces(mesh.num_line_faces());
                     // The shared consecutive-index run is `uc`'s own, sized to cover
                     // every mesh's face count.
-                    part.face_indices_view().set_data(uc.consecutive_indices());
-                    part.face_indices_view().set_count(mesh.num_faces());
+                    // SAFETY: the consecutive run holds `max_consecutive_indices`
+                    // initialized indices in uc's result buffer (scene
+                    // lifetime), and the mesh readers fold every mesh's
+                    // `num_faces` into that maximum (HACK(consecutive-faces)).
+                    unsafe {
+                        part.face_indices_view().set_data(uc.consecutive_indices());
+                        part.face_indices_view().set_count(mesh.num_faces());
+                    }
                     // The shared zero-index run is `uc`'s own and holds at least one
                     // entry here.
-                    mesh.material_part_usage_order_view()
-                        .set_data(uc.zero_indices());
-                    mesh.material_part_usage_order_view().set_count(1);
+                    // SAFETY: the zero run is either a `max_zero_indices`-element
+                    // zero-filled result-buffer push (scene lifetime) or, when
+                    // that maximum is 0, the static all-zero `ZERO_SIZE_BUFFER`
+                    // (at least 64 bytes); either way one zero `u32` is readable.
+                    unsafe {
+                        mesh.material_part_usage_order_view()
+                            .set_data(uc.zero_indices());
+                        mesh.material_part_usage_order_view().set_count(1);
+                    }
                 }
 
                 if mesh.materials().count == 1 {
                     // The shared zero-index run is `uc`'s own, sized to cover every
                     // mesh's face count.
-                    mesh.face_material_view().set_data(uc.zero_indices());
-                    mesh.face_material_view().set_count(mesh.num_faces());
+                    // SAFETY: the zero run holds `max_zero_indices` zeroed indices
+                    // in uc's result buffer (scene lifetime), and the mesh
+                    // readers fold every mesh's `num_faces` into that maximum
+                    // (HACK(consecutive-faces)).
+                    unsafe {
+                        mesh.face_material_view().set_data(uc.zero_indices());
+                        mesh.face_material_view().set_count(mesh.num_faces());
+                    }
                 } else {
-                    mesh.face_material_view().set_data(ptr::null());
-                    mesh.face_material_view().set_count(0);
+                    // SAFETY: a null `data` with a zero `count` is the empty list.
+                    mesh.face_material_view()
+                        .set(unsafe { List::from_raw_parts(ptr::null(), 0) });
                 }
             } else if mesh.materials().count > 0 {
                 finalize_mesh_material(uc.result_view(), uc.error_view(), mesh)?;
@@ -9374,16 +9545,25 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
         // The loop above pushed `num_anim_props` anim props onto `uc`'s tmp
         // stack plus the terminator, and they are popped into `uc`'s own result
         // buffer here.
-        layer.anim_props_view().set_data(
-            uc.result_view()
-                .push_pop::<AnimProp>(uc.tmp_stack_view(), num_anim_props + 1),
-        );
+        // SAFETY (this `set_data` and the `set_count` below): the loop above
+        // pushed `num_anim_props` fully written anim props plus the zeroed
+        // terminator; `push_pop` copies all `num_anim_props + 1` into a fresh
+        // result-buffer run (scene lifetime), of which the count publishes the
+        // first `num_anim_props`. A null result is rejected by the check
+        // before the count is written, and nothing reads the list between.
+        unsafe {
+            layer.anim_props_view().set_data(
+                uc.result_view()
+                    .push_pop::<AnimProp>(uc.tmp_stack_view(), num_anim_props + 1),
+            )
+        };
         ufbxi_check!(
             uc,
             !layer.anim_props_view().data().is_null(),
             "layer->anim_props.data"
         );
-        layer.anim_props_view().set_count(num_anim_props);
+        // SAFETY: see the `set_data` above.
+        unsafe { layer.anim_props_view().set_count(num_anim_props) };
         sort_anim_props(uc, Run::from_list(layer.anim_props_view()))?;
     }
 
@@ -10042,11 +10222,19 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
         }
 
         let num_targets: usize = uc.tmp_stack_view().num_items() - tmp_base;
-        constraint.targets_view().set_count(num_targets);
-        constraint.targets_view().set_data(
-            uc.result_view()
-                .push_pop::<ConstraintTarget>(uc.tmp_stack_view(), num_targets),
-        );
+        // SAFETY: since `tmp_base` the only `tmp_stack` pushes are
+        // `add_constraint_prop`'s one-element `ConstraintTarget`s (node,
+        // weight and transform written), so the top `num_targets` items are
+        // those targets; `push_pop` copies them into a fresh `num_targets`-
+        // element result-buffer run (scene lifetime). A null result is rejected
+        // by the check below.
+        unsafe {
+            constraint.targets_view().set_count(num_targets);
+            constraint.targets_view().set_data(
+                uc.result_view()
+                    .push_pop::<ConstraintTarget>(uc.tmp_stack_view(), num_targets),
+            );
+        }
         ufbxi_check!(
             uc,
             !constraint.targets_view().data().is_null(),

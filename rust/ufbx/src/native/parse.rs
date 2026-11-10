@@ -6279,8 +6279,14 @@ fn retain_dom_node_rec(
         let val: &View<DomValue> = unsafe { View::<DomValue>::from_ptr(val) };
 
         // C: `dst->values.data = val; dst->values.count = 1;`
-        dst_view.values_view().set_data(val.get());
-        dst_view.values_view().set_count(1);
+        // SAFETY: `val` is the single non-null `DomValue` just pushed (zeroed)
+        // into `uc`'s result buffer, which lives as long as the scene; count 1
+        // matches that one-element allocation, and the element is zero-
+        // initialized now and fully written below before the DOM is read.
+        unsafe {
+            dst_view.values_view().set_data(val.get());
+            dst_view.values_view().set_count(1);
+        }
 
         let elem_size = array_type_size(arr.type_());
         // C writes only `val->value_str.data`; the slot is zero-initialized, so
@@ -6362,11 +6368,17 @@ fn retain_dom_node_rec(
         }
 
         // C: `dst->values.count = ix;` then the push, then `dst->values.data`.
-        dst_view.values_view().set_count(ix);
+        // SAFETY: the loop above pushed exactly `ix` initialized `DomValue`s on
+        // the temp stack; `push_pop` copies those `ix` into a fresh `ix`-element
+        // run in `uc`'s result buffer (scene lifetime). The pair is complete
+        // once `set_data` stores it, and a null `values_data` (allocation
+        // failure) is rejected by the check below before the DOM can be read.
+        unsafe { dst_view.values_view().set_count(ix) };
         let values_data = uc
             .result_view()
             .push_pop::<DomValue>(uc.tmp_stack_view(), ix);
-        dst_view.values_view().set_data(values_data);
+        // SAFETY: see the `set_count` above — this completes the same pair.
+        unsafe { dst_view.values_view().set_data(values_data) };
         ufbxi_check!(
             uc,
             !dst_view.values_view().data().is_null(),
@@ -6385,14 +6397,24 @@ fn retain_dom_node_rec(
 
         // C: `dst->children.count = node->num_children;` then the push, then
         // `dst->children.data`.
-        dst_view
-            .children_view()
-            .set_count(node_view.num_children() as usize);
+        // SAFETY: each `retain_dom_node` call above leaves exactly one entry on
+        // `tmp_dom_nodes` (it pushes its own `dst` and pops its children), so
+        // the top `num_children` entries are the children's non-null `DomNode`
+        // pointers into `uc`'s result buffer. `push_pop` copies them into a
+        // fresh `num_children`-slot run in the result buffer (scene lifetime);
+        // a null `children_data` is rejected by the check below before the DOM
+        // can be read.
+        unsafe {
+            dst_view
+                .children_view()
+                .set_count(node_view.num_children() as usize)
+        };
         let children_data = uc
             .result_view()
             .push_pop::<*mut DomNode>(uc.tmp_dom_nodes_view(), node_view.num_children() as usize)
             as *const Ref<DomNode>;
-        dst_view.children_view().set_data(children_data);
+        // SAFETY: see the `set_count` above — this completes the same pair.
+        unsafe { dst_view.children_view().set_data(children_data) };
         ufbxi_check!(
             uc,
             !dst_view.children_view().data().is_null(),

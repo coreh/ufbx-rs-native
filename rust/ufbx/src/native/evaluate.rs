@@ -342,9 +342,17 @@ pub(crate) fn evaluate_skinning(
                     };
                     if num_read == num_normals {
                         cached_normals = true;
-                        mesh.skinned_normal()
-                            .values_view()
-                            .set_data(normal_data as *const Vec3);
+                        // SAFETY: the list keeps its count `num_normals` (read
+                        // above, unchanged since); `normal_data` is the
+                        // non-null `num_normals`-slot sub-run of the
+                        // `buf_result` push past the sentinel, all of which the
+                        // cache sample just wrote (`num_read == num_normals`),
+                        // and the result buffer lives with the evaluated scene.
+                        unsafe {
+                            mesh.skinned_normal()
+                                .values_view()
+                                .set_data(normal_data as *const Vec3)
+                        };
                     }
                 }
             }
@@ -405,9 +413,17 @@ pub(crate) fn evaluate_skinning(
             }
         }
 
-        mesh.skinned_position()
-            .values_view()
-            .set_data(result_pos as *const Vec3);
+        // SAFETY: the list keeps the count copied from `vertex_position.values`,
+        // which a loaded mesh sizes at `num_vertices`; `result_pos` is the
+        // non-null `num_vertices`-slot sub-run past the sentinel of the
+        // `buf_result` push, fully written either by the cache sample
+        // (`num_read == num_vertices`) or by the vertex copy above, and the
+        // result buffer lives with the evaluated scene.
+        unsafe {
+            mesh.skinned_position()
+                .values_view()
+                .set_data(result_pos as *const Vec3)
+        };
 
         if !cached_normals {
             let num_indices: usize = mesh.num_indices();
@@ -3195,9 +3211,16 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
         as *mut u8;
     ufbxi_check_err!(ec.error_view(), !element_data.is_null(), "element_data");
 
-    ec.scene_view()
-        .elements_view()
-        .set_data(ec.result_view().push::<*mut Element>(num_elements) as *const Ref<Element>);
+    // SAFETY: the list keeps the copied source count `num_elements`; the data
+    // is a fresh `num_elements`-slot push on `ec`'s result buffer (lives with
+    // the evaluated scene). A null push is rejected by the check below. The
+    // slots are uninitialized here; the element loop below writes every slot
+    // `0..num_elements` with a non-null element copy before the list is read.
+    unsafe {
+        ec.scene_view()
+            .elements_view()
+            .set_data(ec.result_view().push::<*mut Element>(num_elements) as *const Ref<Element>)
+    };
     ufbxi_check_err!(
         ec.error_view(),
         !ec.scene_view().elements_view().data().is_null(),
@@ -3233,7 +3256,18 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
     for list in by_type_run {
         // Slot `i`'s count is read, then it is retargeted at the array just
         // pushed for it.
-        list.set_data(ec.result_view().push::<*mut Element>(list.count()) as *const Ref<Element>);
+        // SAFETY: the list keeps its copied source count and the data is a
+        // fresh push of exactly that many slots on `ec`'s result buffer (lives
+        // with the evaluated scene); a null push is rejected by the check
+        // below. Per the source-scene premise every element is listed exactly
+        // once in its per-type list at `typed_id`, so the element loop below
+        // fills every slot with a non-null element copy before the list is
+        // read.
+        unsafe {
+            list.set_data(
+                ec.result_view().push::<*mut Element>(list.count()) as *const Ref<Element>
+            )
+        };
         ufbxi_check_err!(
             ec.error_view(),
             !list.data().is_null(),
@@ -3242,12 +3276,19 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
     }
 
     let num_connections: usize = ec.scene_view().connections_dst_view().count();
-    ec.scene_view()
-        .connections_src_view()
-        .set_data(ec.result_view().push::<Connection>(num_connections));
-    ec.scene_view()
-        .connections_dst_view()
-        .set_data(ec.result_view().push::<Connection>(num_connections));
+    // SAFETY: both lists keep their copied source counts, which per the
+    // source-scene premise both equal `num_connections`; each data is a fresh
+    // `num_connections`-element push on `ec`'s result buffer (lives with the
+    // evaluated scene). Null pushes are rejected by the two checks below, and
+    // the loop right after them writes every slot before the lists are read.
+    unsafe {
+        ec.scene_view()
+            .connections_src_view()
+            .set_data(ec.result_view().push::<Connection>(num_connections));
+        ec.scene_view()
+            .connections_dst_view()
+            .set_data(ec.result_view().push::<Connection>(num_connections));
+    }
     ufbxi_check_err!(
         ec.error_view(),
         !ec.scene_view().connections_src_view().data().is_null(),
@@ -3297,9 +3338,17 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
         }
     }
 
-    ec.scene_view()
-        .elements_by_name_view()
-        .set_data(ec.result_view().push::<NameElement>(num_elements));
+    // SAFETY: the list keeps its copied source count, which per the
+    // source-scene premise is `num_elements`; the data is a fresh
+    // `num_elements`-element push on `ec`'s result buffer (lives with the
+    // evaluated scene). A null push is rejected by the check below, and the
+    // element loop below writes every slot `0..num_elements` before the list
+    // is read.
+    unsafe {
+        ec.scene_view()
+            .elements_by_name_view()
+            .set_data(ec.result_view().push::<NameElement>(num_elements))
+    };
     ufbxi_check_err!(
         ec.error_view(),
         !ec.scene_view().elements_by_name_view().data().is_null(),
@@ -3392,9 +3441,17 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
                     .offset_from(ec.src_scene_view().connections_src_view().data()),
             )
         };
-        dst_view
-            .connections_src_view()
-            .set_data(connections_src_data);
+        // SAFETY: the element's `connections_src` count was byte-copied from
+        // the source element, whose run is a sub-run of the source scene's
+        // `connections_src`; rebasing by the same offset lands on the same
+        // sub-run of the destination `connections_src` run, which has the same
+        // length and was fully written by the connection loop above, and lives
+        // in `ec`'s result buffer.
+        unsafe {
+            dst_view
+                .connections_src_view()
+                .set_data(connections_src_data)
+        };
         // SAFETY: as above, for the `connections_dst` runs.
         let connections_dst_data: *const Connection = unsafe {
             ec.scene_view().connections_dst_view().data().offset(
@@ -3404,9 +3461,13 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
                     .offset_from(ec.src_scene_view().connections_dst_view().data()),
             )
         };
-        dst_view
-            .connections_dst_view()
-            .set_data(connections_dst_data);
+        // SAFETY: as for `connections_src` above, for the `connections_dst`
+        // runs.
+        unsafe {
+            dst_view
+                .connections_dst_view()
+                .set_data(connections_dst_data)
+        };
         if dst_view.instances_view().count() > 0 {
             // SAFETY: `instances` is the destination element copy's own
             // `ufbx_element_list`, whose byte copy still lists source-scene
@@ -3530,8 +3591,16 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
             // C: `node->all_attribs.data = &node->attrib;` — the single-element
             // list is retargeted at that node's own already translated `attrib`
             // slot, addressed through the node's own view.
-            node.all_attribs_view()
-                .set_data(node.attrib_ptr() as *const Ref<Element>);
+            // SAFETY: the count stays 1 and the data is the node's own `attrib`
+            // field — one slot inside this destination node copy in `ec`'s
+            // result buffer, translated above. A node with one entry in
+            // `all_attribs` has that entry as its non-null `attrib` (the
+            // loaded scene sets them together), so the slot holds a live
+            // element of the destination scene.
+            unsafe {
+                node.all_attribs_view()
+                    .set_data(node.attrib_ptr() as *const Ref<Element>)
+            };
         }
 
         // SAFETY: as for `parent` above.
@@ -4879,9 +4948,17 @@ pub(crate) fn create_anim_imp(ac: &CreateAnimContext) -> Result<FinishedImp<Anim
     anim.set_custom(true);
 
     let num_layers: usize = ac.opts_view().layer_ids_view().count();
-    anim.layers_view().set_count(num_layers);
-    anim.layers_view()
-        .set_data(ac.result_view().push_zero::<*mut AnimLayer>(num_layers) as *const Ref<AnimLayer>);
+    // SAFETY: the data is a fresh zeroed `num_layers`-slot push on ac's own
+    // result buffer (handed to the finished anim); a null push is rejected by
+    // the check below. The slots start null, and the layer loop below either
+    // fills every slot `0..num_layers` with a live scene `anim_layers` entry
+    // or fails the creation, so the list is never read with a null slot.
+    unsafe {
+        anim.layers_view().set_count(num_layers);
+        anim.layers_view().set_data(
+            ac.result_view().push_zero::<*mut AnimLayer>(num_layers) as *const Ref<AnimLayer>
+        );
+    }
     ufbxi_check_err!(
         ac.error_view(),
         !anim.layers_view().data().is_null(),
@@ -4949,11 +5026,18 @@ pub(crate) fn create_anim_imp(ac: &CreateAnimContext) -> Result<FinishedImp<Anim
     let prop_overrides: crate::prelude::RawList<RawPropOverrideDesc> =
         unsafe { ptr::read(ac.opts_view().prop_overrides_ptr()) };
     if prop_overrides.count > 0 {
-        anim.prop_overrides_view().set_count(prop_overrides.count);
-        anim.prop_overrides_view().set_data(
-            ac.result_view()
-                .push_zero::<PropOverride>(prop_overrides.count),
-        );
+        // SAFETY: the data is a fresh zeroed `prop_overrides.count`-element push
+        // on ac's own result buffer (handed to the finished anim), matching the
+        // count; a null push is rejected by the check below. The zeroed
+        // elements are valid `ufbx_prop_override`s and the loop below fills
+        // each one.
+        unsafe {
+            anim.prop_overrides_view().set_count(prop_overrides.count);
+            anim.prop_overrides_view().set_data(
+                ac.result_view()
+                    .push_zero::<PropOverride>(prop_overrides.count),
+            );
+        }
         ufbxi_check_err!(
             ac.error_view(),
             !anim.prop_overrides_view().data().is_null(),

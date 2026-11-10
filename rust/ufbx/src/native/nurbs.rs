@@ -1103,87 +1103,140 @@ pub(crate) fn tessellate_nurbs_surface_imp(
     mesh_view.element().set_typed_id(u32::MAX);
     mesh_view.element().set_element_id(u32::MAX);
 
-    mesh_view.vertices_view().set_data(positions);
-    mesh_view.vertices_view().set_count(num_positions as usize);
+    // SAFETY: `positions` is the checked non-null `num_indices + 1` result
+    // push advanced past its reserved zero element, so `num_indices` slots
+    // follow it; every sample `ix < num_indices` adds at most one first-seen
+    // position, so `num_positions <= num_indices`, and the sampling loop wrote
+    // each `[0, num_positions)` slot. `vertex_ix` is the checked non-null
+    // `4 * num_faces` push and the face loop wrote every slot below
+    // `dst_index <= 4 * num_faces`. Both live in `tc->result`, which the
+    // finished mesh imp owns.
+    unsafe {
+        mesh_view.vertices_view().set_data(positions);
+        mesh_view.vertices_view().set_count(num_positions as usize);
+    }
     mesh_view.set_num_vertices(num_positions as usize);
-    mesh_view.vertex_indices_view().set_data(vertex_ix);
-    mesh_view.vertex_indices_view().set_count(dst_index);
+    // SAFETY: as above for `vertex_ix` / `dst_index`.
+    unsafe {
+        mesh_view.vertex_indices_view().set_data(vertex_ix);
+        mesh_view.vertex_indices_view().set_count(dst_index);
+    }
 
-    mesh_view.faces_view().set_data(faces);
-    mesh_view.faces_view().set_count(num_faces);
+    // SAFETY: `faces` is the checked non-null `num_faces` result push and the
+    // face loop wrote both fields of every `faces[0..num_faces)` entry (it
+    // runs `faces_u * faces_v == num_faces` times); `tc->result` keeps it live.
+    unsafe {
+        mesh_view.faces_view().set_data(faces);
+        mesh_view.faces_view().set_count(num_faces);
+    }
 
     mesh_view.vertex_position().set_exists(true);
-    mesh_view
-        .vertex_position()
-        .values_view()
-        .set_data(positions);
-    mesh_view
-        .vertex_position()
-        .values_view()
-        .set_count(num_positions as usize);
-    mesh_view
-        .vertex_position()
-        .indices_view()
-        .set_data(vertex_ix);
-    mesh_view
-        .vertex_position()
-        .indices_view()
-        .set_count(dst_index);
+    // SAFETY: the same `(positions, num_positions)` and `(vertex_ix,
+    // dst_index)` pairs published to `vertices` / `vertex_indices` above.
+    unsafe {
+        mesh_view
+            .vertex_position()
+            .values_view()
+            .set_data(positions);
+        mesh_view
+            .vertex_position()
+            .values_view()
+            .set_count(num_positions as usize);
+        mesh_view
+            .vertex_position()
+            .indices_view()
+            .set_data(vertex_ix);
+        mesh_view
+            .vertex_position()
+            .indices_view()
+            .set_count(dst_index);
+    }
     mesh_view.vertex_position().set_unique_per_vertex(true);
 
     // C publishes the compacted corner count for these three parameter-grid
     // value lists. The headers may exceed the sampled storage, so only their
     // index lists are used as bounded runs in this path.
     mesh_view.vertex_uv().set_exists(true);
-    mesh_view.vertex_uv().values_view().set_data(uvs);
-    mesh_view.vertex_uv().values_view().set_count(dst_index);
-    mesh_view.vertex_uv().indices_view().set_data(attrib_ix);
-    mesh_view.vertex_uv().indices_view().set_count(dst_index);
+    // SAFETY: `uvs` is the checked non-null `num_indices + 1` push advanced
+    // past its zero element, so `num_indices` initialized slots follow it.
+    // The `values` count is C's `dst_index` (ufbx.c:28165) and is NOT shown
+    // here to be bounded by those slots (see the note above): the pair is
+    // kept for C byte parity and no in-crate reader
+    // iterates it. Values are only reached through `indices`, which is sound:
+    // `attrib_ix` is the checked non-null `4 * num_faces` push, every slot
+    // below `dst_index <= 4 * num_faces` was written, and each stored index is
+    // a grid sample `< num_indices`.
+    unsafe {
+        mesh_view.vertex_uv().values_view().set_data(uvs);
+        mesh_view.vertex_uv().values_view().set_count(dst_index);
+        mesh_view.vertex_uv().indices_view().set_data(attrib_ix);
+        mesh_view.vertex_uv().indices_view().set_count(dst_index);
+    }
 
     mesh_view.vertex_normal().set_exists(true);
-    mesh_view.vertex_normal().values_view().set_data(normals);
-    mesh_view
-        .vertex_normal()
-        .values_view()
-        .set_count(num_positions as usize);
-    mesh_view.vertex_normal().indices_view().set_data(vertex_ix);
-    mesh_view
-        .vertex_normal()
-        .indices_view()
-        .set_count(dst_index);
+    // SAFETY: `normals` is the checked non-null `num_indices + 1` push advanced
+    // past its zero element, so `num_positions <= num_indices` slots follow it
+    // in `tc->result`. They are not initialized yet: nothing reads them before
+    // `compute_normals` below writes all `num_positions` of them
+    // (`finalize_mesh` only copies the list header into `skinned_normal`).
+    // `(vertex_ix, dst_index)` is the pair argued for `vertex_indices` above.
+    unsafe {
+        mesh_view.vertex_normal().values_view().set_data(normals);
+        mesh_view
+            .vertex_normal()
+            .values_view()
+            .set_count(num_positions as usize);
+        mesh_view.vertex_normal().indices_view().set_data(vertex_ix);
+        mesh_view
+            .vertex_normal()
+            .indices_view()
+            .set_count(dst_index);
+    }
 
     mesh_view.vertex_tangent().set_exists(true);
-    mesh_view.vertex_tangent().values_view().set_data(tangents);
-    mesh_view
-        .vertex_tangent()
-        .values_view()
-        .set_count(dst_index);
-    mesh_view
-        .vertex_tangent()
-        .indices_view()
-        .set_data(attrib_ix);
-    mesh_view
-        .vertex_tangent()
-        .indices_view()
-        .set_count(dst_index);
+    // SAFETY: as for `vertex_uv` above: `tangents` holds `num_indices`
+    // initialized slots past its zero element, the `values` count is C's
+    // `dst_index` and is not shown to be bounded by them, and the
+    // `(attrib_ix, dst_index)` index pair is sound.
+    unsafe {
+        mesh_view.vertex_tangent().values_view().set_data(tangents);
+        mesh_view
+            .vertex_tangent()
+            .values_view()
+            .set_count(dst_index);
+        mesh_view
+            .vertex_tangent()
+            .indices_view()
+            .set_data(attrib_ix);
+        mesh_view
+            .vertex_tangent()
+            .indices_view()
+            .set_count(dst_index);
+    }
 
     mesh_view.vertex_bitangent().set_exists(true);
-    mesh_view
-        .vertex_bitangent()
-        .values_view()
-        .set_data(bitangents);
-    mesh_view
-        .vertex_bitangent()
-        .values_view()
-        .set_count(dst_index);
-    mesh_view
-        .vertex_bitangent()
-        .indices_view()
-        .set_data(attrib_ix);
-    mesh_view
-        .vertex_bitangent()
-        .indices_view()
-        .set_count(dst_index);
+    // SAFETY: as for `vertex_uv` above: `bitangents` holds `num_indices`
+    // initialized slots past its zero element, the `values` count is C's
+    // `dst_index` and is not shown to be bounded by them, and the
+    // `(attrib_ix, dst_index)` index pair is sound.
+    unsafe {
+        mesh_view
+            .vertex_bitangent()
+            .values_view()
+            .set_data(bitangents);
+        mesh_view
+            .vertex_bitangent()
+            .values_view()
+            .set_count(dst_index);
+        mesh_view
+            .vertex_bitangent()
+            .indices_view()
+            .set_data(attrib_ix);
+        mesh_view
+            .vertex_bitangent()
+            .indices_view()
+            .set_count(dst_index);
+    }
 
     mesh_view.set_num_faces(num_faces);
     mesh_view.set_num_triangles(num_triangles);
@@ -1191,9 +1244,16 @@ pub(crate) fn tessellate_nurbs_surface_imp(
     mesh_view.set_max_face_triangles(2);
 
     if let Some(material) = surface_view.material() {
-        mesh_view
-            .face_material_view()
-            .set_data(tc.result_view().push_zero::<u32>(num_faces) as *const u32);
+        // SAFETY: `face_material.count` is still 0 from tc's zeroed
+        // construction and is not written here, so the stored pair is a valid
+        // empty list whatever the push returns; a null result is checked on
+        // the next line. `finalize_mesh_material` reaches the zeroed
+        // `num_faces` run through its own local descriptor.
+        unsafe {
+            mesh_view
+                .face_material_view()
+                .set_data(tc.result_view().push_zero::<u32>(num_faces) as *const u32);
+        }
         ufbxi_check_err!(
             tc.error_view(),
             !mesh_view.face_material().data.is_null(),
@@ -1203,17 +1263,28 @@ pub(crate) fn tessellate_nurbs_surface_imp(
         let material_ptr = material.ptr();
         let mat: *mut *mut Material = tc.result_view().push_copy_ref(&material_ptr);
         ufbxi_check_err!(tc.error_view(), !mat.is_null(), "mat");
-        mesh_view
-            .materials_view()
-            .set_data(mat as *const Ref<Material>);
-        mesh_view.materials_view().set_count(1);
+        // SAFETY: `mat` is the checked non-null one-slot result push holding
+        // a copy of `surface->material`, which is non-null (`Some`) and owned
+        // by the source scene that the mesh imp's parent refcount keeps live.
+        unsafe {
+            mesh_view
+                .materials_view()
+                .set_data(mat as *const Ref<Material>);
+            mesh_view.materials_view().set_count(1);
+        }
     }
 
     if !tc.opts_view().skip_mesh_parts() {
-        mesh_view.material_parts_view().set_count(1);
-        mesh_view
-            .material_parts_view()
-            .set_data(tc.result_view().push_zero::<MeshPart>(1) as *const MeshPart);
+        // SAFETY: `data` is a one-element zeroed `tc->result` push (an
+        // all-zero `MeshPart` is valid: empty lists, zero counts); a null
+        // result is checked on the next line and fails the tessellation
+        // before the list can be read.
+        unsafe {
+            mesh_view.material_parts_view().set_count(1);
+            mesh_view
+                .material_parts_view()
+                .set_data(tc.result_view().push_zero::<MeshPart>(1) as *const MeshPart);
+        }
         ufbxi_check_err!(
             tc.error_view(),
             !mesh_view.material_parts().data.is_null(),

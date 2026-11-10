@@ -582,12 +582,26 @@ impl<T> ListView<T> {
     pub(crate) fn set(&self, value: List<T>) {
         self.write_value(value)
     }
+    /// Write the `count` half of the descriptor (C: `list.count = n;`).
+    ///
+    /// # Safety
+    /// Safe readers (`at`, `copy_at`, `Run::from_list`, the public slice
+    /// API) trust the stored `(data, count)` pair. By the time the list can
+    /// next be read, `data` must address at least `count` contiguous
+    /// initialized elements that stay live and unmoved for as long as the
+    /// list is reachable; a null or dangling `data` is allowed only with a
+    /// zero `count`.
     #[inline(always)]
-    pub(crate) fn set_count(&self, count: usize) {
+    pub(crate) unsafe fn set_count(&self, count: usize) {
         view_write!(self, count, count)
     }
+    /// Write the `data` half of the descriptor (C: `list.data = p;`).
+    ///
+    /// # Safety
+    /// As for [`Self::set_count`]: the stored pair must describe a valid run
+    /// by the time the list can next be read.
     #[inline(always)]
-    pub(crate) fn set_data(&self, data: *const T) {
+    pub(crate) unsafe fn set_data(&self, data: *const T) {
         view_write!(self, data, data)
     }
 }
@@ -626,12 +640,26 @@ impl<T, M: crate::native::view::Mode> crate::native::view::View<RefList<T>, M> {
 }
 
 impl<T> RefListView<T> {
+    /// Write the `count` half of the descriptor (C: `list.count = n;`).
+    ///
+    /// # Safety
+    /// Safe readers (`at`, the public slice API) trust the stored `(data,
+    /// count)` pair. By the time the list can next be read, `data` must
+    /// address at least `count` contiguous slots each holding a non-null
+    /// pointer to a live element, all live and unmoved for as long as the
+    /// list is reachable; a null or dangling `data` is allowed only with a
+    /// zero `count`.
     #[inline(always)]
-    pub(crate) fn set_count(&self, count: usize) {
+    pub(crate) unsafe fn set_count(&self, count: usize) {
         view_write!(self, count, count)
     }
+    /// Write the `data` half of the descriptor (C: `list.data = p;`).
+    ///
+    /// # Safety
+    /// As for [`Self::set_count`]: the stored pair must describe a valid run
+    /// by the time the list can next be read.
     #[inline(always)]
-    pub(crate) fn set_data(&self, data: *const Ref<T>) {
+    pub(crate) unsafe fn set_data(&self, data: *const Ref<T>) {
         view_write!(self, data, data)
     }
 }

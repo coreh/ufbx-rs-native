@@ -430,7 +430,11 @@ pub(crate) fn deduplicate_properties(list: &ListView<Prop>) {
                 src += 1;
             }
         }
-        list.set_count(dst);
+        // SAFETY: the compaction loop keeps `dst <= src <= count`, so `dst` only
+        // shrinks the list's existing valid run; its first `dst` elements were
+        // initialized in place (kept or copied from later live elements) and
+        // `data` is untouched.
+        unsafe { list.set_count(dst) };
     }
 }
 
@@ -1905,8 +1909,13 @@ pub(crate) fn setup_scale_helper(
     // `helper_props` is the result-buffer run whose first `num_props` entries
     // were filled in above; the C's field-write order is kept.
     let scale_props = scale_node.element().props().props_view();
-    scale_props.set_data(helper_props);
-    scale_props.set_count(num_props);
+    // SAFETY: `helper_props` is the non-null `max_props`-long result-buffer
+    // push checked above (result memory lives as long as the scene), and
+    // `num_props <= max_props` counts exactly the entries the loop wrote.
+    unsafe {
+        scale_props.set_data(helper_props);
+        scale_props.set_count(num_props);
+    }
 
     Ok(())
 }
@@ -2372,7 +2381,13 @@ pub(crate) unsafe fn read_vertex_element(
     );
 
     attrib.set_exists(true);
-    attrib.indices_view().set_count(mesh.num_indices());
+    // SAFETY: `count` is published ahead of `data`, as in C; every path below
+    // either sets `data` to a run of at least `mesh.num_indices()` `u32`s
+    // (`check_indices`, a fresh result-buffer push, or a sentinel that
+    // `patch_index_pointer` swaps for the `max_zero_indices` /
+    // `max_consecutive_indices`-sized shared buffers before the scene is
+    // read), zeroes the whole attribute, or fails the load.
+    unsafe { attrib.indices_view().set_count(mesh.num_indices()) };
 
     // C: `const char *mapping = "";` — an anonymous empty literal, never
     // pointer-equal to any interned `ufbxi_*` name constant.
@@ -2508,13 +2523,21 @@ pub(crate) unsafe fn read_vertex_element(
                 }
             }
 
-            attrib.indices_view().set_data(new_index_data);
+            // SAFETY: `new_index_data` is the non-null `mesh.num_indices()`-long
+            // result-buffer push checked above, matching the count already
+            // stored; the faces tile `0..num_indices`, so the loop wrote every
+            // slot.
+            unsafe { attrib.indices_view().set_data(new_index_data) };
         } else if mapping == sp::AllSame.as_ptr() {
             // Indexed by all same: ??? This could be possibly used for making
             // holes with invalid indices, but that seems really fringe.
             // Just use the shared zero index buffer for this.
             uc.set_max_zero_indices(max_sz(uc.max_zero_indices(), mesh.num_indices()));
-            attrib.indices_view().set_data(SENTINEL_INDEX_ZERO.as_ptr());
+            // SAFETY: the 1-element sentinel is only a tag: `max_zero_indices`
+            // was just raised to cover this list's `mesh.num_indices()` count,
+            // and `patch_index_pointer` replaces the sentinel with that
+            // zero-filled result buffer before any element is read.
+            unsafe { attrib.indices_view().set_data(SENTINEL_INDEX_ZERO.as_ptr()) };
             attrib.set_unique_per_vertex(true);
         } else {
             // SAFETY: `get()` addresses the viewed attribute, so its own
@@ -2537,9 +2560,16 @@ pub(crate) unsafe fn read_vertex_element(
                     uc.max_consecutive_indices(),
                     mesh.num_indices(),
                 ));
-                attrib
-                    .indices_view()
-                    .set_data(SENTINEL_INDEX_CONSECUTIVE.as_ptr());
+                // SAFETY: the 1-element sentinel is only a tag:
+                // `max_consecutive_indices` was just raised to cover this
+                // list's `mesh.num_indices()` count, and `patch_index_pointer`
+                // replaces the sentinel with that consecutive result buffer
+                // before any element is read.
+                unsafe {
+                    attrib
+                        .indices_view()
+                        .set_data(SENTINEL_INDEX_CONSECUTIVE.as_ptr())
+                };
             } else {
                 let index_data: *mut u32 = uc.result_view().push::<u32>(mesh.num_indices());
                 ufbxi_check!(uc, !index_data.is_null(), "index_data");
@@ -2617,7 +2647,11 @@ pub(crate) unsafe fn read_vertex_element(
         } else if mapping == sp::AllSame.as_ptr() {
             // Direct by all same: This cannot fail as the index list is just zero.
             uc.set_max_zero_indices(max_sz(uc.max_zero_indices(), mesh.num_indices()));
-            attrib.indices_view().set_data(SENTINEL_INDEX_ZERO.as_ptr());
+            // SAFETY: the 1-element sentinel is only a tag: `max_zero_indices`
+            // was just raised to cover this list's `mesh.num_indices()` count,
+            // and `patch_index_pointer` replaces the sentinel with that
+            // zero-filled result buffer before any element is read.
+            unsafe { attrib.indices_view().set_data(SENTINEL_INDEX_ZERO.as_ptr()) };
             attrib.set_unique_per_vertex(true);
         } else {
             // SAFETY: `get()` addresses the viewed attribute, so its own
@@ -2638,9 +2672,14 @@ pub(crate) unsafe fn read_vertex_element(
             let w_data: Option<&View<ValueArray>> = find_array(node, w_name.as_ptr(), b'r');
             if let Some(w_data) = w_data {
                 if w_data.size() == num_elems {
-                    // The `'r'` array's payload is a run of `size` `ufbx_real`s.
-                    attrib.values_w_view().set_count(w_data.size());
-                    attrib.values_w_view().set_data(w_data.data() as *mut Real);
+                    // SAFETY: the `'r'` array's payload is a run of exactly
+                    // `size` initialized `ufbx_real`s, parsed into the result
+                    // buffer (`UFBXI_ARRAY_FLAG_RESULT`), so it lives as long
+                    // as the scene.
+                    unsafe {
+                        attrib.values_w_view().set_count(w_data.size());
+                        attrib.values_w_view().set_data(w_data.data() as *mut Real);
+                    }
                 } else {
                     ufbxi_check!(
                         uc,
@@ -2975,12 +3014,19 @@ pub(crate) fn read_shape(
     // `num_offsets` `ufbx_vec3` values, and `vertex_indices` the parallel index
     // run; the C's field-write order is kept.
     shape.set_num_offsets(num_offsets);
-    shape
-        .position_offsets_view()
-        .set_data(vertices.data() as *const Vec3);
-    shape.offset_vertices_view().set_data(vertex_indices);
-    shape.position_offsets_view().set_count(num_offsets);
-    shape.offset_vertices_view().set_count(num_offsets);
+    // SAFETY: both payloads were parsed into the result buffer
+    // (`UFBXI_ARRAY_FLAG_RESULT` for `Vertices`/`Indexes`), so they live as
+    // long as the scene; the checks above make `vertices` exactly
+    // `num_offsets * 3` initialized reals (`num_offsets` `Vec3`s) and
+    // `indices` exactly `num_offsets` initialized `u32`s.
+    unsafe {
+        shape
+            .position_offsets_view()
+            .set_data(vertices.data() as *const Vec3);
+        shape.offset_vertices_view().set_data(vertex_indices);
+        shape.position_offsets_view().set_count(num_offsets);
+        shape.offset_vertices_view().set_count(num_offsets);
+    }
 
     if let Some(node_normals) = node_normals {
         let normals: Option<&View<ValueArray>> = get_array(node_normals, b'r');
@@ -2992,10 +3038,15 @@ pub(crate) fn read_shape(
         // The check above returned unless `normals` is a live descriptor whose
         // `'r'` payload matches `vertices`, i.e. `num_offsets` `ufbx_vec3`s.
         let normals: &View<ValueArray> = normals.unwrap();
-        shape
-            .normal_offsets_view()
-            .set_data(normals.data() as *const Vec3);
-        shape.normal_offsets_view().set_count(num_offsets);
+        // SAFETY: the `Normals` payload was parsed into the result buffer
+        // (`UFBXI_ARRAY_FLAG_RESULT`), and the check above sized it to
+        // `vertices`, i.e. `num_offsets` initialized `Vec3`s.
+        unsafe {
+            shape
+                .normal_offsets_view()
+                .set_data(normals.data() as *const Vec3);
+            shape.normal_offsets_view().set_count(num_offsets);
+        }
     }
 
     // Sort the blend shape vertices only if absolutely necessary
@@ -3291,8 +3342,14 @@ pub(crate) fn process_indices(uc: &Context, mesh: &View<Mesh>) -> Result<(), Fai
             });
         index_ix += 1;
     }
-    mesh.faces_view()
-        .set_data(uc.result_view().push::<Face>(num_total_faces));
+    // SAFETY: only `data` is written here; `faces.count` is still the zero of
+    // the freshly pushed mesh and is published below once `face_ix` slots of
+    // this `num_total_faces`-long result-buffer push are filled. A null `data`
+    // is checked on the next line and fails the load.
+    unsafe {
+        mesh.faces_view()
+            .set_data(uc.result_view().push::<Face>(num_total_faces))
+    };
     ufbxi_check!(uc, !mesh.faces().data.is_null(), "mesh->faces.data");
 
     // SAFETY: `mesh.faces.data` is the checked result-arena allocation of
@@ -3343,21 +3400,38 @@ pub(crate) fn process_indices(uc: &Context, mesh: &View<Mesh>) -> Result<(), Fai
         index_ix += 1;
     }
 
-    mesh.vertex_position()
-        .indices_view()
-        .set_data(index_data.as_ptr());
+    // SAFETY: `index_data` is the carrier derived from the mesh's own
+    // `vertex_indices` list, whose `num_indices` entries the loop just
+    // un-negated in place; `vertex_position.indices.count` was already set to
+    // the same `num_indices` by the caller, and the run lives in the result
+    // buffer (or the result-flagged array payload).
+    unsafe {
+        mesh.vertex_position()
+            .indices_view()
+            .set_data(index_data.as_ptr())
+    };
     mesh.set_num_faces(to_size(face_ix as isize));
-    mesh.faces_view().set_count(mesh.num_faces());
+    // SAFETY: the loop wrote faces `0..face_ix` of the `num_total_faces`-long
+    // result-buffer run stored in `faces.data` above; `face_ix` counts the
+    // negative indices exactly as the sizing pass did, so it equals
+    // `num_total_faces` and never exceeds it.
+    unsafe { mesh.faces_view().set_count(mesh.num_faces()) };
     mesh.set_num_triangles(num_triangles);
     mesh.set_max_face_triangles(max_face_triangles);
     mesh.set_num_empty_faces(num_bad_faces[0]);
     mesh.set_num_point_faces(num_bad_faces[1]);
     mesh.set_num_line_faces(num_bad_faces[2]);
 
-    mesh.vertex_first_index_view()
-        .set_count(mesh.num_vertices());
-    mesh.vertex_first_index_view()
-        .set_data(uc.result_view().push::<u32>(mesh.num_vertices()));
+    // SAFETY: `data` is a fresh `num_vertices`-long result-buffer push matching
+    // `count`; a null `data` is checked on the next line and fails the load.
+    // The slots are uninitialized here, and the loop right below fills every
+    // one with `NO_INDEX` before any element is read.
+    unsafe {
+        mesh.vertex_first_index_view()
+            .set_count(mesh.num_vertices());
+        mesh.vertex_first_index_view()
+            .set_data(uc.result_view().push::<u32>(mesh.num_vertices()));
+    }
     ufbxi_check!(
         uc,
         !mesh.vertex_first_index().data.is_null(),
@@ -3619,16 +3693,28 @@ pub(crate) fn assign_face_groups(
     }
 
     // `groups` is the `num_groups`-long run pushed on `buf`.
-    mesh.face_groups_view().set_data(groups);
-    mesh.face_groups_view().set_count(num_groups);
+    // SAFETY: `groups` is the non-null zero-initialized `num_groups`-long push
+    // checked above, every entry's `id`/`name` written by the loop; `buf` is
+    // the result buffer at the only caller (`read_mesh`), so the run lives as
+    // long as the mesh.
+    unsafe {
+        mesh.face_groups_view().set_data(groups);
+        mesh.face_groups_view().set_count(num_groups);
+    }
 
     let mut parts: *mut MeshPart = core::ptr::null_mut();
     if retain_parts {
         parts = buf.push_zero::<MeshPart>(num_groups);
         ufbxi_check_err!(error, !parts.is_null(), "parts");
         // `parts` is the non-null `num_groups`-long run just pushed on `buf`.
-        mesh.face_group_parts_view().set_data(parts);
-        mesh.face_group_parts_view().set_count(num_groups);
+        // SAFETY: `push_zero` initializes all `num_groups` parts to the valid
+        // all-zero `ufbx_mesh_part` (empty `face_indices`), and `buf` is the
+        // result buffer at the only caller (`read_mesh`), so the run lives as
+        // long as the mesh.
+        unsafe {
+            mesh.face_group_parts_view().set_data(parts);
+            mesh.face_group_parts_view().set_count(num_groups);
+        }
     }
 
     // Optimization: Use `consecutive_indices` for a single group
@@ -3645,9 +3731,16 @@ pub(crate) fn assign_face_groups(
                 // SAFETY: `parts` is the non-null `num_groups`-long run pushed
                 // above, so it addresses a live, initialized `ufbx_mesh_part`.
                 let part: &View<MeshPart> = unsafe { View::<MeshPart>::from_ptr(parts) };
-                part.face_indices_view()
-                    .set_data(SENTINEL_INDEX_CONSECUTIVE.as_ptr());
-                part.face_indices_view().set_count(num_faces);
+                // SAFETY: the 1-element sentinel is only a tag: the caller's
+                // `max_consecutive_indices` is raised to `num_faces` just
+                // below, and finalize's `patch_index_pointer` on the single
+                // part swaps the sentinel for that consecutive result buffer
+                // before any element is read.
+                unsafe {
+                    part.face_indices_view()
+                        .set_data(SENTINEL_INDEX_CONSECUTIVE.as_ptr());
+                    part.face_indices_view().set_count(num_faces);
+                }
                 part.set_num_empty_faces(mesh.num_empty_faces());
                 part.set_num_point_faces(mesh.num_point_faces());
                 part.set_num_line_faces(mesh.num_line_faces());
@@ -3726,7 +3819,11 @@ pub(crate) fn assign_face_groups(
         part_index = part_index.wrapping_add(1);
         // `face_indices` sub-divides the `num_faces`-long `ids` run, whose total
         // length is the sum of the parts' `num_faces`.
-        part.face_indices_view().set_data(face_indices);
+        // SAFETY: the part's `face_indices.count` is still the zero from
+        // `push_zero`, so the pair is a valid empty run; the collect loop
+        // below writes each slot before bumping `count`, which never exceeds
+        // the part's `num_faces` slots of this sub-range of the `buf` run.
+        unsafe { part.face_indices_view().set_data(face_indices) };
         face_indices = add_ptr(face_indices, part.num_faces());
     }
     ufbx_assert!(face_indices == add_ptr(ids, num_faces));
@@ -3745,7 +3842,10 @@ pub(crate) fn assign_face_groups(
         unsafe {
             *(part_face_indices.data() as *mut u32).add(part_face_indices.count()) = face_index;
         }
-        part_face_indices.set_count(part_face_indices.count() + 1);
+        // SAFETY: the slot at the old `count` was written just above, so the
+        // grown prefix is initialized and stays within the part's `num_faces`
+        // sub-range of `ids` (argued on the write).
+        unsafe { part_face_indices.set_count(part_face_indices.count() + 1) };
         face_index = face_index.wrapping_add(1);
     }
 
@@ -3767,8 +3867,14 @@ pub(crate) fn update_face_groups(
     }
 
     if need_copy {
-        mesh.face_group_parts_view()
-            .set_data(buf.push_zero::<MeshPart>(num_groups));
+        // SAFETY: `count` stays `num_groups` and `data` becomes a fresh
+        // `num_groups`-long `push_zero` on `buf`, every part the valid all-zero
+        // `ufbx_mesh_part` (the loops below refill them); a null `data` is
+        // checked on the next line and fails the call before the list is read.
+        unsafe {
+            mesh.face_group_parts_view()
+                .set_data(buf.push_zero::<MeshPart>(num_groups))
+        };
         ufbxi_check_err!(
             error,
             !mesh.face_group_parts().data.is_null(),
@@ -3935,23 +4041,35 @@ pub(crate) fn read_mesh(uc: &Context, node: &NodeView, info: &ElementInfoView) -
 
     // The `'r'` payload of `vertices` is `size == num_vertices * 3` reals, i.e.
     // `num_vertices` `ufbx_vec3` values.
-    mesh.vertices_view()
-        .set_data(vertices.data() as *const Vec3);
-    mesh.vertices_view().set_count(mesh.num_vertices());
-    mesh.vertex_indices_view().set_data(index_data);
-    mesh.vertex_indices_view().set_count(mesh.num_indices());
+    // SAFETY: `Vertices` and `PolygonVertexIndex` are parsed into the result
+    // buffer (`UFBXI_ARRAY_FLAG_RESULT`), and the retain-DOM copy is a result
+    // push too, so both runs live as long as the scene. `vertices` holds
+    // exactly `num_vertices * 3` initialized reals (checked `% 3` above);
+    // `index_data` holds exactly `num_indices` initialized `u32`s, or is null
+    // with `num_indices == 0` when there is no index array.
+    unsafe {
+        mesh.vertices_view()
+            .set_data(vertices.data() as *const Vec3);
+        mesh.vertices_view().set_count(mesh.num_vertices());
+        mesh.vertex_indices_view().set_data(index_data);
+        mesh.vertex_indices_view().set_count(mesh.num_indices());
+    }
 
     mesh.vertex_position().set_exists(true);
-    mesh.vertex_position()
-        .values_view()
-        .set_data(vertices.data() as *const Vec3);
-    mesh.vertex_position()
-        .values_view()
-        .set_count(mesh.num_vertices());
-    mesh.vertex_position().indices_view().set_data(index_data);
-    mesh.vertex_position()
-        .indices_view()
-        .set_count(mesh.num_indices());
+    // SAFETY: the same `vertices` / `index_data` runs and counts as the
+    // `vertices` / `vertex_indices` lists just above.
+    unsafe {
+        mesh.vertex_position()
+            .values_view()
+            .set_data(vertices.data() as *const Vec3);
+        mesh.vertex_position()
+            .values_view()
+            .set_count(mesh.num_vertices());
+        mesh.vertex_position().indices_view().set_data(index_data);
+        mesh.vertex_position()
+            .indices_view()
+            .set_count(mesh.num_indices());
+    }
     mesh.vertex_position().set_unique_per_vertex(true);
 
     // Check/make sure that the last index is negated (last of polygon)
@@ -4022,8 +4140,13 @@ pub(crate) fn read_mesh(uc: &Context, node: &NodeView, info: &ElementInfoView) -
 
         // `edges` is the `num_edges`-long result-arena run, of which `dst_ix`
         // were filled.
-        mesh.edges_view().set_data(edges);
-        mesh.edges_view().set_count(dst_ix);
+        // SAFETY: `edges` is the non-null `num_edges`-long result-buffer push
+        // checked above; `dst_ix <= num_edges` counts the slots whose `a` and
+        // `b` were both written (a failed `b` check aborts the load first).
+        unsafe {
+            mesh.edges_view().set_data(edges);
+            mesh.edges_view().set_count(dst_ix);
+        }
         mesh.set_num_edges(mesh.edges().count);
     }
 
@@ -4070,10 +4193,17 @@ pub(crate) fn read_mesh(uc: &Context, node: &NodeView, info: &ElementInfoView) -
     let tangents_run: Run<'_, TangentLayer, Mut> =
         unsafe { Run::<TangentLayer, Mut>::from_raw_parts(tangents, num_tangents) };
 
-    mesh.uv_sets_view()
-        .set_data(uc.result_view().push_zero::<UvSet>(num_uv));
-    mesh.color_sets_view()
-        .set_data(uc.result_view().push_zero::<ColorSet>(num_color));
+    // SAFETY: only `data` is written; both counts are still the zero of the
+    // freshly pushed mesh and are bumped one per filled set below, never past
+    // `num_uv` / `num_color`. The result-buffer pushes are zero-initialized
+    // (a valid all-zero set) and live as long as the scene; a null `data` is
+    // checked on the next lines and fails the load.
+    unsafe {
+        mesh.uv_sets_view()
+            .set_data(uc.result_view().push_zero::<UvSet>(num_uv));
+        mesh.color_sets_view()
+            .set_data(uc.result_view().push_zero::<ColorSet>(num_color));
+    }
     ufbxi_check!(uc, !mesh.uv_sets().data.is_null(), "mesh->uv_sets.data");
     ufbxi_check!(
         uc,
@@ -4186,7 +4316,12 @@ pub(crate) fn read_mesh(uc: &Context, node: &NodeView, info: &ElementInfoView) -
                     (mesh.uv_sets().data as *mut UvSet).add(mesh.uv_sets().count),
                 )
             };
-            mesh.uv_sets_view().set_count(mesh.uv_sets().count + 1);
+            // SAFETY: the counting pass found exactly `num_uv`
+            // `LayerElementUV` children and this bump happens once per such
+            // child, so `count + 1 <= num_uv`, the length of the zeroed
+            // result-buffer run in `data`; the new slot `set` is the
+            // zero-initialized element filled in below.
+            unsafe { mesh.uv_sets_view().set_count(mesh.uv_sets().count + 1) };
 
             if let Some(got) = get_val1::<i32>(n) {
                 set.set_index(got as u32);
@@ -4205,7 +4340,9 @@ pub(crate) fn read_mesh(uc: &Context, node: &NodeView, info: &ElementInfoView) -
                 read_vertex_element(uc, mesh, n, attrib, &sp::UV, &sp::UVIndex, None, b'r', 2)
             }?;
             if !set.vertex_uv().exists() {
-                mesh.uv_sets_view().set_count(mesh.uv_sets().count - 1);
+                // SAFETY: undoes the bump above (`count >= 1`), shrinking back
+                // to the already-valid prefix of the same run.
+                unsafe { mesh.uv_sets_view().set_count(mesh.uv_sets().count - 1) };
             }
         } else if n.name() == sp::LayerElementColor.as_ptr() {
             // SAFETY: `color_sets.data` is the `num_color`-long result-arena run
@@ -4218,8 +4355,15 @@ pub(crate) fn read_mesh(uc: &Context, node: &NodeView, info: &ElementInfoView) -
                     (mesh.color_sets().data as *mut ColorSet).add(mesh.color_sets().count),
                 )
             };
-            mesh.color_sets_view()
-                .set_count(mesh.color_sets().count + 1);
+            // SAFETY: the counting pass found exactly `num_color`
+            // `LayerElementColor` children and this bump happens once per
+            // such child, so `count + 1 <= num_color`, the length of the
+            // zeroed result-buffer run in `data`; the new slot `set` is the
+            // zero-initialized element filled in below.
+            unsafe {
+                mesh.color_sets_view()
+                    .set_count(mesh.color_sets().count + 1)
+            };
 
             if let Some(got) = get_val1::<i32>(n) {
                 set.set_index(got as u32);
@@ -4248,8 +4392,12 @@ pub(crate) fn read_mesh(uc: &Context, node: &NodeView, info: &ElementInfoView) -
                 )
             }?;
             if !set.vertex_color().exists() {
-                mesh.color_sets_view()
-                    .set_count(mesh.color_sets().count - 1);
+                // SAFETY: undoes the bump above (`count >= 1`), shrinking back
+                // to the already-valid prefix of the same run.
+                unsafe {
+                    mesh.color_sets_view()
+                        .set_count(mesh.color_sets().count - 1)
+                };
             }
         } else if n.name() == sp::LayerElementVertexCrease.as_ptr() {
             let attrib: &View<VertexAttrib> = mesh.vertex_crease().attrib_view();
@@ -4414,14 +4562,29 @@ pub(crate) fn read_mesh(uc: &Context, node: &NodeView, info: &ElementInfoView) -
                 // SAFETY: `arr.data()` names that `size >= 1` run of `u32`, so
                 // its first element is readable.
                 let material: u32 = unsafe { *(arr.data() as *mut u32) };
-                mesh.face_material_view().set_count(mesh.num_faces());
+                // SAFETY: `count` is published ahead of `data`, as in C; both
+                // branches below set `data` before the list is next read.
+                unsafe { mesh.face_material_view().set_count(mesh.num_faces()) };
                 if material == 0 {
                     // The zero sentinel stands in for a `num_faces` run of zeros.
-                    mesh.face_material_view()
-                        .set_data(SENTINEL_INDEX_ZERO.as_ptr());
+                    // SAFETY: the 1-element sentinel is only a tag:
+                    // `process_indices` raised `max_zero_indices` to this
+                    // mesh's `num_faces`, and finalize's `patch_index_pointer`
+                    // swaps the sentinel for that zero-filled result buffer
+                    // before any element is read.
+                    unsafe {
+                        mesh.face_material_view()
+                            .set_data(SENTINEL_INDEX_ZERO.as_ptr())
+                    };
                 } else {
-                    mesh.face_material_view()
-                        .set_data(uc.result_view().push::<u32>(mesh.num_faces()));
+                    // SAFETY: a fresh `num_faces`-long result-buffer push,
+                    // matching the `count` just stored; a null `data` is checked
+                    // on the next line and fails the load, and the loop right
+                    // below writes every slot before any other read.
+                    unsafe {
+                        mesh.face_material_view()
+                            .set_data(uc.result_view().push::<u32>(mesh.num_faces()))
+                    };
                     ufbxi_check!(
                         uc,
                         !mesh.face_material().data.is_null(),
@@ -4571,9 +4734,15 @@ pub(crate) fn read_mesh(uc: &Context, node: &NodeView, info: &ElementInfoView) -
     if mesh.face_material().count == 0 {
         uc.set_max_zero_indices(max_sz(uc.max_zero_indices(), mesh.num_faces()));
         // The zero sentinel stands in for a `num_faces` run of zeros.
-        mesh.face_material_view()
-            .set_data(SENTINEL_INDEX_ZERO.as_ptr());
-        mesh.face_material_view().set_count(mesh.num_faces());
+        // SAFETY: the 1-element sentinel is only a tag: `max_zero_indices` was
+        // just raised to `num_faces`, and finalize's `patch_index_pointer`
+        // swaps the sentinel for that zero-filled result buffer before any
+        // element is read.
+        unsafe {
+            mesh.face_material_view()
+                .set_data(SENTINEL_INDEX_ZERO.as_ptr());
+            mesh.face_material_view().set_count(mesh.num_faces());
+        }
     }
 
     if uc.opts_view().strict() {
@@ -4807,15 +4976,22 @@ pub(crate) fn read_nurbs_curve(
         // The `'r'` payloads are `size` reals — `points.size` being a multiple
         // of 4 (checked) makes it `size / 4` `ufbx_vec4` control points; the
         // C's field-write order is kept.
-        nurbs.control_points_view().set_count(points.size() / 4);
-        nurbs
-            .control_points_view()
-            .set_data(points.data() as *const Vec4);
-        nurbs
-            .basis()
-            .knot_vector_view()
-            .set_data(knot.data() as *const Real);
-        nurbs.basis().knot_vector_view().set_count(knot.size());
+        // SAFETY: `Points` and `KnotVector` are parsed into the result buffer
+        // (`UFBXI_ARRAY_FLAG_RESULT`), so both runs live as long as the scene;
+        // `points` holds exactly `size` initialized reals with `size % 4 == 0`
+        // (checked), i.e. `size / 4` `Vec4`s (same alignment as `Real`), and
+        // `knot` holds exactly `size` initialized reals.
+        unsafe {
+            nurbs.control_points_view().set_count(points.size() / 4);
+            nurbs
+                .control_points_view()
+                .set_data(points.data() as *const Vec4);
+            nurbs
+                .basis()
+                .knot_vector_view()
+                .set_data(knot.data() as *const Real);
+            nurbs.basis().knot_vector_view().set_count(knot.size());
+        }
     }
 
     Ok(())
@@ -4900,20 +5076,28 @@ pub(crate) fn read_nurbs_surface(
         // The `'r'` payloads are `size` reals — `points.size` being a multiple
         // of 4 (checked) makes it `size / 4` `ufbx_vec4` control points; the
         // C's field-write order is kept.
-        nurbs.control_points_view().set_count(points.size() / 4);
-        nurbs
-            .control_points_view()
-            .set_data(points.data() as *const Vec4);
-        nurbs
-            .basis_u()
-            .knot_vector_view()
-            .set_data(knot_u.data() as *const Real);
-        nurbs.basis_u().knot_vector_view().set_count(knot_u.size());
-        nurbs
-            .basis_v()
-            .knot_vector_view()
-            .set_data(knot_v.data() as *const Real);
-        nurbs.basis_v().knot_vector_view().set_count(knot_v.size());
+        // SAFETY: `Points`, `KnotVectorU` and `KnotVectorV` are parsed into
+        // the result buffer (`UFBXI_ARRAY_FLAG_RESULT`), so all three runs live
+        // as long as the scene; `points` holds exactly `size` initialized reals
+        // with `size % 4 == 0` (checked), i.e. `size / 4` `Vec4`s (same
+        // alignment as `Real`), and each knot array holds exactly its `size`
+        // initialized reals.
+        unsafe {
+            nurbs.control_points_view().set_count(points.size() / 4);
+            nurbs
+                .control_points_view()
+                .set_data(points.data() as *const Vec4);
+            nurbs
+                .basis_u()
+                .knot_vector_view()
+                .set_data(knot_u.data() as *const Real);
+            nurbs.basis_u().knot_vector_view().set_count(knot_u.size());
+            nurbs
+                .basis_v()
+                .knot_vector_view()
+                .set_data(knot_v.data() as *const Real);
+            nurbs.basis_v().knot_vector_view().set_count(knot_v.size());
+        }
     }
 
     Ok(())
@@ -6467,11 +6651,23 @@ pub(crate) fn read_pose(
     // The `num_bones` `TmpBonePose` values pushed by the loop are the top of
     // `tmp_stack`, so `push_pop` moves exactly that run into `tmp`; C's
     // field-write order is kept.
-    pose.bone_poses_view().set_count(num_bones);
-    pose.bone_poses_view().set_data(
-        uc.tmp_view()
-            .push_pop::<TmpBonePose>(uc.tmp_stack_view(), num_bones) as *const BonePose,
-    );
+    // SAFETY: NOT a valid `BonePose` run — this is C's type-punned stash: the
+    // `num_bones` initialized `TmpBonePose` records (raw `bone_fbx_id` where
+    // `bone_node` would be) moved into `tmp`, which lives until the load ends.
+    // Nothing reads the elements through this list: the finalize pose pass
+    // (`scene_process.rs`, "Transport `ufbxi_tmp_bone_pose`") reads only the
+    // raw `count`/`data` back, re-reads the records as `TmpBonePose`, and
+    // replaces the pair with a real result-buffer `BonePose` run before the
+    // scene is reachable. A null `data` is checked on the next line and fails
+    // the load.
+    unsafe {
+        pose.bone_poses_view().set_count(num_bones);
+        pose.bone_poses_view().set_data(
+            uc.tmp_view()
+                .push_pop::<TmpBonePose>(uc.tmp_stack_view(), num_bones)
+                as *const BonePose,
+        );
+    }
     ufbxi_check!(
         uc,
         !pose.bone_poses_view().data().is_null(),
@@ -6629,8 +6825,16 @@ pub(crate) fn read_selection_set(
 pub(crate) fn find_uint32_list(dst: &View<List<u32>, Mut>, node: &NodeView, name: *const u8) {
     let arr: Option<&View<ValueArray>> = find_array(node, name, b'i');
     if let Some(arr) = arr {
-        dst.set_data(arr.data() as *const u32);
-        dst.set_count(arr.size());
+        // SAFETY: a found `'i'` array's payload is exactly `size` initialized
+        // `u32`s. Its lifetime rests on the callers: the only three
+        // (`read_selection_node`) pass `VertexIndexArray` / `EdgeIndexArray` /
+        // `PolygonIndexArray`, which `ufbxi_is_array_node` parses into the
+        // result buffer (`UFBXI_ARRAY_FLAG_RESULT`), so the run lives as long
+        // as the scene. This fn's safe signature does not enforce that.
+        unsafe {
+            dst.set_data(arr.data() as *const u32);
+            dst.set_count(arr.size());
+        }
     }
 }
 
@@ -9696,23 +9900,34 @@ pub(crate) fn read_legacy_mesh(
 
     // `vertices`'s payload is the `num_vertices` `ufbx_vec3` run and
     // `index_data` the `num_indices` index run.
-    mesh.vertices_view()
-        .set_data(vertices.data() as *const Vec3);
-    mesh.vertex_indices_view().set_data(index_data);
-    mesh.vertices_view().set_count(mesh.num_vertices());
-    mesh.vertex_indices_view().set_count(mesh.num_indices());
+    // SAFETY: legacy-model `Vertices` and `PolygonVertexIndex` are parsed into
+    // the result buffer (`UFBXI_ARRAY_FLAG_RESULT`), and the retain-DOM copy is
+    // a result push too, so both runs live as long as the scene. `vertices`
+    // holds exactly `num_vertices * 3` initialized reals (checked `% 3` above)
+    // and `index_data` exactly `num_indices` initialized `u32`s.
+    unsafe {
+        mesh.vertices_view()
+            .set_data(vertices.data() as *const Vec3);
+        mesh.vertex_indices_view().set_data(index_data);
+        mesh.vertices_view().set_count(mesh.num_vertices());
+        mesh.vertex_indices_view().set_count(mesh.num_indices());
+    }
 
     mesh.vertex_position().set_exists(true);
-    mesh.vertex_position()
-        .values_view()
-        .set_data(vertices.data() as *const Vec3);
-    mesh.vertex_position()
-        .values_view()
-        .set_count(mesh.num_vertices());
-    mesh.vertex_position().indices_view().set_data(index_data);
-    mesh.vertex_position()
-        .indices_view()
-        .set_count(mesh.num_indices());
+    // SAFETY: the same `vertices` / `index_data` runs and counts as the
+    // `vertices` / `vertex_indices` lists just above.
+    unsafe {
+        mesh.vertex_position()
+            .values_view()
+            .set_data(vertices.data() as *const Vec3);
+        mesh.vertex_position()
+            .values_view()
+            .set_count(mesh.num_vertices());
+        mesh.vertex_position().indices_view().set_data(index_data);
+        mesh.vertex_position()
+            .indices_view()
+            .set_count(mesh.num_indices());
+    }
     mesh.vertex_position().set_unique_per_vertex(true);
 
     // Check/make sure that the last index is negated (last of polygon)
@@ -9742,17 +9957,24 @@ pub(crate) fn read_legacy_mesh(
             // one per vertex in this branch, and `vertex_indices.data` is the
             // index run installed above.
             mesh.vertex_normal().set_exists(true);
-            mesh.vertex_normal().values_view().set_count(num_normals);
-            mesh.vertex_normal()
-                .indices_view()
-                .set_count(mesh.num_indices());
-            mesh.vertex_normal().set_unique_per_vertex(true);
-            mesh.vertex_normal()
-                .values_view()
-                .set_data(normals.data() as *const Vec3);
-            mesh.vertex_normal()
-                .indices_view()
-                .set_data(mesh.vertex_indices().data);
+            // SAFETY: legacy `Normals` is parsed into the result buffer
+            // (`UFBXI_ARRAY_FLAG_RESULT`) and holds `size >= num_normals * 3`
+            // initialized reals; the indices reuse the mesh's own
+            // `vertex_indices` run of exactly `num_indices` `u32`s (result
+            // memory, un-negated by `process_indices`).
+            unsafe {
+                mesh.vertex_normal().values_view().set_count(num_normals);
+                mesh.vertex_normal()
+                    .indices_view()
+                    .set_count(mesh.num_indices());
+                mesh.vertex_normal().set_unique_per_vertex(true);
+                mesh.vertex_normal()
+                    .values_view()
+                    .set_data(normals.data() as *const Vec3);
+                mesh.vertex_normal()
+                    .indices_view()
+                    .set_data(mesh.vertex_indices().data);
+            }
         } else if per_index {
             uc.set_max_consecutive_indices(max_sz(
                 uc.max_consecutive_indices(),
@@ -9762,17 +9984,25 @@ pub(crate) fn read_legacy_mesh(
             // one per index in this branch, addressed through the
             // consecutive-index sentinel.
             mesh.vertex_normal().set_exists(true);
-            mesh.vertex_normal().values_view().set_count(num_normals);
-            mesh.vertex_normal()
-                .indices_view()
-                .set_count(mesh.num_indices());
-            mesh.vertex_normal().set_unique_per_vertex(false);
-            mesh.vertex_normal()
-                .values_view()
-                .set_data(normals.data() as *const Vec3);
-            mesh.vertex_normal()
-                .indices_view()
-                .set_data(SENTINEL_INDEX_CONSECUTIVE.as_ptr());
+            // SAFETY: legacy `Normals` is parsed into the result buffer
+            // (`UFBXI_ARRAY_FLAG_RESULT`) and holds `size >= num_normals * 3`
+            // initialized reals. The index data is the 1-element consecutive
+            // sentinel, only a tag: `max_consecutive_indices` was just raised
+            // to `num_indices`, and finalize's `patch_index_pointer` swaps it
+            // for that result buffer before any element is read.
+            unsafe {
+                mesh.vertex_normal().values_view().set_count(num_normals);
+                mesh.vertex_normal()
+                    .indices_view()
+                    .set_count(mesh.num_indices());
+                mesh.vertex_normal().set_unique_per_vertex(false);
+                mesh.vertex_normal()
+                    .values_view()
+                    .set_data(normals.data() as *const Vec3);
+                mesh.vertex_normal()
+                    .indices_view()
+                    .set_data(SENTINEL_INDEX_CONSECUTIVE.as_ptr());
+            }
         }
     }
 
@@ -9807,8 +10037,13 @@ pub(crate) fn read_legacy_mesh(
         }?;
 
         // `set` is the fresh single-element UV-set allocation pushed above.
-        mesh.uv_sets_view().set_data(set.get());
-        mesh.uv_sets_view().set_count(1);
+        // SAFETY: `set` is the non-null one-element zeroed result-buffer push
+        // checked above (scene lifetime), initialized by `push_zero` and the
+        // writes since, so a count of 1 covers exactly it.
+        unsafe {
+            mesh.uv_sets_view().set_data(set.get());
+            mesh.uv_sets_view().set_count(1);
+        }
         // C: `mesh->vertex_uv = set->vertex_uv;` — struct assignment is a
         // memcpy; `VertexVec2` is not `Copy` in `generated.rs`.
         // SAFETY: `set.vertex_uv_ptr()` names the live set's own `vertex_uv`
@@ -9854,13 +10089,28 @@ pub(crate) fn read_legacy_mesh(
                 material = unsafe { *(arr.data() as *mut u32) };
             }
 
-            mesh.face_material_view().set_count(mesh.num_faces());
+            // SAFETY: `count` is published ahead of `data`, as in C; both
+            // branches below set `data` before the list is next read.
+            unsafe { mesh.face_material_view().set_count(mesh.num_faces()) };
             if material == 0 {
-                mesh.face_material_view()
-                    .set_data(SENTINEL_INDEX_ZERO.as_ptr());
+                // SAFETY: the 1-element sentinel is only a tag:
+                // `process_indices` raised `max_zero_indices` to this mesh's
+                // `num_faces`, and finalize's `patch_index_pointer` swaps the
+                // sentinel for that zero-filled result buffer before any
+                // element is read.
+                unsafe {
+                    mesh.face_material_view()
+                        .set_data(SENTINEL_INDEX_ZERO.as_ptr())
+                };
             } else {
-                mesh.face_material_view()
-                    .set_data(uc.result_view().push::<u32>(mesh.num_faces()));
+                // SAFETY: a fresh `num_faces`-long result-buffer push, matching
+                // the `count` just stored; a null `data` is checked on the next
+                // line and fails the load, and the loop right below writes
+                // every slot before any other read.
+                unsafe {
+                    mesh.face_material_view()
+                        .set_data(uc.result_view().push::<u32>(mesh.num_faces()))
+                };
                 ufbxi_check!(
                     uc,
                     !mesh.face_material().data.is_null(),
@@ -10794,11 +11044,18 @@ pub(crate) fn finalize_mesh(
     }
 
     if mesh.vertex_first_index().count == 0 {
-        mesh.vertex_first_index_view()
-            .set_count(mesh.num_vertices());
         // The push result is a fresh `num_vertices`-long run owned by `buf`.
-        mesh.vertex_first_index_view()
-            .set_data(buf.push::<u32>(mesh.num_vertices()));
+        // SAFETY: `data` is a fresh `num_vertices`-long push on `buf` (the
+        // mesh's result buffer at every caller), matching `count`; a null
+        // `data` is checked on the next line and fails the call. The slots are
+        // uninitialized here, and `update_vertex_first_index` right below fills
+        // every one with `NO_INDEX` before reading any.
+        unsafe {
+            mesh.vertex_first_index_view()
+                .set_count(mesh.num_vertices());
+            mesh.vertex_first_index_view()
+                .set_data(buf.push::<u32>(mesh.num_vertices()));
+        }
         ufbxi_check_err!(
             error,
             !mesh.vertex_first_index().data.is_null(),
@@ -10834,8 +11091,13 @@ pub(crate) fn finalize_mesh(
             );
         }
 
-        mesh.uv_sets_view().set_data(uv_set);
-        mesh.uv_sets_view().set_count(1);
+        // SAFETY: `uv_set` is the non-null one-element `push_zero` on `buf`
+        // (the mesh's result buffer at every caller) checked above, initialized
+        // by the zero fill and the field writes just made.
+        unsafe {
+            mesh.uv_sets_view().set_data(uv_set);
+            mesh.uv_sets_view().set_count(1);
+        }
     }
 
     if mesh.color_sets().count == 0 && mesh.vertex_color().exists() {
@@ -10857,8 +11119,13 @@ pub(crate) fn finalize_mesh(
             );
         }
 
-        mesh.color_sets_view().set_data(color_set);
-        mesh.color_sets_view().set_count(1);
+        // SAFETY: `color_set` is the non-null one-element `push_zero` on `buf`
+        // (the mesh's result buffer at every caller) checked above, initialized
+        // by the zero fill and the field writes just made.
+        unsafe {
+            mesh.color_sets_view().set_data(color_set);
+            mesh.color_sets_view().set_count(1);
+        }
     }
 
     patch_mesh_reals(mesh);

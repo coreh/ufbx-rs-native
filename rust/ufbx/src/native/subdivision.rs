@@ -2083,10 +2083,20 @@ pub(crate) fn subdivide_attrib(
     };
     subdivide_layer(sc, output_view, input_view)?;
 
-    attrib.values_view().set_data(output_view.values());
-    attrib.indices_view().set_data(output_view.indices());
-    attrib.values_view().set_count(output_view.num_values());
-    attrib.indices_view().set_count(output_view.num_indices());
+    // SAFETY: `subdivide_layer` succeeded, so `output` holds its final
+    // descriptors: `values` is the checked non-null `(num_values + 1) * stride`
+    // byte push of `sc->result` advanced past the zeroed sentinel value, with
+    // all `num_values` values copied in, and `stride` is `value_reals` reals,
+    // this attribute's element size. `ignore_indices` is false here, so
+    // `indices` is the checked non-null `4 * src num_indices` push whose every
+    // slot the quad loop wrote, and `num_indices` is that count. The result
+    // arena keeps both live for the subdivided mesh.
+    unsafe {
+        attrib.values_view().set_data(output_view.values());
+        attrib.indices_view().set_data(output_view.indices());
+        attrib.values_view().set_count(output_view.num_values());
+        attrib.indices_view().set_count(output_view.num_indices());
+    }
 
     Ok(())
 }
@@ -2368,10 +2378,23 @@ pub(crate) unsafe fn subdivide_weights(
         vi += 1;
     }
 
-    ranges.set_data(dst_ranges);
-    ranges.set_count(num_vertices);
-    weights.set_data(dst_weights);
-    weights.set_count(sc.total_weights());
+    // SAFETY: `dst_ranges` is the `num_vertices`-slot `sc->result` push and
+    // the loop above wrote both fields of every slot. `dst_weights` is the
+    // `total_weights`-slot push; the loop filled `[0, weight_offset)` where
+    // `weight_offset` is the sum of the output values' `num_weights`, and
+    // `total_weights` equals that sum because the layer walk invokes the summer
+    // exactly once per output value (face, first-seen or split edge, claimed
+    // vertex) and each call adds its retained `num_weights`. Neither push is
+    // null-checked (C checks the out parameters instead, see above): an
+    // allocation failure is not caught, and the copy loop above would already
+    // have written through the null pointer, so this argument covers only the
+    // successful-allocation path.
+    unsafe {
+        ranges.set_data(dst_ranges);
+        ranges.set_count(num_vertices);
+        weights.set_data(dst_weights);
+        weights.set_count(sc.total_weights());
+    }
 
     Ok(())
 }
@@ -2390,9 +2413,17 @@ pub(crate) fn subdivide_vertex_crease<M: Mode>(
     let src_values: usize = src.values().count;
 
     // The pushed `values.data` is a `src_values+1`-element buffer.
-    dst.values_view().set_count(src_values.wrapping_add(1));
-    dst.values_view()
-        .set_data(sc.result_view().push::<Real>(dst.values().count));
+    // SAFETY: `data` is a `src_values + 1`-element `sc->result` push sized by
+    // the count stored just before it; a null result is checked on the next
+    // line and fails the level. The elements are uninitialized until the
+    // sentinel write below and the crease loop, which only write through the
+    // run and together cover every slot `[0, src_values]` before anything
+    // reads the list.
+    unsafe {
+        dst.values_view().set_count(src_values.wrapping_add(1));
+        dst.values_view()
+            .set_data(sc.result_view().push::<Real>(dst.values().count));
+    }
     ufbxi_check_err!(
         sc.error_view(),
         !dst.values().data.is_null(),
@@ -2402,9 +2433,15 @@ pub(crate) fn subdivide_vertex_crease<M: Mode>(
     dst_values.write_at(src_values, 0.0);
 
     // The pushed `indices.data` is a `src_indices*4`-element buffer.
-    dst.indices_view().set_count(src_indices.wrapping_mul(4));
-    dst.indices_view()
-        .set_data(sc.result_view().push::<u32>(dst.indices().count));
+    // SAFETY: `data` is a `4 * src_indices`-element `sc->result` push sized by
+    // the count stored just before it; a null result is checked on the next
+    // line and fails the level. The quad loop below writes all four slots of
+    // every source index before the list is read.
+    unsafe {
+        dst.indices_view().set_count(src_indices.wrapping_mul(4));
+        dst.indices_view()
+            .set_data(sc.result_view().push::<u32>(dst.indices().count));
+    }
     ufbxi_check_err!(
         sc.error_view(),
         !dst.indices().data.is_null(),
@@ -2819,11 +2856,22 @@ pub(crate) unsafe fn subdivide_mesh_level(
     result.set_num_triangles(mesh.num_indices().wrapping_mul(2));
 
     let vertex_indices: &ListView<u32> = result.vertex_indices_view();
-    vertex_indices.set_data(result.vertex_position().indices().data);
-    vertex_indices.set_count(result.num_indices());
+    // SAFETY: `subdivide_attrib` published `vertex_position.indices` as the
+    // fully written `4 * mesh.num_indices()` result push, and `num_indices` was
+    // set to exactly that above; both lists alias the same live result-arena
+    // run.
+    unsafe {
+        vertex_indices.set_data(result.vertex_position().indices().data);
+        vertex_indices.set_count(result.num_indices());
+    }
     let vertices: &ListView<Vec3> = result.vertices_view();
-    vertices.set_data(result.vertex_position().values().data);
-    vertices.set_count(result.num_vertices());
+    // SAFETY: `num_vertices` was set above from `vertex_position.values.count`,
+    // so this copies the valid `vertex_position.values` pair published by
+    // `subdivide_attrib` (a live, fully initialized result-arena run).
+    unsafe {
+        vertices.set_data(result.vertex_position().values().data);
+        vertices.set_count(result.num_vertices());
+    }
 
     let num_faces = result.num_faces();
     let faces = sc.result_view().push::<Face>(num_faces);
@@ -2854,8 +2902,15 @@ pub(crate) unsafe fn subdivide_mesh_level(
                 .wrapping_mul(2)
                 .wrapping_add(result.num_faces()),
         );
-        edges.set_count(result.num_edges());
-        edges.set_data(sc.result_view().push::<Edge>(result.num_edges()));
+        // SAFETY: `data` is a `num_edges`-element `sc->result` push sized by
+        // the count stored just before it; a null result is checked on the
+        // next line and fails the level. The two loops below write slots
+        // `[0, 2 * mesh.num_edges())` then `[.., + num_faces)`, i.e. every
+        // slot, before the list is read.
+        unsafe {
+            edges.set_count(result.num_edges());
+            edges.set_data(sc.result_view().push::<Edge>(result.num_edges()));
+        }
         ufbxi_check_err!(
             sc.error_view(),
             !edges.data().is_null(),
@@ -2863,8 +2918,15 @@ pub(crate) unsafe fn subdivide_mesh_level(
         );
 
         if !mesh.edge_crease().data.is_null() {
-            edge_crease.set_count(result.num_edges());
-            edge_crease.set_data(sc.result_view().push::<Real>(result.num_edges()));
+            // SAFETY: as for `edges` above: a `num_edges`-element result push
+            // whose null result is checked on the next line, and the two edge
+            // loops below write every slot: their `edge_crease` writes are
+            // guarded by the same non-null data, so they run exactly when
+            // this push happened.
+            unsafe {
+                edge_crease.set_count(result.num_edges());
+                edge_crease.set_data(sc.result_view().push::<Real>(result.num_edges()));
+            }
             ufbxi_check_err!(
                 sc.error_view(),
                 !edge_crease.data().is_null(),
@@ -2872,8 +2934,15 @@ pub(crate) unsafe fn subdivide_mesh_level(
             );
         }
         if !mesh.edge_smoothing().data.is_null() {
-            edge_smoothing.set_count(result.num_edges());
-            edge_smoothing.set_data(sc.result_view().push::<bool>(result.num_edges()));
+            // SAFETY: as for `edges` above: a `num_edges`-element result push
+            // whose null result is checked on the next line, and the two edge
+            // loops below write every slot: their `edge_smoothing` writes are
+            // guarded by the same non-null data, so they run exactly when
+            // this push happened.
+            unsafe {
+                edge_smoothing.set_count(result.num_edges());
+                edge_smoothing.set_data(sc.result_view().push::<bool>(result.num_edges()));
+            }
             ufbxi_check_err!(
                 sc.error_view(),
                 !edge_smoothing.data().is_null(),
@@ -2881,8 +2950,15 @@ pub(crate) unsafe fn subdivide_mesh_level(
             );
         }
         if !mesh.edge_visibility().data.is_null() {
-            edge_visibility.set_count(result.num_edges());
-            edge_visibility.set_data(sc.result_view().push::<bool>(result.num_edges()));
+            // SAFETY: as for `edges` above: a `num_edges`-element result push
+            // whose null result is checked on the next line, and the two edge
+            // loops below write every slot: their `edge_visibility` writes are
+            // guarded by the same non-null data, so they run exactly when
+            // this push happened.
+            unsafe {
+                edge_visibility.set_count(result.num_edges());
+                edge_visibility.set_data(sc.result_view().push::<bool>(result.num_edges()));
+            }
             ufbxi_check_err!(
                 sc.error_view(),
                 !edge_visibility.data().is_null(),
@@ -2969,8 +3045,16 @@ pub(crate) unsafe fn subdivide_mesh_level(
     let face_hole: &ListView<bool> = result.face_hole_view();
 
     if !mesh.face_material().data.is_null() {
-        face_material.set_count(result.num_faces());
-        face_material.set_data(sc.result_view().push::<u32>(result.num_faces()));
+        // SAFETY: `data` is a `result.num_faces() == mesh.num_indices()`
+        // element result push whose null result is checked on the next line.
+        // The per-face loop below fills `face.num_indices` slots per source
+        // face at a running offset; this fn's contract that source face
+        // ranges tile `num_indices` makes those writes cover every slot
+        // before the list is read.
+        unsafe {
+            face_material.set_count(result.num_faces());
+            face_material.set_data(sc.result_view().push::<u32>(result.num_faces()));
+        }
         ufbxi_check_err!(
             sc.error_view(),
             !face_material.data().is_null(),
@@ -2978,8 +3062,16 @@ pub(crate) unsafe fn subdivide_mesh_level(
         );
     }
     if !mesh.face_smoothing().data.is_null() {
-        face_smoothing.set_count(result.num_faces());
-        face_smoothing.set_data(sc.result_view().push::<bool>(result.num_faces()));
+        // SAFETY: `data` is a `result.num_faces() == mesh.num_indices()`
+        // element result push whose null result is checked on the next line.
+        // The per-face loop below fills `face.num_indices` slots per source
+        // face at a running offset; this fn's contract that source face
+        // ranges tile `num_indices` makes those writes cover every slot
+        // before the list is read.
+        unsafe {
+            face_smoothing.set_count(result.num_faces());
+            face_smoothing.set_data(sc.result_view().push::<bool>(result.num_faces()));
+        }
         ufbxi_check_err!(
             sc.error_view(),
             !face_smoothing.data().is_null(),
@@ -2987,8 +3079,16 @@ pub(crate) unsafe fn subdivide_mesh_level(
         );
     }
     if !mesh.face_group().data.is_null() {
-        face_group.set_count(result.num_faces());
-        face_group.set_data(sc.result_view().push::<u32>(result.num_faces()));
+        // SAFETY: `data` is a `result.num_faces() == mesh.num_indices()`
+        // element result push whose null result is checked on the next line.
+        // The per-face loop below fills `face.num_indices` slots per source
+        // face at a running offset; this fn's contract that source face
+        // ranges tile `num_indices` makes those writes cover every slot
+        // before the list is read.
+        unsafe {
+            face_group.set_count(result.num_faces());
+            face_group.set_data(sc.result_view().push::<u32>(result.num_faces()));
+        }
         ufbxi_check_err!(
             sc.error_view(),
             !face_group.data().is_null(),
@@ -2996,8 +3096,16 @@ pub(crate) unsafe fn subdivide_mesh_level(
         );
     }
     if !mesh.face_hole().data.is_null() {
-        face_hole.set_count(result.num_faces());
-        face_hole.set_data(sc.result_view().push::<bool>(result.num_faces()));
+        // SAFETY: `data` is a `result.num_faces() == mesh.num_indices()`
+        // element result push whose null result is checked on the next line.
+        // The per-face loop below fills `face.num_indices` slots per source
+        // face at a running offset; this fn's contract that source face
+        // ranges tile `num_indices` makes those writes cover every slot
+        // before the list is read.
+        unsafe {
+            face_hole.set_count(result.num_faces());
+            face_hole.set_data(sc.result_view().push::<bool>(result.num_faces()));
+        }
         ufbxi_check_err!(
             sc.error_view(),
             !face_hole.data().is_null(),
@@ -3007,10 +3115,17 @@ pub(crate) unsafe fn subdivide_mesh_level(
 
     if result.material_parts().count > 0 {
         let material_parts: &ListView<MeshPart> = result.material_parts_view();
-        material_parts.set_data(
-            sc.result_view()
-                .push_zero::<MeshPart>(material_parts.count()),
-        );
+        // SAFETY: success path only. `material_parts.count` was copied from
+        // the source mesh and `data` is a zeroed push of exactly that many
+        // `MeshPart`s (all-zero is a valid empty part) in the result arena.
+        // The check that follows is C's, on `result->materials.data`
+        // (ufbx.c:29882); this vouch does not cover a failed push here.
+        unsafe {
+            material_parts.set_data(
+                sc.result_view()
+                    .push_zero::<MeshPart>(material_parts.count()),
+            );
+        }
         // C-parity: upstream checks `result->materials.data` here
         // (ufbx.c:29882), not the freshly pushed `material_parts.data`.
         ufbxi_check_err!(
@@ -3069,7 +3184,8 @@ pub(crate) unsafe fn subdivide_mesh_level(
     }
 
     // Will be filled in by `ufbxi_finalize_mesh()`.
-    result.vertex_first_index_view().set_count(0);
+    // SAFETY: a zero count describes a valid empty list whatever `data` holds.
+    unsafe { result.vertex_first_index_view().set_count(0) };
 
     finalize_mesh_material(sc.result_view(), sc.error_view(), result)?;
     finalize_mesh(sc.result_view(), sc.error_view(), result)?;

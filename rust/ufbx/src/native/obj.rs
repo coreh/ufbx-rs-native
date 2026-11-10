@@ -1658,17 +1658,27 @@ pub(crate) fn obj_pop_meshes(uc: &Context) -> Result<(), Fail> {
 
             // Each list `fbx_mesh` is given here is the run popped for it out
             // of the matching obj-parser arena, checked non-null right after.
-            fbx_mesh.faces_view().set_count(num_faces);
-            fbx_mesh.face_material_view().set_count(num_faces);
+            // SAFETY: the parser pushed one initialized `Face` and one
+            // material index per face of this mesh onto `tmp_faces` /
+            // `tmp_face_material`, and meshes are popped in reverse push
+            // order, so the top `num_faces` items of each belong to this mesh
+            // (`pop_size` asserts at least that many remain). `push_pop`
+            // copies them into `num_faces`-element `uc->result` runs that the
+            // scene owns; a null result is checked on the lines right after
+            // and fails the load before either list is read.
+            unsafe {
+                fbx_mesh.faces_view().set_count(num_faces);
+                fbx_mesh.face_material_view().set_count(num_faces);
 
-            fbx_mesh.faces_view().set_data(
-                uc.result_view()
-                    .push_pop::<Face>(uc.obj().tmp_faces_view(), num_faces),
-            );
-            fbx_mesh.face_material_view().set_data(
-                uc.result_view()
-                    .push_pop::<u32>(uc.obj().tmp_face_material_view(), num_faces),
-            );
+                fbx_mesh.faces_view().set_data(
+                    uc.result_view()
+                        .push_pop::<Face>(uc.obj().tmp_faces_view(), num_faces),
+                );
+                fbx_mesh.face_material_view().set_data(
+                    uc.result_view()
+                        .push_pop::<u32>(uc.obj().tmp_face_material_view(), num_faces),
+                );
+            }
 
             ufbxi_check!(
                 uc,
@@ -1861,10 +1871,17 @@ pub(crate) fn obj_pop_meshes(uc: &Context) -> Result<(), Fail> {
         if mesh.num_groups() > 1 {
             update_face_groups(uc.result_view(), uc.error_view(), fbx_mesh, false)?;
         } else if mesh.num_groups() == 1 {
-            fbx_mesh
-                .face_group_view()
-                .set_data(SENTINEL_INDEX_ZERO.as_ptr());
-            fbx_mesh.face_group_view().set_count(num_faces);
+            // SAFETY: the 1-element sentinel is only a tag: `max_zero_indices`
+            // is raised to cover `num_faces` at the end of this iteration, and
+            // `patch_index_pointer` (scene finalization) replaces the sentinel
+            // with that zero-filled result-buffer run before any element is
+            // read. Nothing between here and that patch reads `face_group`.
+            unsafe {
+                fbx_mesh
+                    .face_group_view()
+                    .set_data(SENTINEL_INDEX_ZERO.as_ptr());
+                fbx_mesh.face_group_view().set_count(num_faces);
+            }
             // NOTE: Consecutive and zero indices are always allocated so we can skip doing it here,
             // see HACK(consecutiv-faces)..
             if fbx_mesh.face_group_parts_view().count() > 0 {
@@ -1878,9 +1895,16 @@ pub(crate) fn obj_pop_meshes(uc: &Context) -> Result<(), Fail> {
                 part.set_num_line_faces(fbx_mesh.num_line_faces());
                 part.set_num_triangles(fbx_mesh.num_triangles());
                 // The sentinel index arrays are static.
-                part.face_indices_view()
-                    .set_data(SENTINEL_INDEX_CONSECUTIVE.as_ptr());
-                part.face_indices_view().set_count(num_faces);
+                // SAFETY: as for `face_group` above, but for the consecutive
+                // sentinel: `max_consecutive_indices` is raised to cover
+                // `num_faces` below, and scene finalization patches
+                // `face_group_parts[0].face_indices` to the `0..n` run before
+                // any element is read.
+                unsafe {
+                    part.face_indices_view()
+                        .set_data(SENTINEL_INDEX_CONSECUTIVE.as_ptr());
+                    part.face_indices_view().set_count(num_faces);
+                }
             }
         }
 
