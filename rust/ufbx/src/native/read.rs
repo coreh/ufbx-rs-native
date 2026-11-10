@@ -191,7 +191,10 @@ pub(crate) fn read_embedded_blob(
             }
             let dst_begin: *mut u8 = uc.result_view().push::<u8>(total_size);
             ufbxi_check!(uc, !dst_begin.is_null(), "dst");
-            content = String::new_c(dst_begin, total_size);
+            // SAFETY: `dst_begin` is the fresh non-null `total_size`-byte
+            // result-buffer push, filled by the copy loop below before
+            // `content` is read.
+            content = unsafe { String::new_c(dst_begin, total_size) };
             let mut dst = dst_begin;
             for part in parts.iter() {
                 let part_data = part.data();
@@ -894,8 +897,10 @@ pub(crate) fn read_definitions(uc: &Context) -> Result<(), Fail> {
             {
                 // C strips the prefix by advancing `data` and shortening
                 // `length` in place; the pair is republished as one descriptor.
+                // SAFETY: `sub_type` holds more than 3 bytes (checked above),
+                // so this is the suffix of its own interned run.
                 let mut stripped: String =
-                    String::new_c(unsafe { sub_type.data().add(3) }, sub_type.length() - 3);
+                    unsafe { String::new_c(sub_type.data().add(3), sub_type.length() - 3) };
 
                 // HACK: LOD groups use LODGroup for Template, LodGroup for Object?
                 // SAFETY: `stripped` spans 8 readable bytes of that same pooled
@@ -1077,7 +1082,7 @@ pub(crate) fn split_type_and_name<M: Mode>(
     } else {
         // Preserve the STORED pointer for empty strings: `bytes().as_ptr()` may
         // be the canonical dangling pointer for a zero-length run.
-        *name = String::new_c(type_and_name.data(), type_and_name.length());
+        *name = type_and_name.value();
         type_.data = EMPTY_CHAR.as_ptr();
         type_.length = 0;
     }
@@ -1367,8 +1372,9 @@ pub(crate) unsafe fn push_synthetic_element_size(
         // stored pointer keeps its original whole-object provenance, as C's
         // `elem->name.data = name` does.
         // SAFETY: `name` is non-null (checked) and NUL-terminated (fn
-        // contract), which is what `strlen` requires.
-        elem_view.set_name(String::new_c(name, unsafe { strlen(name) }));
+        // contract), which is what `strlen` requires; it outlives the
+        // element (fn contract), so the descriptor stays readable.
+        elem_view.set_name(unsafe { String::new_c(name, strlen(name)) });
     }
 
     ufbxi_check_return!(
@@ -1584,7 +1590,7 @@ pub(crate) fn init_synthetic_vec3_prop(
 ) {
     dst.set_type(type_);
     dst.name_view()
-        .set(String::new_c(name.as_ptr(), synthetic_name_length(name)));
+        .set(String::from_static(name, synthetic_name_length(name)));
     // C: `dst->value_vec3 = *value;` writes only x/y/z of the value union.
     // SAFETY: `value_vec4_raw()` addresses `dst`'s own 4-`Real` value union
     // arm; `Vec3` is its 3-real prefix, so the projected write stays inside it.
@@ -8383,12 +8389,11 @@ unsafe fn read_take_prop_channel_rec(
             // that does not `continue`.
             let new_name: String;
             if old_name == sp::T.as_ptr() {
-                new_name =
-                    String::new_c(sp::Lcl_Translation.as_ptr(), sp::Lcl_Translation.len() - 1);
+                new_name = String::from_static(&sp::Lcl_Translation, sp::Lcl_Translation.len() - 1);
             } else if old_name == sp::R.as_ptr() {
-                new_name = String::new_c(sp::Lcl_Rotation.as_ptr(), sp::Lcl_Rotation.len() - 1);
+                new_name = String::from_static(&sp::Lcl_Rotation, sp::Lcl_Rotation.len() - 1);
             } else if old_name == sp::S.as_ptr() {
-                new_name = String::new_c(sp::Lcl_Scaling.as_ptr(), sp::Lcl_Scaling.len() - 1);
+                new_name = String::from_static(&sp::Lcl_Scaling, sp::Lcl_Scaling.len() - 1);
             } else {
                 continue;
             }
@@ -9364,9 +9369,7 @@ pub(crate) fn read_legacy_props(
 
         // SAFETY: `LegacyProp`'s invariant makes `prop_name` NUL-terminated and
         // live for the resulting scene property.
-        let name = String::new_c(legacy_prop.prop_name, unsafe {
-            strlen(legacy_prop.prop_name)
-        });
+        let name = unsafe { String::new_c(legacy_prop.prop_name, strlen(legacy_prop.prop_name)) };
         prop.set_name(name);
         prop.set_internal_key(get_name_key(prop.name_view().bytes()));
         prop.set_flags(PropFlags::from_raw(0));
@@ -10278,10 +10281,16 @@ pub(crate) fn init_file_paths(uc: &Context) -> Result<(), Fail> {
     let raw_filename = uc.opts_view().raw_filename_view();
 
     if filename.length() > 0 {
-        let value = String::new_c(filename.data(), filename.length());
+        // SAFETY: the caller's filename option — `length` readable bytes per
+        // the load-options contract; the place is interned (copied) below
+        // before the load can return.
+        let value = unsafe { String::new_c(filename.data(), filename.length()) };
         uc.scene_view().metadata_view().set_filename(value);
     } else if raw_filename.size() > 0 {
-        let value = String::new_c(raw_filename.data(), raw_filename.size());
+        // SAFETY: the caller's raw filename bytes (`size` readable bytes per
+        // the load-options contract); the descriptor is interned (copied)
+        // below before the load can return.
+        let value = unsafe { String::new_c(raw_filename.data(), raw_filename.size()) };
         uc.scene_view().metadata_view().set_filename(value);
     }
 
@@ -10294,7 +10303,8 @@ pub(crate) fn init_file_paths(uc: &Context) -> Result<(), Fail> {
             .metadata_view()
             .set_raw_filename(raw_filename);
     } else if filename.length() > 0 {
-        let filename = String::new_c(filename.data(), filename.length());
+        // SAFETY: as for the filename above.
+        let filename = unsafe { String::new_c(filename.data(), filename.length()) };
         uc.scene_view()
             .metadata_view()
             .set_raw_filename(Blob::from_string(filename));
@@ -10312,7 +10322,10 @@ pub(crate) fn init_file_paths(uc: &Context) -> Result<(), Fail> {
     )?;
 
     let filename = uc.scene_view().metadata_view().filename_view();
-    let relative_root = String::new_c(filename.data(), trim_delimiters(uc, filename.bytes()));
+    // SAFETY: a prefix of the interned `filename` (`trim_delimiters` returns
+    // at most its length).
+    let relative_root =
+        unsafe { String::new_c(filename.data(), trim_delimiters(uc, filename.bytes())) };
     uc.scene_view()
         .metadata_view()
         .relative_root_view()
@@ -10600,7 +10613,10 @@ pub(crate) fn resolve_relative_filename<M: Mode>(
     // Intern the string and pop the temporary buffer
     // C: `ufbxi_to_size(ptr - result)` — `out_ix` is that same distance, the
     // count of bytes written into the scratch run above.
-    let mut dst: String = String::new_c(result, out_ix);
+    // SAFETY: `result` is the scratch run and `out_ix` the count of bytes
+    // written into it above; `dst` is interned (copied) before the scratch is
+    // popped.
+    let mut dst: String = unsafe { String::new_c(result, out_ix) };
     ufbx_assert!(dst.length <= result_cap);
     // `dst` is a live local naming the bytes written into the scratch run above.
     push_string_place_str(uc.string_pool_view(), StringView::from_mut(&mut dst), raw)?;
@@ -10960,16 +10976,16 @@ mod tests {
         };
         let storage = View::<Strblob, Mut>::from_mut(&mut storage);
 
-        let string = String::new_c(STRING_BYTES.as_ptr(), STRING_BYTES.len());
+        let string = String::from_static(STRING_BYTES, STRING_BYTES.len());
         strblob_set_string(storage, string);
         assert_eq!(strblob_data(storage, false), STRING_BYTES.as_ptr());
         assert_eq!(strblob_length(storage, false), STRING_BYTES.len());
 
-        strblob_set_string(storage, String::new_c(core::ptr::null(), 0));
+        strblob_set_string(storage, String::null());
         assert_eq!(strblob_data(storage, false), EMPTY_CHAR.as_ptr());
         assert_eq!(strblob_length(storage, false), 0);
 
-        let blob_string = String::new_c(BLOB_BYTES.as_ptr(), BLOB_BYTES.len());
+        let blob_string = String::from_static(BLOB_BYTES, BLOB_BYTES.len());
         strblob_set_blob(storage, Blob::from_string(blob_string));
         assert_eq!(strblob_data(storage, true), BLOB_BYTES.as_ptr());
         assert_eq!(strblob_length(storage, true), BLOB_BYTES.len());

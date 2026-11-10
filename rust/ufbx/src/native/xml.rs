@@ -597,7 +597,9 @@ fn xml_publish_token_string(
     // `data` is the checked-non-null stable result-buffer allocation above,
     // readable for `tok_len - 1` bytes. Publish both descriptor leaves through
     // the whole-value setter so no split state is observable.
-    dst.set(String::new_c(data, tok_len - 1));
+    // SAFETY: `data` is the checked-non-null result-buffer allocation above,
+    // readable for `tok_len - 1` bytes and alive as long as the document.
+    dst.set(unsafe { String::new_c(data, tok_len - 1) });
     Ok(())
 }
 

@@ -244,7 +244,7 @@ pub(crate) fn str_cmp(a: &[u8], b: &[u8]) -> i32 {
 #[inline(always)]
 pub(crate) fn str_c(str_: &'static CStr) -> String {
     let bytes = str_.to_bytes();
-    String::new_c(bytes.as_ptr(), bytes.len())
+    String::from_static(bytes, bytes.len())
 }
 
 // Rust-port infrastructure: borrowed Rust callers supply byte slices directly.
@@ -394,7 +394,10 @@ pub(crate) fn remove_prefix_len(str_: &StringView, prefix: &[u8]) -> bool {
             unsafe { str_.data().add(prefix.len()) }
         };
         let length = str_.length() - prefix.len();
-        str_.set(String::new_c(data, length));
+        // SAFETY: a suffix of the string this view already holds (the matched
+        // prefix proves `prefix.len() <= length`), so it inherits that run's
+        // liveness.
+        str_.set(unsafe { String::new_c(data, length) });
         return true;
     }
     false
@@ -411,7 +414,9 @@ pub(crate) fn remove_suffix_len(str_: &StringView, suffix: &[u8]) -> bool {
         // shortened length is non-negative.
         let data = str_.data();
         let length = str_.length() - suffix.len();
-        str_.set(String::new_c(data, length));
+        // SAFETY: a prefix of the string this view already holds (`ends_with`
+        // proves `suffix.len() <= length`).
+        str_.set(unsafe { String::new_c(data, length) });
         return true;
     }
     false
@@ -451,19 +456,24 @@ pub(crate) unsafe extern "C" fn map_cmp_string(
 }
 
 // ufbx.c:5022-5026 `ufbxi_safe_string`
-// Sound as a safe fn: `data` is only stored (via `String::new_c`), never
-// dereferenced here — the caller still carries the obligation to dereference
-// the resulting `String` soundly.
+//
+// # Safety
+// The `String::new_c` contract for `(data, length)`; a zero `length` ignores
+// `data`.
 #[inline(always)]
-pub(crate) fn safe_string(data: *const u8, length: usize) -> String {
-    String::new_c(
-        if length > 0 {
-            data
-        } else {
-            EMPTY_CHAR.as_ptr()
-        },
-        length,
-    )
+pub(crate) unsafe fn safe_string(data: *const u8, length: usize) -> String {
+    // SAFETY: forwarded from this fn's contract; the empty arm is the shared
+    // 'static NUL byte.
+    unsafe {
+        String::new_c(
+            if length > 0 {
+                data
+            } else {
+                EMPTY_CHAR.as_ptr()
+            },
+            length,
+        )
+    }
 }
 
 // ufbx.c:5028-5032 `ufbxi_string_pool_temp_free`
@@ -801,7 +811,10 @@ pub(crate) fn push_sanitized_string(
         }
     }
 
-    let ref_ = String::new_c(total_data, total_length);
+    // SAFETY: `total_data`/`total_length` describe the caller's input run or
+    // the sanitized copy assembled above; `ref_` is only a lookup key for this
+    // call.
+    let ref_ = unsafe { String::new_c(total_data, total_length) };
 
     // SAFETY: the pool map stores `String` items compared by `map_cmp_string`;
     // `ref_` describes the `total_length` bytes assembled in `sanitized` above.
@@ -834,7 +847,10 @@ pub(crate) fn push_sanitized_string(
         // only path between C's two writes returns an error that abandons the
         // whole pool, and C leaves `data` uninitialized on it, so the
         // intermediate state is unobservable.
-        entry.set(String::new_c(dst, total_length));
+        // SAFETY: `dst` is the fresh pool-arena copy of `total_length`
+        // sanitized (valid UTF-8) bytes plus a NUL; pool memory outlives every
+        // string interned in it.
+        entry.set(unsafe { String::new_c(dst, total_length) });
         sanitized.set_raw_data(dst);
     }
 
@@ -921,7 +937,9 @@ pub(crate) unsafe fn push_string_imp(
         }
     }
 
-    let ref_ = String::new_c(str_, length);
+    // SAFETY: `str_` is readable for `length` bytes (fn contract); `ref_` is
+    // only a lookup key for this call.
+    let ref_ = unsafe { String::new_c(str_, length) };
 
     // SAFETY: the pool map stores `String` items compared by `map_cmp_string`;
     // `ref_` describes the `length` readable bytes at `str_` (fn contract).
@@ -953,9 +971,14 @@ pub(crate) unsafe fn push_string_imp(
             ptr::copy_nonoverlapping(str_, dst, length);
             *dst.add(length) = b'\0';
         }
-        entry.set(String::new_c(dst, length));
+        // SAFETY: `dst` is the fresh pool-arena copy of `length` bytes plus a
+        // NUL; pool memory outlives every string interned in it.
+        entry.set(unsafe { String::new_c(dst, length) });
     } else {
-        entry.set(String::new_c(str_, length));
+        // SAFETY: `str_` is readable for `length` bytes and, on this no-copy
+        // path, the caller keeps it alive for the pool's lifetime (fn
+        // contract).
+        entry.set(unsafe { String::new_c(str_, length) });
     }
     entry.data()
 }
@@ -1389,308 +1412,308 @@ pub(crate) struct StringTable(pub [String; 302]);
 unsafe impl Sync for StringTable {}
 
 pub(crate) static STRINGS: StringTable = StringTable([
-    String::new_c(AllSame.as_ptr(), 7),
-    String::new_c(Alphas.as_ptr(), 6),
-    String::new_c(AmbientColor.as_ptr(), 12),
-    String::new_c(AnimationCurve.as_ptr(), 14),
-    String::new_c(AnimationCurveNode.as_ptr(), 18),
-    String::new_c(AnimationLayer.as_ptr(), 14),
-    String::new_c(AnimationStack.as_ptr(), 14),
-    String::new_c(ApertureFormat.as_ptr(), 14),
-    String::new_c(ApertureMode.as_ptr(), 12),
-    String::new_c(AreaLightShape.as_ptr(), 14),
-    String::new_c(AspectH.as_ptr(), 7),
-    String::new_c(AspectHeight.as_ptr(), 12),
-    String::new_c(AspectRatioMode.as_ptr(), 15),
-    String::new_c(AspectW.as_ptr(), 7),
-    String::new_c(AspectWidth.as_ptr(), 11),
-    String::new_c(Audio.as_ptr(), 5),
-    String::new_c(AudioLayer.as_ptr(), 10),
-    String::new_c(BaseLayer.as_ptr(), 9),
-    String::new_c(BinaryData.as_ptr(), 10),
-    String::new_c(BindPose.as_ptr(), 8),
-    String::new_c(BindingTable.as_ptr(), 12),
-    String::new_c(Binormals.as_ptr(), 9),
-    String::new_c(BinormalsIndex.as_ptr(), 14),
-    String::new_c(BinormalsW.as_ptr(), 10),
-    String::new_c(BlendMode.as_ptr(), 9),
-    String::new_c(BlendModes.as_ptr(), 10),
-    String::new_c(BlendShape.as_ptr(), 10),
-    String::new_c(BlendShapeChannel.as_ptr(), 17),
-    String::new_c(BlendWeights.as_ptr(), 12),
-    String::new_c(Boundary.as_ptr(), 8),
-    String::new_c(BoundaryRule.as_ptr(), 12),
-    String::new_c(ByEdge.as_ptr(), 6),
-    String::new_c(ByPolygon.as_ptr(), 9),
-    String::new_c(ByPolygonVertex.as_ptr(), 15),
-    String::new_c(ByVertex.as_ptr(), 8),
-    String::new_c(ByVertice.as_ptr(), 9),
-    String::new_c(Cache.as_ptr(), 5),
-    String::new_c(Camera.as_ptr(), 6),
-    String::new_c(CameraProjectionType.as_ptr(), 20),
-    String::new_c(CameraStereo.as_ptr(), 12),
-    String::new_c(CameraSwitcher.as_ptr(), 14),
-    String::new_c(CastLight.as_ptr(), 9),
-    String::new_c(CastShadows.as_ptr(), 11),
-    String::new_c(Channel.as_ptr(), 7),
-    String::new_c(Character.as_ptr(), Character.len() - 1), // sizeof(ufbxi_Character) - 1
-    String::new_c(Children.as_ptr(), 8),
-    String::new_c(Cluster.as_ptr(), 7),
-    String::new_c(Collection.as_ptr(), 10),
-    String::new_c(CollectionExclusive.as_ptr(), 19),
-    String::new_c(Color.as_ptr(), 5),
-    String::new_c(ColorIndex.as_ptr(), 10),
-    String::new_c(Colors.as_ptr(), 6),
-    String::new_c(Cone_angle.as_ptr(), 10),
-    String::new_c(ConeAngle.as_ptr(), 9),
-    String::new_c(Connections.as_ptr(), 11),
-    String::new_c(Constraint.as_ptr(), Constraint.len() - 1), // sizeof(ufbxi_Constraint) - 1
-    String::new_c(Content.as_ptr(), 7),
-    String::new_c(CoordAxis.as_ptr(), 9),
-    String::new_c(CoordAxisSign.as_ptr(), 13),
-    String::new_c(Count.as_ptr(), 5),
-    String::new_c(Creator.as_ptr(), 7),
-    String::new_c(CurrentTextureBlendMode.as_ptr(), 23),
-    String::new_c(CurrentTimeMarker.as_ptr(), 17),
-    String::new_c(CustomFrameRate.as_ptr(), 15),
-    String::new_c(DecayType.as_ptr(), 9),
-    String::new_c(Default.as_ptr(), 7),
-    String::new_c(DefaultCamera.as_ptr(), 13),
-    String::new_c(Definitions.as_ptr(), 11),
-    String::new_c(DeformPercent.as_ptr(), 13),
-    String::new_c(Deformer.as_ptr(), 8),
-    String::new_c(DiffuseColor.as_ptr(), 12),
-    String::new_c(Dimension.as_ptr(), 9),
-    String::new_c(Dimensions.as_ptr(), 10),
-    String::new_c(DisplayLayer.as_ptr(), 12),
-    String::new_c(Document.as_ptr(), 8),
-    String::new_c(Documents.as_ptr(), 9),
-    String::new_c(EdgeCrease.as_ptr(), 10),
-    String::new_c(EdgeIndexArray.as_ptr(), 14),
-    String::new_c(Edges.as_ptr(), 5),
-    String::new_c(EmissiveColor.as_ptr(), 13),
-    String::new_c(Entry.as_ptr(), 5),
-    String::new_c(FBXHeaderExtension.as_ptr(), 18),
-    String::new_c(FBXHeaderVersion.as_ptr(), 16),
-    String::new_c(FBXVersion.as_ptr(), 10),
-    String::new_c(FKEffector.as_ptr(), 10),
-    String::new_c(FarPlane.as_ptr(), 8),
-    String::new_c(FbxPropertyEntry.as_ptr(), 16),
-    String::new_c(FbxSemanticEntry.as_ptr(), 16),
-    String::new_c(FieldOfView.as_ptr(), 11),
-    String::new_c(FieldOfViewX.as_ptr(), 12),
-    String::new_c(FieldOfViewY.as_ptr(), 12),
-    String::new_c(FileName.as_ptr(), 8),
-    String::new_c(Filename.as_ptr(), 8),
-    String::new_c(FilmHeight.as_ptr(), 10),
-    String::new_c(FilmSqueezeRatio.as_ptr(), 16),
-    String::new_c(FilmWidth.as_ptr(), 9),
-    String::new_c(FlipNormals.as_ptr(), 11),
-    String::new_c(FocalLength.as_ptr(), 11),
-    String::new_c(Form.as_ptr(), 4),
-    String::new_c(Freeze.as_ptr(), 6),
-    String::new_c(FrontAxis.as_ptr(), 9),
-    String::new_c(FrontAxisSign.as_ptr(), 13),
-    String::new_c(FullWeights.as_ptr(), 11),
-    String::new_c(GateFit.as_ptr(), 7),
-    String::new_c(GeometricRotation.as_ptr(), 17),
-    String::new_c(GeometricScaling.as_ptr(), 16),
-    String::new_c(GeometricTranslation.as_ptr(), 20),
-    String::new_c(Geometry.as_ptr(), 8),
-    String::new_c(GeometryUVInfo.as_ptr(), 14),
-    String::new_c(GlobalSettings.as_ptr(), 14),
-    String::new_c(Hole.as_ptr(), 4),
-    String::new_c(HotSpot.as_ptr(), 7),
-    String::new_c(IKEffector.as_ptr(), 10),
-    String::new_c(ImageData.as_ptr(), 9),
-    String::new_c(Implementation.as_ptr(), 14),
-    String::new_c(Indexes.as_ptr(), 7),
-    String::new_c(InheritType.as_ptr(), 11),
-    String::new_c(InnerAngle.as_ptr(), 10),
-    String::new_c(Intensity.as_ptr(), 9),
-    String::new_c(IsTheNodeInSet.as_ptr(), 14),
-    String::new_c(Key.as_ptr(), 3),
-    String::new_c(KeyAttrDataFloat.as_ptr(), 16),
-    String::new_c(KeyAttrFlags.as_ptr(), 12),
-    String::new_c(KeyAttrRefCount.as_ptr(), 15),
-    String::new_c(KeyCount.as_ptr(), 8),
-    String::new_c(KeyTime.as_ptr(), 7),
-    String::new_c(KeyValueFloat.as_ptr(), 13),
-    String::new_c(KeyVer.as_ptr(), 6),
-    String::new_c(KnotVector.as_ptr(), 10),
-    String::new_c(KnotVectorU.as_ptr(), 11),
-    String::new_c(KnotVectorV.as_ptr(), 11),
-    String::new_c(Layer.as_ptr(), 5),
-    String::new_c(LayerElement.as_ptr(), 12),
-    String::new_c(LayerElementBinormal.as_ptr(), 20),
-    String::new_c(LayerElementColor.as_ptr(), 17),
-    String::new_c(LayerElementEdgeCrease.as_ptr(), 22),
-    String::new_c(LayerElementHole.as_ptr(), 16),
-    String::new_c(LayerElementMaterial.as_ptr(), 20),
-    String::new_c(LayerElementNormal.as_ptr(), 18),
-    String::new_c(LayerElementPolygonGroup.as_ptr(), 24),
-    String::new_c(LayerElementSmoothing.as_ptr(), 21),
-    String::new_c(LayerElementTangent.as_ptr(), 19),
-    String::new_c(LayerElementUV.as_ptr(), 14),
-    String::new_c(LayerElementVertexCrease.as_ptr(), 24),
-    String::new_c(LayerElementVisibility.as_ptr(), 22),
-    String::new_c(LayeredTexture.as_ptr(), 14),
-    String::new_c(Lcl_Rotation.as_ptr(), 12),
-    String::new_c(Lcl_Scaling.as_ptr(), 11),
-    String::new_c(Lcl_Translation.as_ptr(), 15),
-    String::new_c(LeftCamera.as_ptr(), 10),
-    String::new_c(Light.as_ptr(), 5),
-    String::new_c(LightType.as_ptr(), 9),
-    String::new_c(Limb.as_ptr(), 4),
-    String::new_c(LimbLength.as_ptr(), 10),
-    String::new_c(LimbNode.as_ptr(), 8),
-    String::new_c(Line.as_ptr(), 4),
-    String::new_c(Link.as_ptr(), 4),
-    String::new_c(LocalStart.as_ptr(), 10),
-    String::new_c(LocalStop.as_ptr(), 9),
-    String::new_c(LocalTime.as_ptr(), 9),
-    String::new_c(LodGroup.as_ptr(), 8),
-    String::new_c(MappingInformationType.as_ptr(), 22),
-    String::new_c(Marker.as_ptr(), 6),
-    String::new_c(Material.as_ptr(), 8),
-    String::new_c(MaterialAssignation.as_ptr(), 19),
-    String::new_c(Materials.as_ptr(), 9),
-    String::new_c(Matrix.as_ptr(), 6),
-    String::new_c(Media.as_ptr(), 5),
-    String::new_c(Mesh.as_ptr(), 4),
-    String::new_c(Model.as_ptr(), 5),
-    String::new_c(Name.as_ptr(), 4),
-    String::new_c(NearPlane.as_ptr(), 9),
-    String::new_c(Node.as_ptr(), 4),
-    String::new_c(NodeAttribute.as_ptr(), 13),
-    String::new_c(NodeAttributeName.as_ptr(), 17),
-    String::new_c(Normals.as_ptr(), 7),
-    String::new_c(NormalsIndex.as_ptr(), 12),
-    String::new_c(NormalsW.as_ptr(), 8),
-    String::new_c(Null.as_ptr(), 4),
-    String::new_c(Nurbs.as_ptr(), 5),
-    String::new_c(NurbsCurve.as_ptr(), 10),
-    String::new_c(NurbsSurface.as_ptr(), 12),
-    String::new_c(NurbsSurfaceOrder.as_ptr(), 17),
-    String::new_c(OO.as_ptr(), 2),
-    String::new_c(OP.as_ptr(), 2),
-    String::new_c(ObjectMetaData.as_ptr(), 14),
-    String::new_c(ObjectType.as_ptr(), 10),
-    String::new_c(Objects.as_ptr(), 7),
-    String::new_c(Order.as_ptr(), 5),
-    String::new_c(OriginalUnitScaleFactor.as_ptr(), 23),
-    String::new_c(OriginalUpAxis.as_ptr(), 14),
-    String::new_c(OriginalUpAxisSign.as_ptr(), 18),
-    String::new_c(OrthoZoom.as_ptr(), 9),
-    String::new_c(OtherFlags.as_ptr(), 10),
-    String::new_c(OuterAngle.as_ptr(), 10),
-    String::new_c(PO.as_ptr(), 2),
-    String::new_c(PP.as_ptr(), 2),
-    String::new_c(Points.as_ptr(), 6),
-    String::new_c(PointsIndex.as_ptr(), 11),
-    String::new_c(PolygonGroup.as_ptr(), 12),
-    String::new_c(PolygonIndexArray.as_ptr(), 17),
-    String::new_c(PolygonVertexIndex.as_ptr(), 18),
-    String::new_c(Pose.as_ptr(), 4),
-    String::new_c(PoseNode.as_ptr(), 8),
-    String::new_c(Post_Extrapolation.as_ptr(), 18),
-    String::new_c(PostRotation.as_ptr(), 12),
-    String::new_c(Pre_Extrapolation.as_ptr(), 17),
-    String::new_c(PreRotation.as_ptr(), 11),
-    String::new_c(PreviewDivisionLevels.as_ptr(), 21),
-    String::new_c(Properties60.as_ptr(), 12),
-    String::new_c(Properties70.as_ptr(), 12),
-    String::new_c(PropertyTemplate.as_ptr(), 16),
-    String::new_c(R.as_ptr(), 1),
-    String::new_c(ReferenceStart.as_ptr(), 14),
-    String::new_c(ReferenceStop.as_ptr(), 13),
-    String::new_c(ReferenceTime.as_ptr(), 13),
-    String::new_c(RelativeFileName.as_ptr(), 16),
-    String::new_c(RelativeFilename.as_ptr(), 16),
-    String::new_c(RenderDivisionLevels.as_ptr(), 20),
-    String::new_c(Repetition.as_ptr(), 10),
-    String::new_c(RightCamera.as_ptr(), 11),
-    String::new_c(Root.as_ptr(), 4),
-    String::new_c(RootNode.as_ptr(), 8),
-    String::new_c(Rotation.as_ptr(), 8),
-    String::new_c(RotationAccumulationMode.as_ptr(), 24),
-    String::new_c(RotationActive.as_ptr(), 14),
-    String::new_c(RotationOffset.as_ptr(), 14),
-    String::new_c(RotationOrder.as_ptr(), 13),
-    String::new_c(RotationPivot.as_ptr(), 13),
-    String::new_c(RotationSpaceForLimitOnly.as_ptr(), 25),
-    String::new_c(S.as_ptr(), 1),
-    String::new_c(ScaleAccumulationMode.as_ptr(), 21),
-    String::new_c(Scaling.as_ptr(), 7),
-    String::new_c(ScalingOffset.as_ptr(), 13),
-    String::new_c(ScalingPivot.as_ptr(), 12),
-    String::new_c(SceneInfo.as_ptr(), 9),
-    String::new_c(SelectionNode.as_ptr(), 13),
-    String::new_c(SelectionSet.as_ptr(), 12),
-    String::new_c(ShadingModel.as_ptr(), 12),
-    String::new_c(Shape.as_ptr(), 5),
-    String::new_c(Shininess.as_ptr(), 9),
-    String::new_c(Show.as_ptr(), 4),
-    String::new_c(Size.as_ptr(), 4),
-    String::new_c(Skin.as_ptr(), 4),
-    String::new_c(SkinningType.as_ptr(), 12),
-    String::new_c(Smoothing.as_ptr(), 9),
-    String::new_c(Smoothness.as_ptr(), 10),
-    String::new_c(SnapOnFrameMode.as_ptr(), 15),
-    String::new_c(SpecularColor.as_ptr(), 13),
-    String::new_c(Step.as_ptr(), 4),
-    String::new_c(SubDeformer.as_ptr(), 11),
-    String::new_c(T.as_ptr(), 1),
-    String::new_c(TCDefinition.as_ptr(), 12),
-    String::new_c(Take.as_ptr(), 4),
-    String::new_c(Takes.as_ptr(), 5),
-    String::new_c(Tangents.as_ptr(), 8),
-    String::new_c(TangentsIndex.as_ptr(), 13),
-    String::new_c(TangentsW.as_ptr(), 9),
-    String::new_c(Texture.as_ptr(), 7),
-    String::new_c(Texture_alpha.as_ptr(), 13),
-    String::new_c(TextureId.as_ptr(), 9),
-    String::new_c(TextureRotationPivot.as_ptr(), 20),
-    String::new_c(TextureScalingPivot.as_ptr(), 19),
-    String::new_c(TextureUV.as_ptr(), 9),
-    String::new_c(TextureUVVerticeIndex.as_ptr(), 21),
-    String::new_c(Thumbnail.as_ptr(), 9),
-    String::new_c(TimeMarker.as_ptr(), 10),
-    String::new_c(TimeMode.as_ptr(), 8),
-    String::new_c(TimeProtocol.as_ptr(), 12),
-    String::new_c(TimeSpanStart.as_ptr(), 13),
-    String::new_c(TimeSpanStop.as_ptr(), 12),
-    String::new_c(Transform.as_ptr(), 9),
-    String::new_c(TransformLink.as_ptr(), 13),
-    String::new_c(Translation.as_ptr(), 11),
-    String::new_c(TrimNurbsSurface.as_ptr(), 16),
-    String::new_c(Type.as_ptr(), 4),
-    String::new_c(TypedIndex.as_ptr(), 10),
-    String::new_c(UV.as_ptr(), 2),
-    String::new_c(UVIndex.as_ptr(), 7),
-    String::new_c(UVSet.as_ptr(), 5),
-    String::new_c(UVSwap.as_ptr(), 6),
-    String::new_c(UnitScaleFactor.as_ptr(), 15),
-    String::new_c(UpAxis.as_ptr(), 6),
-    String::new_c(UpAxisSign.as_ptr(), 10),
-    String::new_c(Version5.as_ptr(), 8),
-    String::new_c(VertexCacheDeformer.as_ptr(), 19),
-    String::new_c(VertexCrease.as_ptr(), 12),
-    String::new_c(VertexCreaseIndex.as_ptr(), 17),
-    String::new_c(VertexIndexArray.as_ptr(), 16),
-    String::new_c(Vertices.as_ptr(), 8),
-    String::new_c(Video.as_ptr(), 5),
-    String::new_c(Visibility.as_ptr(), 10),
-    String::new_c(Weight.as_ptr(), 6),
-    String::new_c(Weights.as_ptr(), 7),
-    String::new_c(WrapModeU.as_ptr(), 9),
-    String::new_c(WrapModeV.as_ptr(), 9),
-    String::new_c(X.as_ptr(), 1),
-    String::new_c(Y.as_ptr(), 1),
-    String::new_c(Z.as_ptr(), 1),
-    String::new_c(d_X.as_ptr(), 3),
-    String::new_c(d_Y.as_ptr(), 3),
-    String::new_c(d_Z.as_ptr(), 3),
+    String::from_static(&AllSame, 7),
+    String::from_static(&Alphas, 6),
+    String::from_static(&AmbientColor, 12),
+    String::from_static(&AnimationCurve, 14),
+    String::from_static(&AnimationCurveNode, 18),
+    String::from_static(&AnimationLayer, 14),
+    String::from_static(&AnimationStack, 14),
+    String::from_static(&ApertureFormat, 14),
+    String::from_static(&ApertureMode, 12),
+    String::from_static(&AreaLightShape, 14),
+    String::from_static(&AspectH, 7),
+    String::from_static(&AspectHeight, 12),
+    String::from_static(&AspectRatioMode, 15),
+    String::from_static(&AspectW, 7),
+    String::from_static(&AspectWidth, 11),
+    String::from_static(&Audio, 5),
+    String::from_static(&AudioLayer, 10),
+    String::from_static(&BaseLayer, 9),
+    String::from_static(&BinaryData, 10),
+    String::from_static(&BindPose, 8),
+    String::from_static(&BindingTable, 12),
+    String::from_static(&Binormals, 9),
+    String::from_static(&BinormalsIndex, 14),
+    String::from_static(&BinormalsW, 10),
+    String::from_static(&BlendMode, 9),
+    String::from_static(&BlendModes, 10),
+    String::from_static(&BlendShape, 10),
+    String::from_static(&BlendShapeChannel, 17),
+    String::from_static(&BlendWeights, 12),
+    String::from_static(&Boundary, 8),
+    String::from_static(&BoundaryRule, 12),
+    String::from_static(&ByEdge, 6),
+    String::from_static(&ByPolygon, 9),
+    String::from_static(&ByPolygonVertex, 15),
+    String::from_static(&ByVertex, 8),
+    String::from_static(&ByVertice, 9),
+    String::from_static(&Cache, 5),
+    String::from_static(&Camera, 6),
+    String::from_static(&CameraProjectionType, 20),
+    String::from_static(&CameraStereo, 12),
+    String::from_static(&CameraSwitcher, 14),
+    String::from_static(&CastLight, 9),
+    String::from_static(&CastShadows, 11),
+    String::from_static(&Channel, 7),
+    String::from_static(&Character, Character.len() - 1), // sizeof(ufbxi_Character) - 1
+    String::from_static(&Children, 8),
+    String::from_static(&Cluster, 7),
+    String::from_static(&Collection, 10),
+    String::from_static(&CollectionExclusive, 19),
+    String::from_static(&Color, 5),
+    String::from_static(&ColorIndex, 10),
+    String::from_static(&Colors, 6),
+    String::from_static(&Cone_angle, 10),
+    String::from_static(&ConeAngle, 9),
+    String::from_static(&Connections, 11),
+    String::from_static(&Constraint, Constraint.len() - 1), // sizeof(ufbxi_Constraint) - 1
+    String::from_static(&Content, 7),
+    String::from_static(&CoordAxis, 9),
+    String::from_static(&CoordAxisSign, 13),
+    String::from_static(&Count, 5),
+    String::from_static(&Creator, 7),
+    String::from_static(&CurrentTextureBlendMode, 23),
+    String::from_static(&CurrentTimeMarker, 17),
+    String::from_static(&CustomFrameRate, 15),
+    String::from_static(&DecayType, 9),
+    String::from_static(&Default, 7),
+    String::from_static(&DefaultCamera, 13),
+    String::from_static(&Definitions, 11),
+    String::from_static(&DeformPercent, 13),
+    String::from_static(&Deformer, 8),
+    String::from_static(&DiffuseColor, 12),
+    String::from_static(&Dimension, 9),
+    String::from_static(&Dimensions, 10),
+    String::from_static(&DisplayLayer, 12),
+    String::from_static(&Document, 8),
+    String::from_static(&Documents, 9),
+    String::from_static(&EdgeCrease, 10),
+    String::from_static(&EdgeIndexArray, 14),
+    String::from_static(&Edges, 5),
+    String::from_static(&EmissiveColor, 13),
+    String::from_static(&Entry, 5),
+    String::from_static(&FBXHeaderExtension, 18),
+    String::from_static(&FBXHeaderVersion, 16),
+    String::from_static(&FBXVersion, 10),
+    String::from_static(&FKEffector, 10),
+    String::from_static(&FarPlane, 8),
+    String::from_static(&FbxPropertyEntry, 16),
+    String::from_static(&FbxSemanticEntry, 16),
+    String::from_static(&FieldOfView, 11),
+    String::from_static(&FieldOfViewX, 12),
+    String::from_static(&FieldOfViewY, 12),
+    String::from_static(&FileName, 8),
+    String::from_static(&Filename, 8),
+    String::from_static(&FilmHeight, 10),
+    String::from_static(&FilmSqueezeRatio, 16),
+    String::from_static(&FilmWidth, 9),
+    String::from_static(&FlipNormals, 11),
+    String::from_static(&FocalLength, 11),
+    String::from_static(&Form, 4),
+    String::from_static(&Freeze, 6),
+    String::from_static(&FrontAxis, 9),
+    String::from_static(&FrontAxisSign, 13),
+    String::from_static(&FullWeights, 11),
+    String::from_static(&GateFit, 7),
+    String::from_static(&GeometricRotation, 17),
+    String::from_static(&GeometricScaling, 16),
+    String::from_static(&GeometricTranslation, 20),
+    String::from_static(&Geometry, 8),
+    String::from_static(&GeometryUVInfo, 14),
+    String::from_static(&GlobalSettings, 14),
+    String::from_static(&Hole, 4),
+    String::from_static(&HotSpot, 7),
+    String::from_static(&IKEffector, 10),
+    String::from_static(&ImageData, 9),
+    String::from_static(&Implementation, 14),
+    String::from_static(&Indexes, 7),
+    String::from_static(&InheritType, 11),
+    String::from_static(&InnerAngle, 10),
+    String::from_static(&Intensity, 9),
+    String::from_static(&IsTheNodeInSet, 14),
+    String::from_static(&Key, 3),
+    String::from_static(&KeyAttrDataFloat, 16),
+    String::from_static(&KeyAttrFlags, 12),
+    String::from_static(&KeyAttrRefCount, 15),
+    String::from_static(&KeyCount, 8),
+    String::from_static(&KeyTime, 7),
+    String::from_static(&KeyValueFloat, 13),
+    String::from_static(&KeyVer, 6),
+    String::from_static(&KnotVector, 10),
+    String::from_static(&KnotVectorU, 11),
+    String::from_static(&KnotVectorV, 11),
+    String::from_static(&Layer, 5),
+    String::from_static(&LayerElement, 12),
+    String::from_static(&LayerElementBinormal, 20),
+    String::from_static(&LayerElementColor, 17),
+    String::from_static(&LayerElementEdgeCrease, 22),
+    String::from_static(&LayerElementHole, 16),
+    String::from_static(&LayerElementMaterial, 20),
+    String::from_static(&LayerElementNormal, 18),
+    String::from_static(&LayerElementPolygonGroup, 24),
+    String::from_static(&LayerElementSmoothing, 21),
+    String::from_static(&LayerElementTangent, 19),
+    String::from_static(&LayerElementUV, 14),
+    String::from_static(&LayerElementVertexCrease, 24),
+    String::from_static(&LayerElementVisibility, 22),
+    String::from_static(&LayeredTexture, 14),
+    String::from_static(&Lcl_Rotation, 12),
+    String::from_static(&Lcl_Scaling, 11),
+    String::from_static(&Lcl_Translation, 15),
+    String::from_static(&LeftCamera, 10),
+    String::from_static(&Light, 5),
+    String::from_static(&LightType, 9),
+    String::from_static(&Limb, 4),
+    String::from_static(&LimbLength, 10),
+    String::from_static(&LimbNode, 8),
+    String::from_static(&Line, 4),
+    String::from_static(&Link, 4),
+    String::from_static(&LocalStart, 10),
+    String::from_static(&LocalStop, 9),
+    String::from_static(&LocalTime, 9),
+    String::from_static(&LodGroup, 8),
+    String::from_static(&MappingInformationType, 22),
+    String::from_static(&Marker, 6),
+    String::from_static(&Material, 8),
+    String::from_static(&MaterialAssignation, 19),
+    String::from_static(&Materials, 9),
+    String::from_static(&Matrix, 6),
+    String::from_static(&Media, 5),
+    String::from_static(&Mesh, 4),
+    String::from_static(&Model, 5),
+    String::from_static(&Name, 4),
+    String::from_static(&NearPlane, 9),
+    String::from_static(&Node, 4),
+    String::from_static(&NodeAttribute, 13),
+    String::from_static(&NodeAttributeName, 17),
+    String::from_static(&Normals, 7),
+    String::from_static(&NormalsIndex, 12),
+    String::from_static(&NormalsW, 8),
+    String::from_static(&Null, 4),
+    String::from_static(&Nurbs, 5),
+    String::from_static(&NurbsCurve, 10),
+    String::from_static(&NurbsSurface, 12),
+    String::from_static(&NurbsSurfaceOrder, 17),
+    String::from_static(&OO, 2),
+    String::from_static(&OP, 2),
+    String::from_static(&ObjectMetaData, 14),
+    String::from_static(&ObjectType, 10),
+    String::from_static(&Objects, 7),
+    String::from_static(&Order, 5),
+    String::from_static(&OriginalUnitScaleFactor, 23),
+    String::from_static(&OriginalUpAxis, 14),
+    String::from_static(&OriginalUpAxisSign, 18),
+    String::from_static(&OrthoZoom, 9),
+    String::from_static(&OtherFlags, 10),
+    String::from_static(&OuterAngle, 10),
+    String::from_static(&PO, 2),
+    String::from_static(&PP, 2),
+    String::from_static(&Points, 6),
+    String::from_static(&PointsIndex, 11),
+    String::from_static(&PolygonGroup, 12),
+    String::from_static(&PolygonIndexArray, 17),
+    String::from_static(&PolygonVertexIndex, 18),
+    String::from_static(&Pose, 4),
+    String::from_static(&PoseNode, 8),
+    String::from_static(&Post_Extrapolation, 18),
+    String::from_static(&PostRotation, 12),
+    String::from_static(&Pre_Extrapolation, 17),
+    String::from_static(&PreRotation, 11),
+    String::from_static(&PreviewDivisionLevels, 21),
+    String::from_static(&Properties60, 12),
+    String::from_static(&Properties70, 12),
+    String::from_static(&PropertyTemplate, 16),
+    String::from_static(&R, 1),
+    String::from_static(&ReferenceStart, 14),
+    String::from_static(&ReferenceStop, 13),
+    String::from_static(&ReferenceTime, 13),
+    String::from_static(&RelativeFileName, 16),
+    String::from_static(&RelativeFilename, 16),
+    String::from_static(&RenderDivisionLevels, 20),
+    String::from_static(&Repetition, 10),
+    String::from_static(&RightCamera, 11),
+    String::from_static(&Root, 4),
+    String::from_static(&RootNode, 8),
+    String::from_static(&Rotation, 8),
+    String::from_static(&RotationAccumulationMode, 24),
+    String::from_static(&RotationActive, 14),
+    String::from_static(&RotationOffset, 14),
+    String::from_static(&RotationOrder, 13),
+    String::from_static(&RotationPivot, 13),
+    String::from_static(&RotationSpaceForLimitOnly, 25),
+    String::from_static(&S, 1),
+    String::from_static(&ScaleAccumulationMode, 21),
+    String::from_static(&Scaling, 7),
+    String::from_static(&ScalingOffset, 13),
+    String::from_static(&ScalingPivot, 12),
+    String::from_static(&SceneInfo, 9),
+    String::from_static(&SelectionNode, 13),
+    String::from_static(&SelectionSet, 12),
+    String::from_static(&ShadingModel, 12),
+    String::from_static(&Shape, 5),
+    String::from_static(&Shininess, 9),
+    String::from_static(&Show, 4),
+    String::from_static(&Size, 4),
+    String::from_static(&Skin, 4),
+    String::from_static(&SkinningType, 12),
+    String::from_static(&Smoothing, 9),
+    String::from_static(&Smoothness, 10),
+    String::from_static(&SnapOnFrameMode, 15),
+    String::from_static(&SpecularColor, 13),
+    String::from_static(&Step, 4),
+    String::from_static(&SubDeformer, 11),
+    String::from_static(&T, 1),
+    String::from_static(&TCDefinition, 12),
+    String::from_static(&Take, 4),
+    String::from_static(&Takes, 5),
+    String::from_static(&Tangents, 8),
+    String::from_static(&TangentsIndex, 13),
+    String::from_static(&TangentsW, 9),
+    String::from_static(&Texture, 7),
+    String::from_static(&Texture_alpha, 13),
+    String::from_static(&TextureId, 9),
+    String::from_static(&TextureRotationPivot, 20),
+    String::from_static(&TextureScalingPivot, 19),
+    String::from_static(&TextureUV, 9),
+    String::from_static(&TextureUVVerticeIndex, 21),
+    String::from_static(&Thumbnail, 9),
+    String::from_static(&TimeMarker, 10),
+    String::from_static(&TimeMode, 8),
+    String::from_static(&TimeProtocol, 12),
+    String::from_static(&TimeSpanStart, 13),
+    String::from_static(&TimeSpanStop, 12),
+    String::from_static(&Transform, 9),
+    String::from_static(&TransformLink, 13),
+    String::from_static(&Translation, 11),
+    String::from_static(&TrimNurbsSurface, 16),
+    String::from_static(&Type, 4),
+    String::from_static(&TypedIndex, 10),
+    String::from_static(&UV, 2),
+    String::from_static(&UVIndex, 7),
+    String::from_static(&UVSet, 5),
+    String::from_static(&UVSwap, 6),
+    String::from_static(&UnitScaleFactor, 15),
+    String::from_static(&UpAxis, 6),
+    String::from_static(&UpAxisSign, 10),
+    String::from_static(&Version5, 8),
+    String::from_static(&VertexCacheDeformer, 19),
+    String::from_static(&VertexCrease, 12),
+    String::from_static(&VertexCreaseIndex, 17),
+    String::from_static(&VertexIndexArray, 16),
+    String::from_static(&Vertices, 8),
+    String::from_static(&Video, 5),
+    String::from_static(&Visibility, 10),
+    String::from_static(&Weight, 6),
+    String::from_static(&Weights, 7),
+    String::from_static(&WrapModeU, 9),
+    String::from_static(&WrapModeV, 9),
+    String::from_static(&X, 1),
+    String::from_static(&Y, 1),
+    String::from_static(&Z, 1),
+    String::from_static(&d_X, 3),
+    String::from_static(&d_Y, 3),
+    String::from_static(&d_Z, 3),
 ]);
 
 // ufbx.c:5902 `ufbxi_one_vec3`
@@ -1937,7 +1960,9 @@ mod tests {
     }
 
     fn s(b: &'static [u8]) -> String {
-        String::new_c(b.as_ptr(), b.len())
+        // SAFETY: a 'static byte run and its own length. Not `from_static`:
+        // these fixtures feed deliberately non-UTF-8 input to the sanitizer.
+        unsafe { String::new_c(b.as_ptr(), b.len()) }
     }
 
     unsafe fn bytes<'a>(ptr_: *const u8, len: usize) -> &'a [u8] {
@@ -2170,7 +2195,7 @@ mod tests {
             assert_ne!(str_.data, source_data);
             let interned = str_.data;
             // NULL data with zero length is allowed.
-            let mut str2 = String::new_c(core::ptr::null(), 0);
+            let mut str2 = String::null();
             assert_eq!(
                 push_string_place_str(
                     StringPoolView::from_mut(&mut fx.pool),
@@ -2316,7 +2341,9 @@ mod tests {
         assert_eq!(get_concat_key(ConcatParts::borrowed(&short)), 0x61000000);
 
         // The C ABI carrier preserves the SIZE_MAX C-string sentinel.
-        let raw = [String::new_c(b"abcd\0".as_ptr(), usize::MAX)];
+        // SAFETY: the `SIZE_MAX` sentinel form is only handed to
+        // `from_strings`, which measures the NUL-terminated literal itself.
+        let raw = [unsafe { String::new_c(b"abcd\0".as_ptr(), usize::MAX) }];
         let raw_parts = unsafe { ConcatParts::from_strings(&raw) };
         assert_eq!(get_concat_key(raw_parts), 0x61626364);
         assert_eq!(concat_str_cmp(b"abcd", raw_parts), 0);
@@ -2347,7 +2374,7 @@ mod tests {
         unsafe {
             // Mirror of C `ufbxi_check_string_ordering` (ufbx.c:11414-11424):
             // the table must be strictly sorted by `ufbxi_str_less`.
-            let mut prev = String::new_c(EMPTY_CHAR.as_ptr(), 0);
+            let mut prev = String::from_static(&EMPTY_CHAR, 0);
             for str_ in STRINGS.0.iter() {
                 assert!(
                     str_less(prev.as_bytes(), (*str_).as_bytes())

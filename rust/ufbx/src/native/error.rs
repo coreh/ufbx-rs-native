@@ -427,7 +427,10 @@ pub(crate) fn fail_imp_err(
             // that same NUL-terminated run.
             let description_data = unsafe { cond.add(1) };
             let description_length = unsafe { strlen(description_data) };
-            description.set(String::new_c(description_data, description_length));
+            // SAFETY: `description_data` is the `FailStr` run past its `'$'`:
+            // `description_length` bytes of a NUL-terminated 'static ASCII
+            // literal.
+            description.set(unsafe { String::new_c(description_data, description_length) });
         }
 
         #[cfg(feature = "error-stack")]
@@ -458,10 +461,13 @@ pub(crate) fn fail_imp_err(
             // invariant is a NUL-terminated 'static run.
             let description_data = cond;
             let description_length = unsafe { strlen(description_data) };
-            description.set(String::new_c(description_data, description_length));
+            // SAFETY: `cond` is a `FailStr` — a NUL-terminated 'static ASCII
+            // literal of `description_length` bytes.
+            description.set(unsafe { String::new_c(description_data, description_length) });
             let function_data = func;
             let function_length = unsafe { strlen(function_data) };
-            function.set(String::new_c(function_data, function_length));
+            // SAFETY: `func` is a `FailStr`, as for the description above.
+            function.set(unsafe { String::new_c(function_data, function_length) });
             frame.set_source_line(line);
         }
     }
@@ -645,9 +651,7 @@ pub(crate) fn clear_error(err: Option<&ErrorView>) {
 
     err.set_type_(ErrorType::None);
     let description = err.description_view();
-    let description_data = EMPTY_CHAR.as_ptr();
-    let description_length = 0;
-    description.set(String::new_c(description_data, description_length));
+    description.set(String::empty());
     err.set_stack_size(0);
     // SAFETY: writing the first byte of the error's own info buffer, which is
     // ERROR_INFO_LENGTH (>= 1) bytes long and sits inside the live `Error` this
@@ -1246,7 +1250,10 @@ pub(crate) fn fix_error_type(
     let description_length = desc.iter().position(|&b| b == 0).unwrap_or(desc.len());
     error
         .description_view()
-        .set(String::new_c(description_data, description_length));
+        // SAFETY: `desc` is one of the 'static ASCII description literals
+        // matched above (or the error's own interned description), cut at its
+        // first NUL.
+        .set(unsafe { String::new_c(description_data, description_length) });
     if let Some(p_error) = p_error {
         // memcpy(p_error, error, sizeof(ufbx_error));
         // Every call site passes two distinct objects (the context error vs.
@@ -1278,11 +1285,10 @@ pub(crate) fn uninitialized_options(p_error: Option<&ErrorView>) -> *mut core::f
             core::ptr::write_bytes(p_error.get() as *mut u8, 0, core::mem::size_of::<Error>())
         };
         p_error.set_type_(ErrorType::UninitializedOptions);
-        let description_data = b"Uninitialized options\0".as_ptr();
-        let description_length = b"Uninitialized options".len();
-        p_error
-            .description_view()
-            .set(String::new_c(description_data, description_length));
+        p_error.description_view().set(String::from_static(
+            b"Uninitialized options\0",
+            b"Uninitialized options".len(),
+        ));
     }
     core::ptr::null_mut()
 }
@@ -1294,8 +1300,8 @@ pub(crate) fn uninitialized_options(p_error: Option<&ErrorView>) -> *mut core::f
 pub(crate) fn uninitialized_options_value() -> Error {
     Error {
         type_: ErrorType::UninitializedOptions,
-        description: crate::prelude::String::new_c(
-            b"Uninitialized options\0".as_ptr(),
+        description: crate::prelude::String::from_static(
+            b"Uninitialized options\0",
             b"Uninitialized options".len(),
         ),
         ..Error::default()

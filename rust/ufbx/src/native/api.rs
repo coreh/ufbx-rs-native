@@ -284,7 +284,7 @@ pub(crate) unsafe fn release_ref(mut refcount: *mut Refcount) {
 pub(crate) struct EmptyString(pub String);
 unsafe impl Sync for EmptyString {}
 #[cfg_attr(feature = "c-abi", export_name = "ufbx_empty_string")]
-pub static EMPTY_STRING: EmptyString = EmptyString(String::new_c(EMPTY_CHAR.as_ptr(), 0));
+pub static EMPTY_STRING: EmptyString = EmptyString(String::empty());
 
 // ufbx.c:30340 `ufbx_abi_data_def const ufbx_blob ufbx_empty_blob = { NULL, 0 };`
 // Same `Sync` wrapper rationale as `EMPTY_STRING` above.
@@ -5533,7 +5533,9 @@ pub(crate) unsafe fn load_geometry_cache_len(
     // SAFETY: `opts` is this fn's raw-pointer param; the macro reads its
     // `_begin_zero`/`_end_zero` guard fields only after a null check.
     unsafe { ufbxi_check_opts_res!(opts) };
-    let str_: String = safe_string(filename, filename_len);
+    // SAFETY: `filename` is readable for `filename_len` bytes and outlives the
+    // load — this fn's raw-pointer contract.
+    let str_: String = unsafe { safe_string(filename, filename_len) };
     // SAFETY: `opts`/`error` are this fn's raw-pointer params, forwarded
     // unchanged under the same contract to the cache loader.
     unsafe { crate::native::cache::load_geometry_cache(str_, opts) }

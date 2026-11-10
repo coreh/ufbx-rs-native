@@ -698,6 +698,13 @@ impl<M: crate::native::view::Mode> crate::native::view::View<String, M> {
     pub(crate) fn length(&self) -> usize {
         view_read_shared!(self, length)
     }
+    /// The whole descriptor, by value (C: struct copy).
+    #[inline(always)]
+    pub(crate) fn value(&self) -> String {
+        // SAFETY: whole-value read of the viewed, initialized `String` (the
+        // same per-leaf argument as `data()`/`length()`, for both fields).
+        unsafe { crate::native::view::read_no_drop(self.as_ptr()) }
+    }
     /// The string's bytes, borrowed for the view's own lifetime.
     #[inline(always)]
     pub(crate) fn bytes(&self) -> &[u8] {
@@ -720,13 +727,43 @@ impl StringView {
 impl String {
     // Raw constructor for the native port (C: `ufbx_string s = { data, len };`).
     // `_marker` is private to this module, so aggregate construction is only
-    // possible here. `const` so the static `ufbxi_strings[]` table can use it.
-    pub(crate) const fn new_c(data: *const u8, length: usize) -> String {
+    // possible here.
+    //
+    /// # Safety
+    /// A `String` carries no lifetime, and safe readers (`View<String>::bytes`,
+    /// the public `Deref<Target = str>`) trust the pair. `data` must address
+    /// `length` readable bytes that stay live and unwritten for as long as
+    /// the value, or any copy of it, can be read — and they must be valid
+    /// UTF-8 before the value is reachable through the public API. A null or
+    /// dangling `data` is allowed only with `length == 0`.
+    pub(crate) const unsafe fn new_c(data: *const u8, length: usize) -> String {
         String {
             data,
             length,
             _marker: PhantomData,
         }
+    }
+
+    /// The leading `length` bytes of a `'static` UTF-8 byte run (C: a string
+    /// literal; `length` excludes the spelled-out NUL). `const` so the static
+    /// `ufbxi_strings[]` table can use it; a non-UTF-8 or too-short run is a
+    /// compile error there and a panic elsewhere.
+    pub(crate) const fn from_static(bytes: &'static [u8], length: usize) -> String {
+        let (head, _) = bytes.split_at(length);
+        assert!(str::from_utf8(head).is_ok());
+        // SAFETY: `head` is `length` readable UTF-8 bytes that live forever.
+        unsafe { String::new_c(head.as_ptr(), length) }
+    }
+
+    /// C: `ufbx_empty_string` — zero length over the shared NUL byte.
+    pub(crate) const fn empty() -> String {
+        String::from_static(&crate::native::error::EMPTY_CHAR, 0)
+    }
+
+    /// C: `{ NULL, 0 }`.
+    pub(crate) const fn null() -> String {
+        // SAFETY: null with zero length reads nothing.
+        unsafe { String::new_c(core::ptr::null(), 0) }
     }
 
     /// Project a by-value `String` to its byte run with a caller-chosen
@@ -755,6 +792,9 @@ impl String {
 
 impl AsRef<str> for String {
     fn as_ref(&self) -> &str {
+        // SAFETY: the `String::new_c` contract — every `String` reachable
+        // through the public API addresses `length` live bytes of valid UTF-8
+        // (the loader interns and sanitizes them), borrowed here for `&self`.
         unsafe { str::from_utf8_unchecked(slice_from_ptr(self.data, self.length)) }
     }
 }

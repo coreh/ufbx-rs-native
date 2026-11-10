@@ -1894,10 +1894,16 @@ fn ascii_parse_node_rec(
                             )
                         };
                         let length = decode_base64(uc, dst, src, &mut arr_error)?;
-                        v.set(String::new_c(data, length));
+                        // SAFETY: `data` is the `capacity`-byte result-buffer
+                        // run decoded into above and `length <= capacity` (the
+                        // decoder writes within `dst`).
+                        v.set(unsafe { String::new_c(data, length) });
                         ufbx_assert!(length <= capacity);
                     } else {
-                        v.set(String::new_c(tok.str_data(), tok.str_len()));
+                        // SAFETY: the token's own `str_len` bytes, interned
+                        // (copied) by the push on the next line before the
+                        // token buffer is reused.
+                        v.set(unsafe { String::new_c(tok.str_data(), tok.str_len()) });
                         push_string_place_str(uc.string_pool_view(), v, raw)?;
                     }
                 } else {

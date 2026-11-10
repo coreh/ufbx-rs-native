@@ -4170,7 +4170,7 @@ pub(crate) const MAT_DOUBLE_SIDED: u32 = 1 << MaterialFeature::DoubleSided as u3
 // for absent texture prefixes/suffixes. NOT `ufbx_empty_string`, which points
 // at `ufbxi_empty_char`; the consumers test `length > 0`, but the pointer is
 // observable if that ever changes.
-const NULL_STRING: String = String::new_c(ptr::null(), 0);
+const NULL_STRING: String = String::null();
 
 // ufbx.c:19876-19958 `ufbxi_shader_pbr_mappings`
 // C omits the trailing `ufbx_string` members in most entries; C aggregate
@@ -4396,7 +4396,10 @@ pub(crate) unsafe fn fetch_mapping_maps(
     let mapping_run: &[ShaderMapping] = unsafe { slice_from_ptr(mappings, count) };
     for mapping in mapping_run {
         // C: `ufbx_string prop_name = { mapping->prop, mapping->prop_len };`
-        let mut prop_name: String = String::new_c(mapping.prop, mapping.prop_len as usize);
+        // SAFETY: each `ShaderMapping` entry of the 'static tables names
+        // `prop_len` bytes of a 'static ASCII literal.
+        let mut prop_name: String =
+            unsafe { String::new_c(mapping.prop, mapping.prop_len as usize) };
         if prefix.length > 0 || prefix2.length > 0 || suffix.length > 0 {
             // C: `sizeof(combined_name)` — the array is `char[512]`.
             if prop_name.length + prefix.length + prefix2.length + suffix.length
@@ -5461,7 +5464,7 @@ pub(crate) fn push_prop_prefix<M: Mode>(
     // the same local `(data, length)` pair while keeping its read contract in
     // the parameter type.
     let prefix_bytes = prefix_view.bytes();
-    let mut prefix = String::new_c(prefix_view.data(), prefix_view.length());
+    let mut prefix = prefix_view.value();
     let mut stack_size: usize = 0;
     if prefix.length > 0 && prefix_bytes[prefix.length - 1] != b'|' {
         stack_size = prefix.length.wrapping_add(1);
@@ -5565,7 +5568,10 @@ pub(crate) fn shader_texture_find_prefix(
             name = &name[..name.len() - 1];
 
             if sp::ends_with(name, suffix) {
-                let prefix = String::new_c(name.as_ptr(), name.len());
+                // SAFETY: `name` is a sub-slice of the property's interned
+                // name; `push_prop_prefix` copies what it keeps before
+                // returning.
+                let prefix = unsafe { String::new_c(name.as_ptr(), name.len()) };
                 push_prop_prefix(
                     uc,
                     shader.prop_prefix_view(),
@@ -5761,8 +5767,8 @@ pub(crate) fn finalize_shader_texture<'a>(
     // C writes only the `data` half of each string; the slot is zeroed, so
     // publishing the whole descriptor with the zero length it already has
     // stores the same bytes.
-    shader.set_shader_source(String::new_c(EMPTY_CHAR.as_ptr(), 0));
-    shader.set_shader_name(String::new_c(EMPTY_CHAR.as_ptr(), 0));
+    shader.set_shader_source(String::empty());
+    shader.set_shader_name(String::empty());
 
     // C: `ufbxi_nounroll for (size_t i = 0; i < ufbxi_arraycount(name_props); i++)`
     for i in 0..NAME_PROPS.len() {
@@ -7562,7 +7568,9 @@ pub(crate) fn absolute_to_relative_path(
 
     // `dst`/`tmp_length` describe the string just interned in `uc`'s pool. The
     // discriminator visibly selects the matching union member for publication.
-    let dst = String::new_c(dst, tmp_length);
+    // SAFETY: `dst` is the checked-non-null `tmp_length`-byte string just
+    // interned in uc's pool, which outlives the scene.
+    let dst = unsafe { String::new_c(dst, tmp_length) };
     if raw {
         strblob_set_blob(p_dst, Blob::from_string(dst));
     } else {
@@ -7715,7 +7723,7 @@ pub(crate) fn fetch_file_content(
     if p_data.size() > 0 {
         return;
     }
-    let filename: String = String::new_c(p_filename.data(), p_filename.length());
+    let filename: String = p_filename.value();
     let mut index: usize = usize::MAX;
     // C: `ufbxi_macro_lower_bound_eq(ufbxi_file_content, 8, &index,
     // uc->file_content, 0, uc->num_file_content, ...)` — does NOT write
@@ -12801,8 +12809,8 @@ mod tests {
 
         // The non-null descriptor points at immutable static storage; the null
         // descriptor has zero length and is never dereferenced.
-        let distinct = String::new_c(DISTINCT_EMPTY.as_ptr(), 0);
-        let null = String::new_c(core::ptr::null(), 0);
+        let distinct = String::from_static(&DISTINCT_EMPTY, 0);
+        let null = String::null();
 
         let distinct_key =
             ConnectionPropKey::from_nullable_string(View::<String, Const>::from_ref(&distinct));

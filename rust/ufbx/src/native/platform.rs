@@ -598,7 +598,7 @@ pub(crate) unsafe fn swap(a: *mut u8, b: *mut u8, size: usize) {
 // the exact analogue of `sizeof(str) - 1`.
 macro_rules! ufbxi_string_literal {
     ($str:expr) => {
-        crate::prelude::String::new_c($str.as_ptr(), $str.len() - 1)
+        crate::prelude::String::from_static($str, $str.len() - 1)
     };
 }
 pub(crate) use ufbxi_string_literal;

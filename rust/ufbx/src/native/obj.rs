@@ -558,7 +558,11 @@ pub(crate) fn obj_read_line(uc: &Context) -> Result<(), Fail> {
     let line_len: usize = offset;
     let line_data = uc.data();
 
-    uc.obj().line_view().set(String::new_c(line_data, line_len));
+    // SAFETY: `line_len` bytes were just scanned at `uc.data()` inside the
+    // read window; the line is consumed before the window is refilled.
+    uc.obj()
+        .line_view()
+        .set(unsafe { String::new_c(line_data, line_len) });
     // SAFETY: `line_len` bytes were just scanned out of uc's read window, so
     // advancing `data` past them stays inside the buffer.
     unsafe { uc.set_data(line_data.add(line_len)) };
@@ -585,7 +589,10 @@ pub(crate) fn obj_read_line(uc: &Context) -> Result<(), Fail> {
         let continued_length = uc.obj().line_view().length() + 1;
         uc.obj()
             .line_view()
-            .set(String::new_c(new_data, continued_length));
+            // SAFETY: `new_data` is the tmp-buffer copy written just above:
+            // the previous line plus the appended newline, `continued_length`
+            // bytes.
+            .set(unsafe { String::new_c(new_data, continued_length) });
     }
 
     Ok(())
@@ -697,7 +704,9 @@ pub(crate) fn obj_tokenize(uc: &Context) -> Result<(), Fail> {
             // SAFETY: `ptr` rests on the '#' of the line window, so one byte
             // past it is still inside.
             ptr = unsafe { ptr.add(1) };
-            tok.set(String::new_c(tok_data, 1));
+            // SAFETY: `tok_data` rests on the '#' byte inside the current
+            // line.
+            tok.set(unsafe { String::new_c(tok_data, 1) });
             continue;
         }
 
@@ -725,10 +734,9 @@ pub(crate) fn obj_tokenize(uc: &Context) -> Result<(), Fail> {
                 }
             }
         }
-        tok.set(String::new_c(
-            tok_data,
-            to_size(ptr as isize - tok_data as isize),
-        ));
+        // SAFETY: `tok_data..ptr` is the token just scanned inside the current
+        // line (`ptr` only advanced over line bytes).
+        tok.set(unsafe { String::new_c(tok_data, to_size(ptr as isize - tok_data as isize)) });
     }
 
     Ok(())
@@ -2238,7 +2246,9 @@ pub(crate) fn obj_parse_mtl_map(uc: &Context, prefix_len: usize) -> Result<(), F
             // two bytes, so dropping the leading '-' keeps the span inside the
             // token's own bytes.
             let rest: &[u8] = &tok[1..];
-            let tok: String = String::new_c(rest.as_ptr(), rest.len());
+            // SAFETY: `rest` is a sub-slice of the token's own bytes, which
+            // outlive this block.
+            let tok: String = unsafe { String::new_c(rest.as_ptr(), rest.len()) };
             // SAFETY: `tok` is still that token's own readable span after
             // dropping the leading '-'.
             unsafe { obj_parse_prop(uc, tok, start + 1, false, Some(&mut start))? };
@@ -2309,7 +2319,10 @@ pub(crate) fn obj_parse_mtl_map(uc: &Context, prefix_len: usize) -> Result<(), F
     let prop: String = {
         let cmd: &[u8] = tokens.at(0).bytes();
         ufbx_assert!(cmd.len() >= prefix_len);
-        let mut prop: String = String::new_c(cmd[prefix_len..].as_ptr(), cmd.len() - prefix_len);
+        // SAFETY: a suffix of the first token's own bytes; `prop` is interned
+        // (copied) right below.
+        let mut prop: String =
+            unsafe { String::new_c(cmd[prefix_len..].as_ptr(), cmd.len() - prefix_len) };
         push_string_place_str(
             uc.string_pool_view(),
             StringView::from_mut(&mut prop),

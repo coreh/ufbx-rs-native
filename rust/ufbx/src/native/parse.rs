@@ -6234,10 +6234,11 @@ fn retain_dom_node_rec(
 
     // C: `dst->name.data = node->name; dst->name.length = node->name_len;` —
     // published as one descriptor write.
-    dst_view.name_view().set(String::new_c(
-        node_view.name(),
-        node_view.name_len() as usize,
-    ));
+    // SAFETY: the parsed node's interned name: `name_len` bytes of string-pool
+    // memory, which outlives the DOM.
+    dst_view
+        .name_view()
+        .set(unsafe { String::new_c(node_view.name(), node_view.name_len() as usize) });
 
     {
         let mapping = DomMapping {
@@ -6285,7 +6286,7 @@ fn retain_dom_node_rec(
         // C writes only `val->value_str.data`; the slot is zero-initialized, so
         // publishing the whole descriptor with the zero length it already has
         // stores the same bytes.
-        val.set_value_str(String::new_c(EMPTY_CHAR.as_ptr(), 0));
+        val.set_value_str(String::empty());
         // C: `val->value_blob.data = arr->data; val->value_blob.size = ...;`
         // SAFETY: `arr`'s stored `data`/`size` describe the array payload run
         // retained by the resulting scene — the `Blob::new_c` escaping-run
@@ -6331,7 +6332,7 @@ fn retain_dom_node_rec(
             // C writes only `val->value_str.data`; the slot is zero-initialized,
             // so publishing the whole descriptor with the zero length it already
             // has stores the same bytes.
-            val.set_value_str(String::new_c(EMPTY_CHAR.as_ptr(), 0));
+            val.set_value_str(String::empty());
 
             if mask == ValueType::String as u32 {
                 val.set_type_(DomValueType::String);
@@ -6482,8 +6483,13 @@ pub(crate) fn next_line(line: &StringView, buf: &StringView, skip_space: bool) -
         .position(|&c| c == b'\n')
         .map_or(buf_bytes.len(), |newline| newline + 1);
 
-    let line_value = String::new_c(buf_bytes.as_ptr(), length);
-    let buf_value = String::new_c(buf_bytes[length..].as_ptr(), buf_bytes.len() - length);
+    // SAFETY: a prefix of `buf`'s own bytes; it is stored only into `line`,
+    // which the caller reads while `buf`'s backing run is live.
+    let line_value = unsafe { String::new_c(buf_bytes.as_ptr(), length) };
+    // SAFETY: the remaining suffix of `buf`'s own bytes, republished into
+    // `buf`.
+    let buf_value =
+        unsafe { String::new_c(buf_bytes[length..].as_ptr(), buf_bytes.len() - length) };
     line.set(line_value);
     buf.set(buf_value);
 
@@ -6497,7 +6503,8 @@ pub(crate) fn next_line(line: &StringView, buf: &StringView, skip_space: bool) -
         while begin < end && is_space(line_bytes[end - 1]) {
             end -= 1;
         }
-        line.set(String::new_c(line_bytes[begin..].as_ptr(), end - begin));
+        // SAFETY: a sub-range of `line`'s own bytes (`begin <= end <= len`).
+        line.set(unsafe { String::new_c(line_bytes[begin..].as_ptr(), end - begin) });
     }
 
     true
@@ -6900,8 +6907,10 @@ pub(crate) fn is_format(data: &[u8], format: FileFormat) -> bool {
     let size = data.len();
     // C: `ufbx_string line, buf = { data, size };` — `line` is written by
     // `ufbxi_next_line` before any read.
-    let mut line: String = String::new_c(core::ptr::null(), 0);
-    let mut buf: String = String::new_c(data.as_ptr(), size);
+    let mut line: String = String::null();
+    // SAFETY: `data` is borrowed for the whole call and `buf` does not outlive
+    // it.
+    let mut buf: String = unsafe { String::new_c(data.as_ptr(), size) };
     let line = StringView::from_mut(&mut line);
     let buf = StringView::from_mut(&mut buf);
 
@@ -8128,8 +8137,8 @@ mod tests {
     #[test]
     fn test_next_line_views() {
         let input = b" \tfirst \r\n\n second";
-        let mut line = String::new_c(core::ptr::null(), 0);
-        let mut buf = String::new_c(input.as_ptr(), input.len());
+        let mut line = String::null();
+        let mut buf = String::from_static(input, input.len());
         let line = StringView::from_mut(&mut line);
         let buf = StringView::from_mut(&mut buf);
 

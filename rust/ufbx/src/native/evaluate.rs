@@ -1584,8 +1584,8 @@ pub(crate) unsafe fn load(
             && uc.scene_view().metadata_view().file_format() == FileFormat::Fbx
             && !supports_version(uc.version())
         {
-            fixed.description = crate::prelude::String::new_c(
-                b"Unsupported version\0".as_ptr(),
+            fixed.description = crate::prelude::String::from_static(
+                b"Unsupported version\0",
                 b"Unsupported version".len(),
             );
             fixed.type_ = ErrorType::UnsupportedVersion;
@@ -4757,7 +4757,10 @@ pub(crate) unsafe fn check_string(
 
     // C: `dst->data = data; dst->length = length;` — publish the validated
     // descriptor as one complete value.
-    dst.set(String::new_c(data, length));
+    // SAFETY: `data` is `length` readable bytes (fn contract; the shared NUL
+    // byte when empty), validated as UTF-8 above. The caller keeps the source
+    // alive for as long as `dst` is read.
+    dst.set(unsafe { String::new_c(data, length) });
     Ok(())
 }
 
@@ -4777,7 +4780,9 @@ pub(crate) fn push_anim_string(ac: &CreateAnimContext, str_: &StringView) -> Res
         // SAFETY: `str_.length()` is `length`, the last slot of the
         // `length + 1` byte run just pushed.
         unsafe { *copy.add(str_.length()) = b'\0' };
-        str_.set(String::new_c(copy, length));
+        // SAFETY: `copy` is the fresh result-buffer run holding `length` bytes
+        // plus the NUL written above.
+        str_.set(unsafe { String::new_c(copy, length) });
     } else {
         ufbx_assert!(str_.data() == EMPTY_CHAR.as_ptr());
     }
@@ -5042,7 +5047,7 @@ pub(crate) fn create_anim_imp(ac: &CreateAnimContext) -> Result<FinishedImp<Anim
         let mut global_str: usize = 0;
         let global_end: usize = globals.len();
         // C: `ufbx_string prev_name = { ufbxi_empty_char };`
-        let mut prev_name: String = String::new_c(EMPTY_CHAR.as_ptr(), 0);
+        let mut prev_name: String = String::empty();
         // C: `ufbxi_for_list(ufbx_prop_override, over, anim->prop_overrides)`
         // SAFETY: the list run is the contiguous `push_zero` allocation checked
         // above — fully initialized by the copy loop — live and unmoved on ac's

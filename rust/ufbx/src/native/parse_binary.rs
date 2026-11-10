@@ -534,7 +534,11 @@ pub(crate) unsafe fn binary_parse_multivalue_array(
             // coupled pair is published in one write into the bounds-checked
             // slot `i` of the destination run.
             let d: &StringView = dst_run.at(i);
-            d.set(String::new_c(read_bytes(uc, len), len));
+            // SAFETY: `read_bytes` returns null (checked next, with the
+            // descriptor never read) or `len` readable bytes of the input
+            // window, which the caller copies or interns before the window
+            // moves.
+            d.set(unsafe { String::new_c(read_bytes(uc, len), len) });
             ufbxi_check!(uc, !d.data().is_null(), "d->data");
             if dst_type == b'C' {
                 let buf: &BufView = if size == 1 || uc.opts_view().retain_dom() {
@@ -549,7 +553,9 @@ pub(crate) unsafe fn binary_parse_multivalue_array(
                 let copy = unsafe { buf.push_copy_raw::<u8>(len, d.data()) };
                 // C: `d->data = ufbxi_push_copy(...)` — `length` is unchanged,
                 // so the descriptor is republished with the same `len`.
-                d.set(String::new_c(copy, len));
+                // SAFETY: `copy` is null (checked next) or the fresh
+                // `len`-byte copy in `buf`, which outlives the parsed node.
+                d.set(unsafe { String::new_c(copy, len) });
                 ufbxi_check!(uc, !d.data().is_null(), "d->data");
             } else {
                 push_string_place_str(uc.string_pool_view(), d, raw)?;

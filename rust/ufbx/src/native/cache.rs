@@ -1240,7 +1240,10 @@ pub(crate) fn cache_load_mc(cc: &CacheContext) -> Result<(), Fail> {
                 let channel_name_data = cc.name_buf();
                 let channel_name_length = length;
                 cc.channel_name_view()
-                    .set(String::new_c(channel_name_data, channel_name_length));
+                    // SAFETY: `length <= padded_length` bytes were just read
+                    // into cc's `name_buf`; the place is interned (copied) on
+                    // the next line.
+                    .set(unsafe { String::new_c(channel_name_data, channel_name_length) });
                 push_string_place_str(cc.string_pool_view(), cc.channel_name_view(), false)?;
             }
             TAG_SIZE => cache_mc_read_u32(cc, &mut count)?,
@@ -1607,7 +1610,9 @@ pub(crate) fn cache_load_xml(cc: &CacheContext) -> Result<(), Fail> {
 #[cfg(feature = "geometry-cache")]
 #[inline(never)]
 fn cache_load_file(cc: &CacheContext, filename: &[u8]) -> Result<(), Fail> {
-    cc.set_stream_filename(String::new_c(filename.as_ptr(), filename.len()));
+    // SAFETY: `filename` is borrowed for this call and the place is interned
+    // (copied) on the next line, before the borrow ends.
+    cc.set_stream_filename(unsafe { String::new_c(filename.as_ptr(), filename.len()) });
     push_string_place_str(cc.string_pool_view(), cc.stream_filename_view(), false)?;
 
     // Assume all files have at least 16 bytes of header
@@ -1760,7 +1765,10 @@ pub(crate) fn cache_load_frame_files(cc: &CacheContext) -> Result<(), Fail> {
     // once here and `filename.length` on every path below; the descriptor
     // rides as a plain `ufbx_string` value (`String` is `Copy`, C's memcpy
     // assignment), so no raw slot is needed.
-    let mut filename: String = String::new_c(name_buf, 0);
+    // SAFETY: an empty descriptor over the fresh non-null `name_buf` push;
+    // each path below sets `length` to the bytes it formatted into that
+    // buffer.
+    let mut filename: String = unsafe { String::new_c(name_buf, 0) };
 
     if cc.xml_type() == CacheXmlType::SingleFile {
         // SAFETY: formats into the `suffix_len` bytes remaining in `name_buf`
@@ -2118,10 +2126,7 @@ unsafe fn cache_load_imp(
         cc.tmp_stack_view().set_ator(cc.ator_tmp());
     }
 
-    let channel_name_data = EMPTY_CHAR.as_ptr();
-    let channel_name_length = 0;
-    cc.channel_name_view()
-        .set(String::new_c(channel_name_data, channel_name_length));
+    cc.channel_name_view().set(String::empty());
 
     if cc.open_file_cb_view().fn_().is_none() {
         cc.open_file_cb_view()
@@ -2145,7 +2150,9 @@ unsafe fn cache_load_imp(
         filename_copy
     };
     filename_copy.write_at(filename.len(), b'\0');
-    let filename_copy: String = String::new_c(filename_data, filename.len());
+    // SAFETY: `filename_data` is the tmp copy written above: `filename.len()`
+    // bytes plus the NUL.
+    let filename_copy: String = unsafe { String::new_c(filename_data, filename.len()) };
 
     let mut found: bool = false;
     // SAFETY: `filename_copy` is the NUL-terminated arena copy built just
@@ -2671,11 +2678,10 @@ pub(crate) fn load_external_cache(uc: &Context, file: &ExternalFileView) -> Resu
                 return Ok(());
             } else {
                 cc.error_view().set_type_(ErrorType::ExternalFileNotFound);
-                let description_data = b"External file not found\0".as_ptr();
-                let description_length = b"External file not found".len();
-                cc.error_view()
-                    .description_view()
-                    .set(String::new_c(description_data, description_length));
+                cc.error_view().description_view().set(String::from_static(
+                    b"External file not found\0",
+                    b"External file not found".len(),
+                ));
             }
         }
 
