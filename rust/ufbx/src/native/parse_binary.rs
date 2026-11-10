@@ -201,6 +201,21 @@ pub(crate) fn swap_endian_array(uc: &Context, src: &[u8], count: usize, type_: u
     }
 }
 
+// Rust-port helper (no C counterpart): byte count readable through the pointer
+// `swap_endian_value` returns for `type_`. A swapped value lives in `swap_arr`,
+// which is only guaranteed to hold the bytes that arm swapped; an unswapped
+// one is the caller's 12-byte source window.
+#[inline(always)]
+pub(crate) fn swapped_value_size(type_: u8) -> usize {
+    match type_ {
+        b'Y' => 2,
+        b'I' | b'F' => 4,
+        b'L' | b'D' => 8,
+        b'S' | b'R' => 4,
+        _ => 12,
+    }
+}
+
 // Swap the endianness of a single value (shallow, swaps string/array header words)
 // ufbx.c:8658-8668 `ufbxi_swap_endian_value`
 #[inline(never)]
@@ -503,13 +518,16 @@ pub(crate) unsafe fn binary_parse_multivalue_array(
                 type_ == b'S' || type_ == b'R',
                 "type == 'S' || type == 'R'"
             );
+            let mut val_len: usize = 12;
             if file_big_endian {
                 val = swap_endian_value(uc, &val_bytes[1..], type_);
                 ufbxi_check!(uc, !val.is_null(), "val");
+                val_len = swapped_value_size(type_);
             }
             // SAFETY: `val` addresses the 12-byte payload within the peeked
-            // (and, for big-endian, swapped) window.
-            let value_bytes = unsafe { slice_from_ptr(val, 12) };
+            // window, or the `val_len` bytes `swap_endian_value` wrote into
+            // the swap buffer for this type.
+            let value_bytes = unsafe { slice_from_ptr(val, val_len) };
             let len: usize = read_u32(value_bytes) as usize;
             consume_bytes(uc, 5);
             // C: `d->data = ufbxi_read_bytes(uc, len); d->length = len;` — the
@@ -599,11 +617,13 @@ pub(crate) unsafe fn binary_parse_multivalue_array(
                 let val_bytes = slice_from_ptr(val, 13);
                 let type_: u8 = val_bytes[0];
                 val = val_bytes[1..].as_ptr();
+                let mut val_len: usize = 12;
                 if file_big_endian {
                     val = swap_endian_value(uc, &val_bytes[1..], type_);
                     ufbxi_check!(uc, !val.is_null(), "val");
+                    val_len = swapped_value_size(type_);
                 }
-                let value_bytes = slice_from_ptr(val, 12);
+                let value_bytes = slice_from_ptr(val, val_len);
                 match type_ {
                     // C-parity: `*val` is `char` — SIGNED on this port's targets.
                     // Documented exception to the `u8` storage rule, see
@@ -1372,13 +1392,16 @@ fn binary_parse_node_rec(
             let data_bytes = unsafe { slice_from_ptr(data, 13) };
             let mut value: *const u8 = data_bytes[1..].as_ptr();
             let type_: u8 = data_bytes[0];
+            let mut value_size: usize = 12;
             if uc.file_big_endian() {
                 value = swap_endian_value(uc, &data_bytes[1..], type_);
                 ufbxi_check!(uc, !value.is_null(), "value");
+                value_size = swapped_value_size(type_);
             }
-            // SAFETY: `value` addresses the 12-byte payload in the peeked or
-            // byte-swapped window.
-            let value_bytes = unsafe { slice_from_ptr(value, 12) };
+            // SAFETY: `value` addresses the 12-byte payload in the peeked
+            // window, or the `value_size` bytes `swap_endian_value` wrote into
+            // the swap buffer for this type.
+            let value_bytes = unsafe { slice_from_ptr(value, value_size) };
 
             match type_ {
                 b'C' | b'B' | b'Z' => {
