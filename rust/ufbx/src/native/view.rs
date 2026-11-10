@@ -97,7 +97,8 @@ impl<T, M: Mode> View<T, M> {
     /// # Safety
     /// `ptr` must point to a `T` that stays alive and unmoved for `'a`, and its
     /// provenance must be adequate for `M`: write-capable for [`Mut`], readable
-    /// for [`Const`]. Prefer the per-mode `from_ptr` at boundaries — this exists
+    /// for [`Const`]. As for the per-mode mints, every field must be
+    /// initialized before it is read through the view. Prefer the per-mode `from_ptr` at boundaries — this exists
     /// so mode-generic fns can propagate their caller's `M`.
     #[inline(always)]
     pub(crate) unsafe fn mint<'a>(ptr: *mut T) -> &'a Self {
@@ -156,10 +157,13 @@ impl<T> View<T, Mut> {
     /// # Safety
     /// `ptr` must point to a `T`-sized, `T`-aligned slot that stays alive and
     /// unmoved for `'a` (the arena-stability invariant). The slot's bytes need
-    /// NOT be initialized — the storage is `MaybeUninit`, so the mint asserts no
-    /// whole-value validity (module invariant above) and a freshly pushed arena
-    /// run may be minted before anything is written into it; it is each READ
-    /// accessor that asserts the field it touches is initialized. The
+    /// NOT be initialized at the mint — the storage is `MaybeUninit`, so the
+    /// mint asserts no whole-value validity (module invariant above) and a
+    /// freshly pushed arena run may be minted before anything is written into
+    /// it. The read accessors are safe fns and can vouch for nothing, so the
+    /// obligation is the minter's: every field must be initialized, with a
+    /// valid value of its type, before it is read through this view or
+    /// anything derived from it. The
     /// PROVENANCE must be
     /// write-capable: it must trace to context/arena-owned memory via `*mut`
     /// (or FFI ingress), NEVER to a `&T` — forming `&View<T, Mut>` (an
@@ -230,8 +234,9 @@ impl<T> View<T, Const> {
 // unmoved allocation (its mint/construction invariant); the expansion projects
 // and touches exactly ONE leaf field as a raw place — no `&`/`&mut` to the
 // containing struct is ever formed and no whole-struct validity is asserted.
-// A read asserts only that this field's bytes are initialized (the per-leaf
-// discipline: the same assertion the hand-written body made); a write goes
+// A read relies only on this field's bytes being initialized — the minter's
+// obligation (`View::from_ptr` contract), since these accessors are safe fns;
+// a write goes
 // through `get()`, which only `Mut`-mode views and context handles expose, so
 // write capability is type-checked. `&raw` projections compute an address with
 // the handle's provenance and assert nothing further.
@@ -585,7 +590,8 @@ impl<'a, T> SliceViewIter<'a, T, Mut> {
     /// skip-flagged. The slots need NOT hold initialized `T`: the yielded
     /// `View<T, Mut>` stores `UnsafeCell<MaybeUninit<T>>`, so an
     /// `ufbxi_push`-fresh, still-uninitialized run is a legal vouch — the
-    /// caller owes initialization before any read through `get()`. When
+    /// caller owes initialization before any read through the yielded views.
+    /// When
     /// `count == 0` `base` is never offset or dereferenced, so null-with-zero
     /// is allowed (unlike `slice::from_raw_parts`).
     #[inline]
