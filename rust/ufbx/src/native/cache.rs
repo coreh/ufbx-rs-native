@@ -886,7 +886,11 @@ pub(crate) unsafe fn cache_read(
         // reader has one); calling it is the C-callback contract, with `dst`
         // writable for the `size` bytes the caller guarantees.
         let num_read: usize = unsafe {
-            (cc.stream_view().read_fn().unwrap_unchecked())(cc.stream_view().user(), dst, size)
+            (cc.stream_view().read_fn().expect("stream read_fn"))(
+                cc.stream_view().user(),
+                dst,
+                size,
+            )
         };
         ufbxi_check_err_msg!(
             cc.error_view(),
@@ -914,7 +918,7 @@ pub(crate) unsafe fn cache_read(
         // an opened `cc.stream`; the destination is `cc`'s own buffer, read
         // with exactly its own `buffer_size`.
         let num_read: usize = unsafe {
-            (cc.stream_view().read_fn().unwrap_unchecked())(
+            (cc.stream_view().read_fn().expect("stream read_fn"))(
                 cc.stream_view().user(),
                 cc.buffer_mut_ptr() as *mut c_void,
                 cc.buffer_size(),
@@ -1004,7 +1008,7 @@ pub(crate) fn cache_skip(cc: &CacheContext, mut size: u64) -> Result<(), Fail> {
                 // invoking a stream callback with its paired `user` pointer is
                 // the C stream contract.
                 unsafe {
-                    (cc.stream_view().skip_fn().unwrap_unchecked())(
+                    (cc.stream_view().skip_fn().expect("stream skip_fn"))(
                         cc.stream_view().user(),
                         MAX_SKIP_SIZE - 1,
                     )
@@ -1020,7 +1024,7 @@ pub(crate) fn cache_skip(cc: &CacheContext, mut size: u64) -> Result<(), Fail> {
                                                                     // SAFETY: an open cache stream always has `read_fn` (stream-open
                                                                     // invariant); local 1-byte buffer; C stream-callback contract.
             let num_read: usize = unsafe {
-                (cc.stream_view().read_fn().unwrap_unchecked())(
+                (cc.stream_view().read_fn().expect("stream read_fn"))(
                     cc.stream_view().user(),
                     single_byte.as_mut_ptr() as *mut c_void,
                     1,
@@ -1041,7 +1045,7 @@ pub(crate) fn cache_skip(cc: &CacheContext, mut size: u64) -> Result<(), Fail> {
                 // SAFETY: `skip_fn` is Some (enclosing branch); C stream
                 // callback contract as above.
                 unsafe {
-                    (cc.stream_view().skip_fn().unwrap_unchecked())(
+                    (cc.stream_view().skip_fn().expect("stream skip_fn"))(
                         cc.stream_view().user(),
                         size as usize,
                     )
@@ -1061,7 +1065,7 @@ pub(crate) fn cache_skip(cc: &CacheContext, mut size: u64) -> Result<(), Fail> {
                 // (stream-open invariant); local 2048-byte buffer with
                 // `to_skip` clamped to its size; C stream-callback contract.
                 unsafe {
-                    (cc.stream_view().read_fn().unwrap_unchecked())(
+                    (cc.stream_view().read_fn().expect("stream read_fn"))(
                         cc.stream_view().user(),
                         skip_buf.as_mut_ptr() as *mut c_void,
                         to_skip,

@@ -4397,7 +4397,7 @@ pub(crate) fn report_progress(uc: &Context) -> Result<(), Fail> {
     // it is invoked with the `user` pointer it was paired with in the same
     // callback struct — the C callback contract.
     let result: u32 = unsafe {
-        (uc.opts_view().progress_cb().fn_.unwrap_unchecked())(
+        (uc.opts_view().progress_cb().fn_.expect("progress_cb"))(
             uc.opts_view().progress_cb().user,
             &progress,
         )

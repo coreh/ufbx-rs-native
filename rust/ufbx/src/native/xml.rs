@@ -457,9 +457,9 @@ pub(crate) fn xml_refill(xc: &XmlContext) {
     // `read_fn` from an opened stream, so it is Some wherever refill runs; the
     // callback reads into `data`, which addresses `data_size()` writable bytes.
     // (`load_xml`'s signature admits a null `read_fn` with a non-empty prefix;
-    // no caller does that today, so `unwrap_unchecked` holds.)
+    // no caller does that today, and the `expect` panics if one ever does.)
     let mut num: usize = unsafe {
-        (xc.read_fn().unwrap_unchecked())(
+        (xc.read_fn().expect("stream read_fn"))(
             xc.read_user(),
             xc.data_mut_ptr() as *mut c_void,
             xc.data_size(),

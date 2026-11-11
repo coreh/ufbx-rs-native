@@ -282,8 +282,8 @@ impl AaNodeView {
 // ufbx.c:4373-4391 `ufbxi_map`
 // C-parity: `cmp_fn` is a plain (never-null after `ufbxi_map_init`) function
 // pointer in C; `Option` here only so a zero-initialized map (C callers memset
-// the containing context) is representable — call sites use
-// `unwrap_unchecked`, matching C's unchecked indirect call.
+// the containing context) is representable — call sites `expect` it: where C
+// would call through a null pointer, the port panics.
 // NOT `Copy`/`Clone`: owns its allocations (`items`/`entries`, freed by
 // `map_free`) — see PORTING.md "Copy vs non-Copy structs".
 #[repr(C)]
@@ -694,7 +694,7 @@ unsafe fn aa_tree_insert_rec(
     // SAFETY: `map.cmp_fn` is the non-null comparator installed by `map_init`;
     // calling it with the map's `cmp_user` and the two same-key-discipline
     // pointers `value`/`entry` is the C-callback contract.
-    let cmp = unsafe { (map.cmp_fn().unwrap_unchecked())(map.cmp_user(), value, entry) };
+    let cmp = unsafe { (map.cmp_fn().expect("map cmp_fn"))(map.cmp_user(), value, entry) };
     if cmp < 0 {
         // SAFETY: forwards this fn's key contract (`value`/`item_size` of the
         // map's own key discipline) to the recursive call.
@@ -765,7 +765,7 @@ pub(crate) unsafe fn aa_tree_find(
         // `map_init`; calling it with the map's `cmp_user` and the two
         // same-key-discipline pointers `value`/`entry` is the C-callback
         // contract.
-        let cmp = unsafe { (map.cmp_fn().unwrap_unchecked())(map.cmp_user(), value, entry) };
+        let cmp = unsafe { (map.cmp_fn().expect("map cmp_fn"))(map.cmp_user(), value, entry) };
         if cmp < 0 {
             node = n.left_view();
         } else if cmp > 0 {
@@ -1024,7 +1024,7 @@ pub(crate) unsafe fn map_find_size(
             // `map_init`; calling it with `cmp_user` and the two
             // same-key-discipline pointers `value`/`data` is the C-callback
             // contract.
-            let cmp = unsafe { (map.cmp_fn().unwrap_unchecked())(map.cmp_user(), value, data) };
+            let cmp = unsafe { (map.cmp_fn().expect("map cmp_fn"))(map.cmp_user(), value, data) };
             if cmp == 0 {
                 return data;
             }

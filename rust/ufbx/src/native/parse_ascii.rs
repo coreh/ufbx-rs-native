@@ -141,7 +141,7 @@ pub(crate) fn ascii_refill(uc: &Context) -> u8 {
         // paired `read_user`; `dst_buffer` is the freshly pushed retain-buf run
         // or `uc`'s read buffer, in both cases `dst_size` writable bytes.
         let num_read: usize = unsafe {
-            (uc.read_fn().unwrap_unchecked())(
+            (uc.read_fn().expect("stream read_fn"))(
                 uc.read_user(),
                 dst_buffer as *mut core::ffi::c_void,
                 dst_size,

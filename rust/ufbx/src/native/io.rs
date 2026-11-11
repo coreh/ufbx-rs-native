@@ -127,7 +127,7 @@ pub(crate) fn refill(uc: &Context, size: usize, require_size: bool) -> *const u8
         // the destination window is in bounds; `read_user` is the pointer
         // paired with the callback.
         let read_result: usize = unsafe {
-            (uc.read_fn().unwrap_unchecked())(
+            (uc.read_fn().expect("stream read_fn"))(
                 uc.read_user(),
                 uc.read_buffer().add(data_size) as *mut c_void,
                 to_read,
@@ -331,7 +331,9 @@ pub(crate) fn skip_bytes(uc: &Context, mut size: u64) -> Result<(), Fail> {
                     // SAFETY: `skip_fn` is `Some` (enclosing branch); it is
                     // called with its paired `read_user` — the C stream
                     // callback contract.
-                    unsafe { (uc.skip_fn().unwrap_unchecked())(uc.read_user(), MAX_SKIP_SIZE - 1) },
+                    unsafe {
+                        (uc.skip_fn().expect("stream skip_fn"))(uc.read_user(), MAX_SKIP_SIZE - 1)
+                    },
                     "Truncated file",
                     "uc->skip_fn(uc->read_user, UFBXI_MAX_SKIP_SIZE - 1)"
                 );
@@ -349,7 +351,7 @@ pub(crate) fn skip_bytes(uc: &Context, mut size: u64) -> Result<(), Fail> {
                 // destination is a local 1-byte buffer and exactly 1 byte is
                 // requested.
                 let num_read: usize = unsafe {
-                    (uc.read_fn().unwrap_unchecked())(
+                    (uc.read_fn().expect("stream read_fn"))(
                         uc.read_user(),
                         single_byte.as_mut_ptr() as *mut c_void,
                         1,
@@ -364,7 +366,9 @@ pub(crate) fn skip_bytes(uc: &Context, mut size: u64) -> Result<(), Fail> {
                     uc,
                     // SAFETY: `skip_fn` is `Some` (enclosing branch); C stream
                     // callback contract as above.
-                    unsafe { (uc.skip_fn().unwrap_unchecked())(uc.read_user(), size as usize) },
+                    unsafe {
+                        (uc.skip_fn().expect("stream skip_fn"))(uc.read_user(), size as usize)
+                    },
                     "Truncated file",
                     "uc->skip_fn(uc->read_user, (size_t)size)"
                 );
@@ -455,7 +459,7 @@ pub(crate) unsafe fn read_to(uc: &Context, dst: *mut c_void, mut size: usize) ->
             // and `ptr`/`size` are the unconsumed tail of the caller's
             // destination buffer.
             let read_result: usize = unsafe {
-                (uc.read_fn().unwrap_unchecked())(uc.read_user(), ptr as *mut c_void, size)
+                (uc.read_fn().expect("stream read_fn"))(uc.read_user(), ptr as *mut c_void, size)
             };
             ufbxi_check_msg!(
                 uc,
@@ -1081,7 +1085,7 @@ pub(crate) unsafe extern "C" fn memory_close(user: *mut c_void) {
         // the `user` pointer stored beside it plus the stream's own
         // `data`/`size` — the `ufbx_close_memory_cb` contract.
         unsafe {
-            ((*stream).close_cb.fn_.unwrap_unchecked())(
+            ((*stream).close_cb.fn_.expect("close_cb"))(
                 (*stream).close_cb.user,
                 (*stream).data as *mut c_void,
                 (*stream).size,

@@ -5718,12 +5718,12 @@ pub(crate) unsafe fn read_geometry_cache_real(
 
         // Skip to the correct point in the file
         let mut offset: u64 = frame_ref.data_offset;
-        if stream.skip_fn.is_some() {
+        if let Some(skip_fn) = stream.skip_fn {
             while offset > 0 {
                 let to_skip = min64(offset, MAX_SKIP_SIZE as u64) as usize;
-                // SAFETY: `skip_fn` is `Some` (checked above); calling the
-                // stream's own skip callback with its `user` pointer.
-                if !unsafe { (stream.skip_fn.unwrap_unchecked())(stream.user, to_skip) } {
+                // SAFETY: calling the stream's own skip callback with its
+                // `user` pointer.
+                if !unsafe { skip_fn(stream.user, to_skip) } {
                     break;
                 }
                 offset -= to_skip as u64;
@@ -5735,7 +5735,7 @@ pub(crate) unsafe fn read_geometry_cache_real(
                 // SAFETY: an open `RawStream` from `open_file` has a `read_fn`;
                 // calling it with its `user` pointer and a `to_skip`-byte buffer.
                 let num_read = unsafe {
-                    (stream.read_fn.unwrap_unchecked())(
+                    (stream.read_fn.expect("stream read_fn"))(
                         stream.user,
                         buffer.as_mut_ptr() as *mut c_void,
                         to_skip,
@@ -5774,7 +5774,7 @@ pub(crate) unsafe fn read_geometry_cache_real(
                 // SAFETY: the stream's `read_fn` fills the `f64_` union arm (a
                 // `[f64; 512]`) with up to `to_read` doubles via its `user` ptr.
                 let mut bytes_read = unsafe {
-                    (stream.read_fn.unwrap_unchecked())(
+                    (stream.read_fn.expect("stream read_fn"))(
                         stream.user,
                         buffer.src.f64_.as_mut_ptr() as *mut c_void,
                         to_read * size_of::<f64>(),
@@ -5823,7 +5823,7 @@ pub(crate) unsafe fn read_geometry_cache_real(
                 // SAFETY: the stream's `read_fn` fills the `f32_` union arm (a
                 // `[f32; 512]`) with up to `to_read` floats via its `user` ptr.
                 let mut bytes_read = unsafe {
-                    (stream.read_fn.unwrap_unchecked())(
+                    (stream.read_fn.expect("stream read_fn"))(
                         stream.user,
                         buffer.src.f32_.as_mut_ptr() as *mut c_void,
                         to_read * size_of::<f32>(),

@@ -4587,13 +4587,13 @@ pub(crate) unsafe fn fetch_mapping_maps(
                     }
                     map.set_has_value(true);
                     if mapping.transform != 0 {
-                        // SAFETY: `mapping->transform` is a `MatTransform`
-                        // discriminant below `MatTransform::Count`, and
-                        // `MAT_TRANSFORM_FNS` holds a `Some` at every index above
-                        // the identity slot 0, which the `!= 0` test excludes.
-                        let transform_fn: MatTransformFn = unsafe {
-                            MAT_TRANSFORM_FNS[mapping.transform as usize].unwrap_unchecked()
-                        };
+                        // `mapping->transform` is a `MatTransform` discriminant
+                        // below `MatTransform::Count`, and `MAT_TRANSFORM_FNS`
+                        // holds a `Some` at every index above the identity
+                        // slot 0, which the `!= 0` test excludes.
+                        let transform_fn: MatTransformFn = MAT_TRANSFORM_FNS
+                            [mapping.transform as usize]
+                            .expect("material transform fn");
                         // SAFETY: the argument is the map view's own live
                         // `value_vec4`, which those callbacks are contracted to
                         // take.
@@ -5986,7 +5986,7 @@ pub(crate) fn finalize_shader_texture<'a>(
                         // (ufbx.c:20677-20679) — every input the loop above
                         // creates carries the prop it was made from.
                         let prop: &PropView = ptr::read(&raw const (*input).prop)
-                            .unwrap_unchecked()
+                            .expect("shader texture input prop")
                             .view();
                         texture_view.set_absolute_filename(prop.value_str());
                         texture_view.set_raw_absolute_filename(prop.value_blob());
@@ -12296,9 +12296,11 @@ pub(crate) fn update_initial_clusters(scene_view: &SceneView) {
         let mut node_view: &View<Node> = unsafe { View::<Node>::from_ptr(node) };
         if node_view.is_geometry_transform_helper() {
             // C: `node = node->parent;`
-            // SAFETY: a geometry transform helper is always created as a child of
+            // A geometry transform helper is always created as a child of
             // the node it serves, so its parent link is set.
-            node_view = unsafe { node_view.parent_view().unwrap_unchecked() };
+            node_view = node_view
+                .parent_view()
+                .expect("geometry transform helper parent");
         }
 
         if matrix_all_zero(cluster.mesh_node_to_bone_view()) {
